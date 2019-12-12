@@ -2098,7 +2098,7 @@ impl Debug for Tree {
         loop {
             let get_res = self.view_for_pid(pid, &guard);
             let node = if let Ok(Some(ref view)) = get_res {
-                view
+                view.deref()
             } else {
                 error!(
                     "Tree::fmt failed to read node {} \
