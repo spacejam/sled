@@ -1,3 +1,7 @@
+# Upcoming
+
+* Migrated to a new serialization format
+
 # 0.29.2
 
 ## New Features
