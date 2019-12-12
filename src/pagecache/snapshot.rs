@@ -10,20 +10,21 @@ use super::{
 
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
+#[cfg_attr(test, derive(Clone, PartialEq))]
 pub struct Snapshot {
     /// The last read message lsn
     pub last_lsn: Lsn,
     /// The last read message lid
     pub last_lid: LogOffset,
-    /// the mapping from pages to (lsn, lid)
-    pub pt: FastMap8<PageId, PageState>,
     /// The highest stable offset persisted
     /// into a segment header
     pub max_header_stable_lsn: Lsn,
+    /// the mapping from pages to (lsn, lid)
+    pub pt: FastMap8<PageId, PageState>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PageState {
     Present(Vec<(Lsn, DiskPtr, u64)>),
     Free(Lsn, DiskPtr),
@@ -269,11 +270,11 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
     #[cfg(not(feature = "zstd"))]
     let bytes = buf;
 
-    Ok(deserialize::<Snapshot>(&*bytes).ok())
+    Ok(Snapshot::deserialize(&*bytes).ok())
 }
 
 fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
-    let raw_bytes = serialize(&snapshot).unwrap();
+    let raw_bytes = snapshot.serialize();
     let decompressed_len = raw_bytes.len();
 
     #[cfg(feature = "zstd")]

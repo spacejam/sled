@@ -92,7 +92,7 @@ pub(crate) struct SegmentAccountant {
 /// fragments from different pages. Over time, we track
 /// when segments become reusable and allow them to be
 /// overwritten for new data.
-#[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, PartialEq)]
 struct Segment {
     present: FastSet8<PageId>,
     // a copy of present that lets us make decisions
@@ -108,18 +108,7 @@ struct Segment {
     state: SegmentState,
 }
 
-#[derive(
-    Debug,
-    Copy,
-    Eq,
-    Hash,
-    Ord,
-    PartialOrd,
-    PartialEq,
-    Clone,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Copy, Eq, Hash, Ord, PartialOrd, PartialEq, Clone)]
 pub(crate) enum SegmentState {
     /// the segment is marked for reuse, should never receive
     /// new pids,
@@ -1165,7 +1154,7 @@ impl SegmentAccountant {
 /// The log may be configured to write data
 /// in several different ways, depending on
 /// the constraints of the system using it.
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum SegmentMode {
     /// Write to the end of the log, always.
     Linear,

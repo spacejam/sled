@@ -1,10 +1,8 @@
-use serde::{Deserialize, Serialize};
-
 /// A set built on top of `Vec` and binary search,
 /// for use when calling `nth` to iterate over a set
 /// is too expensive, and the set size is expected to be
 /// ~10 or less most of the time.
-#[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct VecSet<T> {
     inner: Vec<T>,
 }

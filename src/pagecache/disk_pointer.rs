@@ -2,9 +2,7 @@ use super::{BlobPointer, LogOffset};
 use crate::*;
 
 /// A pointer to a location on disk or an off-log blob.
-#[derive(
-    Debug, Clone, PartialOrd, Ord, Copy, Eq, PartialEq, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, PartialOrd, Ord, Copy, Eq, PartialEq)]
 pub enum DiskPtr {
     /// Points to a value stored in the single-file log.
     Inline(LogOffset),

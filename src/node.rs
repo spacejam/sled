@@ -2,15 +2,15 @@ use std::ops::Bound;
 
 use super::*;
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct Node {
-    pub(crate) data: Data,
     pub(crate) next: Option<PageId>,
     pub(crate) lo: IVec,
     pub(crate) hi: IVec,
     pub(crate) merging_child: Option<PageId>,
     pub(crate) merging: bool,
     pub(crate) prefix_len: u8,
+    pub(crate) data: Data,
 }
 
 impl Node {
@@ -574,7 +574,7 @@ impl Node {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Data {
     Index(Vec<(IVec, PageId)>),
     Leaf(Vec<(IVec, IVec)>),
@@ -587,6 +587,17 @@ impl Default for Data {
 }
 
 impl Data {
+    pub(crate) fn serialized_size(&self) -> usize {
+        match self {
+            Data::Index(ref pointers) => {
+                pointers.iter().map(|(k, _)| 16 + k.len()).sum()
+            }
+            Data::Leaf(ref items) => {
+                items.iter().map(|(k, v)| 16 + k.len() + v.len()).sum()
+            }
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
         match *self {
             Data::Index(ref pointers) => pointers.len(),

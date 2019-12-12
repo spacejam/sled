@@ -5,7 +5,10 @@ use std::{
     io,
 };
 
-use crate::pagecache::{DiskPtr, PageView};
+use crate::{
+    pagecache::{DiskPtr, PageView},
+    IVec,
+};
 
 /// The top-level result type for dealing with
 /// the `PageCache`.
@@ -23,7 +26,7 @@ pub(crate) type CasResult<'a, R> =
 #[derive(Debug)]
 pub enum Error {
     /// The underlying collection no longer exists.
-    CollectionNotFound(Vec<u8>),
+    CollectionNotFound(IVec),
     /// The system has been used in an unsupported way.
     Unsupported(String),
     /// An unexpected bug has happened. Please open an issue on github!

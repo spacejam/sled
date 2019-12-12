@@ -2,9 +2,9 @@ use crate::*;
 
 /// A simple map that can be used to store metadata
 /// for the pagecache tenant.
-#[derive(Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub struct Meta {
-    inner: BTreeMap<Vec<u8>, PageId>,
+    pub(crate) inner: BTreeMap<IVec, PageId>,
 }
 
 impl Meta {
@@ -14,7 +14,7 @@ impl Meta {
     }
 
     /// Set the `PageId` associated with an identifier
-    pub fn set_root(&mut self, name: Vec<u8>, pid: PageId) -> Option<PageId> {
+    pub fn set_root(&mut self, name: IVec, pid: PageId) -> Option<PageId> {
         self.inner.insert(name, pid)
     }
 
@@ -24,7 +24,7 @@ impl Meta {
     }
 
     /// Return the current rooted tenants in Meta
-    pub fn tenants(&self) -> BTreeMap<Vec<u8>, PageId> {
+    pub fn tenants(&self) -> BTreeMap<IVec, PageId> {
         self.inner.clone()
     }
 
@@ -40,11 +40,16 @@ impl Meta {
 
 /// Open or create a new disk-backed Tree with its own keyspace,
 /// accessible from the `Db` via the provided identifier.
-pub(crate) fn open_tree(
+pub(crate) fn open_tree<V>(
     context: &Context,
-    name: Vec<u8>,
+    raw_name: V,
     guard: &Guard,
-) -> Result<Tree> {
+) -> Result<Tree>
+where
+    V: Into<IVec>,
+{
+    let name = raw_name.into();
+
     // we loop because creating this Tree may race with
     // concurrent attempts to open the same one.
     loop {

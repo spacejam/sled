@@ -603,9 +603,9 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
     db.drop_tree(b"1")?;
     db.drop_tree(b"2")?;
 
-    assert_eq!(t1.get(b""), Err(Error::CollectionNotFound(b"1".to_vec())));
+    assert_eq!(t1.get(b""), Err(Error::CollectionNotFound(b"1".into())));
 
-    assert_eq!(t2.get(b""), Err(Error::CollectionNotFound(b"2".to_vec())));
+    assert_eq!(t2.get(b""), Err(Error::CollectionNotFound(b"2".into())));
 
     let guard = pin();
     guard.flush();
@@ -805,6 +805,12 @@ fn quickcheck_tree_matches_btreemap() {
         .quickcheck(
             prop_tree_matches_btreemap as fn(Vec<Op>, u8, bool, bool) -> bool,
         );
+}
+
+#[test]
+fn tree_bug_00() {
+    // postmortem:
+    prop_tree_matches_btreemap(vec![Restart], 0, false, false);
 }
 
 #[test]
