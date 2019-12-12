@@ -1,3 +1,4 @@
+#![allow(clippy::mut_mut)]
 use std::{
     convert::{TryFrom, TryInto},
     iter::FromIterator,
@@ -28,7 +29,7 @@ pub trait Serialize: Sized {
     /// Returns owned serialized bytes.
     fn serialize(&self) -> Vec<u8> {
         let sz = self.serialized_size();
-        let mut buf = vec![0; sz as usize];
+        let mut buf = vec![0; usize::try_from(sz).unwrap()];
         self.serialize_into(&mut buf.as_mut_slice());
         buf
     }
@@ -44,9 +45,11 @@ fn scoot(buf: &mut &mut [u8], amount: usize) {
     assert!(buf.len() >= amount);
     let len = buf.len();
     let ptr = buf.as_mut_ptr();
+    let new_len = len - amount;
 
     unsafe {
-        *buf = std::slice::from_raw_parts_mut(ptr.add(amount), len - amount);
+        let new_ptr = ptr.add(amount);
+        *buf = std::slice::from_raw_parts_mut(new_ptr, new_len);
     }
 }
 
@@ -179,8 +182,7 @@ impl Serialize for Link {
             }
             Link::Del(key) => 9 + u64::try_from(key.len()).unwrap(),
             Link::ParentMergeIntention(_) => 9,
-            Link::ParentMergeConfirm => 1,
-            Link::ChildMergeCap => 1,
+            Link::ParentMergeConfirm | Link::ChildMergeCap => 1,
         }
     }
 
