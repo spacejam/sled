@@ -32,7 +32,6 @@ impl Serialize for IVec {
     }
 
     fn write(&self, buf: &mut Vec<u8>) {
-        buf.reserve(8 + self.len());
         let k_len = u64::try_from(self.len()).unwrap().to_le_bytes();
         buf.extend_from_slice(&k_len);
         buf.extend_from_slice(self);
@@ -147,12 +146,10 @@ impl Serialize for DiskPtr {
     fn write(&self, buf: &mut Vec<u8>) {
         match self {
             DiskPtr::Inline(log_offset) => {
-                buf.reserve(9);
                 0_u8.write(buf);
                 log_offset.write(buf);
             }
             DiskPtr::Blob(log_offset, blob_lsn) => {
-                buf.reserve(17);
                 1_u8.write(buf);
                 log_offset.write(buf);
                 blob_lsn.write(buf);
@@ -180,7 +177,6 @@ impl Serialize for PageState {
     fn write(&self, buf: &mut Vec<u8>) {
         match self {
             PageState::Free(lsn, disk_ptr) => {
-                buf.reserve(18);
                 0_u8.write(buf);
                 lsn.write(buf);
                 disk_ptr.write(buf);
@@ -327,19 +323,6 @@ impl Serializable for u64 {
     }
 }
 
-impl Serializable for i64 {
-    fn serialize(&self) -> Vec<u8> {
-        self.to_le_bytes().to_vec()
-    }
-
-    fn deserialize(buf: &[u8]) -> Result<Self> {
-        match buf.try_into() {
-            Ok(array) => Ok(i64::from_le_bytes(array)),
-            Err(_) => Err(Error::Corruption { at: DiskPtr::Inline(0) }),
-        }
-    }
-}
-
 impl Serializable for Meta {
     fn serialize(&self) -> Vec<u8> {
         let output_sz =
@@ -359,28 +342,30 @@ impl Serializable for Meta {
 
 impl Serializable for Link {
     fn serialize(&self) -> Vec<u8> {
-        let mut buf = vec![];
+        let mut buf;
         match self {
             Link::Set(key, value) => {
-                buf.reserve(1 + key.len() + value.len());
+                buf = Vec::with_capacity(17 + key.len() + value.len());
                 0_u8.write(&mut buf);
                 key.write(&mut buf);
                 value.write(&mut buf);
             }
             Link::Del(key) => {
-                buf.reserve(1 + key.len());
+                buf = Vec::with_capacity(9 + key.len());
                 1_u8.write(&mut buf);
                 key.write(&mut buf);
             }
             Link::ParentMergeIntention(pid) => {
-                buf.reserve(9);
+                buf = Vec::with_capacity(9);
                 2_u8.write(&mut buf);
                 pid.write(&mut buf);
             }
             Link::ParentMergeConfirm => {
+                buf = Vec::with_capacity(1);
                 3_u8.write(&mut buf);
             }
             Link::ChildMergeCap => {
+                buf = Vec::with_capacity(1);
                 4_u8.write(&mut buf);
             }
         }
@@ -406,7 +391,10 @@ impl Serializable for Link {
 
 impl Serializable for Node {
     fn serialize(&self) -> Vec<u8> {
-        let mut buf = vec![];
+        let output_sz =
+            34 + self.lo.len() + self.hi.len() + self.data.serialized_size();
+
+        let mut buf = Vec::with_capacity(output_sz);
 
         self.next.unwrap_or(0).write(&mut buf);
         self.merging_child.unwrap_or(0).write(&mut buf);
@@ -453,10 +441,7 @@ impl Serializable for Snapshot {
             last_lsn: { i64::consume(&mut buf)? },
             last_lid: { u64::consume(&mut buf)? },
             max_header_stable_lsn: { i64::consume(&mut buf)? },
-            pt: {
-                let pt: crate::FastMap8<_, _> = consume_sequence(&mut buf)?;
-                pt
-            },
+            pt: consume_sequence(&mut buf)?,
         })
     }
 }

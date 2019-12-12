@@ -587,6 +587,17 @@ impl Default for Data {
 }
 
 impl Data {
+    pub(crate) fn serialized_size(&self) -> usize {
+        match self {
+            Data::Index(ref pointers) => {
+                pointers.iter().map(|(k, _)| 16 + k.len()).sum()
+            }
+            Data::Leaf(ref items) => {
+                items.iter().map(|(k, v)| 16 + k.len() + v.len()).sum()
+            }
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
         match *self {
             Data::Index(ref pointers) => pointers.len(),
