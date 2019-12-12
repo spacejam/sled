@@ -56,7 +56,7 @@ where
         match context.pagecache.meta_pid_for_name(&name, guard) {
             Ok(root_id) => {
                 return Ok(Tree(Arc::new(TreeInner {
-                    tree_id: IVec::from(name),
+                    tree_id: name,
                     context: context.clone(),
                     subscriptions: Subscriptions::default(),
                     root: AtomicU64::new(root_id),
