@@ -329,7 +329,10 @@ fn concurrent_tree_iter() -> Result<()> {
 fn concurrent_tree_transactions() -> TransactionResult<()> {
     common::setup_logger();
 
-    let config = Config::new().temporary(true).flush_every_ms(None);
+    let config = Config::new()
+        .temporary(true)
+        .flush_every_ms(None)
+        .use_compression(true);
     let db = config.open().unwrap();
 
     db.insert(b"k1", b"cats").unwrap();

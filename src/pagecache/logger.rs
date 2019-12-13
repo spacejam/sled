@@ -134,7 +134,7 @@ impl Log {
 
         #[cfg(feature = "compression")]
         {
-            if self.config.use_compression {
+            if self.config.use_compression && pid != BATCH_MANIFEST_PID {
                 use zstd::block::compress;
 
                 let _measure = Measure::new(&M.compress);

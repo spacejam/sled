@@ -91,7 +91,7 @@ impl<'a> Reservation<'a> {
 
         self.buf[0] = MessageKind::BatchManifest.into();
 
-        let buf = u64_to_arr(u64::try_from(lsn).unwrap());
+        let buf = lsn_to_arr(lsn);
 
         let dst = &mut self.buf[MSG_HEADER_LEN..];
 
