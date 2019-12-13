@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "0.29.2"
+version = "0.30.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a modern embedded database"
 license = "MIT/Apache-2.0"
@@ -11,6 +11,7 @@ categories = ["database-implementations", "concurrency", "data-structures", "alg
 documentation = "https://docs.rs/sled/"
 readme = "README.md"
 edition = "2018"
+exclude = ["benchmarks", "examples", "bindings", "scripts"]
 
 [profile.release]
 debug = true

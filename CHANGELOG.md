@@ -1,6 +1,13 @@
-# Upcoming
+# 0.30
 
-* Migrated to a new serialization format
+## Breaking Changes
+
+* Migrated to a new storage format
+
+## Bugfixes
+
+* Fixed a bug where cache was not being evicted
+* Fixed a bug with using transactions with compression
 
 # 0.29.2
 
