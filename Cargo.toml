@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "0.30.0"
+version = "0.30.1"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a modern embedded database"
 license = "MIT/Apache-2.0"

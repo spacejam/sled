@@ -1,3 +1,10 @@
+# 0.30.1
+
+## Bugfixes
+
+* Fixed an issue where an idle threadpool worker
+  would spin in a hot loop until work arrived
+
 # 0.30
 
 ## Breaking Changes

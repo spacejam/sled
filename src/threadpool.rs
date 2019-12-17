@@ -32,7 +32,10 @@ impl Queue {
         let cutoff = Instant::now() + duration;
 
         while queue.is_empty() {
-            self.cv.wait_until(&mut queue, cutoff);
+            let res = self.cv.wait_until(&mut queue, cutoff);
+            if res.timed_out() {
+                break;
+            }
         }
 
         queue.pop_front()
