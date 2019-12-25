@@ -11,7 +11,10 @@ mod io_uring;
 mod iobuf;
 mod iterator;
 mod pagetable;
-mod parallel_io;
+#[cfg(not(unix))]
+mod parallel_io_not_unix;
+#[cfg(unix)]
+mod parallel_io_unix;
 mod reader;
 mod reservation;
 mod segment;
@@ -19,6 +22,12 @@ mod snapshot;
 
 use crate::*;
 use std::{collections::BinaryHeap, ops::Deref};
+
+#[cfg(not(unix))]
+use parallel_io_not_unix::{pread_exact, pwrite_all};
+
+#[cfg(unix)]
+use parallel_io_unix::{pread_exact, pwrite_all};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
@@ -28,7 +37,6 @@ use self::{
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
-    parallel_io::Pio,
     segment::SegmentAccountant,
     snapshot::advance_snapshot,
 };

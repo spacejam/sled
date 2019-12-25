@@ -421,7 +421,7 @@ impl IoBufs {
         #[cfg(not(feature = "io_uring"))]
         {
             let f = &self.config.file;
-            f.pwrite_all(&data[..total_len], log_offset)?;
+            pwrite_all(&f, &data[..total_len], log_offset)?;
             if !self.config.temporary {
                 f.sync_all()?;
             }
