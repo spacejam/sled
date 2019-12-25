@@ -4,8 +4,8 @@ use zstd::block::{compress, decompress};
 use crate::*;
 
 use super::{
-    arr_to_u32, raw_segment_iter_from, u32_to_arr, u64_to_arr, DiskPtr,
-    LogIter, LogKind, LogOffset, Lsn, MessageKind, Pio, MSG_HEADER_LEN,
+    arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
+    DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind, MSG_HEADER_LEN,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -200,7 +200,8 @@ pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
         // from being allocated which would duplicate its LSN, messing
         // up recovery in the future.
         maybe_fail!("segment initial free zero");
-        config.file.pwrite_all(
+        pwrite_all(
+            &config.file,
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
             lid,
         )?;

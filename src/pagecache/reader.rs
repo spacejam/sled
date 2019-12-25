@@ -10,7 +10,7 @@ pub(crate) fn read_segment_header(
     trace!("reading segment header at {}", lid);
 
     let mut seg_header_buf = [0; SEG_HEADER_LEN];
-    file.pread_exact(&mut seg_header_buf, lid)?;
+    pread_exact(file, &mut seg_header_buf, lid)?;
     let segment_header = SegmentHeader::from(seg_header_buf);
 
     if segment_header.lsn < Lsn::try_from(lid).unwrap() {
@@ -33,7 +33,7 @@ pub(crate) fn read_message(
 ) -> Result<LogRead> {
     let mut msg_header_buf = [0; MSG_HEADER_LEN];
 
-    file.pread_exact(&mut msg_header_buf, lid)?;
+    pread_exact(file, &mut msg_header_buf, lid)?;
     let header: MessageHeader = msg_header_buf.into();
 
     // we set the crc bytes to 0 because we will
@@ -111,7 +111,7 @@ pub(crate) fn read_message(
     unsafe {
         buf.set_len(usize::try_from(header.len).unwrap());
     }
-    file.pread_exact(&mut buf, lid + MSG_HEADER_LEN as LogOffset)?;
+    pread_exact(file, &mut buf, lid + MSG_HEADER_LEN as LogOffset)?;
 
     // calculate the CRC32, calculating the hash on the
     // header afterwards
