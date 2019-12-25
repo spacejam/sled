@@ -1,12 +1,9 @@
 use std::fs::File;
 use std::io::{self, Read, Seek, Write};
 
-use super::LogOffset;
+use parking_lot::Mutex;
 
-use {
-    parking_lot::Mutex,
-    std::io::{Read, Seek, Write},
-};
+use super::LogOffset;
 
 fn init_mu() -> Mutex<()> {
     Mutex::new(())
@@ -17,7 +14,7 @@ type MutexInit = fn() -> Mutex<()>;
 static GLOBAL_FILE_LOCK: crate::Lazy<Mutex<()>, MutexInit> =
     crate::Lazy::new(init_mu);
 
-fn pread_exact(
+pub(crate) fn pread_exact(
     file: &File,
     mut buf: &mut [u8],
     offset: LogOffset,
@@ -49,7 +46,7 @@ fn pread_exact(
     }
 }
 
-fn pwrite_all(
+pub(crate) fn pwrite_all(
     file: &File,
     mut buf: &[u8],
     offset: LogOffset,
