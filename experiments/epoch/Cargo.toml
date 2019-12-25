@@ -1,0 +1,11 @@
+[package]
+name = "epoch"
+version = "0.1.0"
+authors = ["Tyler Neely <t@jujit.su>"]
+edition = "2018"
+
+[profile.release]
+debug = true
+
+[dependencies]
+crossbeam-epoch = "0.8.0"
