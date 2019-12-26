@@ -100,7 +100,6 @@ struct Segment {
     // deferred_replacements to take effect during
     // segment deactivation.
     not_yet_replaced: FastSet8<PageId>,
-    removed: FastSet8<PageId>,
     deferred_rm_blob: FastSet8<BlobPointer>,
     // set of pages that we replaced from other segments
     deferred_replacements: FastSet8<(PageId, SegmentId)>,
@@ -137,8 +136,7 @@ impl Default for SegmentState {
 
 impl Segment {
     fn len(&self) -> usize {
-        std::cmp::max(self.present.len(), self.removed.len())
-            - self.removed.len()
+        self.present.len()
     }
 
     fn is_free(&self) -> bool {
@@ -175,7 +173,6 @@ impl Segment {
         assert_eq!(self.state, Free);
         self.present.clear();
         self.not_yet_replaced.clear();
-        self.removed.clear();
         self.deferred_rm_blob.clear();
         self.deferred_replacements.clear();
         self.lsn = Some(new_lsn);
@@ -243,7 +240,6 @@ impl Segment {
         assert!(lsn >= self.lsn());
         self.present.clear();
         self.not_yet_replaced.clear();
-        self.removed.clear();
         self.state = Free;
     }
 
@@ -278,7 +274,6 @@ impl Segment {
             "expected segment with lsn {} to be Active",
             lsn
         );
-        assert!(!self.removed.contains(&pid));
         self.not_yet_replaced.insert(pid);
         self.present.insert(pid);
     }
@@ -303,11 +298,9 @@ impl Segment {
                     "did not expect present to contain pid {} during recovery",
                     pid,
                 );
-                self.removed.insert(pid);
             }
             Inactive | Draining => {
                 self.present.remove(&pid);
-                self.removed.insert(pid);
             }
             Free => panic!("remove_pid called on a Free Segment"),
         }
@@ -351,7 +344,7 @@ impl Segment {
 
     // The live percentage between 0 and 100
     fn live_pct(&self) -> u8 {
-        let total = self.present.len() + self.removed.len();
+        let total = self.present.len();
         if total == 0 {
             return 100;
         }
