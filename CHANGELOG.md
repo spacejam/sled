@@ -1,3 +1,11 @@
+# 0.30.2
+
+## New Features
+
+* Added the `open` function for quickly
+  opening a database at a path with default
+  configuration.
+
 # 0.30.1
 
 ## Bugfixes
