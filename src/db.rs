@@ -256,8 +256,24 @@ impl Db {
     ///
     /// # Examples
     ///
+    /// If you want to migrate from one version of sled
+    /// to another, you need to pull in both versions
+    /// by using version renaming:
+    ///
+    /// `Cargo.toml`:
+    ///
+    /// ```toml, no_run
+    /// [dependencies]
+    /// sled = "0.30"
+    /// old_sled = { version = "0.29", package = "sled" }
+    /// ```
+    ///
+    /// and in your code, remember that old versions of
+    /// sled might have a different way to open them
+    /// than the current `sled::open` method:
+    ///
     /// ```no_run
-    /// let old = sled::open("my_old_db").unwrap();
+    /// let old = old_sled::Db::open("my_old_db").unwrap();
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
@@ -299,8 +315,24 @@ impl Db {
     ///
     /// # Examples
     ///
+    /// If you want to migrate from one version of sled
+    /// to another, you need to pull in both versions
+    /// by using version renaming:
+    ///
+    /// `Cargo.toml`:
+    ///
+    /// ```toml, no_run
+    /// [dependencies]
+    /// sled = "0.30"
+    /// old_sled = { version = "0.29", package = "sled" }
     /// ```
-    /// let old = sled::open("my_old_db").unwrap();
+    ///
+    /// and in your code, remember that old versions of
+    /// sled might have a different way to open them
+    /// than the current `sled::open` method:
+    ///
+    /// ```no_run
+    /// let old = old_sled::Db::open("my_old_db").unwrap();
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
