@@ -262,7 +262,7 @@ impl Db {
     ///
     /// `Cargo.toml`:
     ///
-    /// ```toml, no_run
+    /// ```toml
     /// [dependencies]
     /// sled = "0.30"
     /// old_sled = { version = "0.29", package = "sled" }
@@ -272,7 +272,7 @@ impl Db {
     /// sled might have a different way to open them
     /// than the current `sled::open` method:
     ///
-    /// ```no_run
+    /// ```compile_fail
     /// let old = old_sled::Db::open("my_old_db").unwrap();
     ///
     /// // may be a different version of sled,
@@ -321,7 +321,7 @@ impl Db {
     ///
     /// `Cargo.toml`:
     ///
-    /// ```toml, no_run
+    /// ```toml
     /// [dependencies]
     /// sled = "0.30"
     /// old_sled = { version = "0.29", package = "sled" }
@@ -331,7 +331,7 @@ impl Db {
     /// sled might have a different way to open them
     /// than the current `sled::open` method:
     ///
-    /// ```no_run
+    /// ```compile_fail
     /// let old = old_sled::Db::open("my_old_db").unwrap();
     ///
     /// // may be a different version of sled,
