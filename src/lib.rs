@@ -48,9 +48,7 @@
 //! # Examples
 //!
 //! ```
-//! use sled::Db;
-//!
-//! let t = Db::open("my_db").unwrap();
+//! let t = sled::open("my_db").unwrap();
 //!
 //! // insert and get
 //! t.insert(b"yo!", b"v1");
@@ -262,7 +260,7 @@ pub use {
 pub use self::{
     batch::Batch,
     config::Config,
-    db::Db,
+    db::{open, Db},
     iter::Iter,
     ivec::IVec,
     result::{Error, Result},
