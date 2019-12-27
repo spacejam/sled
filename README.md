@@ -14,9 +14,7 @@
 A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
 
 ```rust
-use sled::Db;
-
-let tree = Db::open(path)?;
+let tree = sled::open(path)?;
 
 // insert and get, similar to std's BTreeMap
 tree.insert(k, v1);
