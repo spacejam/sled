@@ -2,15 +2,15 @@
 
 mod common;
 
-use std::fs;
 use std::mem::size_of;
-use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
 use rand::Rng;
 
 use sled::Config;
+
+use common::cleanup;
 
 const N_TESTS: usize = 100;
 const CYCLE: usize = 256;
@@ -367,11 +367,4 @@ fn test_crash_batches_no_runtime_snapshot() {
         }
     }
     cleanup(dir);
-}
-
-fn cleanup(dir: &str) {
-    let dir = Path::new(dir);
-    if dir.exists() {
-        fs::remove_dir_all(dir).unwrap();
-    }
 }

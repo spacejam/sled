@@ -36,3 +36,11 @@ pub fn setup_logger() {
 
     let _r = builder.try_init();
 }
+
+#[allow(dead_code)]
+pub fn cleanup(dir: &str) {
+    let dir = std::path::Path::new(dir);
+    if dir.exists() {
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
