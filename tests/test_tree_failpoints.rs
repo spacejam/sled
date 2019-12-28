@@ -1482,6 +1482,9 @@ fn failpoints_bug_30() {
 
 #[test]
 fn failpoints_bug_31() {
+    // postmortem 1: apply_batch_inner drops a RecoveryGuard, which in turn drops a Reservation,
+    // and Reservation's drop implementation flushes itself and unwraps the Result returned, which
+    // has the FailPoint error in it
     for _ in 0..1000 {
         assert!(prop_tree_crashes_nicely(
             vec![Del(0), FailPoint("snap write"), Batched(vec![])],
