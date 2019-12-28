@@ -136,8 +136,14 @@ fn tear_down_failpoints() {
 }
 
 #[derive(Debug)]
+struct ReferenceVersion {
+    value: Option<u16>,
+    batch: Option<u32>,
+}
+
+#[derive(Debug)]
 struct ReferenceEntry {
-    values: Vec<Option<u16>>,
+    versions: Vec<ReferenceVersion>,
     crash_epoch: u32,
 }
 
@@ -186,7 +192,6 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
     let mut tree = config.open().expect("tree should start");
     let mut reference = BTreeMap::new();
-    let mut reference_batches = Vec::new();
     let mut fail_points = HashSet::new();
     let mut max_id: isize = -1;
     let mut crash_counter = 0;
@@ -219,17 +224,28 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 Err(Error::FailPoint) => return true,
                 Err(other) => panic!("failed to fetch batch counter after restart: {:?}", other),
             };
-            for (batch_id, ref_batch_map) in std::mem::replace(&mut reference_batches, Vec::new()).into_iter() {
-                if batch_id <= stable_batch {
-                    for (key, _option) in ref_batch_map {
-                        let _reference_entry = reference.entry(key);
-                        // TODO: narrow down the allowable values in reference using the batches
-                        // that have committed, based on what we read out of BATCH_COUNTER_KEY
-                    }
-                } else {
-                    for (key, _option) in ref_batch_map {
-                        let _reference_entry = reference.entry(key);
-                    }
+            for (_, ref_entry) in reference.iter_mut() {
+                if ref_entry.versions.len() == 1 {
+                    continue;
+                }
+                // find the last version from a stable batch, if there is one,
+                // throw away all preceeding versions
+                let committed_find_result = ref_entry.versions.iter().enumerate().rev().find(|(_, ReferenceVersion{ batch, value: _ })| match batch {
+                    Some(batch) => *batch <= stable_batch,
+                    None => false,
+                });
+                if let Some((committed_index, _)) = committed_find_result {
+                    let tail_versions = ref_entry.versions.split_off(committed_index);
+                    std::mem::replace(&mut ref_entry.versions, tail_versions);
+                }
+                // find the first version from a batch that wasn't committed,
+                // throw away it and all subsequent versions
+                let discarded_find_result = ref_entry.versions.iter().enumerate().find(|(_, ReferenceVersion{ batch, value: _})| match batch {
+                    Some(batch) => *batch > stable_batch,
+                    None => false,
+                });
+                if let Some((discarded_index, _)) = discarded_find_result {
+                    ref_entry.versions.split_off(discarded_index);
                 }
             }
 
@@ -248,11 +264,11 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
                 // make sure the tree value is in there
                 while let Some((ref_key, ref_expected)) = ref_iter.next() {
-                    if ref_expected.values.iter().all(Option::is_none) {
+                    if ref_expected.versions.iter().all(|version| version.value.is_none()) {
                         // this key should not be present in the tree, skip it and move on to the
                         // next entry in the reference
                         continue;
-                    } else if ref_expected.values.iter().all(Option::is_some) {
+                    } else if ref_expected.versions.iter().all(|version| version.value.is_some()) {
                         // this key must be present in the tree, check if the keys from both
                         // iterators match
                         if t != ref_key {
@@ -299,7 +315,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             // finish the rest of the reference iterator, and confirm the tree isn't missing
             // any keys it needs to have at the end
             while let Some((ref_key, ref_expected)) = ref_iter.next() {
-                if ref_expected.values.iter().all(Option::is_some) {
+                if ref_expected.versions.iter().all(|version| version.value.is_some()) {
                     // this key had to be present, but we got to the end of the tree without
                     // seeing it
                     println!("tree verification failed: expected {:?} got end", ref_key);
@@ -344,10 +360,16 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 let reference_entry = reference
                     .entry(set_counter)
                     .or_insert_with(|| ReferenceEntry {
-                        values: vec![None],
+                        versions: vec![ReferenceVersion {
+                            value: None,
+                            batch: None,
+                        }],
                         crash_epoch: crash_counter,
                     });
-                reference_entry.values.push(Some(set_counter));
+                reference_entry.versions.push(ReferenceVersion {
+                    value: Some(set_counter),
+                    batch: None,
+                });
                 reference_entry.crash_epoch = crash_counter;
 
                 fp_crash!(tree.insert(
@@ -364,7 +386,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // again, and require this key to be absent (unless there's a
                 // crash before then).
                 reference.entry(u16::from(k)).and_modify(|v| {
-                    v.values.push(None);
+                    v.versions
+                        .push(ReferenceVersion { value: None, batch: None });
                     v.crash_epoch = crash_counter;
                 });
 
@@ -382,7 +405,6 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 max_id = id as isize;
             }
             Batched(batch_ops) => {
-                let mut ref_batch_map = BTreeMap::new();
                 let mut batch = Batch::default();
                 batch.insert(
                     BATCH_COUNTER_KEY,
@@ -394,13 +416,17 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                             let reference_entry = reference
                                 .entry(set_counter)
                                 .or_insert_with(|| ReferenceEntry {
-                                    values: vec![None],
+                                    versions: vec![ReferenceVersion {
+                                        value: None,
+                                        batch: None,
+                                    }],
                                     crash_epoch: crash_counter,
                                 });
-                            reference_entry.values.push(Some(set_counter));
+                            reference_entry.versions.push(ReferenceVersion {
+                                value: Some(set_counter),
+                                batch: Some(batch_counter),
+                            });
                             reference_entry.crash_epoch = crash_counter;
-                            ref_batch_map
-                                .insert(set_counter, Some(set_counter));
 
                             batch.insert(
                                 u16::to_be_bytes(set_counter).to_vec(),
@@ -411,16 +437,17 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                         }
                         BatchOp::Del(k) => {
                             reference.entry(u16::from(k)).and_modify(|v| {
-                                v.values.push(None);
+                                v.versions.push(ReferenceVersion {
+                                    value: None,
+                                    batch: Some(batch_counter),
+                                });
                                 v.crash_epoch = crash_counter;
                             });
-                            ref_batch_map.insert(u16::from(k), None);
 
                             batch.remove(u16::to_be_bytes(k.into()).to_vec());
                         }
                     }
                 }
-                reference_batches.push((batch_counter, ref_batch_map));
                 batch_counter += 1;
                 fp_crash!(tree.apply_batch(batch));
             }
@@ -433,15 +460,18 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // the last crash, keep the value for that key corresponding to
                 // the most recent operation, and toss the rest.
                 for (_key, reference_entry) in reference.iter_mut() {
-                    if reference_entry.values.len() > 1 {
+                    if reference_entry.versions.len() > 1 {
                         if reference_entry.crash_epoch == crash_counter {
-                            let last = *reference_entry.values.last().unwrap();
-                            reference_entry.values.clear();
-                            reference_entry.values.push(last);
+                            let last = std::mem::replace(
+                                &mut reference_entry.versions,
+                                Vec::new(),
+                            )
+                            .pop()
+                            .unwrap();
+                            reference_entry.versions.push(last);
                         }
                     }
                 }
-                reference_batches = Vec::new();
             }
             Restart => {
                 restart!();
