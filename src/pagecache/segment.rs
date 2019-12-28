@@ -727,7 +727,7 @@ impl SegmentAccountant {
     }
 
     /// Called by the `PageCache` to find pages that are in
-    /// segments elligible for cleaning that it should
+    /// segments eligible for cleaning that it should
     /// try to rewrite elsewhere.
     pub(super) fn clean(
         &mut self,
