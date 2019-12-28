@@ -4,14 +4,14 @@ use std::os::windows::fs::FileExt;
 
 use super::LogOffset;
 
-fn<F: FileExt> seek_read_exact(file: &mut F, mut buf: &mut[u8], mut offset: u64) -> io::Result<()> {
+fn seek_read_exact<F: FileExt>(file: &mut F, mut buf: &mut[u8], mut offset: u64) -> io::Result<()> {
     while !buf.is_empty() {
         match file.seek_read(buf, offset) {
             Ok(0) => break,
             Ok(n) => {
                 let tmp = buf;
                 buf = &mut tmp[n..];
-                offset += n;
+                offset += n as u64;
             }
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
@@ -25,14 +25,14 @@ fn<F: FileExt> seek_read_exact(file: &mut F, mut buf: &mut[u8], mut offset: u64)
     }
 }
 
-fn<F: FileExt> seek_write_all(file: &mut F, mut buf: &[u8], mut offset: u64) -> io::Result<()> {
+fn seek_write_all<F: FileExt>(file: &mut F, mut buf: &[u8], mut offset: u64) -> io::Result<()> {
     while !buf.is_empty() {
         match file.seek_write(buf, offset) {
             Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero,
                                                "failed to write whole buffer")),
             Ok(n) => {
                 buf = &buf[n..];
-                offset += n;
+                offset += n as u64;
             }
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
