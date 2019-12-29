@@ -11,10 +11,12 @@ mod io_uring;
 mod iobuf;
 mod iterator;
 mod pagetable;
-#[cfg(not(unix))]
-mod parallel_io_not_unix;
+#[cfg(all(not(unix), not(windows)))]
+mod parallel_io_polyfill;
 #[cfg(unix)]
 mod parallel_io_unix;
+#[cfg(windows)]
+mod parallel_io_windows;
 mod reader;
 mod reservation;
 mod segment;
@@ -23,11 +25,14 @@ mod snapshot;
 use crate::*;
 use std::{collections::BinaryHeap, ops::Deref};
 
-#[cfg(not(unix))]
-use parallel_io_not_unix::{pread_exact, pwrite_all};
+#[cfg(all(not(unix), not(windows)))]
+use parallel_io_polyfill::{pread_exact, pwrite_all};
 
 #[cfg(unix)]
 use parallel_io_unix::{pread_exact, pwrite_all};
+
+#[cfg(windows)]
+use parallel_io_windows::{pread_exact, pwrite_all};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
