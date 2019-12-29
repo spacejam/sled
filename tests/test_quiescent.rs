@@ -13,7 +13,7 @@ fn test_quiescent_cpu_time() {
 
     fn run() {
         let start = Instant::now();
-        let db = sled::Db::open(DB_DIR).unwrap();
+        let db = sled::open(DB_DIR).unwrap();
         std::thread::sleep(Duration::from_secs(10));
         drop(db);
         let end = Instant::now();
