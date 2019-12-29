@@ -1,3 +1,14 @@
+# Unreleased
+
+## Improvements
+
+* #921 reduced the reliance on locks while performing
+  multithreaded IO on windows
+
+# 0.30.3
+
+* Documentation-only release
+
 # 0.30.2
 
 ## New Features
