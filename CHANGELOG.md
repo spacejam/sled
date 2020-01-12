@@ -2,15 +2,17 @@
 
 ## Breaking Changes
 
-* SQLite-style varints are now used for sizes
-  of tree data. This dramatically reduces the
-  database size for databases that store small
-  keys and values.
+* #927 use SQLite-style varints for serializing
+  `u64`. This dramatically reduces the written
+  bytes for databases that store small keys and
+  values.
 
 ## Improvements
 
-* #921 reduced the reliance on locks while performing
-  multithreaded IO on windows
+* #921 reduced the reliance on locks while
+  performing multithreaded IO on windows.
+* #928 use `sync_file_range` on linux instead
+  of a full fsync for most writes.
 
 # 0.30.3
 
@@ -39,8 +41,9 @@
 
 ## Bugfixes
 
-* Fixed a bug where cache was not being evicted
-* Fixed a bug with using transactions with compression
+* Fixed a bug where cache was not being evicted.
+* Fixed a bug with using transactions with
+  compression.
 
 # 0.29.2
 
@@ -56,7 +59,7 @@
 ## Bugfixes
 
 * Fixed a bug where prefix encoding could be
-  incorrectly handled when merging nodes together
+  incorrectly handled when merging nodes together.
 
 # 0.29
 
@@ -66,7 +69,7 @@
   `Config` a similar feel to std's `fs::OpenOptions`.
   The `Config::build` and `Db::start` methods are
   now deprecated in favor of calling `Config::open`
-  directly
+  directly.
 * A `checksum` method has been added to Tree and Db
   for use in verifying backups and migrations.
 * Transactions may now involve up to 69 different

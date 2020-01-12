@@ -423,6 +423,25 @@ impl IoBufs {
             let f = &self.config.file;
             pwrite_all(f, &data[..total_len], log_offset)?;
             if !self.config.temporary {
+                #[cfg(target_os = "linux")]
+                {
+                    use std::os::unix::io::AsRawFd;
+                    let ret = unsafe {
+                        libc::sync_file_range(
+                            f.as_raw_fd(),
+                            i64::try_from(log_offset).unwrap(),
+                            i64::try_from(total_len).unwrap(),
+                            libc::SYNC_FILE_RANGE_WAIT_BEFORE
+                                | libc::SYNC_FILE_RANGE_WRITE
+                                | libc::SYNC_FILE_RANGE_WAIT_AFTER,
+                        )
+                    };
+                    if ret < 0 {
+                        return Err(std::io::Error::last_os_error().into());
+                    }
+                }
+
+                #[cfg(not(target_os = "linux"))]
                 f.sync_all()?;
             }
         }
