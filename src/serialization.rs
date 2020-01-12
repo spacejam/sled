@@ -82,15 +82,15 @@ impl Serialize for u64 {
             2
         } else if *self <= 67823 {
             3
-        } else if *self <= 16777215 {
+        } else if *self <= 0x00FF_FFFF {
             4
-        } else if *self <= 4294967295 {
+        } else if *self <= 0xFFFF_FFFF {
             5
-        } else if *self <= 1099511627775 {
+        } else if *self <= 0x00FF_FFFF_FFFF {
             6
-        } else if *self <= 281474976710655 {
+        } else if *self <= 0xFFFF_FFFF_FFFF {
             7
-        } else if *self <= 72057594037927935 {
+        } else if *self <= 0x00FF_FFFF_FFFF_FFFF {
             8
         } else {
             9
@@ -110,27 +110,27 @@ impl Serialize for u64 {
             buf[1] = u8::try_from((*self - 2288) / 256).unwrap();
             buf[2] = u8::try_from((*self - 2288) % 256).unwrap();
             3
-        } else if *self <= 16777215 {
+        } else if *self <= 0x00FF_FFFF {
             buf[0] = 250;
             let bytes = self.to_le_bytes();
             buf[1..4].copy_from_slice(&bytes[..3]);
             4
-        } else if *self <= 4294967295 {
+        } else if *self <= 0xFFFF_FFFF {
             buf[0] = 251;
             let bytes = self.to_le_bytes();
             buf[1..5].copy_from_slice(&bytes[..4]);
             5
-        } else if *self <= 1099511627775 {
+        } else if *self <= 0x00FF_FFFF_FFFF {
             buf[0] = 252;
             let bytes = self.to_le_bytes();
             buf[1..6].copy_from_slice(&bytes[..5]);
             6
-        } else if *self <= 281474976710655 {
+        } else if *self <= 0xFFFF_FFFF_FFFF {
             buf[0] = 253;
             let bytes = self.to_le_bytes();
             buf[1..7].copy_from_slice(&bytes[..6]);
             7
-        } else if *self <= 72057594037927935 {
+        } else if *self <= 0x00FF_FFFF_FFFF_FFFF {
             buf[0] = 254;
             let bytes = self.to_le_bytes();
             buf[1..8].copy_from_slice(&bytes[..7]);
@@ -150,13 +150,15 @@ impl Serialize for u64 {
             return Err(Error::Corruption { at: DiskPtr::Inline(150) });
         }
         let (res, scoot) = match buf[0] {
-            0..=240 => (buf[0] as u64, 1),
-            241..=248 => (240 + 256 * (buf[0] as u64 - 241) + buf[1] as u64, 2),
-            249 => (2288 + 256 * buf[1] as u64 + buf[2] as u64, 3),
+            0..=240 => (u64::from(buf[0]), 1),
+            241..=248 => {
+                (240 + 256 * (u64::from(buf[0]) - 241) + u64::from(buf[1]), 2)
+            }
+            249 => (2288 + 256 * u64::from(buf[1]) + u64::from(buf[2]), 3),
             other => {
                 let sz = other as usize - 247;
                 let mut aligned = [0; 8];
-                aligned[..sz].copy_from_slice(&buf[1..sz + 1]);
+                aligned[..sz].copy_from_slice(&buf[1..=sz]);
                 (u64::from_le_bytes(aligned), sz + 1)
             }
         };
