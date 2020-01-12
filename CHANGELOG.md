@@ -1,5 +1,12 @@
 # Unreleased
 
+## Breaking Changes
+
+* SQLite-style varints are now used for sizes
+  of tree data. This dramatically reduces the
+  database size for databases that store small
+  keys and values.
+
 ## Improvements
 
 * #921 reduced the reliance on locks while performing
