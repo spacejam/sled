@@ -13,6 +13,9 @@ readme = "README.md"
 edition = "2018"
 exclude = ["benchmarks", "examples", "bindings", "scripts", "experiments"]
 
+[badges]
+maintenance = { status = "actively-developed" }
+
 [profile.release]
 debug = true
 opt-level = 3
