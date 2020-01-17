@@ -17,7 +17,6 @@ mod parallel_io_polyfill;
 mod parallel_io_unix;
 #[cfg(windows)]
 mod parallel_io_windows;
-mod reader;
 mod reservation;
 mod segment;
 mod snapshot;
