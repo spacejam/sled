@@ -2,12 +2,12 @@ use std::fs::File;
 use std::sync::Arc;
 
 use super::{
-    arr_to_lsn, arr_to_u32, arr_to_u64, bump_atomic_lsn, iobuf, lsn_to_arr,
-    read_blob, read_message, u32_to_arr, u64_to_arr, BlobPointer, DiskPtr,
-    IoBuf, IoBufs, LogKind, LogOffset, Lsn, MessageKind, Reservation,
-    SegmentAccountant, Snapshot, BATCH_MANIFEST_PID, BLOB_INLINE_LEN,
-    COUNTER_PID, META_PID, MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN,
-    SEG_HEADER_LEN,
+    arr_to_lsn, arr_to_u32, arr_to_u64, assert_usize, bump_atomic_lsn, iobuf,
+    lsn_to_arr, maybe_decompress, pread_exact, read_blob, u32_to_arr,
+    u64_to_arr, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
+    MessageKind, Reservation, SegmentAccountant, Snapshot, BATCH_MANIFEST_PID,
+    BLOB_INLINE_LEN, COUNTER_PID, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
+    MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -645,8 +645,7 @@ pub(crate) fn read_message(
 ) -> Result<LogRead> {
     let mut msg_header_buf = [0; MSG_HEADER_LEN];
     pread_exact(file, &mut msg_header_buf, lid)?;
-    let header: MessageHeader =
-        MessageHeader::deserialize(&mut &msg_header_buf)?;
+    let header: MessageHeader = msg_header_buf.into();
 
     // we set the crc bytes to 0 because we will
     // calculate the crc32 over all bytes other
