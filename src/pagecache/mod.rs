@@ -17,7 +17,6 @@ mod parallel_io_polyfill;
 mod parallel_io_unix;
 #[cfg(windows)]
 mod parallel_io_windows;
-mod reader;
 mod reservation;
 mod segment;
 mod snapshot;
@@ -47,8 +46,7 @@ use self::{
 };
 
 pub(crate) use self::{
-    logger::{MessageHeader, SegmentHeader},
-    reader::{read_message, read_segment_header},
+    logger::{read_message, read_segment_header, MessageHeader, SegmentHeader},
     reservation::Reservation,
     snapshot::{read_snapshot_or_default, PageState, Snapshot},
 };
