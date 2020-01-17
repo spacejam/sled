@@ -159,7 +159,7 @@ impl<T> Uring<T> {
             }
 
             // 2. reserve SQE slots
-            if self.free_slots.len() < reserve {
+            while self.free_slots.len() < reserve {
                 let ret = io_uring_submit_and_wait(
                     &mut self.ring,
                     libc::c_uint::try_from(reserve).unwrap(),
@@ -168,12 +168,6 @@ impl<T> Uring<T> {
                     return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
                 }
                 self.drain_cqe()?;
-                if self.free_slots.len() < reserve {
-                    return Err(Error::Io(io::Error::new(
-                        io::ErrorKind::Other,
-                        "wait for free sqes",
-                    )));
-                }
             }
 
             // 3. build write() SQE
