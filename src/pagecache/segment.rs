@@ -195,8 +195,7 @@ impl Segment {
         self.state = Inactive;
 
         // now we can push any deferred blob removals to the removed set
-        let deferred_rm_blob =
-            mem::replace(&mut self.deferred_rm_blob, FastSet8::default());
+        let deferred_rm_blob = mem::take(&mut self.deferred_rm_blob);
         for ptr in deferred_rm_blob {
             trace!(
                 "removing blob {} while transitioning \
@@ -207,8 +206,7 @@ impl Segment {
             remove_blob(ptr, config)?;
         }
 
-        let deferred_replacements =
-            mem::replace(&mut self.deferred_replacements, FastSet8::default());
+        let deferred_replacements = mem::take(&mut self.deferred_replacements);
 
         Ok(deferred_replacements)
     }

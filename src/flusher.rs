@@ -135,7 +135,7 @@ fn run(
 
         let sleep_duration = flush_every
             .checked_sub(before.elapsed())
-            .unwrap_or(Duration::from_millis(1));
+            .unwrap_or_else(|| Duration::from_millis(1));
 
         let _ = sc.wait_for(&mut shutdown, sleep_duration);
     }
