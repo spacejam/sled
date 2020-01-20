@@ -14,6 +14,7 @@ use crate::{Error, Result};
 use liburing::*;
 
 /// TODO: support for SQPOLL with idle timeout
+/// TODO: support for SYNC_FILE_RANGE
 pub(crate) struct Uring<T> {
     /// Mutable unsafe FFI struct from liburing::
     ring: io_uring,
@@ -159,16 +160,7 @@ impl<T> Uring<T> {
             }
 
             // 2. reserve SQE slots
-            while self.free_slots.len() < reserve {
-                let ret = io_uring_submit_and_wait(
-                    &mut self.ring,
-                    libc::c_uint::try_from(reserve).unwrap(),
-                );
-                if ret < 0 {
-                    return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
-                }
-                self.drain_cqe()?;
-            }
+            self.wait(reserve)?;
 
             // 3. build write() SQE
             {
@@ -238,24 +230,33 @@ impl<T> Uring<T> {
 
         Ok(())
     }
+
+    pub fn wait(&mut self, free: usize) -> Result<()> {
+        unsafe {
+            while self.free_slots.len() < free {
+                let ret = io_uring_submit_and_wait(
+                    &mut self.ring,
+                    u32::try_from(free - self.free_slots.len()).unwrap(),
+                );
+                if ret < 0 {
+                    return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
+                }
+
+                self.drain_cqe()?
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl<T> Drop for Uring<T> {
     fn drop(&mut self) {
         unsafe {
-            // flush unfinished ops
-            if self.free_slots.len() < self.iovecs.len() {
-                let ret = io_uring_submit_and_wait(
-                    &mut self.ring,
-                    u32::try_from(self.iovecs.len() - self.free_slots.len())
-                        .unwrap(),
-                );
-                if ret < 0 {
-                    panic!(Error::Io(io::Error::from_raw_os_error(-ret)));
-                }
+            // complete unfinished ops
+            if let Err(err) = self.wait(self.iovecs.len()) {
+                panic!(err);
             }
-
-            self.drain_cqe().unwrap();
 
             // auto on exit: io_uring_unregister_files(&mut self.ring);
             io_uring_queue_exit(&mut self.ring);
