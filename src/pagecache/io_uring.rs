@@ -13,8 +13,8 @@ use crate::{Error, Result};
 
 use liburing::*;
 
-/// TODO: support for SQPOLL with idle timeout
-/// TODO: support for SYNC_FILE_RANGE
+/// TODO: support for `SQPOLL` with idle timeout
+/// TODO: support for `SYNC_FILE_RANGE`
 pub(crate) struct Uring<T> {
     /// Mutable unsafe FFI struct from liburing::
     ring: io_uring,

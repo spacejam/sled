@@ -18,7 +18,12 @@ macro_rules! io_fail {
         fail_point!($e, |_| {
             $self.config.set_global_error(Error::FailPoint);
             // wake up any waiting threads so they don't stall forever
-            let _ = $self.intervals.lock();
+            let _mu = $self.intervals.lock();
+
+            // having held the mutex makes this linearized
+            // with the notify below.
+            drop(_mu);
+
             let _notified = $self.interval_updated.notify_all();
             Err(Error::FailPoint)
         });
@@ -561,7 +566,10 @@ impl IoBufs {
         }
 
         if updated {
-            // safe because self.intervals mutex is already held
+            // having held the mutex makes this linearized
+            // with the notify below.
+            drop(intervals);
+
             let _notified = self.interval_updated.notify_all();
         }
     }
@@ -590,7 +598,12 @@ pub(in crate::pagecache) fn make_stable(
 
     while stable < lsn {
         if let Err(e) = iobufs.config.global_error() {
-            let _ = iobufs.intervals.lock();
+            let intervals = iobufs.intervals.lock();
+
+            // having held the mutex makes this linearized
+            // with the notify below.
+            drop(intervals);
+
             let _notified = iobufs.interval_updated.notify_all();
             return Err(e);
         }
@@ -749,7 +762,12 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             Ok(ret) => ret,
             Err(e) => {
                 iobufs.config.set_global_error(e.clone());
-                let _ = iobufs.intervals.lock();
+                let intervals = iobufs.intervals.lock();
+
+                // having held the mutex makes this linearized
+                // with the notify below.
+                drop(intervals);
+
                 let _notified = iobufs.interval_updated.notify_all();
                 return Err(e);
             }
@@ -793,8 +811,12 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     let mut mu = iobufs.iobuf.write();
     *mu = Arc::new(next_iobuf);
     drop(mu);
-    let _notified = iobufs.interval_updated.notify_all();
+
+    // having held the mutex makes this linearized
+    // with the notify below.
     drop(intervals);
+
+    let _notified = iobufs.interval_updated.notify_all();
 
     drop(measure_assign_offset);
 
@@ -813,7 +835,12 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
                     "hit error while writing iobuf with lsn {}: {:?}",
                     lsn, e
                 );
-                let _ = iobufs.intervals.lock();
+                let intervals = iobufs.intervals.lock();
+
+                // having held the mutex makes this linearized
+                // with the notify below.
+                drop(intervals);
+
                 let _notified = iobufs.interval_updated.notify_all();
                 iobufs.config.set_global_error(e);
             }

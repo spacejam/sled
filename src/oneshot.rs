@@ -99,6 +99,10 @@ impl<T> OneShotFiller<T> {
         state.filled = true;
         state.item = Some(inner);
 
+        // having held the mutex makes this linearized
+        // with the notify below.
+        drop(state);
+
         let _notified = self.cv.notify_all();
     }
 }
@@ -116,6 +120,10 @@ impl<T> Drop for OneShotFiller<T> {
         }
 
         state.filled = true;
+
+        // having held the mutex makes this linearized
+        // with the notify below.
+        drop(state);
 
         let _notified = self.cv.notify_all();
     }
