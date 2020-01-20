@@ -49,6 +49,11 @@ impl Queue {
     fn send(&self, work: Work) {
         let mut queue = self.mu.lock();
         queue.push_back(work);
+
+        // having held the mutex makes this linearized
+        // with the notify below.
+        drop(queue);
+
         self.cv.notify_one();
     }
 }

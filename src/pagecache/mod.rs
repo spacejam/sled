@@ -779,7 +779,12 @@ impl PageCache {
 
             // wake up any waiting threads
             // so they don't stall forever
-            let _ = self.log.iobufs.intervals.lock();
+            let intervals = self.log.iobufs.intervals.lock();
+
+            // having held the mutex makes this linearized
+            // with the notify below.
+            drop(intervals);
+
             let _notified = self.log.iobufs.interval_updated.notify_all();
         }
     }
@@ -1907,6 +1912,11 @@ impl PageCache {
         };
 
         if let Err(e) = self.config.global_error() {
+            // having held the mutex makes this linearized
+            // with the notify below.
+            let intervals = self.log.iobufs.intervals.lock();
+            drop(intervals);
+
             let _notified = self.log.iobufs.interval_updated.notify_all();
             return Err(e);
         }

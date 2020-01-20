@@ -94,6 +94,11 @@ fn run(
                 pagecache.set_failpoint(e);
 
                 *shutdown = ShutdownState::ShutDown;
+
+                // having held the mutex makes this linearized
+                // with the notify below.
+                drop(shutdown);
+
                 let _notified = sc.notify_all();
                 return;
             }
@@ -115,6 +120,11 @@ fn run(
                     pagecache.set_failpoint(e);
 
                     *shutdown = ShutdownState::ShutDown;
+
+                    // having held the mutex makes this linearized
+                    // with the notify below.
+                    drop(shutdown);
+
                     let _notified = sc.notify_all();
                     return;
                 }
@@ -130,6 +140,11 @@ fn run(
         let _ = sc.wait_for(&mut shutdown, sleep_duration);
     }
     *shutdown = ShutdownState::ShutDown;
+
+    // having held the mutex makes this linearized
+    // with the notify below.
+    drop(shutdown);
+
     let _notified = sc.notify_all();
 }
 
