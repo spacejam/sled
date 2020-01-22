@@ -116,7 +116,7 @@ impl Iterator for LogIter {
                         continue;
                     }
                 }
-                Ok(LogRead::Failed(on_disk_len)) => {
+                Ok(LogRead::Canceled(on_disk_len)) => {
                     trace!("read zeroed in LogIter::next");
                     self.cur_lsn += Lsn::from(
                         u32::try_from(MSG_HEADER_LEN).unwrap() + on_disk_len,

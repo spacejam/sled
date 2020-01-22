@@ -91,7 +91,7 @@ pub enum MessageKind {
     /// to a reservation for an in-memory operation that
     /// failed to complete. It should be skipped during
     /// recovery.
-    Cancelled = 1,
+    Canceled = 1,
     /// Indicates that the following buffer is used
     /// as padding to fill out the rest of the segment
     /// before sealing it.
@@ -129,7 +129,7 @@ impl From<u8> for MessageKind {
         use MessageKind::*;
         match byte {
             0 => Corrupted,
-            1 => Cancelled,
+            1 => Canceled,
             2 => Pad,
             3 => BatchManifest,
             4 => Free,
@@ -184,7 +184,7 @@ impl From<MessageKind> for LogKind {
             | MessageKind::InlineMeta
             | MessageKind::BlobMeta => LogKind::Replace,
             MessageKind::InlineLink | MessageKind::BlobLink => LogKind::Link,
-            MessageKind::Cancelled
+            MessageKind::Canceled
             | MessageKind::Pad
             | MessageKind::BatchManifest => LogKind::Skip,
             other => {
@@ -1834,7 +1834,7 @@ impl PageCache {
             BlobLink | InlineLink => Link::deserialize(buf).map(Update::Link),
             BlobNode | InlineNode => Node::deserialize(buf).map(Update::Node),
             Free => Ok(Update::Free),
-            Corrupted | Cancelled | Pad | BatchManifest => {
+            Corrupted | Canceled | Pad | BatchManifest => {
                 panic!("unexpected pull: {:?}", header.kind)
             }
         };

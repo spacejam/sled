@@ -495,7 +495,7 @@ pub enum LogRead {
     /// Successful read, spilled to its own blob file
     Blob(MessageHeader, Vec<u8>, BlobPointer),
     /// A cancelled message was encountered
-    Failed(u32),
+    Canceled(u32),
     /// A padding message used to show that a segment was filled
     Pad(SegmentNumber),
     /// This log message was not readable due to corruption
@@ -763,9 +763,9 @@ pub(crate) fn read_message(
     }
 
     match header.kind {
-        MessageKind::Cancelled => {
+        MessageKind::Canceled => {
             trace!("read failed of len {}", header.len);
-            Ok(LogRead::Failed(header.len))
+            Ok(LogRead::Canceled(header.len))
         }
         MessageKind::Pad => {
             trace!("read pad in segment number {:?}", header.segment_number);

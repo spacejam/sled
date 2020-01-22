@@ -97,7 +97,7 @@ impl IoBufs {
                 ),
                 &config,
             ) {
-                Ok(LogRead::Failed(len)) | Ok(LogRead::Inline(_, _, len)) => {
+                Ok(LogRead::Canceled(len)) | Ok(LogRead::Inline(_, _, len)) => {
                     len + u32::try_from(MSG_HEADER_LEN).unwrap()
                 }
                 Ok(LogRead::Blob(_header, _buf, _blob_ptr)) => {
