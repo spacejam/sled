@@ -497,7 +497,7 @@ pub enum LogRead {
     /// A cancelled message was encountered
     Canceled(u32),
     /// A padding message used to show that a segment was filled
-    Pad(SegmentNumber),
+    Cap(SegmentNumber),
     /// This log message was not readable due to corruption
     Corrupted(u32),
     /// This blob file is no longer available
@@ -767,9 +767,9 @@ pub(crate) fn read_message(
             trace!("read failed of len {}", header.len);
             Ok(LogRead::Canceled(header.len))
         }
-        MessageKind::Pad => {
+        MessageKind::Cap => {
             trace!("read pad in segment number {:?}", header.segment_number);
-            Ok(LogRead::Pad(header.segment_number))
+            Ok(LogRead::Cap(header.segment_number))
         }
         MessageKind::BlobLink
         | MessageKind::BlobNode

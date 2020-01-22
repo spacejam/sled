@@ -130,7 +130,7 @@ impl Iterator for LogIter {
                     );
                     return None;
                 }
-                Ok(LogRead::Pad(_segment_number)) => {
+                Ok(LogRead::Cap(_segment_number)) => {
                     let _taken = self.segment_base.take().unwrap();
 
                     continue;

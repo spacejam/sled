@@ -95,7 +95,7 @@ pub enum MessageKind {
     /// Indicates that the following buffer is used
     /// as padding to fill out the rest of the segment
     /// before sealing it.
-    Pad = 2,
+    Cap = 2,
     /// Indicates that the following buffer contains
     /// an Lsn for the last write in an atomic writebatch.
     BatchManifest = 3,
@@ -130,7 +130,7 @@ impl From<u8> for MessageKind {
         match byte {
             0 => Corrupted,
             1 => Canceled,
-            2 => Pad,
+            2 => Cap,
             3 => BatchManifest,
             4 => Free,
             5 => Counter,
@@ -185,7 +185,7 @@ impl From<MessageKind> for LogKind {
             | MessageKind::BlobMeta => LogKind::Replace,
             MessageKind::InlineLink | MessageKind::BlobLink => LogKind::Link,
             MessageKind::Canceled
-            | MessageKind::Pad
+            | MessageKind::Cap
             | MessageKind::BatchManifest => LogKind::Skip,
             other => {
                 debug!("encountered unexpected message kind byte {:?}", other);
@@ -1834,7 +1834,7 @@ impl PageCache {
             BlobLink | InlineLink => Link::deserialize(buf).map(Update::Link),
             BlobNode | InlineNode => Node::deserialize(buf).map(Update::Node),
             Free => Ok(Update::Free),
-            Corrupted | Canceled | Pad | BatchManifest => {
+            Corrupted | Canceled | Cap | BatchManifest => {
                 panic!("unexpected pull: {:?}", header.kind)
             }
         };

@@ -373,7 +373,7 @@ impl IoBufs {
             );
 
             let header = MessageHeader {
-                kind: MessageKind::Pad,
+                kind: MessageKind::Cap,
                 pid: PageId::max_value(),
                 segment_number,
                 len: u32::try_from(pad_len).unwrap(),
