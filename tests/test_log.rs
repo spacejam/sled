@@ -299,7 +299,7 @@ fn abort(log: &Log) {
     let res = log.reserve(KIND, PID, &[0; 5]).unwrap();
     let (lsn, ptr) = res.abort().unwrap();
     match log.read(PID, lsn, ptr) {
-        Ok(LogRead::Failed(_, _)) => {}
+        Ok(LogRead::Failed(_)) => {}
         other => {
             panic!(
                 "expected to successfully read \

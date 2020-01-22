@@ -78,12 +78,13 @@ impl Iterator for LogIter {
                     trace!("read blob flush in LogIter::next");
                     let sz = u64::try_from(MSG_HEADER_LEN + BLOB_INLINE_LEN)
                         .unwrap();
+                    let lsn = self.cur_lsn;
                     self.cur_lsn += Lsn::try_from(sz).unwrap();
 
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
-                        self.cur_lsn,
+                        lsn,
                         DiskPtr::Blob(lid, blob_ptr),
                         sz,
                     ));
@@ -95,12 +96,13 @@ impl Iterator for LogIter {
                     );
                     let sz = u64::try_from(MSG_HEADER_LEN).unwrap()
                         + u64::try_from(on_disk_len).unwrap();
+                    let lsn = self.cur_lsn;
                     self.cur_lsn += Lsn::try_from(sz).unwrap();
 
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
-                        self.cur_lsn,
+                        lsn,
                         DiskPtr::Inline(lid),
                         sz,
                     ));
@@ -114,7 +116,7 @@ impl Iterator for LogIter {
                         continue;
                     }
                 }
-                Ok(LogRead::Failed(_, on_disk_len)) => {
+                Ok(LogRead::Failed(on_disk_len)) => {
                     trace!("read zeroed in LogIter::next");
                     self.cur_lsn += Lsn::from(
                         u32::try_from(MSG_HEADER_LEN).unwrap() + on_disk_len,
@@ -128,7 +130,7 @@ impl Iterator for LogIter {
                     );
                     return None;
                 }
-                Ok(LogRead::Pad(_lsn)) => {
+                Ok(LogRead::Pad(_segment_number)) => {
                     let _taken = self.segment_base.take().unwrap();
 
                     continue;

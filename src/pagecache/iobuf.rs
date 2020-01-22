@@ -83,41 +83,41 @@ impl IoBufs {
         let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
-        let (next_lsn, next_lid) =
-            if snapshot_last_lsn % segment_size as Lsn == 0 {
-                (snapshot_last_lsn, snapshot_last_lid)
-            } else {
-                let width = match read_message(
-                    file,
-                    snapshot_last_lid,
-                    SegmentNumber(
-                        u64::try_from(snapshot_last_lsn).unwrap()
-                            / u64::try_from(config.segment_size).unwrap(),
-                    ),
-                    &config,
-                ) {
-                    Ok(LogRead::Failed(_, len))
-                    | Ok(LogRead::Inline(_, _, len)) => {
-                        len + u32::try_from(MSG_HEADER_LEN).unwrap()
-                    }
-                    Ok(LogRead::Blob(_header, _buf, _blob_ptr)) => {
-                        u32::try_from(BLOB_INLINE_LEN + MSG_HEADER_LEN).unwrap()
-                    }
-                    other => {
-                        // we can overwrite this non-flush
-                        debug!(
-                            "got non-flush tip while recovering at {}: {:?}",
-                            snapshot_last_lid, other
-                        );
-                        0
-                    }
-                };
-
-                (
-                    snapshot_last_lsn + Lsn::from(width),
-                    snapshot_last_lid + LogOffset::from(width),
-                )
+        let (next_lsn, next_lid) = if snapshot_last_lsn % segment_size as Lsn
+            == 0
+        {
+            (snapshot_last_lsn, snapshot_last_lid)
+        } else {
+            let width = match read_message(
+                file,
+                snapshot_last_lid,
+                SegmentNumber(
+                    u64::try_from(snapshot_last_lsn).unwrap()
+                        / u64::try_from(config.segment_size).unwrap(),
+                ),
+                &config,
+            ) {
+                Ok(LogRead::Failed(len)) | Ok(LogRead::Inline(_, _, len)) => {
+                    len + u32::try_from(MSG_HEADER_LEN).unwrap()
+                }
+                Ok(LogRead::Blob(_header, _buf, _blob_ptr)) => {
+                    u32::try_from(BLOB_INLINE_LEN + MSG_HEADER_LEN).unwrap()
+                }
+                other => {
+                    // we can overwrite this non-flush
+                    debug!(
+                        "got non-flush tip while recovering at {}: {:?}",
+                        snapshot_last_lid, other
+                    );
+                    0
+                }
             };
+
+            (
+                snapshot_last_lsn + Lsn::from(width),
+                snapshot_last_lid + LogOffset::from(width),
+            )
+        };
 
         let mut iobuf = IoBuf::new(segment_size);
 
