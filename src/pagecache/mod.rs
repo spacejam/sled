@@ -46,7 +46,10 @@ use self::{
 };
 
 pub(crate) use self::{
-    logger::{read_message, read_segment_header, MessageHeader, SegmentHeader},
+    logger::{
+        read_message, read_segment_header, MessageHeader, SegmentHeader,
+        SegmentNumber,
+    },
     reservation::Reservation,
     snapshot::{read_snapshot_or_default, PageState, Snapshot},
 };
@@ -1770,6 +1773,12 @@ impl PageCache {
 
         trace!("pulling pid {} lsn {} pointer {} from disk", pid, lsn, pointer);
         let _measure = Measure::new(&M.pull);
+
+        let expected_segment_number: SegmentNumber = SegmentNumber(
+            u64::try_from(lsn).unwrap()
+                / u64::try_from(self.config.segment_size).unwrap(),
+        );
+
         let (header, bytes) = match self.log.read(pid, lsn, pointer) {
             Ok(LogRead::Inline(header, buf, _len)) => {
                 assert_eq!(
@@ -1779,10 +1788,10 @@ impl PageCache {
                     pid, pointer, header.pid
                 );
                 assert_eq!(
-                    header.lsn, lsn,
-                    "expected lsn {} on pull of pointer {}, \
-                     but got lsn {} instead",
-                    lsn, pointer, header.lsn
+                    header.segment_number, expected_segment_number,
+                    "expected segment number {:?} on pull of pointer {}, \
+                     but got segment number {:?} instead",
+                    expected_segment_number, pointer, header.segment_number
                 );
                 Ok((header, buf))
             }
@@ -1794,10 +1803,10 @@ impl PageCache {
                     pid, pointer, header.pid
                 );
                 assert_eq!(
-                    header.lsn, lsn,
-                    "expected lsn {} on pull of pointer {}, \
-                     but got lsn {} instead",
-                    lsn, pointer, header.lsn
+                    header.segment_number, expected_segment_number,
+                    "expected segment number {:?} on pull of pointer {}, \
+                     but got segment number {:?} instead",
+                    expected_segment_number, pointer, header.segment_number
                 );
 
                 Ok((header, buf))

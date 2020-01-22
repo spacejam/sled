@@ -90,7 +90,10 @@ impl IoBufs {
                 let width = match read_message(
                     file,
                     snapshot_last_lid,
-                    snapshot_last_lsn,
+                    SegmentNumber(
+                        u64::try_from(snapshot_last_lsn).unwrap()
+                            / u64::try_from(config.segment_size).unwrap(),
+                    ),
                     &config,
                 ) {
                     Ok(LogRead::Failed(_, len))
@@ -269,17 +272,17 @@ impl IoBufs {
         out_buf: &mut [u8],
         kind: MessageKind,
         pid: PageId,
-        lsn: Lsn,
-        over_blob_threshold: bool,
+        segment_number: SegmentNumber,
+        blob_id: Option<Lsn>,
     ) -> Result<()> {
         let blob_ptr;
 
-        let to_reserve = if over_blob_threshold {
+        let to_reserve = if let Some(blob_id) = blob_id {
             // write blob to file
             io_fail!(self, "blob blob write");
-            write_blob(&self.config, kind, lsn, in_buf)?;
+            write_blob(&self.config, kind, blob_id, in_buf)?;
 
-            let lsn_buf = u64_to_arr(u64::try_from(lsn).unwrap());
+            let lsn_buf = u64_to_arr(u64::try_from(blob_id).unwrap());
 
             blob_ptr = lsn_buf;
             &blob_ptr
@@ -292,7 +295,7 @@ impl IoBufs {
         let header = MessageHeader {
             kind,
             pid,
-            lsn,
+            segment_number,
             len: u32::try_from(to_reserve.len()).unwrap(),
             crc32: 0,
         };
@@ -364,10 +367,15 @@ impl IoBufs {
             // would place our header.
             let padding_bytes = vec![MessageKind::Corrupted.into(); pad_len];
 
+            let segment_number = SegmentNumber(
+                u64::try_from(base_lsn).unwrap()
+                    / u64::try_from(self.config.segment_size).unwrap(),
+            );
+
             let header = MessageHeader {
                 kind: MessageKind::Pad,
                 pid: PageId::max_value(),
-                lsn: base_lsn + bytes_to_write as Lsn,
+                segment_number,
                 len: u32::try_from(pad_len).unwrap(),
                 crc32: 0,
             };

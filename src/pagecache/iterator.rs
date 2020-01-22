@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, io};
 
 use super::{
     read_message, read_segment_header, DiskPtr, LogKind, LogOffset, LogRead,
-    Lsn, SegmentHeader, BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN,
-    MSG_HEADER_LEN, SEG_HEADER_LEN,
+    Lsn, SegmentHeader, SegmentNumber, BATCH_MANIFEST_INLINE_LEN,
+    BLOB_INLINE_LEN, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 use crate::*;
 
@@ -66,9 +66,14 @@ impl Iterator for LogIter {
                 )
                 .unwrap();
 
+            let expected_segment_number = SegmentNumber(
+                u64::try_from(self.cur_lsn).unwrap()
+                    / u64::try_from(self.config.segment_size).unwrap(),
+            );
+
             let f = &self.config.file;
 
-            match read_message(f, lid, self.cur_lsn, &self.config) {
+            match read_message(f, lid, expected_segment_number, &self.config) {
                 Ok(LogRead::Blob(header, _buf, blob_ptr)) => {
                     trace!("read blob flush in LogIter::next");
                     let sz = u64::try_from(MSG_HEADER_LEN + BLOB_INLINE_LEN)
@@ -78,7 +83,7 @@ impl Iterator for LogIter {
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
-                        header.lsn,
+                        self.cur_lsn,
                         DiskPtr::Blob(lid, blob_ptr),
                         sz,
                     ));
@@ -95,7 +100,7 @@ impl Iterator for LogIter {
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
-                        header.lsn,
+                        self.cur_lsn,
                         DiskPtr::Inline(lid),
                         sz,
                     ));
@@ -128,11 +133,11 @@ impl Iterator for LogIter {
 
                     continue;
                 }
-                Ok(LogRead::DanglingBlob(header, blob_ptr)) => {
+                Ok(LogRead::DanglingBlob(_, blob_ptr)) => {
                     debug!(
                         "encountered dangling blob \
                          pointer at lsn {} ptr {}",
-                        header.lsn, blob_ptr
+                        self.cur_lsn, blob_ptr
                     );
                     self.cur_lsn += (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
                     continue;

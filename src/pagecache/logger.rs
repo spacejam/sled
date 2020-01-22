@@ -60,10 +60,14 @@ impl Log {
         trace!("reading log lsn {} ptr {}", lsn, ptr);
 
         let _wrote = self.make_stable(lsn)?;
+        let expected_segment_number = SegmentNumber(
+            u64::try_from(lsn).unwrap()
+                / u64::try_from(self.config.segment_size).unwrap(),
+        );
 
         if ptr.is_inline() {
             let f = &self.config.file;
-            read_message(f, ptr.lid(), lsn, &self.config)
+            read_message(f, ptr.lid(), expected_segment_number, &self.config)
         } else {
             // we short-circuit the inline read
             // here because it might not still
@@ -74,7 +78,7 @@ impl Log {
                 let header = MessageHeader {
                     kind,
                     pid,
-                    lsn,
+                    segment_number: expected_segment_number,
                     crc32: 0,
                     len: u32::try_from(sz).unwrap(),
                 };
@@ -328,19 +332,27 @@ impl Log {
 
             bump_atomic_lsn(&self.iobufs.max_reserved_lsn, reservation_lsn);
 
+            let segment_number = SegmentNumber(
+                u64::try_from(reservation_lsn).unwrap()
+                    / u64::try_from(self.config.segment_size).unwrap(),
+            );
+
+            let blob_id =
+                if over_blob_threshold { Some(reservation_lsn) } else { None };
+
             self.iobufs.encapsulate(
                 &*buf,
                 destination,
                 kind,
                 pid,
-                reservation_lsn,
-                over_blob_threshold,
+                segment_number,
+                blob_id,
             )?;
 
             M.log_reservation_success();
 
-            let pointer = if over_blob_threshold {
-                DiskPtr::new_blob(reservation_offset, reservation_lsn)
+            let pointer = if let Some(blob_id) = blob_id {
+                DiskPtr::new_blob(reservation_offset, blob_id)
             } else if is_blob_rewrite {
                 let blob_ptr =
                     BlobPointer::try_from(arr_to_u64(&*buf)).unwrap();
@@ -447,10 +459,23 @@ impl Drop for Log {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct MessageHeader {
     pub kind: MessageKind,
-    pub lsn: Lsn,
+    pub segment_number: SegmentNumber,
     pub pid: PageId,
     pub len: u32,
     pub crc32: u32,
+}
+
+/// A number representing a segment number.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[repr(transparent)]
+pub struct SegmentNumber(pub u64);
+
+impl std::ops::Deref for SegmentNumber {
+    type Target = u64;
+
+    fn deref(&self) -> &u64 {
+        &self.0
+    }
 }
 
 /// A segment's header contains the new base LSN and a reference
@@ -470,9 +495,9 @@ pub enum LogRead {
     /// Successful read, spilled to its own blob file
     Blob(MessageHeader, Vec<u8>, BlobPointer),
     /// A cancelled message was encountered
-    Failed(Lsn, u32),
+    Failed(SegmentNumber, u32),
     /// A padding message used to show that a segment was filled
-    Pad(Lsn),
+    Pad(SegmentNumber),
     /// This log message was not readable due to corruption
     Corrupted(u32),
     /// This blob file is no longer available
@@ -509,11 +534,18 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         #[allow(unsafe_code)]
         unsafe {
             let page_id = arr_to_u64(buf.get_unchecked(1..9));
-            let lsn = arr_to_lsn(buf.get_unchecked(9..17));
+            let segment_number =
+                SegmentNumber(arr_to_u64(buf.get_unchecked(9..17)));
             let length = arr_to_u32(buf.get_unchecked(17..21));
             let crc32 = arr_to_u32(buf.get_unchecked(21..)) ^ 0xFFFF_FFFF;
 
-            Self { kind, pid: page_id, lsn, len: length, crc32 }
+            MessageHeader {
+                kind,
+                pid: page_id,
+                segment_number,
+                len: length,
+                crc32,
+            }
         }
     }
 }
@@ -524,7 +556,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         buf[0] = self.kind.into();
 
         let pid_arr = u64_to_arr(self.pid);
-        let lsn_arr = lsn_to_arr(self.lsn);
+        let segment_number_arr = u64_to_arr(*self.segment_number);
         let length_arr = u32_to_arr(self.len);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
 
@@ -536,7 +568,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
                 std::mem::size_of::<u64>(),
             );
             std::ptr::copy_nonoverlapping(
-                lsn_arr.as_ptr(),
+                segment_number_arr.as_ptr(),
                 buf.as_mut_ptr().add(9),
                 std::mem::size_of::<u64>(),
             );
@@ -650,7 +682,7 @@ pub(crate) fn read_segment_header(
 pub(crate) fn read_message(
     file: &File,
     lid: LogOffset,
-    expected_lsn: Lsn,
+    expected_segment_number: SegmentNumber,
     config: &Config,
 ) -> Result<LogRead> {
     let mut msg_header_buf = [0; MSG_HEADER_LEN];
@@ -682,27 +714,10 @@ pub(crate) fn read_message(
 
     assert!(lid + MSG_HEADER_LEN as LogOffset <= ceiling);
 
-    if header.lsn % segment_len as Lsn
-        != Lsn::try_from(lid).unwrap() % segment_len as Lsn
-    {
-        let hb: [u8; MSG_HEADER_LEN] = header.into();
-        // our message lsn was not aligned to our segment offset
-        trace!(
-            "read a message whose header lsn \
-             is not aligned to its position \
-             within its segment. header: {:?} \
-             expected: relative offset {} bytes: {:?}",
-            header,
-            lid % segment_len as LogOffset,
-            hb
-        );
-        return Ok(LogRead::Corrupted(header.len));
-    }
-
-    if header.lsn != expected_lsn {
+    if header.segment_number != expected_segment_number {
         debug!(
-            "header {:?} does not contain expected lsn {}",
-            header, expected_lsn
+            "header {:?} does not contain expected segment_number {:?}",
+            header, expected_segment_number
         );
         return Ok(LogRead::Corrupted(header.len));
     }
@@ -750,11 +765,11 @@ pub(crate) fn read_message(
     match header.kind {
         MessageKind::Cancelled => {
             trace!("read failed of len {}", header.len);
-            Ok(LogRead::Failed(header.lsn, header.len))
+            Ok(LogRead::Failed(header.segment_number, header.len))
         }
         MessageKind::Pad => {
-            trace!("read pad at lsn {}", header.lsn);
-            Ok(LogRead::Pad(header.lsn))
+            trace!("read pad in segment number {:?}", header.segment_number);
+            Ok(LogRead::Pad(header.segment_number))
         }
         MessageKind::BlobLink
         | MessageKind::BlobNode
@@ -765,9 +780,9 @@ pub(crate) fn read_message(
                 Ok((kind, buf)) => {
                     assert_eq!(header.kind, kind);
                     trace!(
-                        "read a successful blob message for Blob({}, {})",
-                        header.lsn,
+                        "read a successful blob message for blob {} in segment number {:?}",
                         id,
+                        header.segment_number,
                     );
 
                     Ok(LogRead::Blob(header, buf, id))
@@ -776,8 +791,9 @@ pub(crate) fn read_message(
                     if e.kind() == std::io::ErrorKind::NotFound =>
                 {
                     debug!(
-                        "underlying blob file not found for Blob({}, {})",
-                        header.lsn, id,
+                        "underlying blob file not found for blob {} in segment number {:?}",
+                        id,
+                        header.segment_number,
                     );
                     Ok(LogRead::DanglingBlob(header, id))
                 }
