@@ -141,112 +141,108 @@ impl<T> Uring<T> {
         }
     }
 
-    pub fn pwrite_all(
+    pub unsafe fn pwrite_all(
         &mut self,
         buf: &mut [u8],
         data: Arc<T>,
         offset: LogOffset,
         fsync: bool,
     ) -> Result<()> {
-        unsafe {
-            // 1. drain completed operations
-            self.drain_cqe()?;
+        // it is easier to track queue len if num
+        // of iovecs will be the same as sqes
+        let mut reserve = 1;
+        if fsync {
+            reserve += 1;
+        }
 
-            // it is easier to track queue len if num
-            // of iovecs will be the same as sqes
-            let mut reserve = 1;
-            if fsync {
-                reserve += 1;
+        // 1. reserve SQE slots
+        self.wait(reserve)?;
+
+        // 2. build write() SQE
+        {
+            let sqe = io_uring_get_sqe(&mut self.ring);
+            if sqe.is_null() {
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::Other,
+                    "unexpected lack of sqes",
+                )));
             }
 
-            // 2. reserve SQE slots
-            self.wait(reserve)?;
+            let i = self.free_slots.pop().unwrap();
+            self.buf[i] = Some(data);
+            self.iovecs[i].iov_base = buf.as_mut_ptr() as *mut std::ffi::c_void;
+            self.iovecs[i].iov_len = buf.len();
 
-            // 3. build write() SQE
-            {
-                let sqe = io_uring_get_sqe(&mut self.ring);
-                if sqe.is_null() {
-                    return Err(Error::Io(io::Error::new(
-                        io::ErrorKind::Other,
-                        "unexpected lack of sqes",
-                    )));
-                }
+            io_uring_prep_writev(
+                sqe,
+                // for registered file at index 0
+                // self.file.as_raw_fd(),
+                0,
+                &self.iovecs[i],
+                1,
+                off_t::try_from(offset).unwrap(),
+            );
+            io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
+            (*sqe).user_data = u64::try_from(i).unwrap();
+            // println!("write with i = {}", i);
+        }
 
-                let i = self.free_slots.pop().unwrap();
-                self.buf[i] = Some(data);
-                self.iovecs[i].iov_base =
-                    buf.as_mut_ptr() as *mut std::ffi::c_void;
-                self.iovecs[i].iov_len = buf.len();
-
-                io_uring_prep_writev(
-                    sqe,
-                    // for registered file at index 0
-                    // self.file.as_raw_fd(),
-                    0,
-                    &self.iovecs[i],
-                    1,
-                    off_t::try_from(offset).unwrap(),
-                );
-                io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
-                (*sqe).user_data = u64::try_from(i).unwrap();
-                // println!("write with i = {}", i);
+        // 3. build fsync() SQE
+        if fsync {
+            let sqe = io_uring_get_sqe(&mut self.ring);
+            if sqe.is_null() {
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::Other,
+                    "unexpected lack of sqes",
+                )));
             }
 
-            // 4. build fsync() SQE
-            if fsync {
-                let sqe = io_uring_get_sqe(&mut self.ring);
-                if sqe.is_null() {
-                    return Err(Error::Io(io::Error::new(
-                        io::ErrorKind::Other,
-                        "unexpected lack of sqes",
-                    )));
-                }
+            let i = self.free_slots.pop().unwrap();
+            // mark explicitly that this is fsync op and it has no data.
+            // drain_cqe must ignore fsyncs that got EINVAL due to the
+            // overlap with the existing executing fsyncs.
+            self.iovecs[i].iov_len = 0;
 
-                let i = self.free_slots.pop().unwrap();
-                // mark explicitly that this is fsync op and it has no data.
-                // drain_cqe must ignore fsyncs that got EINVAL due to the
-                // overlap with the existing executing fsyncs.
-                self.iovecs[i].iov_len = 0;
+            io_uring_prep_fsync(
+                sqe,
+                // for registered file at index 0
+                // self.file.as_raw_fd(),
+                0,
+                IORING_FSYNC_DATASYNC,
+            );
+            // io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
+            io_uring_sqe_set_flags(sqe, IOSQE_IO_DRAIN | IOSQE_FIXED_FILE);
+            (*sqe).user_data = u64::try_from(i).unwrap();
+            // println!("fsync with i = {}", i);
+        }
 
-                io_uring_prep_fsync(
-                    sqe,
-                    // for registered file at index 0
-                    // self.file.as_raw_fd(),
-                    0,
-                    IORING_FSYNC_DATASYNC,
-                );
-                // io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
-                io_uring_sqe_set_flags(sqe, IOSQE_IO_DRAIN | IOSQE_FIXED_FILE);
-                (*sqe).user_data = u64::try_from(i).unwrap();
-                // println!("fsync with i = {}", i);
-            }
-
-            // 5. submit
-            let ret = io_uring_submit(&mut self.ring);
-            if ret < 0 {
-                return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
-            }
-        };
+        // 4. submit
+        let ret = io_uring_submit(&mut self.ring);
+        if ret < 0 {
+            return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
+        }
 
         Ok(())
     }
 
-    pub fn wait(&mut self, free: usize) -> Result<()> {
-        unsafe {
-            while self.free_slots.len() < free {
-                let ret = io_uring_submit_and_wait(
-                    &mut self.ring,
-                    u32::try_from(free - self.free_slots.len()).unwrap(),
-                );
-                if ret < 0 {
-                    return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
-                }
-
-                self.drain_cqe()?
+    pub unsafe fn wait(&mut self, free: usize) -> Result<()> {
+        while self.free_slots.len() < free {
+            let ret = io_uring_submit_and_wait(
+                &mut self.ring,
+                u32::try_from(free - self.free_slots.len()).unwrap(),
+            );
+            if ret < 0 {
+                return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
             }
+
+            self.drain_cqe()?
         }
 
         Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        return self.iovecs.len();
     }
 }
 
@@ -254,7 +250,7 @@ impl<T> Drop for Uring<T> {
     fn drop(&mut self) {
         unsafe {
             // complete unfinished ops
-            if let Err(err) = self.wait(self.iovecs.len()) {
+            if let Err(err) = self.wait(self.len()) {
                 panic!(err);
             }
 

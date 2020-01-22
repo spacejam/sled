@@ -415,13 +415,16 @@ impl IoBufs {
 
         io_fail!(self, "buffer write");
         #[cfg(feature = "io_uring")]
-        {
-            self.write_uring.lock().pwrite_all(
+        unsafe {
+            let mut mg = self.write_uring.lock();
+            mg.pwrite_all(
                 &mut data[..total_len],
                 iobuf,
                 log_offset,
                 !self.config.temporary,
             )?;
+            let size = mg.len();
+            mg.wait(size)?;
         }
         #[cfg(not(feature = "io_uring"))]
         {
@@ -968,11 +971,7 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old {
-            Ok(new)
-        } else {
-            Err(res)
-        }
+        if res == old { Ok(new) } else { Err(res) }
     }
 }
 
