@@ -3,10 +3,10 @@ use super::*;
 // kind: u8 1
 // pid: u64 8
 // lsn: i64 8
-// len: u32 4
+// len: u64 8
 // crc: u32 4
 /// Log messages have a header of this length.
-pub const MSG_HEADER_LEN: usize = 25;
+pub const MSG_HEADER_LEN: usize = 29;
 
 /// Log segments have a header of this length.
 pub const SEG_HEADER_LEN: usize = 20;

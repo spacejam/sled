@@ -122,7 +122,7 @@ impl Iterator for LogIter {
                         u32::try_from(MSG_HEADER_LEN).unwrap() + on_disk_len,
                     );
                 }
-                Ok(LogRead::Corrupted(_len)) => {
+                Ok(LogRead::Corrupted) => {
                     trace!(
                         "read corrupted msg in LogIter::next as lid {} lsn {}",
                         lid,

@@ -296,7 +296,7 @@ impl IoBufs {
             kind,
             pid,
             segment_number,
-            len: u32::try_from(to_reserve.len()).unwrap(),
+            len: u64::try_from(to_reserve.len()).unwrap(),
             crc32: 0,
         };
 
@@ -376,7 +376,7 @@ impl IoBufs {
                 kind: MessageKind::Cap,
                 pid: PageId::max_value(),
                 segment_number,
-                len: u32::try_from(pad_len).unwrap(),
+                len: u64::try_from(pad_len).unwrap(),
                 crc32: 0,
             };
 

@@ -80,7 +80,7 @@ impl Log {
                     pid,
                     segment_number: expected_segment_number,
                     crc32: 0,
-                    len: u32::try_from(sz).unwrap(),
+                    len: u64::try_from(sz).unwrap(),
                 };
                 LogRead::Blob(header, buf, blob_ptr)
             })
@@ -461,7 +461,7 @@ pub struct MessageHeader {
     pub kind: MessageKind,
     pub segment_number: SegmentNumber,
     pub pid: PageId,
-    pub len: u32,
+    pub len: u64,
     pub crc32: u32,
 }
 
@@ -499,7 +499,7 @@ pub enum LogRead {
     /// A padding message used to show that a segment was filled
     Cap(SegmentNumber),
     /// This log message was not readable due to corruption
-    Corrupted(u32),
+    Corrupted,
     /// This blob file is no longer available
     DanglingBlob(MessageHeader, BlobPointer),
     /// This data may only be read if at least this future location is stable
@@ -536,8 +536,8 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
             let page_id = arr_to_u64(buf.get_unchecked(1..9));
             let segment_number =
                 SegmentNumber(arr_to_u64(buf.get_unchecked(9..17)));
-            let length = arr_to_u32(buf.get_unchecked(17..21));
-            let crc32 = arr_to_u32(buf.get_unchecked(21..)) ^ 0xFFFF_FFFF;
+            let length = arr_to_u64(buf.get_unchecked(17..25));
+            let crc32 = arr_to_u32(buf.get_unchecked(25..)) ^ 0xFFFF_FFFF;
 
             MessageHeader {
                 kind,
@@ -557,7 +557,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
 
         let pid_arr = u64_to_arr(self.pid);
         let segment_number_arr = u64_to_arr(*self.segment_number);
-        let length_arr = u32_to_arr(self.len);
+        let length_arr = u64_to_arr(self.len);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
 
         #[allow(unsafe_code)]
@@ -575,11 +575,11 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
             std::ptr::copy_nonoverlapping(
                 length_arr.as_ptr(),
                 buf.as_mut_ptr().add(17),
-                std::mem::size_of::<u32>(),
+                std::mem::size_of::<u64>(),
             );
             std::ptr::copy_nonoverlapping(
                 crc32_arr.as_ptr(),
-                buf.as_mut_ptr().add(21),
+                buf.as_mut_ptr().add(25),
                 std::mem::size_of::<u32>(),
             );
         }
@@ -719,7 +719,7 @@ pub(crate) fn read_message(
             "header {:?} does not contain expected segment_number {:?}",
             header, expected_segment_number
         );
-        return Ok(LogRead::Corrupted(header.len));
+        return Ok(LogRead::Corrupted);
     }
 
     let max_possible_len =
@@ -730,7 +730,7 @@ pub(crate) fn read_message(
             "read a corrupted message with impossibly long length {:?}",
             header
         );
-        return Ok(LogRead::Corrupted(header.len));
+        return Ok(LogRead::Corrupted);
     }
 
     if header.kind == MessageKind::Corrupted {
@@ -738,7 +738,7 @@ pub(crate) fn read_message(
             "read a corrupted message with Corrupted MessageKind: {:?}",
             header
         );
-        return Ok(LogRead::Corrupted(header.len));
+        return Ok(LogRead::Corrupted);
     }
 
     // perform crc check on everything that isn't Corrupted
@@ -759,13 +759,13 @@ pub(crate) fn read_message(
 
     if crc32 != header.crc32 {
         trace!("read a message with a bad checksum with header {:?}", header);
-        return Ok(LogRead::Corrupted(header.len));
+        return Ok(LogRead::Corrupted);
     }
 
     match header.kind {
         MessageKind::Canceled => {
             trace!("read failed of len {}", header.len);
-            Ok(LogRead::Canceled(header.len))
+            Ok(LogRead::Canceled(u32::try_from(header.len).unwrap()))
         }
         MessageKind::Cap => {
             trace!("read pad in segment number {:?}", header.segment_number);
@@ -815,7 +815,7 @@ pub(crate) fn read_message(
                 buf
             };
 
-            Ok(LogRead::Inline(header, buf, header.len))
+            Ok(LogRead::Inline(header, buf, u32::try_from(header.len).unwrap()))
         }
         MessageKind::BatchManifest => {
             assert_eq!(buf.len(), std::mem::size_of::<Lsn>());
