@@ -12,10 +12,10 @@ variables:
 strategy:
   matrix:
     windows-stable:
-      imageName: 'vs2017-win2016'
+      imageName: 'windows-2019'
       rustup_toolchain: stable
     mac-stable:
-      imageName: 'macos-10.13'
+      imageName: 'macos-10.14'
       rustup_toolchain: stable
     burn-in:
       imageName: 'ubuntu-16.04'
@@ -33,7 +33,7 @@ strategy:
       rustup_toolchain: nightly
       testKind: 'sanitizers'
     cross-compile:
-      imageName: 'macos-10.13'
+      imageName: 'macos-10.14'
       rustup_toolchain: nightly
       testKind: 'cross-compile'
 
