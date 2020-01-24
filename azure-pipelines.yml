@@ -18,18 +18,18 @@ strategy:
       imageName: 'macos-10.14'
       rustup_toolchain: stable
     burn-in:
-      imageName: 'ubuntu-16.04'
+      imageName: 'ubuntu-18.04'
       rustup_toolchain: stable
       testKind: 'burn-in'
     linux-stable:
-      imageName: 'ubuntu-16.04'
+      imageName: 'ubuntu-18.04'
       rustup_toolchain: stable
     examples:
-      imageName: 'ubuntu-16.04'
+      imageName: 'ubuntu-18.04'
       rustup_toolchain: stable
       testKind: 'examples'
     sanitizers:
-      imageName: 'ubuntu-16.04'
+      imageName: 'ubuntu-18.04'
       rustup_toolchain: nightly
       testKind: 'sanitizers'
     cross-compile:
