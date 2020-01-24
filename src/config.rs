@@ -455,7 +455,11 @@ impl Config {
             .as_nanos()
             << 48;
 
+        #[cfg(not(miri))]
         let pid = u128::from(std::process::id());
+
+        #[cfg(miri)]
+        let pid = 0;
 
         let salt = (pid << 16) + now + seed;
 
