@@ -500,7 +500,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 }
 
 #[test]
-#[cfg(not(target_os = "fuchsia"))]
+#[cfg_attr(any(target_os = "fuchsia", miri), ignore)]
 fn quickcheck_tree_with_failpoints() {
     // use fewer tests for travis OSX builds that stall out all the time
     let mut n_tests = 50;

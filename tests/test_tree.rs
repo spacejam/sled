@@ -872,7 +872,7 @@ fn tree_import_export() -> Result<()> {
 }
 
 #[test]
-#[cfg(not(target_os = "fuchsia"))]
+#[cfg_attr(any(target_os = "fuchsia", miri), ignore)]
 fn quickcheck_tree_matches_btreemap() {
     let n_tests = if cfg!(windows) { 25 } else { 100 };
 
