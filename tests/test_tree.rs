@@ -1,9 +1,9 @@
 mod common;
 mod tree;
 
-use std::sync::{Arc, Barrier};
-use std::thread;
+use std::sync::Arc;
 
+#[allow(unused_imports)]
 use log::{debug, warn};
 use quickcheck::{QuickCheck, StdGen};
 
@@ -20,6 +20,7 @@ const N_PER_THREAD: usize = 100;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
+#[allow(dead_code)]
 const INTENSITY: usize = 5;
 
 fn kv(i: usize) -> Vec<u8> {
@@ -49,7 +50,7 @@ fn very_large_reverse_tree_iterator() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(miri)))]
 fn test_varied_compression_ratios() {
     // tests for the compression issue reported in #938 by @Mrmaxmeier.
 
@@ -85,7 +86,10 @@ fn test_varied_compression_ratios() {
 }
 
 #[test]
+#[cfg(not(miri))] // can't create threads
 fn concurrent_tree_ops() {
+    use std::thread;
+
     common::setup_logger();
 
     for i in 0..INTENSITY {
@@ -209,7 +213,11 @@ fn concurrent_tree_ops() {
 }
 
 #[test]
+#[cfg(not(miri))] // can't create threads
 fn concurrent_tree_iter() -> Result<()> {
+    use std::sync::Barrier;
+    use std::thread;
+
     common::setup_logger();
 
     const N_FORWARD: usize = INTENSITY;
@@ -381,7 +389,10 @@ fn concurrent_tree_iter() -> Result<()> {
 }
 
 #[test]
+#[cfg(not(miri))] // can't create threads
 fn concurrent_tree_transactions() -> TransactionResult<()> {
+    use std::sync::Barrier;
+
     common::setup_logger();
 
     let config = Config::new()

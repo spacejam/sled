@@ -23,6 +23,12 @@ const RECOVERY_NO_SNAPSHOT: &str = "crash_recovery_no_runtime_snapshot";
 const BATCHES_NO_SNAPSHOT: &str = "crash_batches_no_runtime_snapshot";
 
 fn main() {
+    // Don't actually run this harness=false test under miri, as it requires spawning and killing
+    // child processes.
+    if cfg!(miri) {
+        return;
+    }
+
     common::setup_logger();
 
     match env::var(TEST_ENV_VAR) {

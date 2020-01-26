@@ -1,7 +1,5 @@
 mod common;
 
-use std::thread;
-
 use rand::{thread_rng, Rng};
 
 use sled::*;
@@ -111,7 +109,10 @@ fn non_contiguous_log_flush() -> Result<()> {
 }
 
 #[test]
+#[cfg(not(miri))] // can't create threads
 fn concurrent_logging() -> Result<()> {
+    use std::thread;
+
     common::setup_logger();
     for _ in 0..10 {
         let config = Config::new()
