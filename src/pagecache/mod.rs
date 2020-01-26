@@ -10,11 +10,11 @@ mod disk_pointer;
 mod iobuf;
 mod iterator;
 mod pagetable;
-#[cfg(all(not(unix), not(windows)))]
+#[cfg(any(all(not(unix), not(windows)), miri))]
 mod parallel_io_polyfill;
-#[cfg(unix)]
+#[cfg(all(unix, not(miri)))]
 mod parallel_io_unix;
-#[cfg(windows)]
+#[cfg(all(windows, not(miri)))]
 mod parallel_io_windows;
 mod reservation;
 mod segment;
@@ -24,13 +24,13 @@ use std::{collections::BinaryHeap, ops::Deref};
 
 use crate::*;
 
-#[cfg(all(not(unix), not(windows)))]
+#[cfg(any(all(not(unix), not(windows)), miri))]
 use parallel_io_polyfill::{pread_exact, pread_exact_or_eof, pwrite_all};
 
-#[cfg(unix)]
+#[cfg(all(unix, not(miri)))]
 use parallel_io_unix::{pread_exact, pread_exact_or_eof, pwrite_all};
 
-#[cfg(windows)]
+#[cfg(all(windows, not(miri)))]
 use parallel_io_windows::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 use self::{
