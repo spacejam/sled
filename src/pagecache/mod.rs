@@ -25,13 +25,13 @@ use crate::*;
 use std::{collections::BinaryHeap, ops::Deref};
 
 #[cfg(all(not(unix), not(windows)))]
-use parallel_io_polyfill::{pread_exact, pwrite_all};
+use parallel_io_polyfill::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 #[cfg(unix)]
-use parallel_io_unix::{pread_exact, pwrite_all};
+use parallel_io_unix::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 #[cfg(windows)]
-use parallel_io_windows::{pread_exact, pwrite_all};
+use parallel_io_windows::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
@@ -56,8 +56,8 @@ pub(crate) use self::{
 
 pub use self::{
     constants::{
-        BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN, MAX_SPACE_AMPLIFICATION,
-        MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+        MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, MINIMUM_ITEMS_PER_SEGMENT,
+        SEG_HEADER_LEN,
     },
     disk_pointer::DiskPtr,
     logger::{Log, LogRead},
@@ -79,6 +79,11 @@ pub type Lsn = i64;
 
 /// A page identifier.
 pub type PageId = u64;
+
+/// Uses a non-varint `Lsn` to mark offsets.
+#[derive(Default, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[repr(transparent)]
+pub struct BatchManifest(pub Lsn);
 
 /// A byte used to disambiguate log message types
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -769,7 +774,7 @@ impl PageCache {
         let batch_res = self.log.reserve(
             LogKind::Skip,
             BATCH_MANIFEST_PID,
-            &[0; std::mem::size_of::<Lsn>()],
+            &BatchManifest::default(),
         )?;
         Ok(RecoveryGuard { batch_res })
     }
@@ -889,16 +894,13 @@ impl PageCache {
             return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
         }
 
-        let bytes = measure(&M.serialize, || new.serialize());
-
         let mut new_page = Some(Owned::new(Page {
             update: Some(Update::Node(node)),
             cache_infos: vec![],
         }));
 
         loop {
-            let log_reservation =
-                self.log.reserve(LogKind::Link, pid, &bytes)?;
+            let log_reservation = self.log.reserve(LogKind::Link, pid, &new)?;
             let lsn = log_reservation.lsn();
             let pointer = log_reservation.pointer();
 
@@ -1291,15 +1293,6 @@ impl PageCache {
 
         let log_kind = log_kind_from_update(&update);
         trace!("cas_page on pid {} has log kind: {:?}", pid, log_kind);
-        let serialize_latency = Measure::new(&M.serialize);
-        let bytes = match &update {
-            Update::Counter(c) => c.serialize(),
-            Update::Meta(m) => m.serialize(),
-            Update::Free => vec![],
-            Update::Node(node) => node.serialize(),
-            other => panic!("non-replacement used in cas_page: {:?}", other),
-        };
-        drop(serialize_latency);
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(update),
@@ -1307,7 +1300,16 @@ impl PageCache {
         }));
 
         loop {
-            let log_reservation = self.log.reserve(log_kind, pid, &bytes)?;
+            let mut page_ptr = new_page.take().unwrap();
+            let log_reservation = match page_ptr.update.as_ref().unwrap() {
+                Update::Counter(c) => self.log.reserve(log_kind, pid, c)?,
+                Update::Meta(m) => self.log.reserve(log_kind, pid, m)?,
+                Update::Free => self.log.reserve(log_kind, pid, &())?,
+                Update::Node(node) => self.log.reserve(log_kind, pid, node)?,
+                other => {
+                    panic!("non-replacement used in cas_page: {:?}", other)
+                }
+            };
             let lsn = log_reservation.lsn();
             let new_pointer = log_reservation.pointer();
 
@@ -1338,7 +1340,6 @@ impl PageCache {
                     .unwrap(),
             };
 
-            let mut page_ptr = new_page.take().unwrap();
             page_ptr.cache_infos = vec![cache_info];
 
             debug_delay();
@@ -1795,7 +1796,7 @@ impl PageCache {
                 );
                 Ok((header, buf))
             }
-            Ok(LogRead::Blob(header, buf, _blob_pointer)) => {
+            Ok(LogRead::Blob(header, buf, _blob_pointer, _inline_len)) => {
                 assert_eq!(
                     header.pid, pid,
                     "expected pid {} on pull of pointer {}, \
@@ -2001,7 +2002,7 @@ impl PageCache {
                     let cache_info = CacheInfo {
                         lsn,
                         pointer,
-                        log_size: u64::try_from(MSG_HEADER_LEN).unwrap(),
+                        log_size: u64::try_from(MAX_MSG_HEADER_LEN).unwrap(),
                         ts: 0,
                     };
                     cache_infos.push(cache_info);

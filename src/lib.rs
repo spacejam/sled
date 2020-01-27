@@ -247,8 +247,8 @@ pub use {
         lazy::Lazy,
         pagecache::{
             constants::{
-                MAX_SPACE_AMPLIFICATION, MINIMUM_ITEMS_PER_SEGMENT,
-                MSG_HEADER_LEN, SEG_HEADER_LEN,
+                MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION,
+                MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
             },
             DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, PageCache, PageId,
             SegmentMode,
@@ -279,7 +279,7 @@ use {
         histogram::Histogram,
         lru::Lru,
         meta::Meta,
-        metrics::{clock, measure, Measure, M},
+        metrics::{clock, Measure, M},
         node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,

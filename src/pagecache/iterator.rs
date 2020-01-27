@@ -2,8 +2,7 @@ use std::{collections::BTreeMap, io};
 
 use super::{
     read_message, read_segment_header, DiskPtr, LogKind, LogOffset, LogRead,
-    Lsn, SegmentHeader, SegmentNumber, BATCH_MANIFEST_INLINE_LEN,
-    BLOB_INLINE_LEN, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    Lsn, SegmentHeader, SegmentNumber, MAX_MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 use crate::*;
 
@@ -74,53 +73,46 @@ impl Iterator for LogIter {
             let f = &self.config.file;
 
             match read_message(f, lid, expected_segment_number, &self.config) {
-                Ok(LogRead::Blob(header, _buf, blob_ptr)) => {
+                Ok(LogRead::Blob(header, _buf, blob_ptr, inline_len)) => {
                     trace!("read blob flush in LogIter::next");
-                    let sz = u64::try_from(MSG_HEADER_LEN + BLOB_INLINE_LEN)
-                        .unwrap();
                     let lsn = self.cur_lsn;
-                    self.cur_lsn += Lsn::try_from(sz).unwrap();
+                    self.cur_lsn += Lsn::from(inline_len);
 
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
                         DiskPtr::Blob(lid, blob_ptr),
-                        sz,
+                        u64::from(inline_len),
                     ));
                 }
-                Ok(LogRead::Inline(header, _buf, on_disk_len)) => {
+                Ok(LogRead::Inline(header, _buf, inline_len)) => {
                     trace!(
                         "read inline flush with header {:?} in LogIter::next",
                         header,
                     );
-                    let sz = u64::try_from(MSG_HEADER_LEN).unwrap()
-                        + u64::try_from(on_disk_len).unwrap();
                     let lsn = self.cur_lsn;
-                    self.cur_lsn += Lsn::try_from(sz).unwrap();
+                    self.cur_lsn += Lsn::from(inline_len);
 
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
                         DiskPtr::Inline(lid),
-                        sz,
+                        u64::from(inline_len),
                     ));
                 }
-                Ok(LogRead::BatchManifest(last_lsn_in_batch)) => {
+                Ok(LogRead::BatchManifest(last_lsn_in_batch, inline_len)) => {
                     if last_lsn_in_batch > self.max_lsn {
                         return None;
                     } else {
-                        self.cur_lsn +=
-                            (MSG_HEADER_LEN + BATCH_MANIFEST_INLINE_LEN) as Lsn;
+                        self.cur_lsn += Lsn::from(inline_len);
                         continue;
                     }
                 }
-                Ok(LogRead::Canceled(on_disk_len)) => {
+                Ok(LogRead::Canceled(inline_len)) => {
                     trace!("read zeroed in LogIter::next");
-                    self.cur_lsn += Lsn::from(
-                        u32::try_from(MSG_HEADER_LEN).unwrap() + on_disk_len,
-                    );
+                    self.cur_lsn += Lsn::from(inline_len);
                 }
                 Ok(LogRead::Corrupted) => {
                     trace!(
@@ -135,13 +127,13 @@ impl Iterator for LogIter {
 
                     continue;
                 }
-                Ok(LogRead::DanglingBlob(_, blob_ptr)) => {
+                Ok(LogRead::DanglingBlob(_, blob_ptr, inline_len)) => {
                     debug!(
                         "encountered dangling blob \
                          pointer at lsn {} ptr {}",
                         self.cur_lsn, blob_ptr
                     );
-                    self.cur_lsn += (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
+                    self.cur_lsn += Lsn::from(inline_len);
                     continue;
                 }
                 Err(e) => {
@@ -232,7 +224,7 @@ fn valid_entry_offset(lid: LogOffset, segment_len: usize) -> bool {
     let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;
 
     let max_lid =
-        seg_start + segment_len as LogOffset - MSG_HEADER_LEN as LogOffset;
+        seg_start + segment_len as LogOffset - MAX_MSG_HEADER_LEN as LogOffset;
 
     let min_lid = seg_start + SEG_HEADER_LEN as LogOffset;
 

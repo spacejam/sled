@@ -5,7 +5,7 @@ use crate::*;
 
 use super::{
     arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
-    DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind, MSG_HEADER_LEN,
+    DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind, MAX_MSG_HEADER_LEN,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -45,7 +45,7 @@ impl PageState {
         match *self {
             PageState::Present(ref items) => items.clone().into_iter(),
             PageState::Free(lsn, ptr) => {
-                vec![(lsn, ptr, u64::try_from(MSG_HEADER_LEN).unwrap())]
+                vec![(lsn, ptr, u64::try_from(MAX_MSG_HEADER_LEN).unwrap())]
                     .into_iter()
             }
         }

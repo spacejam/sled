@@ -16,7 +16,7 @@ use sled::*;
 
 use sled::{
     DiskPtr, Log, LogKind, LogRead, Lsn, PageId, SegmentMode,
-    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    MAX_MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
 };
 
 const PID: PageId = 0;
@@ -76,7 +76,7 @@ fn more_log_reservations_than_buffers() -> Result<()> {
     let mut reservations = vec![];
 
     let total_seg_overhead = SEG_HEADER_LEN;
-    let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
+    let big_msg_overhead = MAX_MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = config.segment_size - big_msg_overhead;
 
     for _ in 0..=30 {
@@ -102,7 +102,7 @@ fn non_contiguous_log_flush() -> Result<()> {
 
     let seg_overhead = SEG_HEADER_LEN;
     let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
-        - (MSG_HEADER_LEN + seg_overhead);
+        - (MAX_MSG_HEADER_LEN + seg_overhead);
 
     let res1 = log.reserve(KIND, PID, &vec![0; buf_len]).unwrap();
     let res2 = log.reserve(KIND, PID, &vec![0; buf_len]).unwrap();
@@ -133,7 +133,7 @@ fn concurrent_logging() {
 
         let seg_overhead = SEG_HEADER_LEN;
         let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
-            - (MSG_HEADER_LEN + seg_overhead);
+            - (MAX_MSG_HEADER_LEN + seg_overhead);
 
         let t1 = thread::Builder::new()
             .name("c1".to_string())
@@ -380,7 +380,7 @@ fn log_chunky_iterator() {
             let mut reference = vec![];
 
             let max_valid_size =
-                config.segment_size - (MSG_HEADER_LEN + SEG_HEADER_LEN);
+                config.segment_size - (MAX_MSG_HEADER_LEN + SEG_HEADER_LEN);
 
             for i in 0..1000 {
                 let len = thread_rng().gen_range(0, max_valid_size * 2);
@@ -437,7 +437,7 @@ fn multi_segment_log_iteration() -> Result<()> {
         .segment_size(512);
 
     let total_seg_overhead = SEG_HEADER_LEN;
-    let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
+    let big_msg_overhead = MAX_MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = (config.segment_size - big_msg_overhead) / 64;
 
     let log = config.open_raw_log().unwrap();
@@ -482,7 +482,7 @@ impl Arbitrary for Op {
 
         let incr = || {
             let len = thread_rng().gen_range(0, 2);
-            LEN.fetch_add(len + MSG_HEADER_LEN, Ordering::Relaxed);
+            LEN.fetch_add(len + MAX_MSG_HEADER_LEN, Ordering::Relaxed);
             vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; len]
         };
 
@@ -570,7 +570,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let len = buf.len();
                 let (lsn, ptr) =
                     log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
-                tip = ptr.lid() as usize + len + MSG_HEADER_LEN;
+                tip = ptr.lid() as usize + len + MAX_MSG_HEADER_LEN;
                 reference.push((lsn, ptr, Some(buf), len));
             }
             AbortReservation(buf) => {
@@ -580,7 +580,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let lid = res.lid();
                 let ptr = res.pointer();
                 res.abort().unwrap();
-                tip = lid as usize + len + MSG_HEADER_LEN;
+                tip = lid as usize + len + MAX_MSG_HEADER_LEN;
                 reference.push((lsn, ptr, None, len));
             }
             Restart => {
@@ -612,7 +612,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                     for &mut (_lsn, ptr, ref mut expected, sz) in &mut reference
                     {
-                        let tip = ptr.lid() as usize + sz + MSG_HEADER_LEN;
+                        let tip = ptr.lid() as usize + sz + MAX_MSG_HEADER_LEN;
                         if new_len < tip as u64 {
                             *expected = None;
                         }

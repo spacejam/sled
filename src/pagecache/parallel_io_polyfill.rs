@@ -14,6 +14,33 @@ type MutexInit = fn() -> Mutex<()>;
 static GLOBAL_FILE_LOCK: crate::Lazy<Mutex<()>, MutexInit> =
     crate::Lazy::new(init_mu);
 
+pub(crate) fn pread_exact_or_eof(
+    file: &File,
+    mut buf: &mut [u8],
+    offset: LogOffset,
+) -> io::Result<usize> {
+    let _lock = GLOBAL_FILE_LOCK.lock();
+
+    let mut f = file.try_clone()?;
+
+    let _ = f.seek(io::SeekFrom::Start(offset))?;
+
+    let mut total = 0;
+    while !buf.is_empty() {
+        match f.read(buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n;
+                let tmp = buf;
+                buf = &mut tmp[n..];
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(total)
+}
+
 pub(crate) fn pread_exact(
     file: &File,
     mut buf: &mut [u8],

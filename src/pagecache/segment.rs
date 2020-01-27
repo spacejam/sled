@@ -440,7 +440,7 @@ impl SegmentAccountant {
                     add(
                         *pid,
                         lsn,
-                        u64::try_from(MSG_HEADER_LEN).unwrap(),
+                        u64::try_from(MAX_MSG_HEADER_LEN).unwrap(),
                         ptr.lid(),
                         &mut segments,
                     );

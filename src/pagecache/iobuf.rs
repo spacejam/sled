@@ -83,41 +83,39 @@ impl IoBufs {
         let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
-        let (next_lsn, next_lid) = if snapshot_last_lsn % segment_size as Lsn
-            == 0
-        {
-            (snapshot_last_lsn, snapshot_last_lid)
-        } else {
-            let width = match read_message(
-                file,
-                snapshot_last_lid,
-                SegmentNumber(
-                    u64::try_from(snapshot_last_lsn).unwrap()
-                        / u64::try_from(config.segment_size).unwrap(),
-                ),
-                &config,
-            ) {
-                Ok(LogRead::Canceled(len)) | Ok(LogRead::Inline(_, _, len)) => {
-                    len + u32::try_from(MSG_HEADER_LEN).unwrap()
-                }
-                Ok(LogRead::Blob(_header, _buf, _blob_ptr)) => {
-                    u32::try_from(BLOB_INLINE_LEN + MSG_HEADER_LEN).unwrap()
-                }
-                other => {
-                    // we can overwrite this non-flush
-                    debug!(
-                        "got non-flush tip while recovering at {}: {:?}",
-                        snapshot_last_lid, other
-                    );
-                    0
-                }
-            };
+        let (next_lsn, next_lid) =
+            if snapshot_last_lsn % segment_size as Lsn == 0 {
+                (snapshot_last_lsn, snapshot_last_lid)
+            } else {
+                let width = match read_message(
+                    file,
+                    snapshot_last_lid,
+                    SegmentNumber(
+                        u64::try_from(snapshot_last_lsn).unwrap()
+                            / u64::try_from(config.segment_size).unwrap(),
+                    ),
+                    &config,
+                ) {
+                    Ok(LogRead::Canceled(inline_len))
+                    | Ok(LogRead::Inline(_, _, inline_len)) => inline_len,
+                    Ok(LogRead::Blob(_header, _buf, _blob_ptr, inline_len)) => {
+                        inline_len
+                    }
+                    other => {
+                        // we can overwrite this non-flush
+                        debug!(
+                            "got non-flush tip while recovering at {}: {:?}",
+                            snapshot_last_lid, other
+                        );
+                        0
+                    }
+                };
 
-            (
-                snapshot_last_lsn + Lsn::from(width),
-                snapshot_last_lid + LogOffset::from(width),
-            )
-        };
+                (
+                    snapshot_last_lsn + Lsn::from(width),
+                    snapshot_last_lid + LogOffset::from(width),
+                )
+            };
 
         let mut iobuf = IoBuf::new(segment_size);
 
@@ -266,55 +264,27 @@ impl IoBufs {
     }
 
     // Adds a header to the front of the buffer
-    pub(crate) fn encapsulate(
+    pub(crate) fn encapsulate<T: Serialize>(
         &self,
-        in_buf: &[u8],
-        out_buf: &mut [u8],
-        kind: MessageKind,
-        pid: PageId,
-        segment_number: SegmentNumber,
+        item: &T,
+        header: MessageHeader,
+        mut out_buf: &mut [u8],
         blob_id: Option<Lsn>,
     ) -> Result<()> {
-        let blob_ptr;
+        let out_buf: &mut &mut [u8] = &mut out_buf;
+        header.serialize_into(out_buf);
 
-        let to_reserve = if let Some(blob_id) = blob_id {
+        if let Some(blob_id) = blob_id {
             // write blob to file
             io_fail!(self, "blob blob write");
-            write_blob(&self.config, kind, blob_id, in_buf)?;
+            write_blob(&self.config, header.kind, blob_id, item)?;
 
-            let lsn_buf = u64_to_arr(u64::try_from(blob_id).unwrap());
-
-            blob_ptr = lsn_buf;
-            &blob_ptr
+            blob_id.serialize_into(out_buf);
         } else {
-            in_buf
+            item.serialize_into(out_buf);
         };
 
-        assert_eq!(out_buf.len(), to_reserve.len() + MSG_HEADER_LEN);
-
-        let header = MessageHeader {
-            kind,
-            pid,
-            segment_number,
-            len: u64::try_from(to_reserve.len()).unwrap(),
-            crc32: 0,
-        };
-
-        let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
-
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                header_bytes.as_ptr(),
-                out_buf.as_mut_ptr(),
-                MSG_HEADER_LEN,
-            );
-            std::ptr::copy_nonoverlapping(
-                to_reserve.as_ptr(),
-                out_buf.as_mut_ptr().add(MSG_HEADER_LEN),
-                to_reserve.len(),
-            );
-        }
+        assert_eq!(out_buf.len(), 0);
 
         Ok(())
     }
@@ -354,14 +324,14 @@ impl IoBufs {
 
         let maxed = iobuf.linearized(|| iobuf.get_maxed());
         let unused_space = capacity - bytes_to_write;
-        let should_pad = maxed && unused_space >= MSG_HEADER_LEN;
+        let should_pad = maxed && unused_space >= MAX_MSG_HEADER_LEN;
 
         // a pad is a null message written to the end of a buffer
         // to signify that nothing else will be written into it
         if should_pad {
             #[allow(unsafe_code)]
             let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
-            let pad_len = capacity - bytes_to_write - MSG_HEADER_LEN;
+            let pad_len = capacity - bytes_to_write - MAX_MSG_HEADER_LEN;
 
             // take the crc of the random bytes already after where we
             // would place our header.
@@ -380,18 +350,18 @@ impl IoBufs {
                 crc32: 0,
             };
 
-            let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
+            let header_bytes = header.serialize();
 
             #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     header_bytes.as_ptr(),
                     data.as_mut_ptr().add(bytes_to_write),
-                    MSG_HEADER_LEN,
+                    header_bytes.len(),
                 );
                 std::ptr::copy_nonoverlapping(
                     padding_bytes.as_ptr(),
-                    data.as_mut_ptr().add(bytes_to_write + MSG_HEADER_LEN),
+                    data.as_mut_ptr().add(bytes_to_write + header_bytes.len()),
                     pad_len,
                 );
             }
@@ -407,7 +377,8 @@ impl IoBufs {
                 std::ptr::copy_nonoverlapping(
                     crc32_arr.as_ptr(),
                     data.as_mut_ptr().add(
-                        bytes_to_write + MSG_HEADER_LEN
+                        // we back up 4 bytes, since the CRC32 is at the very end
+                        bytes_to_write + header_bytes.len()
                             - std::mem::size_of::<u32>(),
                     ),
                     std::mem::size_of::<u32>(),
@@ -708,7 +679,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     let sealed = mk_sealed(header);
     let res_len = offset(sealed);
 
-    let maxed = from_reserve || capacity - res_len < MSG_HEADER_LEN;
+    let maxed = from_reserve || capacity - res_len < MAX_MSG_HEADER_LEN;
 
     let worked = iobuf.linearized(|| {
         if iobuf.cas_header(header, sealed).is_err() {

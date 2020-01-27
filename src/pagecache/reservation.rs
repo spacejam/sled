@@ -12,6 +12,7 @@ pub struct Reservation<'a> {
     pub(super) pointer: DiskPtr,
     pub(super) lsn: Lsn,
     pub(super) is_blob_rewrite: bool,
+    pub(super) header_len: usize,
 }
 
 impl<'a> Drop for Reservation<'a> {
@@ -93,7 +94,7 @@ impl<'a> Reservation<'a> {
 
         let buf = lsn_to_arr(lsn);
 
-        let dst = &mut self.buf[MSG_HEADER_LEN..];
+        let dst = &mut self.buf[self.header_len..];
 
         dst.copy_from_slice(&buf);
     }
@@ -115,8 +116,8 @@ impl<'a> Reservation<'a> {
         // same here as during calls to
         // LogReader::read_message
         let mut hasher = crc32fast::Hasher::new();
-        hasher.update(&self.buf[MSG_HEADER_LEN..]);
-        hasher.update(&self.buf[..MSG_HEADER_LEN]);
+        hasher.update(&self.buf[self.header_len..]);
+        hasher.update(&self.buf[..self.header_len]);
         let crc32 = hasher.finalize();
         let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
 
@@ -126,7 +127,7 @@ impl<'a> Reservation<'a> {
                 crc32_arr.as_ptr(),
                 self.buf
                     .as_mut_ptr()
-                    .add(MSG_HEADER_LEN - std::mem::size_of::<u32>()),
+                    .add(self.header_len - std::mem::size_of::<u32>()),
                 std::mem::size_of::<u32>(),
             );
         }
