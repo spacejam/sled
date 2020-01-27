@@ -261,7 +261,7 @@ pub(crate) fn maybe_decompress(in_buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
              fix this critical issue ASAP. Thank you :)",
         );
 
-        return Ok(out_buf);
+        Ok(out_buf)
     }
 
     #[cfg(not(feature = "compression"))]
