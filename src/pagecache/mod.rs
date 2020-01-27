@@ -217,9 +217,6 @@ fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
 
 use std::convert::{TryFrom, TryInto};
 
-#[cfg(feature = "compression")]
-use zstd::block::decompress;
-
 #[inline]
 pub(crate) fn lsn_to_arr(number: Lsn) -> [u8; 8] {
     number.to_le_bytes()
@@ -251,38 +248,24 @@ pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
+pub(crate) fn maybe_decompress(in_buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "compression")]
     {
-        use super::*;
-
-        static MAX_COMPRESSION_RATIO: AtomicUsize = AtomicUsize::new(1);
+        use zstd::stream::decode_all;
 
         let _measure = Measure::new(&M.decompress);
-        loop {
-            let ratio = MAX_COMPRESSION_RATIO.load(Acquire);
-            match decompress(&*buf, buf.len() * ratio) {
-                Err(ref e) if e.kind() == std::io::ErrorKind::Other => {
-                    debug!(
-                        "bumping expected compression \
-                         ratio up from {} to {}: {:?}",
-                        ratio,
-                        ratio + 1,
-                        e
-                    );
-                    let _who_cares = MAX_COMPRESSION_RATIO.compare_and_swap(
-                        ratio,
-                        ratio + 1,
-                        Release,
-                    );
-                }
-                other => return other,
-            }
-        }
+        let out_buf = decode_all(&in_buf[..]).expect(
+            "failed to decompress data. \
+             This is not expected, please open an issue on \
+             https://github.com/spacejam/sled so we can \
+             fix this critical issue ASAP. Thank you :)",
+        );
+
+        return Ok(out_buf);
     }
 
     #[cfg(not(feature = "compression"))]
-    Ok(buf)
+    Ok(in_buf)
 }
 
 #[derive(Debug, Clone, Copy)]
