@@ -68,6 +68,7 @@ impl IntoIterator for &'_ Tree {
 ///
 /// t.remove(b"yo!");
 /// assert_eq!(t.get(b"yo!"), Ok(None));
+/// # let _ = std::fs::remove_dir_all("db");
 /// ```
 #[derive(Clone)]
 pub struct Tree(pub(crate) Arc<TreeInner>);
@@ -318,6 +319,7 @@ impl Tree {
     /// db.apply_batch(batch).unwrap();
     /// // key_0 no longer exists, and key_a, key_b, and key_c
     /// // now do exist.
+    /// # let _ = std::fs::remove_dir_all("batch_db");
     /// ```
     pub fn apply_batch(&self, batch: Batch) -> Result<()> {
         let _ = self.concurrency_control.write();
