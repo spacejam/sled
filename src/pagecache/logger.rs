@@ -634,10 +634,17 @@ pub(crate) fn read_message(
     expected_segment_number: SegmentNumber,
     config: &Config,
 ) -> Result<LogRead> {
+    let _measure = Measure::new(&M.read);
+    let segment_len = config.segment_size;
+    let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;
+    trace!("reading message from segment: {} at lid: {}", seg_start, lid);
+    assert!(seg_start + SEG_HEADER_LEN as LogOffset <= lid);
+
     let msg_header_buf = &mut [0; MAX_MSG_HEADER_LEN];
     let header_read = pread_exact_or_eof(file, msg_header_buf, lid)?;
     let header_cursor = &mut msg_header_buf.as_ref();
     let header = MessageHeader::deserialize(header_cursor)?;
+    trace!("read message header at lid {}: {:?}", lid, header);
     let message_offset = header_read - header_cursor.len();
 
     // we set the crc bytes to 0 because we will
@@ -654,12 +661,6 @@ pub(crate) fn read_message(
             std::mem::size_of::<u32>(),
         );
     }
-
-    let _measure = Measure::new(&M.read);
-    let segment_len = config.segment_size;
-    let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;
-    trace!("reading message from segment: {} at lid: {}", seg_start, lid);
-    assert!(seg_start + SEG_HEADER_LEN as LogOffset <= lid);
 
     let ceiling = seg_start + segment_len as LogOffset;
 
