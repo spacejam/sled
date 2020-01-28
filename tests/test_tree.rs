@@ -868,7 +868,7 @@ fn tree_bug_02() {
 }
 
 #[test]
-fn tree_bug_3() {
+fn tree_bug_03() {
     // postmortem: the tree was not persisting and recovering root hoists
     // postmortem 2: when refactoring the log storage, we failed to restart
     // log writing in the proper location.
