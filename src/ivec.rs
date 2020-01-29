@@ -6,9 +6,10 @@ use std::{
     sync::Arc,
 };
 
-const CUTOFF: usize = 22;
+const INLINE_CUTOFF: usize = 22;
+const ARC_CUTOFF: usize = 2048;
 
-type Inner = [u8; CUTOFF];
+type Inner = [u8; INLINE_CUTOFF];
 
 /// A buffer that may either be inline or remote and protected
 /// by an Arc
@@ -24,6 +25,7 @@ impl Default for IVec {
 #[derive(Clone)]
 enum IVecInner {
     Inline(u8, Inner),
+    Medium(Box<[u8]>),
     Remote(Arc<[u8]>),
 }
 
@@ -34,7 +36,11 @@ impl Hash for IVec {
 }
 
 const fn is_inline_candidate(length: usize) -> bool {
-    length <= CUTOFF
+    length <= INLINE_CUTOFF
+}
+
+const fn is_medium_candidate(length: usize) -> bool {
+    length <= ARC_CUTOFF
 }
 
 impl IVec {
@@ -55,6 +61,12 @@ impl IVec {
         Self(IVecInner::Inline(u8::try_from(slice.len()).unwrap(), data))
     }
 
+    fn medium(boxed_slice: Box<[u8]>) -> Self {
+        assert!(!is_inline_candidate(boxed_slice.len()));
+        assert!(is_medium_candidate(boxed_slice.len()));
+        Self(IVecInner::Medium(boxed_slice))
+    }
+
     fn remote(arc: Arc<[u8]>) -> Self {
         Self(IVecInner::Remote(arc))
     }
@@ -64,6 +76,8 @@ impl From<Box<[u8]>> for IVec {
     fn from(b: Box<[u8]>) -> Self {
         if is_inline_candidate(b.len()) {
             Self::inline(&b)
+        } else if is_medium_candidate(b.len()) {
+            Self::medium(b)
         } else {
             // rely on the Arc From specialization
             // for Box<T>, which may improve
@@ -77,6 +91,8 @@ impl From<&[u8]> for IVec {
     fn from(slice: &[u8]) -> Self {
         if is_inline_candidate(slice.len()) {
             Self::inline(slice)
+        } else if is_medium_candidate(slice.len()) {
+            Self::medium(slice.into())
         } else {
             Self::remote(Arc::from(slice))
         }
@@ -105,6 +121,8 @@ impl From<Vec<u8>> for IVec {
     fn from(v: Vec<u8>) -> Self {
         if is_inline_candidate(v.len()) {
             Self::inline(&v)
+        } else if is_medium_candidate(v.len()) {
+            Self::medium(v.into_boxed_slice())
         } else {
             // rely on the Arc From specialization
             // for Vec<T>, which may improve
@@ -146,8 +164,9 @@ from_array!(
 impl Into<Arc<[u8]>> for IVec {
     fn into(self) -> Arc<[u8]> {
         match self.0 {
-            IVecInner::Inline(..) => Arc::from(self.as_ref()),
             IVecInner::Remote(arc) => arc,
+            IVecInner::Medium(b) => Arc::from(b),
+            IVecInner::Inline(..) => Arc::from(self.as_ref()),
         }
     }
 }
@@ -169,6 +188,7 @@ impl AsRef<[u8]> for IVec {
             IVecInner::Inline(sz, buf) => unsafe {
                 buf.get_unchecked(..*sz as usize)
             },
+            IVecInner::Medium(b) => &b,
             IVecInner::Remote(buf) => buf,
         }
     }
