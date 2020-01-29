@@ -109,7 +109,7 @@ impl<'a> Reservation<'a> {
         if !valid {
             // don't actually zero the message, still check its hash
             // on recovery to find corruption.
-            self.buf[0] = MessageKind::Canceled.into();
+            self.buf[4] = MessageKind::Canceled.into();
         }
 
         // the order of hashing must be the

@@ -97,9 +97,10 @@ impl Serialize for MessageHeader {
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
+        crate::trace!("serializing {:?}", self);
         self.crc32.serialize_into(buf);
-        self.len.serialize_into(buf);
         self.kind.into().serialize_into(buf);
+        self.len.serialize_into(buf);
         self.segment_number.serialize_into(buf);
         self.pid.serialize_into(buf);
     }
@@ -107,8 +108,8 @@ impl Serialize for MessageHeader {
     fn deserialize(buf: &mut &[u8]) -> Result<MessageHeader> {
         Ok(MessageHeader {
             crc32: u32::deserialize(buf)?,
-            len: u64::deserialize(buf)?,
             kind: u8::deserialize(buf)?.into(),
+            len: u64::deserialize(buf)?,
             segment_number: SegmentNumber(u64::deserialize(buf)?),
             pid: u64::deserialize(buf)?,
         })
