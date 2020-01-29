@@ -90,7 +90,7 @@ impl<'a> Reservation<'a> {
             self.lsn
         );
 
-        self.buf[0] = MessageKind::BatchManifest.into();
+        self.buf[4] = MessageKind::BatchManifest.into();
 
         let buf = lsn_to_arr(lsn);
 

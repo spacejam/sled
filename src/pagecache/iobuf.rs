@@ -264,7 +264,7 @@ impl IoBufs {
     }
 
     // Adds a header to the front of the buffer
-    pub(crate) fn encapsulate<T: Serialize>(
+    pub(crate) fn encapsulate<T: Serialize + Debug>(
         &self,
         item: &T,
         header: MessageHeader,
@@ -284,7 +284,15 @@ impl IoBufs {
             item.serialize_into(out_buf);
         };
 
-        assert_eq!(out_buf.len(), 0);
+        assert_eq!(
+            out_buf.len(),
+            0,
+            "trying to serialize header {:?} \
+             and item {:?} but there were \
+             buffer leftovers at the end",
+            header,
+            item
+        );
 
         Ok(())
     }

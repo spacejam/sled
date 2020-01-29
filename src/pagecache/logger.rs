@@ -123,7 +123,7 @@ impl Log {
     /// linearizability across CAS operations that may need to
     /// persist part of their operation.
     #[allow(unused)]
-    pub fn reserve<T: Serialize>(
+    pub fn reserve<T: Serialize + Debug>(
         &self,
         log_kind: LogKind,
         pid: PageId,
@@ -153,7 +153,7 @@ impl Log {
         self.reserve_inner(log_kind, pid, item, false)
     }
 
-    fn reserve_inner<T: Serialize>(
+    fn reserve_inner<T: Serialize + Debug>(
         &self,
         log_kind: LogKind,
         pid: PageId,

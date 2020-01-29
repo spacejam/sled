@@ -81,7 +81,7 @@ pub type Lsn = i64;
 pub type PageId = u64;
 
 /// Uses a non-varint `Lsn` to mark offsets.
-#[derive(Default, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[derive(Default, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Debug)]
 #[repr(transparent)]
 pub struct BatchManifest(pub Lsn);
 

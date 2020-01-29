@@ -14,8 +14,8 @@ use rand::{thread_rng, Rng};
 use sled::*;
 
 use sled::{
-    DiskPtr, Log, LogKind, LogRead, Lsn, PageId, SegmentMode, Serialize,
-    MAX_MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
+    BatchManifest, DiskPtr, Log, LogKind, LogRead, Lsn, PageId, SegmentMode,
+    Serialize, MAX_MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
 };
 
 const PID: PageId = 0;
@@ -39,8 +39,7 @@ fn log_writebatch() -> crate::Result<()> {
     // is possible to recover into
     // a batch manifest before
     // some writes.
-    let mut batch_res =
-        log.reserve(KIND, PID, &IVec::from(&[0; std::mem::size_of::<Lsn>()]))?;
+    let mut batch_res = log.reserve(KIND, PID, &BatchManifest::default())?;
     log.reserve(KIND, PID, &IVec::from(b"6"))?.complete()?;
     log.reserve(KIND, PID, &IVec::from(b"7"))?.complete()?;
     log.reserve(KIND, PID, &IVec::from(b"8"))?.complete()?;
@@ -290,7 +289,8 @@ fn write(log: &Log) {
         log.reserve(KIND, PID, &data_bytes).unwrap().complete().unwrap();
     let read_buf = log.read(PID, lsn, ptr).unwrap().into_data().unwrap();
     assert_eq!(
-        *read_buf, *data_bytes,
+        *read_buf,
+        *data_bytes.serialize(),
         "after writing data, it should be readable"
     );
 }
