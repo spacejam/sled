@@ -233,7 +233,7 @@ fn concurrent_logging_404() {
             .spawn(move || {
                 for _ in 0..ITERATIONS {
                     let current = SHARED_COUNTER.load(Ordering::SeqCst);
-                    let raw_value = IVec::from(&current.to_be_bytes());
+                    let raw_value = current as u64;
                     let res = log
                         .reserve(KIND, current as PageId, &raw_value)
                         .unwrap();
@@ -277,7 +277,7 @@ fn concurrent_logging_404() {
         });
 
         let msg = log.read(pid, lsn, ptr).unwrap().into_data().unwrap();
-        assert_eq!(&msg, &i.to_be_bytes());
+        assert_eq!(&msg, &(i as u64).serialize());
         assert_eq!(kind, LogKind::Replace);
     }
     // Assert that there is nothing left in the log.
@@ -549,11 +549,11 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
     for op in ops.into_iter() {
         match op {
-            Read(lid) => {
-                if reference.len() <= lid as usize {
+            Read(id) => {
+                if reference.len() <= id as usize {
                     continue;
                 }
-                let (lsn, ptr, ref expected, _len) = reference[lid as usize];
+                let (lsn, ptr, ref expected, _len) = reference[id as usize];
                 // log.make_stable(lid);
                 let read_res = log.read(PID, lsn, ptr);
                 // println!( "expected {:?} read_res {:?} tip {} lid {}",
@@ -565,9 +565,11 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 } else {
                     let flush = read_res.unwrap().into_data();
                     assert_eq!(
-                        flush, *expected,
-                        "read unexpected value at lid {}",
-                        lid
+                        flush,
+                        *expected,
+                        "read unexpected value at lid {}. reference: {:?}",
+                        ptr.lid(),
+                        reference
                     );
                 }
             }

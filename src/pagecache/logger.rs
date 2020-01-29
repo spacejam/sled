@@ -269,7 +269,11 @@ impl Log {
             // try to claim space
             let buf_offset = iobuf::offset(header);
             let prospective_size = buf_offset + inline_buf_len;
-            let would_overflow = prospective_size > iobuf.capacity;
+            // we don't reserve anything if we're within the last MAX_MSG_HEADER_LEN
+            // bytes of the buffer. during recovery, we assume that nothing
+            // can begin here, because headers are dynamically sized.
+            let red_zone = iobuf.capacity - buf_offset < MAX_MSG_HEADER_LEN;
+            let would_overflow = prospective_size > iobuf.capacity || red_zone;
             if would_overflow {
                 // This buffer is too full to accept our write!
                 // Try to seal the buffer, and maybe write it if
@@ -705,7 +709,7 @@ pub(crate) fn read_message(
     match header.kind {
         MessageKind::Canceled => {
             trace!("read failed of len {}", header.len);
-            Ok(LogRead::Canceled(u32::try_from(header.len).unwrap()))
+            Ok(LogRead::Canceled(u32::try_from(inline_len).unwrap()))
         }
         MessageKind::Cap => {
             trace!("read pad in segment number {:?}", header.segment_number);
