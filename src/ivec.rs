@@ -188,7 +188,7 @@ impl AsRef<[u8]> for IVec {
             IVecInner::Inline(sz, buf) => unsafe {
                 buf.get_unchecked(..*sz as usize)
             },
-            IVecInner::Medium(b) => &b,
+            IVecInner::Medium(b) => b,
             IVecInner::Remote(buf) => buf,
         }
     }
