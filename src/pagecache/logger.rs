@@ -229,6 +229,9 @@ impl Log {
             // load current header value
             let iobuf = self.iobufs.current_iobuf();
             let header = iobuf.get_header();
+            let buf_offset = iobuf::offset(header);
+            let reservation_lsn =
+                iobuf.lsn + Lsn::try_from(buf_offset).unwrap();
 
             // skip if already sealed
             if iobuf::is_sealed(header) {
@@ -245,18 +248,26 @@ impl Log {
             // this is variable because of varints used
             // in the header.
             let message_header = MessageHeader {
+                crc32: 0,
                 kind,
                 segment_number: SegmentNumber(
                     u64::try_from(iobuf.lsn).unwrap()
                         / u64::try_from(self.config.segment_size).unwrap(),
                 ),
                 pid,
-                len: serialized_len,
-                crc32: 0,
+                len: if over_blob_threshold {
+                    reservation_lsn.serialized_size()
+                } else {
+                    serialized_len
+                },
             };
 
             let inline_buf_len = if over_blob_threshold {
-                MAX_MSG_HEADER_LEN + std::mem::size_of::<Lsn>()
+                usize::try_from(
+                    message_header.serialized_size()
+                        + reservation_lsn.serialized_size(),
+                )
+                .unwrap()
             } else {
                 usize::try_from(
                     message_header.serialized_size() + serialized_len,
@@ -267,7 +278,6 @@ impl Log {
             trace!("reserving buf of len {}", inline_buf_len);
 
             // try to claim space
-            let buf_offset = iobuf::offset(header);
             let prospective_size = buf_offset + inline_buf_len;
             // we don't reserve anything if we're within the last MAX_MSG_HEADER_LEN
             // bytes of the buffer. during recovery, we assume that nothing
@@ -319,9 +329,6 @@ impl Log {
 
             // should never have claimed a sealed buffer
             assert!(!iobuf::is_sealed(claimed));
-
-            let reservation_lsn =
-                iobuf.lsn + Lsn::try_from(buf_offset).unwrap();
 
             // MAX is used to signify unreadiness of
             // the underlying IO buffer, and if it's
