@@ -14,7 +14,7 @@ use rand::{thread_rng, Rng};
 use sled::*;
 
 use sled::{
-    DiskPtr, Log, LogKind, LogRead, Lsn, PageId, SegmentMode,
+    DiskPtr, Log, LogKind, LogRead, Lsn, PageId, SegmentMode, Serialize,
     MAX_MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
 };
 
@@ -579,7 +579,12 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                     .complete()
                     .unwrap();
                 tip = ptr.lid() as usize + len + MAX_MSG_HEADER_LEN;
-                reference.push((lsn, ptr, Some(buf), len));
+                reference.push((
+                    lsn,
+                    ptr,
+                    Some(IVec::from(&*buf).serialize()),
+                    len,
+                ));
             }
             AbortReservation(buf) => {
                 let len = buf.len();
@@ -658,7 +663,7 @@ fn quickcheck_log_works() {
 fn log_bug_00() {
     // postmortem:
     use self::Op::*;
-    prop_log_works(vec![Write(vec![34]), Read(0)], true);
+    prop_log_works(vec![Write(vec![66]), Read(0)], true);
 }
 
 #[test]
@@ -679,7 +684,7 @@ fn log_bug_01() {
 }
 
 #[test]
-fn log_bug_2() {
+fn log_bug_02() {
     // postmortem: the logic that scans through zeroed entries
     // until the next readable byte hit the end of the file.
     // fix: when something hits the end of the file, return
@@ -689,7 +694,7 @@ fn log_bug_2() {
 }
 
 #[test]
-fn log_bug_3() {
+fn log_bug_03() {
     // postmortem: the skip-ahead logic for continuing to
     // the next valid log entry when reading a zeroed entry
     // was being triggered on valid entries of size 0.
@@ -699,7 +704,7 @@ fn log_bug_3() {
 }
 
 #[test]
-fn log_bug_7() {
+fn log_bug_07() {
     // postmortem: test alignment
     use self::Op::*;
     prop_log_works(
@@ -719,7 +724,7 @@ fn log_bug_7() {
 }
 
 #[test]
-fn log_bug_9() {
+fn log_bug_09() {
     // postmortem: test was mishandling truncation, which
     // should test loss, not extension
     use self::Op::*;
