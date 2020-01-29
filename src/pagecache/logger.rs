@@ -150,7 +150,7 @@ impl Log {
                     log_kind,
                     pid,
                     &IVec::from(compressed_buf),
-                    false,
+                    None,
                 );
             }
         }
