@@ -643,24 +643,11 @@ pub(crate) fn read_message(
     let msg_header_buf = &mut [0; MAX_MSG_HEADER_LEN];
     let header_read = pread_exact_or_eof(file, msg_header_buf, lid)?;
     let header_cursor = &mut msg_header_buf.as_ref();
+    let len_before = header_cursor.len();
     let header = MessageHeader::deserialize(header_cursor)?;
+    let len_after = header_cursor.len();
     trace!("read message header at lid {}: {:?}", lid, header);
-    let message_offset = header_read - header_cursor.len();
-
-    // we set the crc bytes to 0 because we will
-    // calculate the crc32 over all bytes other
-    // than the crc itself, including the bytes
-    // in the header.
-    #[allow(unsafe_code)]
-    unsafe {
-        std::ptr::write_bytes(
-            msg_header_buf
-                .as_mut_ptr()
-                .add(message_offset - std::mem::size_of::<u32>()),
-            0xFF,
-            std::mem::size_of::<u32>(),
-        );
-    }
+    let message_offset = len_before - len_after;
 
     let ceiling = seg_start + segment_len as LogOffset;
 
