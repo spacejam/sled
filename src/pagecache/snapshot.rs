@@ -261,8 +261,11 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
 
     #[cfg(feature = "zstd")]
     let bytes = if config.use_compression {
+        use std::convert::TryInto;
+
         let len_expected: u64 =
-            crate::pagecache::arr_to_u64(&len_expected_bytes);
+            u64::from_le_bytes(len_expected_bytes.as_ref().try_into().unwrap());
+
         decompress(&*buf, usize::try_from(len_expected).unwrap()).unwrap()
     } else {
         buf
