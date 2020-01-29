@@ -253,6 +253,7 @@ pub use {
             DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, PageCache, PageId,
             SegmentMode,
         },
+        serialization::Serialize,
     },
     crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared},
 };
@@ -283,7 +284,6 @@ use {
         node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
-        serialization::Serialize,
         subscription::Subscriptions,
         tree::TreeInner,
         vecset::VecSet,
