@@ -114,7 +114,12 @@ impl Log {
         pid: PageId,
         blob_pointer: BlobPointer,
     ) -> Result<Reservation<'_>> {
-        self.reserve_inner(LogKind::Replace, pid, &blob_pointer, true)
+        self.reserve_inner(
+            LogKind::Replace,
+            pid,
+            &blob_pointer,
+            Some(blob_pointer),
+        )
     }
 
     /// Tries to claim a reservation for writing a buffer to a
@@ -150,7 +155,7 @@ impl Log {
             }
         }
 
-        self.reserve_inner(log_kind, pid, item, false)
+        self.reserve_inner(log_kind, pid, item, None)
     }
 
     fn reserve_inner<T: Serialize + Debug>(
@@ -158,7 +163,7 @@ impl Log {
         log_kind: LogKind,
         pid: PageId,
         item: &T,
-        is_blob_rewrite: bool,
+        blob_rewrite: Option<Lsn>,
     ) -> Result<Reservation<'_>> {
         let _measure = Measure::new(&M.reserve_lat);
 
@@ -176,7 +181,7 @@ impl Log {
         let over_blob_threshold =
             max_buf_len > u64::try_from(max_buf_size).unwrap();
 
-        assert!(!(over_blob_threshold && is_blob_rewrite));
+        assert!(!(over_blob_threshold && blob_rewrite.is_some()));
 
         let mut printed = false;
         macro_rules! trace_once {
@@ -190,8 +195,11 @@ impl Log {
 
         let backoff = Backoff::new();
 
-        let kind = match (pid, log_kind, over_blob_threshold || is_blob_rewrite)
-        {
+        let kind = match (
+            pid,
+            log_kind,
+            over_blob_threshold || blob_rewrite.is_some(),
+        ) {
             (COUNTER_PID, LogKind::Replace, false) => MessageKind::Counter,
             (META_PID, LogKind::Replace, true) => MessageKind::BlobMeta,
             (META_PID, LogKind::Replace, false) => MessageKind::InlineMeta,
@@ -375,8 +383,8 @@ impl Log {
 
             let pointer = if let Some(blob_id) = blob_id {
                 DiskPtr::new_blob(reservation_offset, blob_id)
-            } else if is_blob_rewrite {
-                DiskPtr::new_blob(reservation_offset, blob_id.unwrap())
+            } else if let Some(blob_rewrite) = blob_rewrite {
+                DiskPtr::new_blob(reservation_offset, blob_rewrite)
             } else {
                 DiskPtr::new_inline(reservation_offset)
             };
@@ -388,7 +396,7 @@ impl Log {
                 flushed: false,
                 lsn: reservation_lsn,
                 pointer,
-                is_blob_rewrite,
+                is_blob_rewrite: blob_rewrite.is_some(),
                 header_len: usize::try_from(message_header.serialized_size())
                     .unwrap(),
             });
