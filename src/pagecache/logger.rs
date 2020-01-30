@@ -681,7 +681,7 @@ impl ReadAt for BasedBuf {
                 "failed to fill buffer",
             ));
         }
-        at = at - self.1;
+        at -= self.1;
         let at_usize = usize::try_from(at).unwrap();
         let to_usize = at_usize + dst.len();
         dst.copy_from_slice(self.0[at_usize..to_usize].as_ref());
@@ -699,7 +699,7 @@ impl ReadAt for BasedBuf {
                 "failed to fill buffer",
             ));
         }
-        at = at - self.1;
+        at -= self.1;
 
         let at_usize = usize::try_from(at).unwrap();
 

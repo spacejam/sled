@@ -23,7 +23,7 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 static TOTAL: AtomicUsize = AtomicUsize::new(0);
 static SEQ: AtomicUsize = AtomicUsize::new(0);
 
-const USAGE: &'static str = "
+const USAGE: &str = "
 Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
     [--key-len=<l>] [--val-len=<l>] \
     [--get-prop=<p>] \
@@ -217,7 +217,7 @@ fn main() {
 
     let args = unsafe {
         ARGS = Docopt::new(USAGE)
-            .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
+            .and_then(|d| d.argv(std::env::args()).deserialize())
             .unwrap_or_else(|e| e.exit());
         ARGS.clone()
     };
@@ -239,7 +239,7 @@ fn main() {
 
     let n_threads = args.flag_threads;
 
-    for i in 0..n_threads + 1 {
+    for i in 0..=n_threads {
         let tree = tree.clone();
         let shutdown = shutdown.clone();
 
