@@ -303,7 +303,7 @@ impl IoBufs {
 
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
-    pub(crate) fn write_to_log(&self, iobuf: Arc<IoBuf>) -> Result<()> {
+    pub(crate) fn write_to_log(&self, iobuf: &IoBuf) -> Result<()> {
         let _measure = Measure::new(&M.write_to_log);
         let header = iobuf.get_header();
         let log_offset = iobuf.offset;
@@ -407,7 +407,7 @@ impl IoBufs {
         #[cfg(feature = "io_uring")]
         {
             let mut remaining_len = total_len;
-            let mut data = &data[..remaining_len];
+            let mut to_write = &data[..remaining_len];
             let mut offset = log_offset;
             while remaining_len > 0 {
                 // we take out this mutex to guarantee
@@ -426,7 +426,7 @@ impl IoBufs {
                 // complete.
                 let wrote_completion = self.io_uring.write_at_ordered(
                     &*self.config.file,
-                    &data,
+                    &to_write,
                     offset,
                     rio::Ordering::Link,
                 );
@@ -448,7 +448,7 @@ impl IoBufs {
                 let wrote = wrote_completion.wait()?;
 
                 remaining_len -= wrote;
-                data = &data[wrote..];
+                to_write = &to_write[wrote..];
                 offset += wrote as u64;
             }
         }
@@ -859,7 +859,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         let iobufs = iobufs.clone();
         let iobuf = iobuf.clone();
         let _result = threadpool::spawn(move || {
-            if let Err(e) = iobufs.write_to_log(iobuf) {
+            if let Err(e) = iobufs.write_to_log(&iobuf) {
                 error!(
                     "hit error while writing iobuf with lsn {}: {:?}",
                     lsn, e
