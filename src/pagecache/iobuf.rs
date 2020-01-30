@@ -64,7 +64,9 @@ pub(crate) struct IoBufs {
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
     #[cfg(feature = "io_uring")]
-    pub io_uring: Mutex<rio::Rio>,
+    pub submission_mutex: Mutex<()>,
+    #[cfg(feature = "io_uring")]
+    pub io_uring: rio::Rio,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -180,7 +182,9 @@ impl IoBufs {
             )),
             segment_accountant: Mutex::new(segment_accountant),
             #[cfg(feature = "io_uring")]
-            io_uring: Mutex::new(rio::new()?),
+            submission_mutex: Mutex::new(()),
+            #[cfg(feature = "io_uring")]
+            io_uring: rio::new()?,
         })
     }
 
@@ -406,21 +410,28 @@ impl IoBufs {
             let mut data = &data[..remaining_len];
             let mut offset = log_offset;
             while remaining_len > 0 {
-                let ring = self.io_uring.lock();
+                // we take out this mutex to guarantee
+                // that our `Link` write operation below
+                // is serialized with the following sync.
+                // we don't put the `Rio` instance into
+                // the `Mutex` because we want to drop the
+                // `Mutex` right after beginning the async
+                // submission.
+                let link_mu = self.submission_mutex.lock();
 
-                // using the Link ordering, we specify
+                // using the `Link` ordering, we specify
                 // that `io_uring` should not begin
                 // the following `sync_file_range`
                 // until the previous write is
                 // complete.
-                let wrote_completion = ring.write_at_ordered(
+                let wrote_completion = self.io_uring.write_at_ordered(
                     &*self.config.file,
                     &data,
                     offset,
                     rio::Ordering::Link,
                 );
 
-                let sync_completion = ring.sync_file_range(
+                let sync_completion = self.io_uring.sync_file_range(
                     &*self.config.file,
                     offset,
                     remaining_len,
@@ -428,9 +439,13 @@ impl IoBufs {
 
                 sync_completion.wait()?;
 
-                let wrote = wrote_completion.wait()?;
+                // TODO we want to move this above the previous `wait`
+                // but there seems to be an issue in `rio` that is
+                // triggered when multiple threads are submitting
+                // events while events from other threads are in play.
+                drop(link_mu);
 
-                drop(ring);
+                let wrote = wrote_completion.wait()?;
 
                 remaining_len -= wrote;
                 data = &data[wrote..];
