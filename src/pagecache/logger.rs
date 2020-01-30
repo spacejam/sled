@@ -660,7 +660,7 @@ pub(crate) fn read_message(
     assert!(seg_start + SEG_HEADER_LEN as LogOffset <= lid);
 
     let msg_header_buf = &mut [0; MAX_MSG_HEADER_LEN];
-    let header_read = pread_exact_or_eof(file, msg_header_buf, lid)?;
+    let _read_bytes = pread_exact_or_eof(file, msg_header_buf, lid)?;
     let header_cursor = &mut msg_header_buf.as_ref();
     let len_before = header_cursor.len();
     let header = MessageHeader::deserialize(header_cursor)?;
