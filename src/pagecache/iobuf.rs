@@ -378,11 +378,11 @@ impl IoBufs {
                 );
             }
 
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(&padding_bytes);
-            hasher.update(&header_bytes[4..]);
-            let crc32 = hasher.finalize();
-            let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
+            // this as to stay aligned with the hashing
+            let crc32_arr = u32_to_arr(calculate_message_crc32(
+                &header_bytes,
+                &padding_bytes,
+            ));
 
             #[allow(unsafe_code)]
             unsafe {

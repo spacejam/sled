@@ -314,6 +314,14 @@ fn crc32(buf: &[u8]) -> u32 {
     hasher.finalize()
 }
 
+fn calculate_message_crc32(header: &[u8], body: &[u8]) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(body);
+    hasher.update(&header[4..]);
+    let crc32 = hasher.finalize();
+    crc32 ^ 0xFFFF_FFFF
+}
+
 #[cfg(any(test, feature = "lock_free_delays"))]
 mod debug_delay;
 

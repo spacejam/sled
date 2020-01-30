@@ -112,15 +112,11 @@ impl<'a> Reservation<'a> {
             self.buf[4] = MessageKind::Canceled.into();
         }
 
-        // the order of hashing must be the
-        // same here as during calls to
-        // LogReader::read_message
-        let mut hasher = crc32fast::Hasher::new();
-        hasher.update(&self.buf[self.header_len..]);
-        hasher.update(&self.buf[std::mem::size_of::<u32>()..self.header_len]);
-
-        let crc32 = hasher.finalize();
-        let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
+        let crc32 = calculate_message_crc32(
+            &self.buf[..self.header_len].as_ref(),
+            &self.buf[self.header_len..],
+        );
+        let crc32_arr = u32_to_arr(crc32);
 
         #[allow(unsafe_code)]
         unsafe {

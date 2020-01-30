@@ -703,15 +703,10 @@ pub(crate) fn read_message(
     let mut buf = vec![0; usize::try_from(header.len).unwrap()];
     pread_exact(file, &mut buf, lid + message_offset as LogOffset)?;
 
-    // calculate the CRC32, calculating the hash on the
-    // header afterwards
-    let mut hasher = crc32fast::Hasher::new();
-    hasher.update(&buf);
-    hasher.update(
-        msg_header_buf[std::mem::size_of::<u32>()..message_offset].as_ref(),
+    let crc32 = calculate_message_crc32(
+        msg_header_buf[..message_offset].as_ref(),
+        &buf,
     );
-
-    let crc32 = hasher.finalize() ^ 0xFFFF_FFFF;
 
     if crc32 != header.crc32 {
         trace!("read a message with a bad checksum with header {:?}", header);
