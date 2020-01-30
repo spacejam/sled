@@ -133,6 +133,10 @@ fn run(
             }
         }
 
+        if let Err(e) = pagecache.config.file.sync_all() {
+            error!("failed to fsync from periodic flush thread: {}", e);
+        }
+
         let sleep_duration = flush_every
             .checked_sub(before.elapsed())
             .unwrap_or_else(|| Duration::from_millis(1));

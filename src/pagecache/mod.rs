@@ -451,7 +451,7 @@ impl Page {
 /// A lock-free pagecache which supports linkmented pages
 /// for dramatically improving write throughput.
 pub struct PageCache {
-    config: RunningConfig,
+    pub(crate) config: RunningConfig,
     inner: PageTable,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
