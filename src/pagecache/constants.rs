@@ -5,7 +5,7 @@ use super::*;
 // lsn: i64 8
 // len: u64 8
 // crc: u32 4
-/// Log messages have a header of this length.
+/// Log messages have a header that might eb up to this length.
 pub const MAX_MSG_HEADER_LEN: usize = 29;
 
 /// Log segments have a header of this length.
