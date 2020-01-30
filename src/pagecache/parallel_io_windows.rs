@@ -1,3 +1,4 @@
+use std::convert::TryFrom;
 use std::fs::File;
 use std::io;
 use std::os::windows::fs::FileExt;
@@ -57,7 +58,7 @@ fn seek_write_all<F: FileExt>(
 
 pub(crate) fn pread_exact_or_eof(
     file: &File,
-    buf: &mut [u8],
+    mut buf: &mut [u8],
     offset: LogOffset,
 ) -> io::Result<usize> {
     let mut total = 0_usize;
