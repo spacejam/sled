@@ -264,6 +264,7 @@ impl IoBufs {
     }
 
     // Adds a header to the front of the buffer
+    #[allow(clippy::mut_mut)]
     pub(crate) fn encapsulate<T: Serialize + Debug>(
         &self,
         item: &T,
@@ -271,21 +272,24 @@ impl IoBufs {
         mut out_buf: &mut [u8],
         blob_id: Option<Lsn>,
     ) -> Result<()> {
-        let out_buf: &mut &mut [u8] = &mut out_buf;
-        header.serialize_into(out_buf);
+        // we create this double ref to allow scooting
+        // the slice forward without doing anything
+        // to the argument
+        let out_buf_ref: &mut &mut [u8] = &mut out_buf;
+        header.serialize_into(out_buf_ref);
 
         if let Some(blob_id) = blob_id {
             // write blob to file
             io_fail!(self, "blob blob write");
             write_blob(&self.config, header.kind, blob_id, item)?;
 
-            blob_id.serialize_into(out_buf);
+            blob_id.serialize_into(out_buf_ref);
         } else {
-            item.serialize_into(out_buf);
+            item.serialize_into(out_buf_ref);
         };
 
         assert_eq!(
-            out_buf.len(),
+            out_buf_ref.len(),
             0,
             "trying to serialize header {:?} \
              and item {:?} but there were \
@@ -957,7 +961,11 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old { Ok(new) } else { Err(res) }
+        if res == old {
+            Ok(new)
+        } else {
+            Err(res)
+        }
     }
 }
 

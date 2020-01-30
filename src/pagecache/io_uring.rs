@@ -242,7 +242,7 @@ impl<T> Uring<T> {
     }
 
     pub fn len(&self) -> usize {
-        return self.iovecs.len();
+        self.iovecs.len()
     }
 }
 
