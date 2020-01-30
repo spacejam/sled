@@ -237,8 +237,8 @@ impl Segment {
     fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
         if let Some(current_lsn) = self.lsn {
             if current_lsn != lsn {
-                assert!(lsn > current_lsn);
                 trace!("(snapshot) recovering segment with base lsn {}", lsn);
+                assert!(lsn > current_lsn);
                 self.state = Free;
                 self.free_to_active(lsn);
             }
@@ -440,7 +440,7 @@ impl SegmentAccountant {
                     add(
                         *pid,
                         lsn,
-                        u64::try_from(MSG_HEADER_LEN).unwrap(),
+                        u64::try_from(MAX_MSG_HEADER_LEN).unwrap(),
                         ptr.lid(),
                         &mut segments,
                     );

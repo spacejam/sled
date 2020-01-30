@@ -248,12 +248,13 @@ pub use {
         lazy::Lazy,
         pagecache::{
             constants::{
-                MAX_SPACE_AMPLIFICATION, MINIMUM_ITEMS_PER_SEGMENT,
-                MSG_HEADER_LEN, SEG_HEADER_LEN,
+                MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION,
+                MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
             },
-            DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, PageCache, PageId,
-            SegmentMode,
+            BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
+            PageCache, PageId, SegmentMode,
         },
+        serialization::Serialize,
     },
     crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared},
 };
@@ -280,11 +281,10 @@ use {
         histogram::Histogram,
         lru::Lru,
         meta::Meta,
-        metrics::{clock, measure, Measure, M},
+        metrics::{clock, Measure, M},
         node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
-        serialization::Serialize,
         subscription::Subscriptions,
         tree::TreeInner,
         vecset::VecSet,
@@ -312,6 +312,14 @@ fn crc32(buf: &[u8]) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
     hasher.update(buf);
     hasher.finalize()
+}
+
+fn calculate_message_crc32(header: &[u8], body: &[u8]) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(body);
+    hasher.update(&header[4..]);
+    let crc32 = hasher.finalize();
+    crc32 ^ 0xFFFF_FFFF
 }
 
 #[cfg(any(test, feature = "lock_free_delays"))]

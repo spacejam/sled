@@ -12,6 +12,7 @@ pub struct Reservation<'a> {
     pub(super) pointer: DiskPtr,
     pub(super) lsn: Lsn,
     pub(super) is_blob_rewrite: bool,
+    pub(super) header_len: usize,
 }
 
 impl<'a> Drop for Reservation<'a> {
@@ -89,11 +90,11 @@ impl<'a> Reservation<'a> {
             self.lsn
         );
 
-        self.buf[0] = MessageKind::BatchManifest.into();
+        self.buf[4] = MessageKind::BatchManifest.into();
 
         let buf = lsn_to_arr(lsn);
 
-        let dst = &mut self.buf[MSG_HEADER_LEN..];
+        let dst = &mut self.buf[self.header_len..];
 
         dst.copy_from_slice(&buf);
     }
@@ -108,25 +109,20 @@ impl<'a> Reservation<'a> {
         if !valid {
             // don't actually zero the message, still check its hash
             // on recovery to find corruption.
-            self.buf[0] = MessageKind::Cancelled.into();
+            self.buf[4] = MessageKind::Canceled.into();
         }
 
-        // the order of hashing must be the
-        // same here as during calls to
-        // LogReader::read_message
-        let mut hasher = crc32fast::Hasher::new();
-        hasher.update(&self.buf[MSG_HEADER_LEN..]);
-        hasher.update(&self.buf[..MSG_HEADER_LEN]);
-        let crc32 = hasher.finalize();
-        let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
+        let crc32 = calculate_message_crc32(
+            self.buf[..self.header_len].as_ref(),
+            &self.buf[self.header_len..],
+        );
+        let crc32_arr = u32_to_arr(crc32);
 
         #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 crc32_arr.as_ptr(),
-                self.buf
-                    .as_mut_ptr()
-                    .add(MSG_HEADER_LEN - std::mem::size_of::<u32>()),
+                self.buf.as_mut_ptr(),
                 std::mem::size_of::<u32>(),
             );
         }

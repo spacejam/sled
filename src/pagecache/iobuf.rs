@@ -90,15 +90,16 @@ impl IoBufs {
                 let width = match read_message(
                     file,
                     snapshot_last_lid,
-                    snapshot_last_lsn,
+                    SegmentNumber(
+                        u64::try_from(snapshot_last_lsn).unwrap()
+                            / u64::try_from(config.segment_size).unwrap(),
+                    ),
                     &config,
                 ) {
-                    Ok(LogRead::Failed(_, len))
-                    | Ok(LogRead::Inline(_, _, len)) => {
-                        len + u32::try_from(MSG_HEADER_LEN).unwrap()
-                    }
-                    Ok(LogRead::Blob(_header, _buf, _blob_ptr)) => {
-                        u32::try_from(BLOB_INLINE_LEN + MSG_HEADER_LEN).unwrap()
+                    Ok(LogRead::Canceled(inline_len))
+                    | Ok(LogRead::Inline(_, _, inline_len)) => inline_len,
+                    Ok(LogRead::Blob(_header, _buf, _blob_ptr, inline_len)) => {
+                        inline_len
                     }
                     other => {
                         // we can overwrite this non-flush
@@ -263,55 +264,39 @@ impl IoBufs {
     }
 
     // Adds a header to the front of the buffer
-    pub(crate) fn encapsulate(
+    #[allow(clippy::mut_mut)]
+    pub(crate) fn encapsulate<T: Serialize + Debug>(
         &self,
-        in_buf: &[u8],
-        out_buf: &mut [u8],
-        kind: MessageKind,
-        pid: PageId,
-        lsn: Lsn,
-        over_blob_threshold: bool,
+        item: &T,
+        header: MessageHeader,
+        mut out_buf: &mut [u8],
+        blob_id: Option<Lsn>,
     ) -> Result<()> {
-        let blob_ptr;
+        // we create this double ref to allow scooting
+        // the slice forward without doing anything
+        // to the argument
+        let out_buf_ref: &mut &mut [u8] = &mut out_buf;
+        header.serialize_into(out_buf_ref);
 
-        let to_reserve = if over_blob_threshold {
+        if let Some(blob_id) = blob_id {
             // write blob to file
             io_fail!(self, "blob blob write");
-            write_blob(&self.config, kind, lsn, in_buf)?;
+            write_blob(&self.config, header.kind, blob_id, item)?;
 
-            let lsn_buf = u64_to_arr(u64::try_from(lsn).unwrap());
-
-            blob_ptr = lsn_buf;
-            &blob_ptr
+            blob_id.serialize_into(out_buf_ref);
         } else {
-            in_buf
+            item.serialize_into(out_buf_ref);
         };
 
-        assert_eq!(out_buf.len(), to_reserve.len() + MSG_HEADER_LEN);
-
-        let header = MessageHeader {
-            kind,
-            pid,
-            lsn,
-            len: u32::try_from(to_reserve.len()).unwrap(),
-            crc32: 0,
-        };
-
-        let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
-
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                header_bytes.as_ptr(),
-                out_buf.as_mut_ptr(),
-                MSG_HEADER_LEN,
-            );
-            std::ptr::copy_nonoverlapping(
-                to_reserve.as_ptr(),
-                out_buf.as_mut_ptr().add(MSG_HEADER_LEN),
-                to_reserve.len(),
-            );
-        }
+        assert_eq!(
+            out_buf_ref.len(),
+            0,
+            "trying to serialize header {:?} \
+             and item {:?} but there were \
+             buffer leftovers at the end",
+            header,
+            item
+        );
 
         Ok(())
     }
@@ -351,56 +336,61 @@ impl IoBufs {
 
         let maxed = iobuf.linearized(|| iobuf.get_maxed());
         let unused_space = capacity - bytes_to_write;
-        let should_pad = maxed && unused_space >= MSG_HEADER_LEN;
+        let should_pad = maxed && unused_space >= MAX_MSG_HEADER_LEN;
 
         // a pad is a null message written to the end of a buffer
         // to signify that nothing else will be written into it
         if should_pad {
             #[allow(unsafe_code)]
             let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
-            let pad_len = capacity - bytes_to_write - MSG_HEADER_LEN;
+            let pad_len = capacity - bytes_to_write - MAX_MSG_HEADER_LEN;
 
             // take the crc of the random bytes already after where we
             // would place our header.
             let padding_bytes = vec![MessageKind::Corrupted.into(); pad_len];
 
+            let segment_number = SegmentNumber(
+                u64::try_from(base_lsn).unwrap()
+                    / u64::try_from(self.config.segment_size).unwrap(),
+            );
+
             let header = MessageHeader {
-                kind: MessageKind::Pad,
+                kind: MessageKind::Cap,
                 pid: PageId::max_value(),
-                lsn: base_lsn + bytes_to_write as Lsn,
-                len: u32::try_from(pad_len).unwrap(),
+                segment_number,
+                len: u64::try_from(pad_len).unwrap(),
                 crc32: 0,
             };
 
-            let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
+            let header_bytes = header.serialize();
 
             #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     header_bytes.as_ptr(),
                     data.as_mut_ptr().add(bytes_to_write),
-                    MSG_HEADER_LEN,
+                    header_bytes.len(),
                 );
                 std::ptr::copy_nonoverlapping(
                     padding_bytes.as_ptr(),
-                    data.as_mut_ptr().add(bytes_to_write + MSG_HEADER_LEN),
+                    data.as_mut_ptr().add(bytes_to_write + header_bytes.len()),
                     pad_len,
                 );
             }
 
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(&padding_bytes);
-            hasher.update(&header_bytes);
-            let crc32 = hasher.finalize();
-            let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
+            // this as to stay aligned with the hashing
+            let crc32_arr = u32_to_arr(calculate_message_crc32(
+                &header_bytes,
+                &padding_bytes,
+            ));
 
             #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     crc32_arr.as_ptr(),
                     data.as_mut_ptr().add(
-                        bytes_to_write + MSG_HEADER_LEN
-                            - std::mem::size_of::<u32>(),
+                        // the crc32 is the first part of the buffer
+                        bytes_to_write,
                     ),
                     std::mem::size_of::<u32>(),
                 );
@@ -703,7 +693,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     let sealed = mk_sealed(header);
     let res_len = offset(sealed);
 
-    let maxed = from_reserve || capacity - res_len < MSG_HEADER_LEN;
+    let maxed = from_reserve || capacity - res_len < MAX_MSG_HEADER_LEN;
 
     let worked = iobuf.linearized(|| {
         if iobuf.cas_header(header, sealed).is_err() {
@@ -971,7 +961,11 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old { Ok(new) } else { Err(res) }
+        if res == old {
+            Ok(new)
+        } else {
+            Err(res)
+        }
     }
 }
 

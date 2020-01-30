@@ -6,6 +6,11 @@
   `u64`. This dramatically reduces the written
   bytes for databases that store small keys and
   values.
+* #943 use varints for most of the fields in
+  message headers, causing an additional large
+  space reduction. combined with #927, these
+  changes reduce bytes written by 68% for workloads
+  writing small items.
 
 ## Improvements
 

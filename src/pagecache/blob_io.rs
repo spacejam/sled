@@ -72,11 +72,11 @@ pub(crate) fn read_blob(
     }
 }
 
-pub(crate) fn write_blob(
+pub(crate) fn write_blob<T: Serialize>(
     config: &Config,
     kind: MessageKind,
     id: Lsn,
-    data: &[u8],
+    item: &T,
 ) -> Result<()> {
     let path = config.blob_path(id);
     let mut f =
@@ -86,7 +86,10 @@ pub(crate) fn write_blob(
 
     let mut hasher = crc32fast::Hasher::new();
     hasher.update(kind_buf);
-    hasher.update(data);
+
+    let data = item.serialize();
+
+    hasher.update(&data);
     let crc = u32_to_arr(hasher.finalize());
 
     io_fail!(config, "write_blob write crc");
@@ -94,7 +97,7 @@ pub(crate) fn write_blob(
     io_fail!(config, "write_blob write kind_byte");
     f.write_all(kind_buf)?;
     io_fail!(config, "write_blob write buf");
-    f.write_all(data)
+    f.write_all(&data)
         .map(|r| {
             trace!("successfully wrote blob at {:?}", path);
             r
