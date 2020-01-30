@@ -64,7 +64,9 @@ pub(crate) struct IoBufs {
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
     #[cfg(feature = "io_uring")]
-    pub write_uring: Mutex<io_uring::Uring<IoBuf>>,
+    pub submission_mutex: Mutex<()>,
+    #[cfg(feature = "io_uring")]
+    pub io_uring: rio::Rio,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -165,9 +167,6 @@ impl IoBufs {
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
-        #[cfg(feature = "io_uring")]
-        let file = config.file.clone();
-
         Ok(Self {
             config,
 
@@ -183,8 +182,9 @@ impl IoBufs {
             )),
             segment_accountant: Mutex::new(segment_accountant),
             #[cfg(feature = "io_uring")]
-            write_uring: Mutex::new(io_uring::Uring::new(file, 16, 0)?),
-            // TODO: queue and flags configurable
+            submission_mutex: Mutex::new(()),
+            #[cfg(feature = "io_uring")]
+            io_uring: rio::new()?,
         })
     }
 
@@ -303,7 +303,7 @@ impl IoBufs {
 
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
-    pub(crate) fn write_to_log(&self, iobuf: Arc<IoBuf>) -> Result<()> {
+    pub(crate) fn write_to_log(&self, iobuf: &IoBuf) -> Result<()> {
         let _measure = Measure::new(&M.write_to_log);
         let header = iobuf.get_header();
         let log_offset = iobuf.offset;
@@ -405,16 +405,52 @@ impl IoBufs {
 
         io_fail!(self, "buffer write");
         #[cfg(feature = "io_uring")]
-        unsafe {
-            let mut mg = self.write_uring.lock();
-            mg.pwrite_all(
-                &mut data[..total_len],
-                iobuf,
-                log_offset,
-                !self.config.temporary,
-            )?;
-            let size = mg.len();
-            mg.wait(size)?;
+        {
+            let mut remaining_len = total_len;
+            let mut to_write = &data[..remaining_len];
+            let mut offset = log_offset;
+            while remaining_len > 0 {
+                // we take out this mutex to guarantee
+                // that our `Link` write operation below
+                // is serialized with the following sync.
+                // we don't put the `Rio` instance into
+                // the `Mutex` because we want to drop the
+                // `Mutex` right after beginning the async
+                // submission.
+                let link_mu = self.submission_mutex.lock();
+
+                // using the `Link` ordering, we specify
+                // that `io_uring` should not begin
+                // the following `sync_file_range`
+                // until the previous write is
+                // complete.
+                let wrote_completion = self.io_uring.write_at_ordered(
+                    &*self.config.file,
+                    &to_write,
+                    offset,
+                    rio::Ordering::Link,
+                );
+
+                let sync_completion = self.io_uring.sync_file_range(
+                    &*self.config.file,
+                    offset,
+                    remaining_len,
+                );
+
+                sync_completion.wait()?;
+
+                // TODO we want to move this above the previous `wait`
+                // but there seems to be an issue in `rio` that is
+                // triggered when multiple threads are submitting
+                // events while events from other threads are in play.
+                drop(link_mu);
+
+                let wrote = wrote_completion.wait()?;
+
+                remaining_len -= wrote;
+                to_write = &to_write[wrote..];
+                offset += wrote as u64;
+            }
         }
         #[cfg(not(feature = "io_uring"))]
         {
@@ -823,7 +859,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         let iobufs = iobufs.clone();
         let iobuf = iobuf.clone();
         let _result = threadpool::spawn(move || {
-            if let Err(e) = iobufs.write_to_log(iobuf) {
+            if let Err(e) = iobufs.write_to_log(&iobuf) {
                 error!(
                     "hit error while writing iobuf with lsn {}: {:?}",
                     lsn, e
