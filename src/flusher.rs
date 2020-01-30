@@ -108,8 +108,11 @@ fn run(
         // cleaning up the segments. try not to
         // spend more than half of our sleep
         // time rewriting pages though.
-        while shutdown.is_running() && before.elapsed() < flush_every / 2 {
-            match pagecache.attempt_gc() {
+        //
+        // this looks weird because it's a rust-style do-while
+        // where the conditional is the full body
+        while {
+            let made_progress = match pagecache.attempt_gc() {
                 Err(e) => {
                     error!(
                         "failed to clean file from periodic flush thread: {}",
@@ -128,9 +131,16 @@ fn run(
                     let _notified = sc.notify_all();
                     return;
                 }
-                Ok(false) => break,
-                Ok(true) => {}
-            }
+                Ok(false) => false,
+                Ok(true) => true,
+            };
+            made_progress
+                && shutdown.is_running()
+                && before.elapsed() < flush_every / 2
+        } {}
+
+        if let Err(e) = pagecache.config.file.sync_all() {
+            error!("failed to fsync from periodic flush thread: {}", e);
         }
 
         let sleep_duration = flush_every

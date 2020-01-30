@@ -83,14 +83,6 @@ impl<'h> Drop for Measure<'h> {
     }
 }
 
-/// Measure the time spent on calling a given function in a given `Histogram`.
-#[cfg_attr(not(feature = "no_inline"), inline)]
-pub(crate) fn measure<F: FnOnce() -> R, R>(_histo: &Histogram, f: F) -> R {
-    #[cfg(not(feature = "no_metrics"))]
-    let _measure = Measure::new(_histo);
-    f()
-}
-
 #[derive(Default, Debug)]
 pub struct Metrics {
     pub advance_snapshot: Histogram,

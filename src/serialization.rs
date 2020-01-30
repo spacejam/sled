@@ -6,7 +6,9 @@ use std::{
 };
 
 use crate::{
-    pagecache::{PageState, Snapshot},
+    pagecache::{
+        BatchManifest, MessageHeader, PageState, SegmentNumber, Snapshot,
+    },
     Data, DiskPtr, Error, IVec, Link, Meta, Node, Result,
 };
 
@@ -50,6 +52,67 @@ fn scoot(buf: &mut &mut [u8], amount: usize) {
     unsafe {
         let new_ptr = ptr.add(amount);
         *buf = std::slice::from_raw_parts_mut(new_ptr, new_len);
+    }
+}
+
+impl Serialize for BatchManifest {
+    fn serialized_size(&self) -> u64 {
+        8
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        buf[..8].copy_from_slice(&self.0.to_le_bytes());
+        scoot(buf, 8);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        if buf.len() < 8 {
+            return Err(Error::Corruption { at: DiskPtr::Inline(103) });
+        }
+
+        let array = buf[..8].try_into().unwrap();
+        *buf = &buf[8..];
+        Ok(BatchManifest(i64::from_le_bytes(array)))
+    }
+}
+
+impl Serialize for () {
+    fn serialized_size(&self) -> u64 {
+        0
+    }
+
+    fn serialize_into(&self, _: &mut &mut [u8]) {}
+
+    fn deserialize(_: &mut &[u8]) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl Serialize for MessageHeader {
+    fn serialized_size(&self) -> u64 {
+        1 + 4
+            + self.segment_number.serialized_size()
+            + self.pid.serialized_size()
+            + self.len.serialized_size()
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        crate::trace!("serializing {:?}", self);
+        self.crc32.serialize_into(buf);
+        self.kind.into().serialize_into(buf);
+        self.len.serialize_into(buf);
+        self.segment_number.serialize_into(buf);
+        self.pid.serialize_into(buf);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<MessageHeader> {
+        Ok(MessageHeader {
+            crc32: u32::deserialize(buf)?,
+            kind: u8::deserialize(buf)?.into(),
+            len: u64::deserialize(buf)?,
+            segment_number: SegmentNumber(u64::deserialize(buf)?),
+            pid: u64::deserialize(buf)?,
+        })
     }
 }
 
@@ -185,6 +248,27 @@ impl Serialize for i64 {
         let array = buf[..8].try_into().unwrap();
         *buf = &buf[8..];
         Ok(i64::from_le_bytes(array))
+    }
+}
+
+impl Serialize for u32 {
+    fn serialized_size(&self) -> u64 {
+        4
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        buf[..4].copy_from_slice(&self.to_le_bytes());
+        scoot(buf, 4);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        if buf.len() < 4 {
+            return Err(Error::Corruption { at: DiskPtr::Inline(250) });
+        }
+
+        let array = buf[..4].try_into().unwrap();
+        *buf = &buf[4..];
+        Ok(u32::from_le_bytes(array))
     }
 }
 
@@ -653,6 +737,25 @@ mod qc {
     use rand::Rng;
 
     use super::*;
+    use crate::pagecache::MessageKind;
+
+    impl Arbitrary for MessageHeader {
+        fn arbitrary<G: Gen>(g: &mut G) -> MessageHeader {
+            MessageHeader {
+                crc32: g.gen(),
+                len: g.gen(),
+                kind: MessageKind::arbitrary(g),
+                segment_number: SegmentNumber(SpreadU64::arbitrary(g).0),
+                pid: g.gen(),
+            }
+        }
+    }
+
+    impl Arbitrary for MessageKind {
+        fn arbitrary<G: Gen>(g: &mut G) -> MessageKind {
+            g.gen_range(0, 12).into()
+        }
+    }
 
     impl Arbitrary for Data {
         fn arbitrary<G: Gen>(g: &mut G) -> Data {
@@ -872,6 +975,10 @@ mod qc {
         }
 
         fn link(item: Link) -> bool {
+            prop_serialize(item)
+        }
+
+        fn msg_header(item: MessageHeader) -> bool {
             prop_serialize(item)
         }
     }
