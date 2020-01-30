@@ -4,10 +4,10 @@ use std::sync::Arc;
 use super::{
     arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, iobuf, lsn_to_arr,
     maybe_decompress, pread_exact, pread_exact_or_eof, read_blob, u32_to_arr,
-    BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind, LogOffset, Lsn, MessageKind,
-    Reservation, SegmentAccountant, Serialize, Snapshot, BATCH_MANIFEST_PID,
-    COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
-    SEG_HEADER_LEN,
+    BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
+    MessageKind, Reservation, SegmentAccountant, Serialize, Snapshot,
+    BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
+    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -67,7 +67,7 @@ impl Log {
 
         if ptr.is_inline() {
             let f = &self.config.file;
-            read_message(f, ptr.lid(), expected_segment_number, &self.config)
+            read_message(&**f, ptr.lid(), expected_segment_number, &self.config)
         } else {
             // we short-circuit the inline read
             // here because it might not still
@@ -646,9 +646,75 @@ pub(crate) fn read_segment_header(
     Ok(segment_header)
 }
 
+pub(crate) trait ReadAt {
+    fn pread_exact(&self, dst: &mut [u8], at: u64) -> std::io::Result<()>;
+
+    fn pread_exact_or_eof(
+        &self,
+        dst: &mut [u8],
+        at: u64,
+    ) -> std::io::Result<usize>;
+}
+
+impl ReadAt for File {
+    fn pread_exact(&self, dst: &mut [u8], at: u64) -> std::io::Result<()> {
+        pread_exact(self, dst, at)
+    }
+
+    fn pread_exact_or_eof(
+        &self,
+        dst: &mut [u8],
+        at: u64,
+    ) -> std::io::Result<usize> {
+        pread_exact_or_eof(self, dst, at)
+    }
+}
+
+impl ReadAt for BasedBuf {
+    fn pread_exact(&self, dst: &mut [u8], mut at: u64) -> std::io::Result<()> {
+        if at < self.1
+            || u64::try_from(dst.len()).unwrap() + at
+                > u64::try_from(self.0.len()).unwrap() + self.1
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "failed to fill buffer",
+            ));
+        }
+        at -= self.1;
+        let at_usize = usize::try_from(at).unwrap();
+        let to_usize = at_usize + dst.len();
+        dst.copy_from_slice(self.0[at_usize..to_usize].as_ref());
+        Ok(())
+    }
+
+    fn pread_exact_or_eof(
+        &self,
+        dst: &mut [u8],
+        mut at: u64,
+    ) -> std::io::Result<usize> {
+        if at < self.1 || u64::try_from(self.0.len()).unwrap() < at - self.1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "failed to fill buffer",
+            ));
+        }
+        at -= self.1;
+
+        let at_usize = usize::try_from(at).unwrap();
+
+        let len = std::cmp::min(dst.len(), self.0.len() - at_usize);
+
+        let start = at_usize;
+        let end = start + len;
+        dst[..len].copy_from_slice(self.0[start..end].as_ref());
+        Ok(len)
+    }
+}
+
 /// read a buffer from the disk
-pub(crate) fn read_message(
-    file: &File,
+pub(crate) fn read_message<R: ReadAt>(
+    file: &R,
     lid: LogOffset,
     expected_segment_number: SegmentNumber,
     config: &Config,
@@ -659,8 +725,8 @@ pub(crate) fn read_message(
     trace!("reading message from segment: {} at lid: {}", seg_start, lid);
     assert!(seg_start + SEG_HEADER_LEN as LogOffset <= lid);
 
-    let msg_header_buf = &mut [0; MAX_MSG_HEADER_LEN];
-    let _read_bytes = pread_exact_or_eof(file, msg_header_buf, lid)?;
+    let msg_header_buf = &mut [0; 128];
+    let _read_bytes = file.pread_exact_or_eof(msg_header_buf, lid)?;
     let header_cursor = &mut msg_header_buf.as_ref();
     let len_before = header_cursor.len();
     let header = MessageHeader::deserialize(header_cursor)?;
@@ -683,7 +749,9 @@ pub(crate) fn read_message(
     let max_possible_len =
         assert_usize(ceiling - lid - message_offset as LogOffset);
 
-    if usize::try_from(header.len).unwrap() > max_possible_len {
+    let header_len = usize::try_from(header.len).unwrap();
+
+    if header_len > max_possible_len {
         trace!(
             "read a corrupted message with impossibly long length {:?}",
             header
@@ -700,8 +768,15 @@ pub(crate) fn read_message(
     }
 
     // perform crc check on everything that isn't Corrupted
-    let mut buf = vec![0; usize::try_from(header.len).unwrap()];
-    pread_exact(file, &mut buf, lid + message_offset as LogOffset)?;
+    let mut buf = vec![0; header_len];
+
+    if header_len > len_after {
+        // we have to read more data from disk
+        file.pread_exact(&mut buf, lid + message_offset as LogOffset)?;
+    } else {
+        // we already read this data in the initial read
+        buf.copy_from_slice(header_cursor[..header_len].as_ref());
+    }
 
     let crc32 = calculate_message_crc32(
         msg_header_buf[..message_offset].as_ref(),

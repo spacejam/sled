@@ -90,7 +90,7 @@ impl IoBufs {
                 (snapshot_last_lsn, snapshot_last_lid)
             } else {
                 let width = match read_message(
-                    file,
+                    &**file,
                     snapshot_last_lid,
                     SegmentNumber(
                         u64::try_from(snapshot_last_lsn).unwrap()
