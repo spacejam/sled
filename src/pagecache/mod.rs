@@ -84,6 +84,10 @@ pub type PageId = u64;
 #[repr(transparent)]
 pub struct BatchManifest(pub Lsn);
 
+/// A buffer with an associated offset. Useful for
+/// batching many reads over a file segment.
+pub struct BasedBuf(pub Vec<u8>, pub u64);
+
 /// A byte used to disambiguate log message types
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]

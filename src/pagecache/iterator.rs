@@ -1,15 +1,16 @@
 use std::{collections::BTreeMap, io};
 
 use super::{
-    read_message, read_segment_header, DiskPtr, LogKind, LogOffset, LogRead,
-    Lsn, SegmentHeader, SegmentNumber, MAX_MSG_HEADER_LEN, SEG_HEADER_LEN,
+    pread_exact_or_eof, read_message, read_segment_header, BasedBuf, DiskPtr,
+    LogKind, LogOffset, LogRead, Lsn, SegmentHeader, SegmentNumber,
+    MAX_MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 use crate::*;
 
 pub struct LogIter {
     pub config: RunningConfig,
     pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogOffset)>>,
-    pub segment_base: Option<LogOffset>,
+    pub segment_base: Option<BasedBuf>,
     pub max_lsn: Lsn,
     pub cur_lsn: Lsn,
 }
@@ -53,13 +54,17 @@ impl Iterator for LogIter {
                 }
             }
 
+            // self.segment_base is `Some` now.
+
             if self.cur_lsn > self.max_lsn {
                 // all done
                 trace!("hit max_lsn {} in iterator, stopping", self.max_lsn);
                 return None;
             }
 
-            let lid = self.segment_base.unwrap()
+            let segment_base = &self.segment_base.as_ref().unwrap();
+
+            let lid = segment_base.1
                 + LogOffset::try_from(
                     self.cur_lsn % self.config.segment_size as Lsn,
                 )
@@ -70,9 +75,12 @@ impl Iterator for LogIter {
                     / u64::try_from(self.config.segment_size).unwrap(),
             );
 
-            let f = &self.config.file;
-
-            match read_message(f, lid, expected_segment_number, &self.config) {
+            match read_message(
+                &**segment_base,
+                lid,
+                expected_segment_number,
+                &self.config,
+            ) {
                 Ok(LogRead::Blob(header, _buf, blob_ptr, inline_len)) => {
                     trace!("read blob flush in LogIter::next");
                     let lsn = self.cur_lsn;
@@ -192,7 +200,13 @@ impl LogIter {
         trace!("read segment header {:?}", segment_header);
 
         self.cur_lsn = segment_header.lsn + SEG_HEADER_LEN as Lsn;
-        self.segment_base = Some(offset);
+
+        let mut buf = vec![0; self.config.segment_size];
+        let size = pread_exact_or_eof(&f, &mut buf, offset)?;
+
+        trace!("setting stored segment buffer length to {} after read", size);
+        buf.truncate(size);
+        self.segment_base = Some(BasedBuf(buf, offset));
 
         Ok(())
     }
