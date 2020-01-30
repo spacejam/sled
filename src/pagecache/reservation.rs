@@ -113,7 +113,7 @@ impl<'a> Reservation<'a> {
         }
 
         let crc32 = calculate_message_crc32(
-            &self.buf[..self.header_len].as_ref(),
+            self.buf[..self.header_len].as_ref(),
             &self.buf[self.header_len..],
         );
         let crc32_arr = u32_to_arr(crc32);
