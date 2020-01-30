@@ -256,8 +256,11 @@ pub(crate) fn maybe_decompress(in_buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     {
         use zstd::stream::decode_all;
 
+        let scootable_in_buf = &mut &*in_buf;
+        let _ivec_varint = u64::deserialize(scootable_in_buf)
+            .expect("this had to be serialized with an extra length frame");
         let _measure = Measure::new(&M.decompress);
-        let out_buf = decode_all(&in_buf[..]).expect(
+        let out_buf = decode_all(scootable_in_buf).expect(
             "failed to decompress data. \
              This is not expected, please open an issue on \
              https://github.com/spacejam/sled so we can \
