@@ -7,7 +7,6 @@ pub mod logger;
 
 mod blob_io;
 mod disk_pointer;
-mod io_uring;
 mod iobuf;
 mod iterator;
 mod pagetable;

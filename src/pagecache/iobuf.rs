@@ -64,7 +64,7 @@ pub(crate) struct IoBufs {
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
     #[cfg(feature = "io_uring")]
-    pub write_uring: Mutex<io_uring::Uring<IoBuf>>,
+    pub io_uring: Mutex<rio::Rio>,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -165,9 +165,6 @@ impl IoBufs {
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
-        #[cfg(feature = "io_uring")]
-        let file = config.file.clone();
-
         Ok(Self {
             config,
 
@@ -183,8 +180,7 @@ impl IoBufs {
             )),
             segment_accountant: Mutex::new(segment_accountant),
             #[cfg(feature = "io_uring")]
-            write_uring: Mutex::new(io_uring::Uring::new(file, 16, 0)?),
-            // TODO: queue and flags configurable
+            io_uring: Mutex::new(rio::new()?),
         })
     }
 
@@ -405,16 +401,41 @@ impl IoBufs {
 
         io_fail!(self, "buffer write");
         #[cfg(feature = "io_uring")]
-        unsafe {
-            let mut mg = self.write_uring.lock();
-            mg.pwrite_all(
-                &mut data[..total_len],
-                iobuf,
-                log_offset,
-                !self.config.temporary,
-            )?;
-            let size = mg.len();
-            mg.wait(size)?;
+        {
+            let mut remaining_len = total_len;
+            let mut data = &data[..remaining_len];
+            let mut offset = log_offset;
+            while remaining_len > 0 {
+                let ring = self.io_uring.lock();
+
+                // using the Link ordering, we specify
+                // that `io_uring` should not begin
+                // the following `sync_file_range`
+                // until the previous write is
+                // complete.
+                let wrote_completion = ring.write_at_ordered(
+                    &*self.config.file,
+                    &data,
+                    offset,
+                    rio::Ordering::Link,
+                );
+
+                let sync_completion = ring.sync_file_range(
+                    &*self.config.file,
+                    offset,
+                    remaining_len,
+                );
+
+                sync_completion.wait()?;
+
+                let wrote = wrote_completion.wait()?;
+
+                drop(ring);
+
+                remaining_len -= wrote;
+                data = &data[wrote..];
+                offset += wrote as u64;
+            }
         }
         #[cfg(not(feature = "io_uring"))]
         {

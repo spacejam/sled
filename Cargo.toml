@@ -32,7 +32,7 @@ no_logs = ["log/max_level_off"]
 no_inline = []
 measure_allocs = []
 pretty_backtrace = ["color-backtrace"]
-io_uring = ["liburing"]
+io_uring = ["rio"]
 
 [dependencies]
 crossbeam-epoch = "0.8.0"
@@ -48,7 +48,7 @@ crc32fast = "1.2.0"
 log = "0.4.8"
 parking_lot = "0.10.0"
 color-backtrace = {version = "0.3.0", optional = true }
-liburing = { version = "0.0.2", optional = true }
+rio = { version = "0.9.2", optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os="windows"))'.dependencies]
 fs2 = "0.4.3"
