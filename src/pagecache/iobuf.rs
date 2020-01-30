@@ -376,7 +376,7 @@ impl IoBufs {
 
             let mut hasher = crc32fast::Hasher::new();
             hasher.update(&padding_bytes);
-            hasher.update(&header_bytes);
+            hasher.update(&header_bytes[4..]);
             let crc32 = hasher.finalize();
             let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
 
@@ -385,9 +385,8 @@ impl IoBufs {
                 std::ptr::copy_nonoverlapping(
                     crc32_arr.as_ptr(),
                     data.as_mut_ptr().add(
-                        // we back up 4 bytes, since the CRC32 is at the very end
-                        bytes_to_write + header_bytes.len()
-                            - std::mem::size_of::<u32>(),
+                        // the crc32 is the first part of the buffer
+                        bytes_to_write,
                     ),
                     std::mem::size_of::<u32>(),
                 );
