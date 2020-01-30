@@ -1,4 +1,15 @@
-# Unreleased
+# 0.31
+
+## Improvements
+
+* #947 dramatic read and recovery optimizations
+* #921 reduced the reliance on locks while
+  performing multithreaded IO on windows.
+* #928 use `sync_file_range` on linux instead
+  of a full fsync for most writes.
+* #946 io_uring support changed to the `rio` crate
+* #939 reduced memory consumption during
+  zstd decompression
 
 ## Breaking Changes
 
@@ -11,13 +22,6 @@
   space reduction. combined with #927, these
   changes reduce bytes written by 68% for workloads
   writing small items.
-
-## Improvements
-
-* #921 reduced the reliance on locks while
-  performing multithreaded IO on windows.
-* #928 use `sync_file_range` on linux instead
-  of a full fsync for most writes.
 
 # 0.30.3
 
