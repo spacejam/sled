@@ -70,6 +70,7 @@
 //!
 //! t.remove(b"yo!");
 //! assert_eq!(t.get(b"yo!"), Ok(None));
+//! # let _ = std::fs::remove_dir_all("my_db");
 //! ```
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png"

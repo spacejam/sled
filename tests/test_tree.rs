@@ -29,6 +29,42 @@ fn kv(i: usize) -> Vec<u8> {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn test_varied_compression_ratios() {
+    // tests for the compression issue reported in #938 by @Mrmaxmeier.
+
+    let low_entropy = vec![0u8; 64 << 10]; // 64k zeroes
+    let high_entropy = {
+        // 64mb random
+        use std::fs::File;
+        use std::io::Read;
+        let mut buf = vec![0u8; 64 << 20];
+        File::open("/dev/urandom").unwrap().read_exact(&mut buf).unwrap();
+        buf
+    };
+
+    let tree = sled::Config::default()
+        .use_compression(true)
+        .path("compression_db_test")
+        .open()
+        .unwrap();
+
+    tree.insert(b"low  entropy", &low_entropy[..]).unwrap();
+    tree.insert(b"high entropy", &high_entropy[..]).unwrap();
+
+    println!("reloading database...");
+    drop(tree);
+    let tree = sled::Config::default()
+        .use_compression(true)
+        .path("compression_db_test")
+        .open()
+        .unwrap();
+    drop(tree);
+
+    let _ = std::fs::remove_dir_all("compression_db_test");
+}
+
+#[test]
 fn concurrent_tree_ops() {
     common::setup_logger();
 
