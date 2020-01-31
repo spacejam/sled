@@ -488,11 +488,11 @@ impl Drop for Log {
 /// All log messages are prepended with this header
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct MessageHeader {
+    pub crc32: u32,
     pub kind: MessageKind,
     pub segment_number: SegmentNumber,
     pub pid: PageId,
     pub len: u64,
-    pub crc32: u32,
 }
 
 /// A number representing a segment number.

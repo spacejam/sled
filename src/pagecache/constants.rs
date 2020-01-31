@@ -1,12 +1,12 @@
 use super::*;
 
-// kind: u8 1
-// pid: u64 8
-// lsn: i64 8
-// len: u64 8
 // crc: u32 4
+// kind: u8 1
+// seg num: u64 9 (varint)
+// pid: u64 9 (varint)
+// len: u64 9 (varint)
 /// Log messages have a header that might eb up to this length.
-pub const MAX_MSG_HEADER_LEN: usize = 29;
+pub const MAX_MSG_HEADER_LEN: usize = 32;
 
 /// Log segments have a header of this length.
 pub const SEG_HEADER_LEN: usize = 20;
