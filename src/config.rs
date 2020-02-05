@@ -478,7 +478,7 @@ impl Config {
         if self.use_compression {
             supported!(
                 cfg!(feature = "compression"),
-                "the compression feature must be enabled"
+                "the 'compression' feature must be enabled"
             );
         }
         supported!(
