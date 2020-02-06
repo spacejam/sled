@@ -498,6 +498,8 @@ impl SegmentAccountant {
             }
 
             let segment_utilization = segment_utilizations[idx];
+
+            #[allow(clippy::cast_precision_loss)]
             M.segment_utilization.measure(segment_utilization as f64);
 
             let segment_lsn = if let Some(lsn) = segment.lsn {
