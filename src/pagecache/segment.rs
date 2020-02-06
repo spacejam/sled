@@ -1187,7 +1187,7 @@ fn segment_is_drainable(
 
     let live_pct = resident_size * 100 / config.segment_size as u64;
 
-    let segment_low_pct = live_pct as usize <= cleanup_threshold;
+    let segment_low_pct = live_pct <= cleanup_threshold as u64;
 
     let segment_low_count =
         len < MINIMUM_ITEMS_PER_SEGMENT * 100 / cleanup_threshold;
