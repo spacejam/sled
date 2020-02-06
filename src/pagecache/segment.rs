@@ -103,7 +103,7 @@ struct Segment {
     not_yet_replaced: FastSet8<PageId>,
     deferred_rm_blob: FastSet8<BlobPointer>,
     // set of pages that we replaced from other segments
-    deferred_replacements: FastSet8<(PageId, SegmentId, u64)>,
+    deferred_replacements: FastMap8<(PageId, SegmentId), u64>,
     lsn: Option<Lsn>,
     state: SegmentState,
 }
@@ -179,7 +179,7 @@ impl Segment {
         lsn: Lsn,
         from_recovery: bool,
         config: &Config,
-    ) -> Result<FastSet8<(PageId, SegmentId, u64)>> {
+    ) -> Result<FastMap8<(PageId, SegmentId), u64>> {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
         assert!(
             self.state == Active || self.state == Draining,
@@ -209,7 +209,7 @@ impl Segment {
         }
 
         let deferred_replacements =
-            mem::replace(&mut self.deferred_replacements, FastSet8::default());
+            mem::replace(&mut self.deferred_replacements, FastMap8::default());
 
         Ok(deferred_replacements)
     }
@@ -300,11 +300,13 @@ impl Segment {
 
     fn defer_replace_pids(
         &mut self,
-        deferred: FastSet8<(PageId, SegmentId, u64)>,
+        deferred: FastMap8<(PageId, SegmentId), u64>,
         lsn: Lsn,
     ) {
         assert!(lsn >= self.lsn());
-        self.deferred_replacements.extend(deferred);
+        for (k, v) in deferred {
+            *self.deferred_replacements.entry(k).or_insert(0) += v;
+        }
     }
 
     fn remove_blob(
@@ -637,7 +639,7 @@ impl SegmentAccountant {
         let schedule_rm_blob = !(old_cache_infos.len() == 1
             && old_cache_infos[0].pointer.is_blob());
 
-        let mut deferred_replacements = FastSet8::default();
+        let mut deferred_replacements = FastMap8::default();
 
         for old_cache_info in old_cache_infos {
             let old_ptr = &old_cache_info.pointer;
@@ -682,11 +684,8 @@ impl SegmentAccountant {
 
             self.segments[old_idx].not_yet_replaced.remove(&pid);
 
-            deferred_replacements.insert((
-                pid,
-                old_idx,
-                old_cache_info.log_size,
-            ));
+            *deferred_replacements.entry((pid, old_idx)).or_insert(0) +=
+                old_cache_info.log_size;
         }
 
         self.segments[new_idx].defer_replace_pids(deferred_replacements, lsn);
@@ -862,7 +861,8 @@ impl SegmentAccountant {
         let idx = self.segment_id(lid);
 
         trace!(
-            "deactivating segment with lsn {}: {:?}",
+            "deactivating segment with lid {} lsn {}: {:?}",
+            lid,
             lsn,
             self.segments[idx]
         );
@@ -875,57 +875,62 @@ impl SegmentAccountant {
 
         let mut old_segments = FastSet8::default();
 
-        for &(pid, old_idx, log_size) in &replacements {
+        for ((pid, old_idx), log_size) in &replacements {
             old_segments.insert(old_idx);
 
-            let old_segment = &mut self.segments[old_idx];
-            old_segment.resident_size -= log_size;
+            let old_segment = &mut self.segments[*old_idx];
+            old_segment.resident_size =
+                old_segment.resident_size.saturating_sub(*log_size);
 
-            assert!(
-                old_segment.state != Active && old_segment.state != Free,
-                "segment {} is processing pid {} replacements for \
-                 old segment {}, which is in the {:?} state. \
-                 all replacements for pid: {:?}",
-                lid,
-                pid,
-                old_idx * self.config.segment_size,
-                old_segment.state,
-                replacements
-                    .iter()
-                    .filter(|(p, _, _)| p == &pid)
-                    .collect::<Vec<_>>()
-            );
+            if !(old_segment.state != Active && old_segment.state != Free) {
+                assert!(
+                    old_segment.state != Active && old_segment.state != Free,
+                    "segment {} is processing pid {} replacements for \
+                    old segment {}, which is in the {:?} state. \
+                    all replacements for pid: {:?}",
+                    lid,
+                    pid,
+                    old_idx * self.config.segment_size,
+                    old_segment.state,
+                    replacements
+                        .iter()
+                        .filter(|((p, _), _)| p == pid)
+                        .collect::<Vec<_>>()
+                );
+            }
 
-            #[cfg(feature = "event_log")]
-            assert!(
-                old_segment.present.contains(&pid),
-                "we expect deferred replacements to provide \
-                 all previous segments so we can clean them. \
-                 pid {} old_ptr segment: {} segments with (offset, state, present): {:?}",
-                pid,
-                old_idx * self.config.segment_size,
-                self.segments
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, s)| {
-                        if s.present.contains(&pid) {
-                            Some((
-                                i * self.config.segment_size,
-                                s.state,
-                                s.present.clone(),
-                            ))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            );
+            assert!(old_segment.lsn() <= lsn);
 
-            old_segment.remove_pid(pid, lsn, false);
+            if !old_segment.present.contains(&pid) {
+                let error = Error::ReportableBug(format!(
+                    "segment {} does not contain pid {}. \
+                    we expect deferred replacements to provide \
+                    all previous segments so we can clean them. \
+                    segments with this pid include (segment \
+                    offset, state): {:?}",
+                    old_idx * self.config.segment_size,
+                    pid,
+                    self.segments
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, s)| {
+                            if s.present.contains(&pid) {
+                                Some((i * self.config.segment_size, s.state))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                ));
+                self.config.set_global_error(error.clone());
+                panic!("{:?}", error);
+            }
+
+            old_segment.remove_pid(*pid, lsn, false);
         }
 
         for old_idx in old_segments {
-            self.possibly_clean_or_free_segment(old_idx, lsn);
+            self.possibly_clean_or_free_segment(*old_idx, lsn);
         }
 
         // if we have a lot of free segments in our whole file,
