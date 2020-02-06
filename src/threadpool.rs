@@ -12,7 +12,12 @@ use crate::{
     debug_delay, warn, AtomicBool, AtomicUsize, Lazy, OneShot, Relaxed, SeqCst,
 };
 
+#[cfg(windows)]
+const MAX_THREADS: usize = 16;
+
+#[cfg(not(windows))]
 const MAX_THREADS: usize = 128;
+
 const MIN_THREADS: usize = 2;
 
 static STANDBY_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
