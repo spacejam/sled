@@ -939,21 +939,10 @@ impl PageCache {
 
                     assert_ne!(previous_head_lsn, 0);
 
-                    let previous_lsn_segment =
-                        previous_head_lsn / self.config.segment_size as i64;
-                    let new_lsn_segment = lsn / self.config.segment_size as i64;
-
-                    let to_clean = if previous_lsn_segment == new_lsn_segment {
-                        // can skip mark_link because we've
-                        // already accounted for this page
-                        // being resident on this segment
-                        self.log.with_sa(|sa| sa.clean(Some(pid)))
-                    } else {
-                        self.log.with_sa(|sa| {
-                            sa.mark_link(pid, lsn, pointer);
-                            sa.clean(Some(pid))
-                        })
-                    };
+                    let to_clean = self.log.with_sa(|sa| {
+                        sa.mark_link(pid, cache_info);
+                        sa.clean(Some(pid))
+                    });
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
@@ -1142,11 +1131,13 @@ impl PageCache {
 
                 let lsn = log_reservation.lsn();
 
-                let old_pointers =
-                    page_view.cache_infos.iter().map(|ci| ci.pointer).collect();
-
                 self.log.with_sa(|sa| {
-                    sa.mark_replace(pid, lsn, old_pointers, cache_entry.pointer)
+                    sa.mark_replace(
+                        pid,
+                        lsn,
+                        page_view.cache_infos.clone(),
+                        cache_entry,
+                    )
                 })?;
 
                 // NB complete must happen AFTER calls to SA, because
@@ -1339,11 +1330,13 @@ impl PageCache {
                     }
 
                     trace!("cas_page succeeded on pid {}", pid);
-                    let pointers =
-                        old.cache_infos.iter().map(|ci| ci.pointer).collect();
-
                     self.log.with_sa(|sa| {
-                        sa.mark_replace(pid, lsn, pointers, new_pointer)
+                        sa.mark_replace(
+                            pid,
+                            lsn,
+                            old.cache_infos.clone(),
+                            cache_info,
+                        )
                     })?;
 
                     // NB complete must happen AFTER calls to SA, because
