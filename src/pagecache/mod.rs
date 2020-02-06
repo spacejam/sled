@@ -933,11 +933,7 @@ impl PageCache {
                         guard.defer_destroy(old.read);
                     }
 
-                    // if the last update for this page was also
-                    // sent to this segment, we can skip marking it
-                    let previous_head_lsn = old.last_lsn();
-
-                    assert_ne!(previous_head_lsn, 0);
+                    assert_ne!(old.last_lsn(), 0);
 
                     let to_clean = self.log.with_sa(|sa| {
                         sa.mark_link(pid, cache_info);
@@ -1103,7 +1099,7 @@ impl PageCache {
             let log_reservation =
                 self.log.rewrite_blob_pointer(pid, blob_pointer)?;
 
-            let cache_entry = CacheInfo {
+            let cache_info = CacheInfo {
                 ts: page_view.ts(),
                 lsn: log_reservation.lsn,
                 pointer: log_reservation.pointer,
@@ -1113,7 +1109,7 @@ impl PageCache {
 
             let new_page = Owned::new(Page {
                 update: page_view.update.clone(),
-                cache_infos: vec![cache_entry],
+                cache_infos: vec![cache_info],
             });
 
             debug_delay();
@@ -1136,7 +1132,7 @@ impl PageCache {
                         pid,
                         lsn,
                         page_view.cache_infos.clone(),
-                        cache_entry,
+                        cache_info,
                     )
                 })?;
 

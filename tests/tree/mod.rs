@@ -195,6 +195,25 @@ pub fn prop_tree_matches_btreemap(
     flusher: bool,
     use_compression: bool,
 ) -> bool {
+    if let Err(e) = prop_tree_matches_btreemap_inner(
+        ops,
+        snapshot_after,
+        flusher,
+        use_compression,
+    ) {
+        eprintln!("hit error while running quickcheck on tree: {:?}", e);
+        false
+    } else {
+        true
+    }
+}
+
+fn prop_tree_matches_btreemap_inner(
+    ops: Vec<Op>,
+    snapshot_after: u8,
+    flusher: bool,
+    use_compression: bool,
+) -> Result<()> {
     use self::*;
 
     super::common::setup_logger();
@@ -344,6 +363,10 @@ pub fn prop_tree_matches_btreemap(
                 tree.set_merge_operator(test_merge_operator);
             }
         }
+        if let Err(e) = config.global_error() {
+            eprintln!("quickcheck test encountered error: {:?}", e);
+            return Err(e);
+        }
     }
 
     let space_amplification = tree
@@ -358,7 +381,8 @@ pub fn prop_tree_matches_btreemap(
         MAX_SPACE_AMPLIFICATION
     );
 
-    true
+    drop(tree);
+    config.global_error()
 }
 
 #[test]
