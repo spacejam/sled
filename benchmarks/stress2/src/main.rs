@@ -131,10 +131,9 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
             thread_rng().gen::<usize>()
         } % args.flag_entries;
 
-        let i_bytes: [u8; std::mem::size_of::<usize>()] =
-            unsafe { std::mem::transmute(i) };
+        let i_bytes = i.to_be_bytes();
 
-        i_bytes.iter().cycle().take(len).cloned().collect()
+        i_bytes.iter().cycle().take(len).copied().collect()
     };
     let mut rng = thread_rng();
 
