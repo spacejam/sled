@@ -360,6 +360,7 @@ impl SegmentAccountant {
         config: RunningConfig,
         snapshot: &Snapshot,
     ) -> Result<Self> {
+        let _measure = Measure::new(&M.start_segment_accountant);
         let mut ret = Self {
             config,
             segments: vec![],
@@ -408,7 +409,7 @@ impl SegmentAccountant {
 
         // generate segments from snapshot lids
         let mut segments = vec![Segment::default(); number_of_segments];
-        let mut segment_sizes = vec![0_u64; number_of_segments];
+        let mut segment_utilizations = vec![0_u64; number_of_segments];
 
         let mut add = |pid,
                        lsn,
@@ -417,16 +418,17 @@ impl SegmentAccountant {
                        segments: &mut Vec<Segment>| {
             let idx = assert_usize(lid / segment_size as LogOffset);
             trace!(
-                "adding lsn: {} lid: {} for pid {} to segment {} during SA recovery",
+                "adding lsn: {} lid: {} sz: {} for pid {} to segment {} during SA recovery",
                 lsn,
                 lid,
+                sz,
                 pid,
                 idx
             );
             let segment_lsn = lsn / segment_size as Lsn * segment_size as Lsn;
             segments[idx].recovery_ensure_initialized(segment_lsn);
             segments[idx].insert_pid(pid, segment_lsn);
-            segment_sizes[idx] += sz;
+            segment_utilizations[idx] += sz;
         };
 
         for (pid, state) in &snapshot.pt {
@@ -448,12 +450,13 @@ impl SegmentAccountant {
             }
         }
 
-        Ok((segments, segment_sizes))
+        Ok((segments, segment_utilizations))
     }
 
     fn initialize_from_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let segment_size = self.config.segment_size;
-        let (mut segments, segment_sizes) = self.initial_segments(snapshot)?;
+        let (mut segments, segment_utilizations) =
+            self.initial_segments(snapshot)?;
 
         let currently_active_segment = {
             // this logic allows us to free the last
@@ -494,6 +497,9 @@ impl SegmentAccountant {
                 );
             }
 
+            let segment_utilization = segment_utilizations[idx];
+            M.segment_utilization.measure(segment_utilization as f64);
+
             let segment_lsn = if let Some(lsn) = segment.lsn {
                 lsn
             } else {
@@ -509,7 +515,7 @@ impl SegmentAccountant {
                 && segment_lsn + segment_size as Lsn
                     <= snapshot.max_header_stable_lsn
             {
-                if segment_sizes[idx] == 0 {
+                if segment_utilization == 0 {
                     // can free
                     trace!(
                         "freeing segment with lid {} during SA initialization",
@@ -521,12 +527,12 @@ impl SegmentAccountant {
                         segment.state = Free;
                         self.free_segment(segment_base, true);
                     }
-                } else if segment_sizes[idx] <= drain_sz {
+                } else if segment_utilization <= drain_sz {
                     trace!(
                         "SA draining segment at {} during startup \
                          with size {} being < drain size of {}",
                         segment_base,
-                        segment_sizes[idx],
+                        segment_utilizations[idx],
                         drain_sz
                     );
                     segment.state = Draining;

@@ -71,6 +71,7 @@ impl Snapshot {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
         trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
+        let _measure = Measure::new(&M.snapshot_apply);
 
         match log_kind {
             LogKind::Replace => {

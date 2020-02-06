@@ -537,6 +537,8 @@ impl PageCache {
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
 
+        let _measure = Measure::new(&M.start_pagecache);
+
         let cache_capacity = config.cache_capacity;
         let lru = Lru::new(cache_capacity);
 
