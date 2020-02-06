@@ -901,7 +901,7 @@ impl SegmentAccountant {
 
             assert!(old_segment.lsn() <= lsn);
 
-            if !old_segment.present.contains(&pid) {
+            if !old_segment.present.contains(pid) {
                 let error = Error::ReportableBug(format!(
                     "segment {} does not contain pid {}. \
                     we expect deferred replacements to provide \
@@ -914,7 +914,7 @@ impl SegmentAccountant {
                         .iter()
                         .enumerate()
                         .filter_map(|(i, s)| {
-                            if s.present.contains(&pid) {
+                            if s.present.contains(pid) {
                                 Some((i * self.config.segment_size, s.state))
                             } else {
                                 None
