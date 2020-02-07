@@ -214,7 +214,11 @@ fn test_crash_recovery_with_runtime_snapshot() {
     for _ in 0..N_TESTS {
         let mut child = run_child_process(RECOVERY_WITH_SNAPSHOT);
 
-        child.wait().map(|status| handle_child_exit_status(dir, status));
+        child
+            .wait()
+            .map(|status| handle_child_exit_status(dir, status))
+            .map_err(|e| handle_child_wait_err(dir, e))
+            .unwrap();
     }
 
     cleanup(dir);
