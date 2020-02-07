@@ -234,7 +234,8 @@ fn test_crash_recovery_no_runtime_snapshot() {
         child
             .wait()
             .map(|status| handle_child_exit_status(dir, status))
-            .map_err(|e| handle_child_wait_err(dir, e));
+            .map_err(|e| handle_child_wait_err(dir, e))
+            .unwrap();
     }
 
     cleanup(dir);
