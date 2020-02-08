@@ -439,7 +439,7 @@ impl Config {
         (cache_capacity, u64, "maximum size in bytes for the system page cache"),
         (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
         (use_compression, bool, "whether to use zstd compression"),
-        (compression_factor, i32, "the compression factor to use with zstd compression"),
+        (compression_factor, i32, "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."),
         (snapshot_after_ops, u64, "number of operations between page table snapshots"),
         (segment_cleanup_threshold, u8, "the proportion of remaining valid pages in the segment before GC defragments it"),
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
@@ -478,7 +478,7 @@ impl Config {
         if self.use_compression {
             supported!(
                 cfg!(feature = "compression"),
-                "the compression feature must be enabled"
+                "the 'compression' feature must be enabled"
             );
         }
         supported!(
