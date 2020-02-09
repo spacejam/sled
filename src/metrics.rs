@@ -119,7 +119,6 @@ pub struct Metrics {
     pub decompress: Histogram,
     pub make_stable: Histogram,
     pub assign_offset: Histogram,
-    pub assign_spinloop: Histogram,
     pub reserve_lat: Histogram,
     pub reserve_sz: Histogram,
     pub write_to_log: Histogram,
@@ -309,7 +308,6 @@ impl Metrics {
             lat("write", &self.write_to_log),
             sz("written bytes", &self.written_bytes),
             lat("assign offset", &self.assign_offset),
-            lat("assign spinloop", &self.assign_spinloop),
             lat("reserve lat", &self.reserve_lat),
             sz("reserve sz", &self.reserve_sz),
         ]);
