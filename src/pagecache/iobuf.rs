@@ -234,10 +234,10 @@ impl IoBufs {
         guard: &Guard,
     ) -> Result<()> {
         self.with_sa(|sa| {
-            sa.stabilize(lsn)?;
             for op in self.deferred_segment_ops.take_iter(guard) {
                 sa.apply_op(op)?;
             }
+            sa.stabilize(lsn)?;
             Ok(())
         })
     }
