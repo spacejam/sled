@@ -285,7 +285,7 @@ use {
         io::{Read, Write},
         sync::{
             atomic::{
-                AtomicBool, AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
+                AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
                 Ordering::{Acquire, Relaxed, Release, SeqCst},
             },
             Arc,
