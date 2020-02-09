@@ -111,7 +111,6 @@ pub struct Metrics {
     pub rewrite_page: Histogram,
     pub replace_page: Histogram,
     pub link_page: Histogram,
-    pub merge_page: Histogram,
     pub page_out: Histogram,
     pub pull: Histogram,
     pub serialize: Histogram,
@@ -123,8 +122,6 @@ pub struct Metrics {
     pub assign_spinloop: Histogram,
     pub reserve_lat: Histogram,
     pub reserve_sz: Histogram,
-    pub reserve_current_condvar_wait: Histogram,
-    pub reserve_written_condvar_wait: Histogram,
     pub write_to_log: Histogram,
     pub written_bytes: Histogram,
     pub read: Histogram,
@@ -251,7 +248,6 @@ impl Metrics {
 
         println!("tree:");
         p(vec![
-            lat("start", &self.tree_start),
             lat("traverse", &self.tree_traverse),
             lat("get", &self.tree_get),
             lat("set", &self.tree_set),
@@ -262,8 +258,7 @@ impl Metrics {
             lat("rev scan", &self.tree_reverse_scan),
         ]);
         let total_loops = self.tree_loops.load(Acquire);
-        let total_ops = self.tree_start.count()
-            + self.tree_get.count()
+        let total_ops = self.tree_get.count()
             + self.tree_set.count()
             + self.tree_merge.count()
             + self.tree_del.count()
@@ -290,7 +285,6 @@ impl Metrics {
             lat("rewrite", &self.rewrite_page),
             lat("replace", &self.replace_page),
             lat("link", &self.link_page),
-            lat("merge", &self.merge_page),
             lat("pull", &self.pull),
             lat("page_out", &self.page_out),
         ]);
@@ -315,8 +309,6 @@ impl Metrics {
             lat("assign spinloop", &self.assign_spinloop),
             lat("reserve lat", &self.reserve_lat),
             sz("reserve sz", &self.reserve_sz),
-            lat("res cvar r", &self.reserve_current_condvar_wait),
-            lat("res cvar w", &self.reserve_written_condvar_wait),
         ]);
         println!("log reservations: {}", self.log_reservations.load(Acquire));
         println!(
@@ -337,6 +329,7 @@ impl Metrics {
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("recovery:");
         p(vec![
+            lat("start", &self.tree_start),
             lat("advance snapshot", &self.advance_snapshot),
             lat("load SA", &self.start_segment_accountant),
             lat("load PC", &self.start_pagecache),
