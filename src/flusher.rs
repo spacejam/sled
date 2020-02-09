@@ -82,10 +82,12 @@ fn run(
             }
             Ok(_) => {
                 wrote_data = true;
-                // at some point, we may want to
-                // put adaptive logic here to tune
-                // sleeps based on how much work
-                // we accomplished
+                if !shutdown.is_running() {
+                    // loop right away if we're in
+                    // shutdown mode, to flush data
+                    // more quickly.
+                    continue;
+                }
             }
             Err(e) => {
                 error!("failed to flush from periodic flush thread: {}", e);
@@ -147,7 +149,11 @@ fn run(
             .checked_sub(before.elapsed())
             .unwrap_or_else(|| Duration::from_millis(1));
 
-        let _ = sc.wait_for(&mut shutdown, sleep_duration);
+        if shutdown.is_running() {
+            // only sleep if we have not yet entered the
+            // shutdown state yet.
+            sc.wait_for(&mut shutdown, sleep_duration);
+        }
     }
     *shutdown = ShutdownState::ShutDown;
 
