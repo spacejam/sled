@@ -162,16 +162,6 @@ macro_rules! maybe_fail {
     };
 }
 
-macro_rules! once {
-    ($args:block) => {
-        static E: AtomicBool = AtomicBool::new(false);
-        if !E.compare_and_swap(false, true, Relaxed) {
-            // only execute this once
-            $args;
-        }
-    };
-}
-
 mod batch;
 mod binary_search;
 mod config;
@@ -210,12 +200,7 @@ mod threadpool {
         R: Send + 'static,
     {
         let (promise_filler, promise) = OneShot::pair();
-        let task = move || {
-            let result = (work)();
-            promise_filler.fill(result);
-        };
-
-        (task)();
+        promise_filler.fill((work)());
         return promise;
     }
 }
@@ -300,7 +285,7 @@ use {
         io::{Read, Write},
         sync::{
             atomic::{
-                AtomicBool, AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
+                AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
                 Ordering::{Acquire, Relaxed, Release, SeqCst},
             },
             Arc,

@@ -875,7 +875,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             }
         });
 
-        #[cfg(test)]
+        #[cfg(features = "event_log")]
         _result.unwrap();
 
         Ok(())
