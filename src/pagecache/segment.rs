@@ -102,6 +102,9 @@ pub(crate) struct SegmentAccountant {
     async_truncations: BTreeMap<LogOffset, OneShot<Result<()>>>,
 }
 
+#[derive(Default, Clone, Debug, PartialEq)]
+struct SegmentReplacements(FastMap8<SegmentId, (u64, FastSet8<PageId>)>);
+
 /// A `Segment` holds the bookkeeping information for
 /// a contiguous block of the disk. It may contain many
 /// fragments from different pages. Over time, we track
@@ -118,7 +121,7 @@ struct Segment {
     not_yet_replaced: FastSet8<PageId>,
     deferred_rm_blob: FastSet8<BlobPointer>,
     // set of pages that we replaced from other segments
-    deferred_replacements: FastMap8<(PageId, SegmentId), u64>,
+    deferred_replacements: SegmentReplacements,
     lsn: Option<Lsn>,
     state: SegmentState,
 }
@@ -181,7 +184,7 @@ impl Segment {
         self.present.clear();
         self.not_yet_replaced.clear();
         self.deferred_rm_blob.clear();
-        self.deferred_replacements.clear();
+        self.deferred_replacements.0.clear();
         self.lsn = Some(new_lsn);
         self.state = Active;
     }
@@ -194,7 +197,7 @@ impl Segment {
         lsn: Lsn,
         from_recovery: bool,
         config: &Config,
-    ) -> Result<FastMap8<(PageId, SegmentId), u64>> {
+    ) -> Result<SegmentReplacements> {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
         assert!(
             self.state == Active || self.state == Draining,
@@ -223,8 +226,10 @@ impl Segment {
             remove_blob(ptr, config)?;
         }
 
-        let deferred_replacements =
-            mem::replace(&mut self.deferred_replacements, FastMap8::default());
+        let deferred_replacements = mem::replace(
+            &mut self.deferred_replacements,
+            SegmentReplacements::default(),
+        );
 
         Ok(deferred_replacements)
     }
@@ -313,14 +318,18 @@ impl Segment {
         }
     }
 
-    fn defer_replace_pids(
-        &mut self,
-        deferred: FastMap8<(PageId, SegmentId), u64>,
-        lsn: Lsn,
-    ) {
+    fn defer_replace_pids(&mut self, deferred: SegmentReplacements, lsn: Lsn) {
         assert!(lsn >= self.lsn());
-        for (k, v) in deferred {
-            *self.deferred_replacements.entry(k).or_insert(0) += v;
+        for (sid, (log_size, pids)) in deferred.0 {
+            let mut entry = self
+                .deferred_replacements
+                .0
+                .entry(sid)
+                .or_insert((0, FastSet8::default()));
+            entry.0 += log_size;
+            for pid in pids {
+                entry.1.insert(pid);
+            }
         }
     }
 
@@ -665,7 +674,7 @@ impl SegmentAccountant {
         let schedule_rm_blob = !(old_cache_infos.len() == 1
             && old_cache_infos[0].pointer.is_blob());
 
-        let mut deferred_replacements = FastMap8::default();
+        let mut deferred_replacements = SegmentReplacements::default();
 
         for old_cache_info in old_cache_infos {
             let old_ptr = &old_cache_info.pointer;
@@ -710,8 +719,11 @@ impl SegmentAccountant {
 
             self.segments[old_idx].not_yet_replaced.remove(&pid);
 
-            *deferred_replacements.entry((pid, old_idx)).or_insert(0) +=
-                old_cache_info.log_size;
+            let mut entry = deferred_replacements
+                .0
+                .entry(old_idx)
+                .or_insert((0, FastSet8::default()));
+            entry.0 += old_cache_info.log_size;
         }
 
         self.segments[new_idx].defer_replace_pids(deferred_replacements, lsn);
@@ -901,7 +913,7 @@ impl SegmentAccountant {
 
         let mut old_segments = FastSet8::default();
 
-        for ((pid, old_idx), log_size) in &replacements {
+        for (old_idx, (log_size, pids)) in &replacements.0 {
             old_segments.insert(old_idx);
 
             let old_segment = &mut self.segments[*old_idx];
@@ -911,48 +923,48 @@ impl SegmentAccountant {
             if !(old_segment.state != Active && old_segment.state != Free) {
                 assert!(
                     old_segment.state != Active && old_segment.state != Free,
-                    "segment {} is processing pid {} replacements for \
-                    old segment {}, which is in the {:?} state. \
-                    all replacements for pid: {:?}",
+                    "segment {} is processing pids {:?} replacements for \
+                    old segment {}, which is in the {:?} state.",
                     lid,
-                    pid,
+                    pids,
                     old_idx * self.config.segment_size,
                     old_segment.state,
-                    replacements
-                        .iter()
-                        .filter(|((p, _), _)| p == pid)
-                        .collect::<Vec<_>>()
                 );
             }
 
             assert!(old_segment.lsn() <= lsn);
 
-            if !old_segment.present.contains(pid) {
-                let error = Error::ReportableBug(format!(
-                    "segment {} does not contain pid {}. \
+            for pid in pids {
+                if !old_segment.present.contains(pid) {
+                    let error = Error::ReportableBug(format!(
+                        "segment {} does not contain pid {}. \
                     we expect deferred replacements to provide \
                     all previous segments so we can clean them. \
                     segments with this pid include (segment \
                     offset, state): {:?}",
-                    old_idx * self.config.segment_size,
-                    pid,
-                    self.segments
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, s)| {
-                            if s.present.contains(pid) {
-                                Some((i * self.config.segment_size, s.state))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                ));
-                self.config.set_global_error(error.clone());
-                panic!("{:?}", error);
-            }
+                        old_idx * self.config.segment_size,
+                        pid,
+                        self.segments
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, s)| {
+                                if s.present.contains(pid) {
+                                    Some((
+                                        i * self.config.segment_size,
+                                        s.state,
+                                    ))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    ));
+                    self.config.set_global_error(error.clone());
+                    panic!("{:?}", error);
+                }
 
-            old_segment.remove_pid(*pid, lsn, false);
+                old_segment.remove_pid(*pid, lsn, false);
+            }
         }
 
         for old_idx in old_segments {
