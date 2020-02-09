@@ -261,7 +261,17 @@ impl Metrics {
             lat("scan", &self.tree_scan),
             lat("rev scan", &self.tree_reverse_scan),
         ]);
-        println!("tree contention loops: {}", self.tree_loops.load(Acquire));
+        let total_loops = self.tree_loops.load(Acquire);
+        let total_ops = self.tree_start.count()
+            + self.tree_get.count()
+            + self.tree_set.count()
+            + self.tree_merge.count()
+            + self.tree_del.count()
+            + self.tree_cas.count()
+            + self.tree_scan.count()
+            + self.tree_reverse_scan.count();
+        let loop_pct = total_loops * 100 / total_ops;
+        println!("tree contention loops: {} ({}%)", total_loops, loop_pct);
         println!(
             "tree split success rates: child({}/{}) parent({}/{}) root({}/{})",
             self.tree_child_split_success.load(Acquire),
