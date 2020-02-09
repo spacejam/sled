@@ -18,6 +18,16 @@ const MIN_THREADS: usize = 2;
 static STANDBY_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+macro_rules! once {
+    ($args:block) => {
+        static E: AtomicBool = AtomicBool::new(false);
+        if !E.compare_and_swap(false, true, Relaxed) {
+            // only execute this once
+            $args;
+        }
+    };
+}
+
 type Work = Box<dyn FnOnce() + Send + 'static>;
 
 struct Queue {
