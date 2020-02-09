@@ -296,7 +296,9 @@ impl Metrics {
         p(vec![
             lat("serialize", &self.serialize),
             lat("deserialize", &self.deserialize),
+            #[cfg(feature = "compression")]
             lat("compress", &self.compress),
+            #[cfg(feature = "compression")]
             lat("decompress", &self.decompress),
         ]);
 

@@ -307,15 +307,20 @@ impl IoBufs {
         // the slice forward without doing anything
         // to the argument
         let out_buf_ref: &mut &mut [u8] = &mut out_buf;
-        header.serialize_into(out_buf_ref);
+        {
+            let _ = Measure::new(&M.serialize);
+            header.serialize_into(out_buf_ref);
+        }
 
         if let Some(blob_id) = blob_id {
             // write blob to file
             io_fail!(self, "blob blob write");
             write_blob(&self.config, header.kind, blob_id, item)?;
 
+            let _ = Measure::new(&M.serialize);
             blob_id.serialize_into(out_buf_ref);
         } else {
+            let _ = Measure::new(&M.serialize);
             item.serialize_into(out_buf_ref);
         };
 
