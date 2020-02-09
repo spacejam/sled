@@ -55,6 +55,7 @@ impl Iterator for LogIter {
             }
 
             // self.segment_base is `Some` now.
+            let _measure = Measure::new(&M.read_segment_message);
 
             if self.cur_lsn > self.max_lsn {
                 // all done
@@ -161,6 +162,7 @@ impl LogIter {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
     fn read_segment(&mut self, lsn: Lsn, offset: LogOffset) -> Result<()> {
+        let _measure = Measure::new(&M.segment_read);
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,

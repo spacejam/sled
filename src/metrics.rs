@@ -86,6 +86,12 @@ impl<'h> Drop for Measure<'h> {
 #[derive(Default, Debug)]
 pub struct Metrics {
     pub advance_snapshot: Histogram,
+    pub start_segment_accountant: Histogram,
+    pub start_pagecache: Histogram,
+    pub snapshot_apply: Histogram,
+    pub segment_read: Histogram,
+    pub segment_utilization: Histogram,
+    pub read_segment_message: Histogram,
     pub tree_set: Histogram,
     pub tree_get: Histogram,
     pub tree_del: Histogram,
@@ -186,7 +192,7 @@ impl Metrics {
 
     pub fn print_profile(&self) {
         println!(
-            "pagecache profile:\n\
+            "sled profile:\n\
              {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}",
             "op",
             "min (us)",
@@ -316,6 +322,18 @@ impl Metrics {
             lat("next", &self.accountant_next),
             lat("replace", &self.accountant_mark_replace),
             lat("link", &self.accountant_mark_link),
+        ]);
+
+        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
+        println!("recovery:");
+        p(vec![
+            lat("advance snapshot", &self.advance_snapshot),
+            lat("load SA", &self.start_segment_accountant),
+            lat("load PC", &self.start_pagecache),
+            lat("snap apply", &self.snapshot_apply),
+            lat("segment read", &self.segment_read),
+            lat("log message read", &self.read_segment_message),
+            sz("segment util", &self.segment_utilization),
         ]);
 
         #[cfg(feature = "measure_allocs")]
