@@ -266,7 +266,10 @@ impl Metrics {
             + self.tree_scan.count()
             + self.tree_reverse_scan.count();
         let loop_pct = total_loops * 100 / total_ops;
-        println!("tree contention loops: {} ({}%)", total_loops, loop_pct);
+        println!(
+            "tree contention loops: {} ({}% retry rate)",
+            total_loops, loop_pct
+        );
         println!(
             "tree split success rates: child({}/{}) parent({}/{}) root({}/{})",
             self.tree_child_split_success.load(Acquire),
@@ -310,10 +313,16 @@ impl Metrics {
             lat("reserve lat", &self.reserve_lat),
             sz("reserve sz", &self.reserve_sz),
         ]);
-        println!("log reservations: {}", self.log_reservations.load(Acquire));
+        let log_reservations = self.log_reservations.load(Acquire);
+        let log_reservation_attempts =
+            self.log_reservation_attempts.load(Acquire);
+        let log_reservation_retry_rate =
+            (log_reservation_attempts - log_reservations) * 100
+                / log_reservations;
+        println!("log reservations: {}", log_reservations);
         println!(
-            "log res attempts: {}",
-            self.log_reservation_attempts.load(Acquire)
+            "log res attempts: {}, ({}% retry rate)",
+            log_reservation_attempts, log_reservation_retry_rate,
         );
 
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
