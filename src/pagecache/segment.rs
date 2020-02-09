@@ -63,6 +63,21 @@ use super::PageState;
 use crate::pagecache::*;
 use crate::*;
 
+/// A operation that can be applied asynchronously.
+#[derive(Debug)]
+pub(crate) enum SegmentOp {
+    Link {
+        pid: PageId,
+        cache_info: CacheInfo,
+    },
+    Replace {
+        pid: PageId,
+        lsn: Lsn,
+        old_cache_infos: Vec<CacheInfo>,
+        new_cache_info: CacheInfo,
+    },
+}
+
 /// The segment accountant keeps track of the logical blocks
 /// of storage. It scans through all segments quickly during
 /// recovery and attempts to locate torn segments.
@@ -603,6 +618,17 @@ impl SegmentAccountant {
         }
     }
 
+    pub(super) fn apply_op(&mut self, op: &SegmentOp) -> Result<()> {
+        use SegmentOp::*;
+        match op {
+            Link { pid, cache_info } => self.mark_link(*pid, *cache_info),
+            Replace { pid, lsn, old_cache_infos, new_cache_info } => {
+                self.mark_replace(*pid, *lsn, old_cache_infos, *new_cache_info)?
+            }
+        }
+        Ok(())
+    }
+
     /// Called by the `PageCache` when a page has been rewritten completely.
     /// We mark all of the old segments that contained the previous state
     /// from the page, and if the old segments are empty or clear enough to
@@ -611,7 +637,7 @@ impl SegmentAccountant {
         &mut self,
         pid: PageId,
         lsn: Lsn,
-        old_cache_infos: Vec<CacheInfo>,
+        old_cache_infos: &[CacheInfo],
         new_cache_info: CacheInfo,
     ) -> Result<()> {
         let _measure = Measure::new(&M.accountant_mark_replace);

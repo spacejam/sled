@@ -63,6 +63,7 @@ pub(crate) struct IoBufs {
     pub max_reserved_lsn: AtomicLsn,
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
+    deferred_segment_ops: stack::Stack<SegmentOp>,
     #[cfg(feature = "io_uring")]
     pub submission_mutex: Mutex<()>,
     #[cfg(feature = "io_uring")]
@@ -181,10 +182,63 @@ impl IoBufs {
                 snapshot_max_header_stable_lsn,
             )),
             segment_accountant: Mutex::new(segment_accountant),
+            deferred_segment_ops: stack::Stack::default(),
             #[cfg(feature = "io_uring")]
             submission_mutex: Mutex::new(()),
             #[cfg(feature = "io_uring")]
             io_uring: rio::new()?,
+        })
+    }
+
+    pub(in crate::pagecache) fn sa_mark_link(
+        &self,
+        pid: PageId,
+        cache_info: CacheInfo,
+        guard: &Guard,
+    ) {
+        let op = SegmentOp::Link { pid, cache_info };
+        self.deferred_segment_ops.push(op, guard);
+    }
+
+    pub(in crate::pagecache) fn sa_mark_replace(
+        &self,
+        pid: PageId,
+        lsn: Lsn,
+        old_cache_infos: &[CacheInfo],
+        new_cache_info: CacheInfo,
+        guard: &Guard,
+    ) -> Result<()> {
+        debug_delay();
+        if let Some(mut sa) = self.segment_accountant.try_lock() {
+            let start = clock();
+            sa.mark_replace(pid, lsn, old_cache_infos, new_cache_info)?;
+            for op in self.deferred_segment_ops.take_iter(guard) {
+                sa.apply_op(op)?;
+            }
+            M.accountant_hold.measure(clock() - start);
+        } else {
+            let op = SegmentOp::Replace {
+                pid,
+                lsn,
+                old_cache_infos: old_cache_infos.to_vec(),
+                new_cache_info,
+            };
+            self.deferred_segment_ops.push(op, guard);
+        }
+        Ok(())
+    }
+
+    pub(in crate::pagecache) fn sa_stabilize(
+        &self,
+        lsn: Lsn,
+        guard: &Guard,
+    ) -> Result<()> {
+        self.with_sa(|sa| {
+            sa.stabilize(lsn)?;
+            for op in self.deferred_segment_ops.take_iter(guard) {
+                sa.apply_op(op)?;
+            }
+            Ok(())
         })
     }
 
@@ -209,29 +263,6 @@ impl IoBufs {
         M.accountant_hold.measure(clock() - locked_at);
 
         ret
-    }
-
-    /// `SegmentAccountant` access for coordination with the `PageCache`
-    pub(in crate::pagecache) fn try_with_sa<B, F>(&self, f: F) -> Option<B>
-    where
-        F: FnOnce(&mut SegmentAccountant) -> B,
-    {
-        let start = clock();
-
-        debug_delay();
-        let mut sa = self.segment_accountant.try_lock()?;
-
-        let locked_at = clock();
-
-        M.accountant_lock.measure(locked_at - start);
-
-        let ret = f(&mut sa);
-
-        drop(sa);
-
-        M.accountant_hold.measure(clock() - locked_at);
-
-        Some(ret)
     }
 
     /// Return an iterator over the log, starting with
@@ -515,20 +546,13 @@ impl IoBufs {
             trace!("bumping atomic header lsn to {}", stored_max_stable_lsn);
             bump_atomic_lsn(&max_header_stable_lsn, stored_max_stable_lsn)
         });
+
         guard.flush();
-        drop(guard);
 
         let current_max_header_stable_lsn =
             self.max_header_stable_lsn.load(SeqCst);
 
-        // TODO make SA lock-free so we don't have to defer this occasionally
-        if let Some(ret) =
-            self.try_with_sa(|sa| sa.stabilize(current_max_header_stable_lsn))
-        {
-            ret
-        } else {
-            Ok(())
-        }
+        self.sa_stabilize(current_max_header_stable_lsn, &guard)
     }
 
     // It's possible that IO buffers are written out of order!

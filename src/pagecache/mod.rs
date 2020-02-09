@@ -40,7 +40,7 @@ use self::{
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
-    segment::SegmentAccountant,
+    segment::{SegmentAccountant, SegmentOp},
     snapshot::advance_snapshot,
 };
 
@@ -935,10 +935,7 @@ impl PageCache {
 
                     assert_ne!(old.last_lsn(), 0);
 
-                    let to_clean = self.log.with_sa(|sa| {
-                        sa.mark_link(pid, cache_info);
-                        sa.clean(Some(pid))
-                    });
+                    self.log.iobufs.sa_mark_link(pid, cache_info, guard);
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
@@ -959,10 +956,6 @@ impl PageCache {
                     );
                     if !to_evict.is_empty() {
                         self.page_out(to_evict, guard)?;
-                    }
-
-                    if let Some(to_clean) = to_clean {
-                        self.rewrite_page(to_clean, guard)?;
                     }
 
                     let count = self.updates.fetch_add(1, Relaxed) + 1;
@@ -1127,14 +1120,13 @@ impl PageCache {
 
                 let lsn = log_reservation.lsn();
 
-                self.log.with_sa(|sa| {
-                    sa.mark_replace(
-                        pid,
-                        lsn,
-                        page_view.cache_infos.clone(),
-                        cache_info,
-                    )
-                })?;
+                self.log.iobufs.sa_mark_replace(
+                    pid,
+                    lsn,
+                    &page_view.cache_infos,
+                    cache_info,
+                    guard,
+                )?;
 
                 // NB complete must happen AFTER calls to SA, because
                 // when the iobuf's n_writers hits 0, we may transition
@@ -1326,14 +1318,13 @@ impl PageCache {
                     }
 
                     trace!("cas_page succeeded on pid {}", pid);
-                    self.log.with_sa(|sa| {
-                        sa.mark_replace(
-                            pid,
-                            lsn,
-                            old.cache_infos.clone(),
-                            cache_info,
-                        )
-                    })?;
+                    self.log.iobufs.sa_mark_replace(
+                        pid,
+                        lsn,
+                        &old.cache_infos,
+                        cache_info,
+                        guard,
+                    )?;
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
