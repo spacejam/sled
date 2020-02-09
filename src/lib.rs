@@ -200,12 +200,7 @@ mod threadpool {
         R: Send + 'static,
     {
         let (promise_filler, promise) = OneShot::pair();
-        let task = move || {
-            let result = (work)();
-            promise_filler.fill(result);
-        };
-
-        (task)();
+        promise_filler.fill((work)());
         return promise;
     }
 }
