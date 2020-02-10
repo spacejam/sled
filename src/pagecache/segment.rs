@@ -115,6 +115,19 @@ impl Drop for SegmentAccountant {
 #[derive(Default, Clone, Debug, PartialEq)]
 struct SegmentReplacements(FastMap8<SegmentId, (u64, FastSet8<PageId>)>);
 
+impl SegmentReplacements {
+    fn merge(&mut self, other: SegmentReplacements) {
+        for (sid, (log_size, pids)) in other.0 {
+            let mut entry =
+                self.0.entry(sid).or_insert((0, FastSet8::default()));
+            entry.0 += log_size;
+            for pid in pids {
+                entry.1.insert(pid);
+            }
+        }
+    }
+}
+
 /// A `Segment` holds the bookkeeping information for
 /// a contiguous block of the disk. It may contain many
 /// fragments from different pages. Over time, we track
@@ -330,17 +343,7 @@ impl Segment {
 
     fn defer_replace_pids(&mut self, deferred: SegmentReplacements, lsn: Lsn) {
         assert!(lsn >= self.lsn());
-        for (sid, (log_size, pids)) in deferred.0 {
-            let mut entry = self
-                .deferred_replacements
-                .0
-                .entry(sid)
-                .or_insert((0, FastSet8::default()));
-            entry.0 += log_size;
-            for pid in pids {
-                entry.1.insert(pid);
-            }
-        }
+        self.deferred_replacements.merge(deferred);
     }
 
     fn remove_blob(
@@ -637,6 +640,9 @@ impl SegmentAccountant {
         }
     }
 
+    /// Asynchronously apply a GC-related operation. Used in a flat-combining
+    /// style that allows callers to avoid blocking while sending these
+    /// messages to this module.
     pub(super) fn apply_op(&mut self, op: &SegmentOp) -> Result<()> {
         use SegmentOp::*;
         match op {
