@@ -63,6 +63,21 @@ use super::PageState;
 use crate::pagecache::*;
 use crate::*;
 
+/// A operation that can be applied asynchronously.
+#[derive(Debug)]
+pub(crate) enum SegmentOp {
+    Link {
+        pid: PageId,
+        cache_info: CacheInfo,
+    },
+    Replace {
+        pid: PageId,
+        lsn: Lsn,
+        old_cache_infos: Vec<CacheInfo>,
+        new_cache_info: CacheInfo,
+    },
+}
+
 /// The segment accountant keeps track of the logical blocks
 /// of storage. It scans through all segments quickly during
 /// recovery and attempts to locate torn segments.
@@ -87,6 +102,32 @@ pub(crate) struct SegmentAccountant {
     async_truncations: BTreeMap<LogOffset, OneShot<Result<()>>>,
 }
 
+impl Drop for SegmentAccountant {
+    fn drop(&mut self) {
+        for segment in &self.segments {
+            let segment_utilization = segment.resident_size;
+            #[allow(clippy::cast_precision_loss)]
+            M.segment_utilization_shutdown.measure(segment_utilization as f64);
+        }
+    }
+}
+
+#[derive(Default, Clone, Debug, PartialEq)]
+struct SegmentReplacements(FastMap8<SegmentId, (u64, FastSet8<PageId>)>);
+
+impl SegmentReplacements {
+    fn merge(&mut self, other: SegmentReplacements) {
+        for (sid, (log_size, pids)) in other.0 {
+            let mut entry =
+                self.0.entry(sid).or_insert((0, FastSet8::default()));
+            entry.0 += log_size;
+            for pid in pids {
+                entry.1.insert(pid);
+            }
+        }
+    }
+}
+
 /// A `Segment` holds the bookkeeping information for
 /// a contiguous block of the disk. It may contain many
 /// fragments from different pages. Over time, we track
@@ -94,6 +135,7 @@ pub(crate) struct SegmentAccountant {
 /// overwritten for new data.
 #[derive(Default, Clone, Debug, PartialEq)]
 struct Segment {
+    resident_size: u64,
     present: FastSet8<PageId>,
     // a copy of present that lets us make decisions
     // about draining without waiting for
@@ -102,7 +144,7 @@ struct Segment {
     not_yet_replaced: FastSet8<PageId>,
     deferred_rm_blob: FastSet8<BlobPointer>,
     // set of pages that we replaced from other segments
-    deferred_replacements: FastSet8<(PageId, SegmentId)>,
+    deferred_replacements: SegmentReplacements,
     lsn: Option<Lsn>,
     state: SegmentState,
 }
@@ -165,7 +207,7 @@ impl Segment {
         self.present.clear();
         self.not_yet_replaced.clear();
         self.deferred_rm_blob.clear();
-        self.deferred_replacements.clear();
+        self.deferred_replacements.0.clear();
         self.lsn = Some(new_lsn);
         self.state = Active;
     }
@@ -178,7 +220,7 @@ impl Segment {
         lsn: Lsn,
         from_recovery: bool,
         config: &Config,
-    ) -> Result<FastSet8<(PageId, usize)>> {
+    ) -> Result<SegmentReplacements> {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
         assert!(
             self.state == Active || self.state == Draining,
@@ -207,8 +249,10 @@ impl Segment {
             remove_blob(ptr, config)?;
         }
 
-        let deferred_replacements =
-            mem::replace(&mut self.deferred_replacements, FastSet8::default());
+        let deferred_replacements = mem::replace(
+            &mut self.deferred_replacements,
+            SegmentReplacements::default(),
+        );
 
         Ok(deferred_replacements)
     }
@@ -297,13 +341,9 @@ impl Segment {
         }
     }
 
-    fn defer_replace_pids(
-        &mut self,
-        deferred: FastSet8<(PageId, SegmentId)>,
-        lsn: Lsn,
-    ) {
+    fn defer_replace_pids(&mut self, deferred: SegmentReplacements, lsn: Lsn) {
         assert!(lsn >= self.lsn());
-        self.deferred_replacements.extend(deferred);
+        self.deferred_replacements.merge(deferred);
     }
 
     fn remove_blob(
@@ -333,18 +373,6 @@ impl Segment {
         Ok(())
     }
 
-    // The live percentage between 0 and 100
-    fn live_pct(&self) -> u8 {
-        let total = self.present.len();
-        if total == 0 {
-            return 100;
-        }
-
-        let live = self.present.len() * 100 / total;
-        assert!(live <= 100);
-        u8::try_from(live).unwrap()
-    }
-
     fn can_free(&self) -> bool {
         self.state == Draining && self.is_empty()
     }
@@ -360,6 +388,7 @@ impl SegmentAccountant {
         config: RunningConfig,
         snapshot: &Snapshot,
     ) -> Result<Self> {
+        let _measure = Measure::new(&M.start_segment_accountant);
         let mut ret = Self {
             config,
             segments: vec![],
@@ -408,7 +437,7 @@ impl SegmentAccountant {
 
         // generate segments from snapshot lids
         let mut segments = vec![Segment::default(); number_of_segments];
-        let mut segment_sizes = vec![0_u64; number_of_segments];
+        let mut segment_utilizations = vec![0_u64; number_of_segments];
 
         let mut add = |pid,
                        lsn,
@@ -417,16 +446,17 @@ impl SegmentAccountant {
                        segments: &mut Vec<Segment>| {
             let idx = assert_usize(lid / segment_size as LogOffset);
             trace!(
-                "adding lsn: {} lid: {} for pid {} to segment {} during SA recovery",
+                "adding lsn: {} lid: {} sz: {} for pid {} to segment {} during SA recovery",
                 lsn,
                 lid,
+                sz,
                 pid,
                 idx
             );
             let segment_lsn = lsn / segment_size as Lsn * segment_size as Lsn;
             segments[idx].recovery_ensure_initialized(segment_lsn);
             segments[idx].insert_pid(pid, segment_lsn);
-            segment_sizes[idx] += sz;
+            segment_utilizations[idx] += sz;
         };
 
         for (pid, state) in &snapshot.pt {
@@ -448,12 +478,13 @@ impl SegmentAccountant {
             }
         }
 
-        Ok((segments, segment_sizes))
+        Ok((segments, segment_utilizations))
     }
 
     fn initialize_from_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let segment_size = self.config.segment_size;
-        let (mut segments, segment_sizes) = self.initial_segments(snapshot)?;
+        let (mut segments, segment_utilizations) =
+            self.initial_segments(snapshot)?;
 
         let currently_active_segment = {
             // this logic allows us to free the last
@@ -494,6 +525,11 @@ impl SegmentAccountant {
                 );
             }
 
+            let segment_utilization = segment_utilizations[idx];
+
+            #[allow(clippy::cast_precision_loss)]
+            M.segment_utilization_startup.measure(segment_utilization as f64);
+
             let segment_lsn = if let Some(lsn) = segment.lsn {
                 lsn
             } else {
@@ -509,7 +545,7 @@ impl SegmentAccountant {
                 && segment_lsn + segment_size as Lsn
                     <= snapshot.max_header_stable_lsn
             {
-                if segment_sizes[idx] == 0 {
+                if segment_utilization == 0 {
                     // can free
                     trace!(
                         "freeing segment with lid {} during SA initialization",
@@ -521,12 +557,12 @@ impl SegmentAccountant {
                         segment.state = Free;
                         self.free_segment(segment_base, true);
                     }
-                } else if segment_sizes[idx] <= drain_sz {
+                } else if segment_utilization <= drain_sz {
                     trace!(
                         "SA draining segment at {} during startup \
                          with size {} being < drain size of {}",
                         segment_base,
-                        segment_sizes[idx],
+                        segment_utilizations[idx],
                         drain_sz
                     );
                     segment.state = Draining;
@@ -604,6 +640,20 @@ impl SegmentAccountant {
         }
     }
 
+    /// Asynchronously apply a GC-related operation. Used in a flat-combining
+    /// style that allows callers to avoid blocking while sending these
+    /// messages to this module.
+    pub(super) fn apply_op(&mut self, op: &SegmentOp) -> Result<()> {
+        use SegmentOp::*;
+        match op {
+            Link { pid, cache_info } => self.mark_link(*pid, *cache_info),
+            Replace { pid, lsn, old_cache_infos, new_cache_info } => {
+                self.mark_replace(*pid, *lsn, old_cache_infos, *new_cache_info)?
+            }
+        }
+        Ok(())
+    }
+
     /// Called by the `PageCache` when a page has been rewritten completely.
     /// We mark all of the old segments that contained the previous state
     /// from the page, and if the old segments are empty or clear enough to
@@ -612,20 +662,20 @@ impl SegmentAccountant {
         &mut self,
         pid: PageId,
         lsn: Lsn,
-        old_ptrs: Vec<DiskPtr>,
-        new_ptr: DiskPtr,
+        old_cache_infos: &[CacheInfo],
+        new_cache_info: CacheInfo,
     ) -> Result<()> {
         let _measure = Measure::new(&M.accountant_mark_replace);
 
         trace!(
-            "mark_replace pid {} from ptrs {:?} to ptr {} with lsn {}",
+            "mark_replace pid {} from cache infos {:?} to cache info {:?} with lsn {}",
             pid,
-            old_ptrs,
-            new_ptr,
+            old_cache_infos,
+            new_cache_info,
             lsn
         );
 
-        let new_idx = self.segment_id(new_ptr.lid());
+        let new_idx = self.segment_id(new_cache_info.pointer.lid());
 
         // make sure we're not actively trying to replace the destination
         let new_segment_start =
@@ -637,11 +687,13 @@ impl SegmentAccountant {
         // Not if we just moved the pointer without changing
         // the underlying blob, as is the case with a single Blob
         // with nothing else.
-        let schedule_rm_blob = !(old_ptrs.len() == 1 && old_ptrs[0].is_blob());
+        let schedule_rm_blob = !(old_cache_infos.len() == 1
+            && old_cache_infos[0].pointer.is_blob());
 
-        let mut deferred_replacements = FastSet8::default();
+        let mut deferred_replacements = SegmentReplacements::default();
 
-        for old_ptr in old_ptrs {
+        for old_cache_info in old_cache_infos {
+            let old_ptr = &old_cache_info.pointer;
             let old_lid = old_ptr.lid();
 
             if schedule_rm_blob && old_ptr.is_blob() {
@@ -654,12 +706,6 @@ impl SegmentAccountant {
             }
 
             let old_idx = self.segment_id(old_lid);
-            if new_idx == old_idx {
-                // we probably haven't flushed this segment yet, so don't
-                // mark the pid as being removed from it
-
-                continue;
-            }
 
             if self.segments[old_idx].lsn() > lsn {
                 // has been replaced after this call already,
@@ -683,12 +729,21 @@ impl SegmentAccountant {
 
             self.segments[old_idx].not_yet_replaced.remove(&pid);
 
-            deferred_replacements.insert((pid, old_idx));
+            let mut entry = deferred_replacements
+                .0
+                .entry(old_idx)
+                .or_insert((0, FastSet8::default()));
+            entry.0 += old_cache_info.log_size;
+
+            if old_idx != new_idx {
+                // only remove the pid if it's added to a different segment
+                entry.1.insert(pid);
+            }
         }
 
         self.segments[new_idx].defer_replace_pids(deferred_replacements, lsn);
 
-        self.mark_link(pid, lsn, new_ptr);
+        self.mark_link(pid, new_cache_info);
 
         Ok(())
     }
@@ -697,7 +752,7 @@ impl SegmentAccountant {
         let can_drain = segment_is_drainable(
             idx,
             self.segments.len(),
-            self.segments[idx].live_pct(),
+            self.segments[idx].resident_size,
             self.segments[idx].len(),
             &self.config,
         ) && self.segments[idx].is_inactive();
@@ -778,11 +833,11 @@ impl SegmentAccountant {
     /// Called from `PageCache` when some state has been added
     /// to a logical page at a particular offset. We ensure the
     /// page is present in the segment's page set.
-    pub(super) fn mark_link(&mut self, pid: PageId, lsn: Lsn, ptr: DiskPtr) {
+    pub(super) fn mark_link(&mut self, pid: PageId, cache_info: CacheInfo) {
         let _measure = Measure::new(&M.accountant_mark_link);
 
-        trace!("mark_link pid {} at ptr {}", pid, ptr);
-        let idx = self.segment_id(ptr.lid());
+        trace!("mark_link pid {} at cache info {:?}", pid, cache_info);
+        let idx = self.segment_id(cache_info.pointer.lid());
 
         // make sure we're not actively trying to replace the destination
         let new_segment_start =
@@ -792,7 +847,7 @@ impl SegmentAccountant {
 
         let segment = &mut self.segments[idx];
 
-        let segment_lsn = lsn / self.config.segment_size as Lsn
+        let segment_lsn = cache_info.lsn / self.config.segment_size as Lsn
             * self.config.segment_size as Lsn;
 
         // a race happened, and our Lsn does not apply anymore
@@ -806,6 +861,7 @@ impl SegmentAccountant {
         );
 
         segment.insert_pid(pid, segment_lsn);
+        segment.resident_size += cache_info.log_size;
     }
 
     pub(super) fn stabilize(&mut self, stable_lsn: Lsn) -> Result<()> {
@@ -858,7 +914,8 @@ impl SegmentAccountant {
         let idx = self.segment_id(lid);
 
         trace!(
-            "deactivating segment with lsn {}: {:?}",
+            "deactivating segment with lid {} lsn {}: {:?}",
+            lid,
             lsn,
             self.segments[idx]
         );
@@ -871,56 +928,62 @@ impl SegmentAccountant {
 
         let mut old_segments = FastSet8::default();
 
-        for &(pid, old_idx) in &replacements {
+        for (old_idx, (log_size, pids)) in &replacements.0 {
             old_segments.insert(old_idx);
 
-            let old_segment = &mut self.segments[old_idx];
+            let old_segment = &mut self.segments[*old_idx];
+            old_segment.resident_size =
+                old_segment.resident_size.saturating_sub(*log_size);
 
-            assert!(
-                old_segment.state != Active && old_segment.state != Free,
-                "segment {} is processing pid {} replacements for \
-                 old segment {}, which is in the {:?} state. \
-                 all replacements for pid: {:?}",
-                lid,
-                pid,
-                old_idx * self.config.segment_size,
-                old_segment.state,
-                replacements
-                    .iter()
-                    .filter(|(p, _)| p == &pid)
-                    .collect::<Vec<_>>()
-            );
+            if !(old_segment.state != Active && old_segment.state != Free) {
+                assert!(
+                    old_segment.state != Active && old_segment.state != Free,
+                    "segment {} is processing pids {:?} replacements for \
+                    old segment {}, which is in the {:?} state.",
+                    lid,
+                    pids,
+                    old_idx * self.config.segment_size,
+                    old_segment.state,
+                );
+            }
 
-            #[cfg(feature = "event_log")]
-            assert!(
-                old_segment.present.contains(&pid),
-                "we expect deferred replacements to provide \
-                 all previous segments so we can clean them. \
-                 pid {} old_ptr segment: {} segments with (offset, state, present): {:?}",
-                pid,
-                old_idx * self.config.segment_size,
-                self.segments
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, s)| {
-                        if s.present.contains(&pid) {
-                            Some((
-                                i * self.config.segment_size,
-                                s.state,
-                                s.present.clone(),
-                            ))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            );
+            assert!(old_segment.lsn() <= lsn);
 
-            old_segment.remove_pid(pid, lsn, false);
+            for pid in pids {
+                if !old_segment.present.contains(pid) {
+                    let error = Error::ReportableBug(format!(
+                        "segment {} does not contain pid {}. \
+                        we expect deferred replacements to provide \
+                        all previous segments so we can clean them. \
+                        segments with this pid include (segment \
+                        offset, state): {:?}",
+                        old_idx * self.config.segment_size,
+                        pid,
+                        self.segments
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, s)| {
+                                if s.present.contains(pid) {
+                                    Some((
+                                        i * self.config.segment_size,
+                                        s.state,
+                                    ))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    ));
+                    self.config.set_global_error(error.clone());
+                    panic!("{:?}", error);
+                }
+
+                old_segment.remove_pid(*pid, lsn, false);
+            }
         }
 
         for old_idx in old_segments {
-            self.possibly_clean_or_free_segment(old_idx, lsn);
+            self.possibly_clean_or_free_segment(*old_idx, lsn);
         }
 
         // if we have a lot of free segments in our whole file,
@@ -1153,7 +1216,7 @@ pub enum SegmentMode {
 fn segment_is_drainable(
     idx: usize,
     num_segments: usize,
-    live_pct: u8,
+    resident_size: u64,
     len: usize,
     config: &Config,
 ) -> bool {
@@ -1180,7 +1243,9 @@ fn segment_is_drainable(
         computed_threshold
     };
 
-    let segment_low_pct = live_pct as usize <= cleanup_threshold;
+    let live_pct = resident_size * 100 / config.segment_size as u64;
+
+    let segment_low_pct = live_pct <= cleanup_threshold as u64;
 
     let segment_low_count =
         len < MINIMUM_ITEMS_PER_SEGMENT * 100 / cleanup_threshold;

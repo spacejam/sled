@@ -1,9 +1,9 @@
-use super::fastlock::FastLock;
 use std::convert::TryFrom;
 use std::ptr;
 
 use super::{
     dll::{DoublyLinkedList, Item, Node},
+    fastlock::FastLock,
     stack::Stack,
     Guard,
 };

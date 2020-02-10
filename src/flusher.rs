@@ -150,8 +150,9 @@ fn run(
             .unwrap_or_else(|| Duration::from_millis(1));
 
         if shutdown.is_running() {
-            // only sleep if we have not yet entered the
-            // shutdown state yet.
+            // only sleep before the next flush if we are
+            // running normally. if we're shutting down,
+            // flush faster.
             sc.wait_for(&mut shutdown, sleep_duration);
         }
     }

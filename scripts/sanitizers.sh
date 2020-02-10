@@ -2,13 +2,6 @@
 set -eo pipefail
 
 pushd benchmarks/stress2
-echo "lsan"
-cargo clean
-export RUSTFLAGS="-Z sanitizer=leak"
-cargo +nightly build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu
-sudo rm -rf default.sled
-sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30
-sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6
 
 echo "asan"
 cargo clean
@@ -19,6 +12,14 @@ sudo rm -rf default.sled
 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30
 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6
 unset ASAN_OPTIONS
+
+echo "lsan"
+cargo clean
+export RUSTFLAGS="-Z sanitizer=leak"
+cargo +nightly build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu
+sudo rm -rf default.sled
+sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30
+sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6
 
 echo "tsan"
 cargo clean
