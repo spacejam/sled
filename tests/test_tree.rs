@@ -34,6 +34,7 @@ fn test_size_leak() -> Result<()> {
         .temporary(true)
         .segment_size(2048)
         .flush_every_ms(None)
+        .snapshot_after_ops(100_000_000)
         .open()?;
 
     for _ in 0..10_000 {
