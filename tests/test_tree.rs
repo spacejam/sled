@@ -42,7 +42,13 @@ fn test_size_leak() -> Result<()> {
 
     tree.flush()?;
 
-    assert!(tree.size_on_disk()? <= 16384);
+    let sz = tree.size_on_disk()?;
+    assert!(
+        sz <= 16384,
+        "expected system to use less than or equal to \
+        16486 bytes, but actually used {}",
+        sz
+    );
 
     Ok(())
 }
