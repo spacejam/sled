@@ -38,7 +38,7 @@ fn test_size_leak() -> Result<()> {
 
     tree.flush()?;
 
-    assert!(dbg!(tree.size_on_disk()?) <= 16384);
+    assert!(tree.size_on_disk()? <= 16384);
 
     Ok(())
 }

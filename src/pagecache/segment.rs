@@ -706,12 +706,6 @@ impl SegmentAccountant {
             }
 
             let old_idx = self.segment_id(old_lid);
-            if new_idx == old_idx {
-                // we probably haven't flushed this segment yet, so don't
-                // mark the pid as being removed from it
-
-                continue;
-            }
 
             if self.segments[old_idx].lsn() > lsn {
                 // has been replaced after this call already,
@@ -740,6 +734,11 @@ impl SegmentAccountant {
                 .entry(old_idx)
                 .or_insert((0, FastSet8::default()));
             entry.0 += old_cache_info.log_size;
+
+            if old_idx != new_idx {
+                // only remove the pid if it's added to a different segment
+                entry.1.insert(pid);
+            }
         }
 
         self.segments[new_idx].defer_replace_pids(deferred_replacements, lsn);
@@ -954,10 +953,10 @@ impl SegmentAccountant {
                 if !old_segment.present.contains(pid) {
                     let error = Error::ReportableBug(format!(
                         "segment {} does not contain pid {}. \
-                    we expect deferred replacements to provide \
-                    all previous segments so we can clean them. \
-                    segments with this pid include (segment \
-                    offset, state): {:?}",
+                        we expect deferred replacements to provide \
+                        all previous segments so we can clean them. \
+                        segments with this pid include (segment \
+                        offset, state): {:?}",
                         old_idx * self.config.segment_size,
                         pid,
                         self.segments
