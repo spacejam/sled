@@ -30,7 +30,11 @@ fn kv(i: usize) -> Vec<u8> {
 
 #[test]
 fn test_size_leak() -> Result<()> {
-    let tree = Config::new().temporary(true).segment_size(2048).open()?;
+    let tree = Config::new()
+        .temporary(true)
+        .segment_size(2048)
+        .flush_every_ms(None)
+        .open()?;
 
     for _ in 0..10_000 {
         tree.insert(b"", b"")?;
