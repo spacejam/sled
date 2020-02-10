@@ -29,32 +29,6 @@ fn kv(i: usize) -> Vec<u8> {
 }
 
 #[test]
-fn test_size_leak() -> Result<()> {
-    let tree = Config::new()
-        .temporary(true)
-        .segment_size(2048)
-        .flush_every_ms(None)
-        .snapshot_after_ops(100_000_000)
-        .open()?;
-
-    for _ in 0..10_000 {
-        tree.insert(b"", b"")?;
-    }
-
-    tree.flush()?;
-
-    let sz = tree.size_on_disk()?;
-    assert!(
-        sz <= 16384,
-        "expected system to use less than or equal to \
-        16486 bytes, but actually used {}",
-        sz
-    );
-
-    Ok(())
-}
-
-#[test]
 #[cfg(target_os = "linux")]
 fn test_varied_compression_ratios() {
     // tests for the compression issue reported in #938 by @Mrmaxmeier.
