@@ -349,7 +349,8 @@ impl Metrics {
             lat("snap apply", &self.snapshot_apply),
             lat("segment read", &self.segment_read),
             lat("log message read", &self.read_segment_message),
-            sz("segment util", &self.segment_utilization),
+            sz("seg util start", &self.segment_utilization_startup),
+            sz("seg util end", &self.segment_utilization_shutdown),
         ]);
 
         #[cfg(feature = "measure_allocs")]

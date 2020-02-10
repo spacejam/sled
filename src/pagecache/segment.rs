@@ -102,6 +102,16 @@ pub(crate) struct SegmentAccountant {
     async_truncations: BTreeMap<LogOffset, OneShot<Result<()>>>,
 }
 
+impl Drop for SegmentAccountant {
+    fn drop(&mut self) {
+        for segment in &self.segments {
+            let segment_utilization = segment.resident_size;
+            #[allow(clippy::cast_precision_loss)]
+            M.segment_utilization_shutdown.measure(segment_utilization as f64);
+        }
+    }
+}
+
 #[derive(Default, Clone, Debug, PartialEq)]
 struct SegmentReplacements(FastMap8<SegmentId, (u64, FastSet8<PageId>)>);
 
@@ -515,7 +525,7 @@ impl SegmentAccountant {
             let segment_utilization = segment_utilizations[idx];
 
             #[allow(clippy::cast_precision_loss)]
-            M.segment_utilization.measure(segment_utilization as f64);
+            M.segment_utilization_startup.measure(segment_utilization as f64);
 
             let segment_lsn = if let Some(lsn) = segment.lsn {
                 lsn
