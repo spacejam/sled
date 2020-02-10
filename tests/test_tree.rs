@@ -29,6 +29,21 @@ fn kv(i: usize) -> Vec<u8> {
 }
 
 #[test]
+fn test_size_leak() -> Result<()> {
+    let tree = Config::new().temporary(true).segment_size(2048).open()?;
+
+    for _ in 0..10_000 {
+        tree.insert(b"", b"")?;
+    }
+
+    tree.flush()?;
+
+    assert!(dbg!(tree.size_on_disk()?) <= 16384);
+
+    Ok(())
+}
+
+#[test]
 #[cfg(target_os = "linux")]
 fn test_varied_compression_ratios() {
     // tests for the compression issue reported in #938 by @Mrmaxmeier.
