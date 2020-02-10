@@ -40,7 +40,7 @@ use self::{
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
-    segment::SegmentAccountant,
+    segment::{SegmentAccountant, SegmentOp},
     snapshot::advance_snapshot,
 };
 
@@ -537,6 +537,8 @@ impl PageCache {
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
 
+        let _measure = Measure::new(&M.start_pagecache);
+
         let cache_capacity = config.cache_capacity;
         let lru = Lru::new(cache_capacity);
 
@@ -931,27 +933,9 @@ impl PageCache {
                         guard.defer_destroy(old.read);
                     }
 
-                    // if the last update for this page was also
-                    // sent to this segment, we can skip marking it
-                    let previous_head_lsn = old.last_lsn();
+                    assert_ne!(old.last_lsn(), 0);
 
-                    assert_ne!(previous_head_lsn, 0);
-
-                    let previous_lsn_segment =
-                        previous_head_lsn / self.config.segment_size as i64;
-                    let new_lsn_segment = lsn / self.config.segment_size as i64;
-
-                    let to_clean = if previous_lsn_segment == new_lsn_segment {
-                        // can skip mark_link because we've
-                        // already accounted for this page
-                        // being resident on this segment
-                        self.log.with_sa(|sa| sa.clean(Some(pid)))
-                    } else {
-                        self.log.with_sa(|sa| {
-                            sa.mark_link(pid, lsn, pointer);
-                            sa.clean(Some(pid))
-                        })
-                    };
+                    self.log.iobufs.sa_mark_link(pid, cache_info, guard);
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
@@ -972,10 +956,6 @@ impl PageCache {
                     );
                     if !to_evict.is_empty() {
                         self.page_out(to_evict, guard)?;
-                    }
-
-                    if let Some(to_clean) = to_clean {
-                        self.rewrite_page(to_clean, guard)?;
                     }
 
                     let count = self.updates.fetch_add(1, Relaxed) + 1;
@@ -1112,7 +1092,7 @@ impl PageCache {
             let log_reservation =
                 self.log.rewrite_blob_pointer(pid, blob_pointer)?;
 
-            let cache_entry = CacheInfo {
+            let cache_info = CacheInfo {
                 ts: page_view.ts(),
                 lsn: log_reservation.lsn,
                 pointer: log_reservation.pointer,
@@ -1122,7 +1102,7 @@ impl PageCache {
 
             let new_page = Owned::new(Page {
                 update: page_view.update.clone(),
-                cache_infos: vec![cache_entry],
+                cache_infos: vec![cache_info],
             });
 
             debug_delay();
@@ -1140,12 +1120,13 @@ impl PageCache {
 
                 let lsn = log_reservation.lsn();
 
-                let old_pointers =
-                    page_view.cache_infos.iter().map(|ci| ci.pointer).collect();
-
-                self.log.with_sa(|sa| {
-                    sa.mark_replace(pid, lsn, old_pointers, cache_entry.pointer)
-                })?;
+                self.log.iobufs.sa_mark_replace(
+                    pid,
+                    lsn,
+                    &page_view.cache_infos,
+                    cache_info,
+                    guard,
+                )?;
 
                 // NB complete must happen AFTER calls to SA, because
                 // when the iobuf's n_writers hits 0, we may transition
@@ -1337,12 +1318,13 @@ impl PageCache {
                     }
 
                     trace!("cas_page succeeded on pid {}", pid);
-                    let pointers =
-                        old.cache_infos.iter().map(|ci| ci.pointer).collect();
-
-                    self.log.with_sa(|sa| {
-                        sa.mark_replace(pid, lsn, pointers, new_pointer)
-                    })?;
+                    self.log.iobufs.sa_mark_replace(
+                        pid,
+                        lsn,
+                        &old.cache_infos,
+                        cache_info,
+                        guard,
+                    )?;
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition

@@ -87,7 +87,10 @@ pub(crate) fn write_blob<T: Serialize>(
     let mut hasher = crc32fast::Hasher::new();
     hasher.update(kind_buf);
 
-    let data = item.serialize();
+    let data = {
+        let _ = Measure::new(&M.serialize);
+        item.serialize()
+    };
 
     hasher.update(&data);
     let crc = u32_to_arr(hasher.finalize());
