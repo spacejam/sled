@@ -290,6 +290,9 @@ impl Metrics {
             lat("pull", &self.pull),
             lat("page_out", &self.page_out),
         ]);
+        let hit_ratio = (self.get_page.count() - self.pull.count()) * 100
+            / self.get_page.count();
+        println!("hit ratio: {}%", hit_ratio);
 
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("serialization and compression:");
