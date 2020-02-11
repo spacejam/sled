@@ -735,8 +735,9 @@ impl PageCache {
         }
         let guard = pin();
         let to_clean = self.log.with_sa(|sa| sa.clean(None));
-        let ret = if let Some(to_clean) = to_clean {
-            self.rewrite_page(to_clean, &guard).map(|_| true)
+        let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
+            self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
+                .map(|_| true)
         } else {
             Ok(false)
         };
@@ -1046,11 +1047,11 @@ impl PageCache {
         let result =
             self.cas_page(pid, old, Update::Node(new), false, guard)?;
 
-        let to_clean = self.log.with_sa(|sa| sa.clean(Some(pid)));
-
-        if let Some(to_clean) = to_clean {
-            assert_ne!(pid, to_clean);
-            self.rewrite_page(to_clean, guard)?;
+        if let Some((pid_to_clean, segment_to_clean)) =
+            self.log.with_sa(|sa| sa.clean(Some(pid)))
+        {
+            assert_ne!(pid, pid_to_clean);
+            self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
         }
 
         let count = self.updates.fetch_add(1, Relaxed) + 1;
@@ -1073,127 +1074,159 @@ impl PageCache {
     // (at least partially) located in. This happens when a
     // segment has had enough resident page replacements moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page(&self, pid: PageId, guard: &Guard) -> Result<()> {
+    fn rewrite_page(
+        &self,
+        pid: PageId,
+        segment_to_purge: LogOffset,
+        guard: &Guard,
+    ) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);
 
-        let page_view = if let Some(page_view) = self.inner.get(pid, guard) {
-            page_view
-        } else {
-            panic!("rewriting pid {} failed (no longer exists)", pid);
-        };
+        let purge_segment_id =
+            segment_to_purge / self.config.segment_size as u64;
 
-        // if the page is just a single blob pointer, rewrite it.
-        if let Some(disk_pointer) = page_view.lone_blob() {
-            trace!("rewriting blob with pid {}", pid);
-            let blob_pointer = disk_pointer.blob().1;
-
-            let log_reservation =
-                self.log.rewrite_blob_pointer(pid, blob_pointer)?;
-
-            let cache_info = CacheInfo {
-                ts: page_view.ts(),
-                lsn: log_reservation.lsn,
-                pointer: log_reservation.pointer,
-                log_size: u64::try_from(log_reservation.reservation_len())
-                    .unwrap(),
+        loop {
+            let page_view = if let Some(page_view) = self.inner.get(pid, guard)
+            {
+                page_view
+            } else {
+                panic!("rewriting pid {} failed (no longer exists)", pid);
             };
 
-            let new_page = Owned::new(Page {
-                update: page_view.update.clone(),
-                cache_infos: vec![cache_info],
-            });
-
-            debug_delay();
-            let result = page_view.entry.compare_and_set(
-                page_view.read,
-                new_page,
-                SeqCst,
-                guard,
-            );
-
-            if let Ok(new_shared) = result {
-                unsafe {
-                    guard.defer_destroy(page_view.read);
-                }
-
-                let lsn = log_reservation.lsn();
-
-                self.log.iobufs.sa_mark_replace(
-                    pid,
-                    lsn,
-                    &page_view.cache_infos,
-                    cache_info,
-                    guard,
-                )?;
-
-                // NB complete must happen AFTER calls to SA, because
-                // when the iobuf's n_writers hits 0, we may transition
-                // the segment to inactive, resulting in a race otherwise.
-                let _pointer = log_reservation.complete()?;
-
-                // possibly evict an item now that our cache has grown
-                let total_page_size = unsafe { new_shared.deref().log_size() };
-                let to_evict = self.lru.accessed(pid, total_page_size, guard);
-                trace!(
-                    "accessed pid {} -> paging out pids {:?}",
-                    pid,
-                    to_evict
-                );
-                if !to_evict.is_empty() {
-                    self.page_out(to_evict, guard)?;
-                }
-
-                trace!("rewriting pid {} succeeded", pid);
-
-                Ok(())
-            } else {
-                let _pointer = log_reservation.abort()?;
-
-                trace!("rewriting pid {} failed", pid);
-
-                Ok(())
+            let already_moved = !unsafe { page_view.read.deref() }
+                .cache_infos
+                .iter()
+                .any(|ce| {
+                    ce.pointer.lid() / self.config.segment_size as u64
+                        == purge_segment_id
+                });
+            if already_moved {
+                return Ok(());
             }
-        } else {
-            trace!("rewriting page with pid {}", pid);
 
-            // page-in whole page with a get
-            let (key, update): (_, Update) = if pid == META_PID {
-                let meta_view = self.get_meta(guard)?;
-                (meta_view.0, Update::Meta(meta_view.deref().clone()))
-            } else if pid == COUNTER_PID {
-                let (key, counter) = self.get_idgen(guard)?;
-                (key, Update::Counter(counter))
-            } else if let Some(node_view) = self.get(pid, guard)? {
-                (node_view.0, Update::Node(node_view.deref().clone()))
-            } else {
-                let page_view = match self.inner.get(pid, guard) {
-                    None => panic!("expected page missing in rewrite"),
-                    Some(p) => p,
+            // if the page is just a single blob pointer, rewrite it.
+            if let Some(disk_pointer) = page_view.lone_blob() {
+                trace!("rewriting blob with pid {}", pid);
+                let blob_pointer = disk_pointer.blob().1;
+
+                let log_reservation =
+                    self.log.rewrite_blob_pointer(pid, blob_pointer)?;
+
+                let cache_info = CacheInfo {
+                    ts: page_view.ts(),
+                    lsn: log_reservation.lsn,
+                    pointer: log_reservation.pointer,
+                    log_size: u64::try_from(log_reservation.reservation_len())
+                        .unwrap(),
                 };
 
-                match &page_view.update {
-                    Some(Update::Free) => (page_view, Update::Free),
-                    other => {
-                        debug!(
-                            "when rewriting pid {} \
+                let new_page = Owned::new(Page {
+                    update: page_view.update.clone(),
+                    cache_infos: vec![cache_info],
+                });
+
+                debug_delay();
+                let result = page_view.entry.compare_and_set(
+                    page_view.read,
+                    new_page,
+                    SeqCst,
+                    guard,
+                );
+
+                if let Ok(new_shared) = result {
+                    unsafe {
+                        guard.defer_destroy(page_view.read);
+                    }
+
+                    let lsn = log_reservation.lsn();
+
+                    self.log.iobufs.sa_mark_replace(
+                        pid,
+                        lsn,
+                        &page_view.cache_infos,
+                        cache_info,
+                        guard,
+                    )?;
+
+                    // NB complete must happen AFTER calls to SA, because
+                    // when the iobuf's n_writers hits 0, we may transition
+                    // the segment to inactive, resulting in a race otherwise.
+                    let _pointer = log_reservation.complete()?;
+
+                    // possibly evict an item now that our cache has grown
+                    let total_page_size =
+                        unsafe { new_shared.deref().log_size() };
+                    let to_evict =
+                        self.lru.accessed(pid, total_page_size, guard);
+                    trace!(
+                        "accessed pid {} -> paging out pids {:?}",
+                        pid,
+                        to_evict
+                    );
+                    if !to_evict.is_empty() {
+                        self.page_out(to_evict, guard)?;
+                    }
+
+                    trace!("rewriting pid {} succeeded", pid);
+
+                    return Ok(());
+                } else {
+                    let _pointer = log_reservation.abort()?;
+
+                    trace!("rewriting pid {} failed", pid);
+                }
+            } else {
+                trace!("rewriting page with pid {}", pid);
+
+                // page-in whole page with a get
+                let (key, update): (_, Update) = if pid == META_PID {
+                    let meta_view = self.get_meta(guard)?;
+                    (meta_view.0, Update::Meta(meta_view.deref().clone()))
+                } else if pid == COUNTER_PID {
+                    let (key, counter) = self.get_idgen(guard)?;
+                    (key, Update::Counter(counter))
+                } else if let Some(node_view) = self.get(pid, guard)? {
+                    (node_view.0, Update::Node(node_view.deref().clone()))
+                } else {
+                    let page_view = match self.inner.get(pid, guard) {
+                        None => panic!("expected page missing in rewrite"),
+                        Some(p) => p,
+                    };
+
+                    match &page_view.update {
+                        Some(Update::Free) => (page_view, Update::Free),
+                        other => {
+                            debug!(
+                                "when rewriting pid {} \
                              we encountered a rewritten \
                              node with a link {:?} that \
                              we previously witnessed a Free \
                              for (PageCache::get returned None), \
                              assuming we can just return now since \
                              the Free was replace'd",
-                            pid, other
-                        );
-                        return Ok(());
+                                pid, other
+                            );
+                            return Ok(());
+                        }
                     }
-                }
-            };
+                };
 
-            self.cas_page(pid, key, update, true, guard).map(|res| {
-                trace!("rewriting pid {} success: {}", pid, res.is_ok());
-            })
+                let res = self.cas_page(pid, key, update, true, guard).map(
+                    |res| {
+                        trace!(
+                            "rewriting pid {} success: {}",
+                            pid,
+                            res.is_ok()
+                        );
+                        res
+                    },
+                )?;
+                if res.is_ok() {
+                    return Ok(());
+                }
+            }
         }
     }
 
