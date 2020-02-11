@@ -1,12 +1,33 @@
-| key | value |
-| :-: | --- |
-| [documentation](https://docs.rs/sled) | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
-| [chat about databases with us](https://discord.gg/Z6VsXds) | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
-| [help us build what you want to use](https://github.com/sponsors/spacejam) | [![Open Collective backers](https://img.shields.io/opencollective/backers/sled)](https://github.com/sponsors/spacejam) |
 
+<table style="width:100%">
+<tr>
+  <td>
+    <table style="width:100%">
+      <tr>
+        <td> key </td>
+        <td> value </td>
+      </tr>
+      <tr>
+        <td><a href="https://docs.rs/sled">documentation</a></td>
+        <td><a href="https://docs.rs/sled"><img src="https://docs.rs/sled/badge.svg"></a></td>
+      </tr>
+      <tr>
+        <td><a href="https://discord.gg/Z6VsXds">chat about databases with us</a></td>
+        <td><a href="https://discord.gg/Z6VsXds"><img src="https://img.shields.io/discord/509773073294295082.svg?logo=discord"></a></td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/sponsors/spacejam">help us build what you want to use</a></td>
+        <td><a href="https://github.com/sponsors/spacejam"><img src="https://img.shields.io/opencollective/backers/sled"></a></td>
+      </tr>
+     </table>
+  </td>
+  <td>
 <p align="center">
-  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="20%" height="auto" />
-</p>
+  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="40%" height="auto" />
+  </p>
+  </td>
+ </tr>
+</table>
 
 
 # sled - ~~it's all downhill from here!!!~~
