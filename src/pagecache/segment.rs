@@ -835,13 +835,15 @@ impl SegmentAccountant {
             if can_drain {
                 // can be cleaned
                 trace!(
-                "SA inserting {} into to_clean from possibly_clean_or_free_segment",
-                segment_start
-            );
+                    "SA inserting {} into to_clean from possibly_clean_or_free_segment",
+                    segment_start
+                );
                 self.segments[idx].inactive_to_draining(lsn);
                 self.to_clean.insert(segment_start);
             }
         }
+
+        let segment_lsn = self.segments[idx].lsn();
 
         if self.segments[idx].can_free() {
             // can be reused immediately
@@ -852,15 +854,17 @@ impl SegmentAccountant {
                 segment_start
             );
 
-            if self.max_stabilized_lsn < replacement_lsn {
-                self.free_segment(segment_start, false);
+            let replacement_lid = self.ordering[&replacement_lsn];
+            let replacement_idx = usize::try_from(
+                replacement_lid / self.config.segment_size as u64,
+            )
+            .unwrap();
+
+            if self.segments[replacement_idx].is_active() {
+                self.segments[replacement_idx].defer_free_lsn(segment_lsn);
             } else {
-                let replacement_lid = self.ordering[&replacement_lsn];
-                let replacement_idx = usize::try_from(
-                    replacement_lid / self.config.segment_size as u64,
-                )
-                .unwrap();
-                self.segments[replacement_idx].defer_free_lsn(replacement_lsn);
+                assert!(replacement_lsn < self.max_stabilized_lsn);
+                self.free_segment(segment_start, false);
             }
         }
     }
@@ -966,12 +970,13 @@ impl SegmentAccountant {
             Default::default()
         };
 
-        self.possibly_clean_or_free_segment(idx, lsn);
-
         for lsn in freeable_segments {
             let segment_start = self.ordering[&lsn];
+            assert_ne!(segment_start, lid);
             self.free_segment(segment_start, false);
         }
+
+        self.possibly_clean_or_free_segment(idx, lsn);
 
         // if we have a lot of free segments in our whole file,
         // let's start relocating the current tip to boil it down
