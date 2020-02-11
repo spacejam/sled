@@ -2,7 +2,7 @@ mod common;
 
 use std::env::{self, VarError};
 use std::mem::size_of;
-use std::process::{abort, Child, Command, ExitStatus};
+use std::process::{exit, Child, Command, ExitStatus};
 use std::thread;
 use std::time::Duration;
 
@@ -150,7 +150,7 @@ fn spawn_killah() {
     thread::spawn(|| {
         let runtime = rand::thread_rng().gen_range(0, 200);
         thread::sleep(Duration::from_millis(runtime));
-        abort();
+        exit(9);
     });
 }
 
