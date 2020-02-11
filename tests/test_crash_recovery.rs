@@ -15,20 +15,30 @@ use common::cleanup;
 const TEST_ENV_VAR: &str = "SLED_CRASH_TEST";
 const N_TESTS: usize = 100;
 const CYCLE: usize = 256;
+const BATCH_SIZE: u32 = 8;
 
 // test names, also used as dir names
 const RECOVERY_WITH_SNAPSHOT: &str = "crash_recovery_with_runtime_snapshot";
 const RECOVERY_NO_SNAPSHOT: &str = "crash_recovery_no_runtime_snapshot";
+const BATCHES_WITH_SNAPSHOT: &str = "crash_batches_with_runtime_snapshot";
+const BATCHES_NO_SNAPSHOT: &str = "crash_batches_no_runtime_snapshot";
 
 fn main() {
     match env::var(TEST_ENV_VAR) {
         Err(VarError::NotPresent) => {
             test_crash_recovery_with_runtime_snapshot();
             test_crash_recovery_no_runtime_snapshot();
+            // TODO: uncomment batch tests once batch recovery is fixed
+            //test_crash_batches_with_runtime_snapshot();
+            //test_crash_batches_no_runtime_snapshot();
         }
 
         Ok(ref s) if s == RECOVERY_WITH_SNAPSHOT => run_with_snapshot(s),
         Ok(ref s) if s == RECOVERY_NO_SNAPSHOT => run_without_snapshot(s),
+        Ok(ref s) if s == BATCHES_WITH_SNAPSHOT => run_batches_with_snapshot(s),
+        Ok(ref s) if s == BATCHES_NO_SNAPSHOT => {
+            run_batches_without_snapshot(s)
+        }
 
         Ok(_) | Err(_) => panic!("invalid crash test case"),
     }
@@ -89,6 +99,41 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     (contiguous, highest)
 }
 
+/// Verifies that the keys in the tree are correctly recovered (i.e., equal).
+/// Panics if they are incorrect.
+fn verify_batches(tree: &sled::Tree) -> u32 {
+    let mut iter = tree.iter();
+    let first_value = match iter.next() {
+        Some(Ok((_k, v))) => slice_to_u32(&*v),
+        Some(Err(e)) => panic!("{:?}", e),
+        None => return 0,
+    };
+    for key in 0..BATCH_SIZE {
+        let res = tree.get(u32_to_vec(key));
+        let option = res.unwrap();
+        let v = match option {
+            Some(v) => v,
+            None => panic!(
+                "expected key {} to have a value, instead it was missing in db: {:?}",
+                key,
+                tree
+            ),
+        };
+        let value = slice_to_u32(&*v);
+        assert_eq!(
+            first_value,
+            value,
+            "expected key {} to have value {}, instead it had value {} in db: {:?}",
+            key,
+            first_value,
+            value,
+            tree
+        );
+    }
+
+    first_value
+}
+
 fn u32_to_vec(u: u32) -> Vec<u8> {
     let buf: [u8; size_of::<u32>()] = u.to_be_bytes();
     buf.to_vec()
@@ -147,6 +192,51 @@ fn run(config: Config) {
     }
 }
 
+fn run_batches(config: Config) {
+    fn do_batch(i: u32, tree: &sled::Tree) {
+        let mut rng = rand::thread_rng();
+        let base_value = u32_to_vec(i);
+
+        let mut batch = sled::Batch::default();
+        if rng.gen_bool(0.1) {
+            for key in 0..BATCH_SIZE {
+                batch.remove(u32_to_vec(key));
+            }
+        } else {
+            for key in 0..BATCH_SIZE {
+                let mut value = base_value.clone();
+                let additional_len = rng.gen_range(0, 1000);
+                value.append(&mut vec![0u8; additional_len]);
+
+                batch.insert(u32_to_vec(key), value);
+            }
+        }
+        tree.apply_batch(batch).unwrap();
+    }
+
+    common::setup_logger();
+    let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
+
+    if crash_during_initialization {
+        spawn_killah();
+    }
+
+    let tree = config.open().unwrap();
+
+    let mut i = verify_batches(&tree);
+    i += 1;
+    do_batch(i, &tree);
+
+    if !crash_during_initialization {
+        spawn_killah();
+    }
+
+    loop {
+        i += 1;
+        do_batch(i, &tree);
+    }
+}
+
 fn run_with_snapshot(dir: &str) {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
@@ -173,6 +263,40 @@ fn run_without_snapshot(dir: &str) {
         .segment_size(1024);
 
     match thread::spawn(|| run(config)).join() {
+        Err(e) => {
+            println!("worker thread failed: {:?}", e);
+            std::process::exit(15);
+        }
+        _ => {}
+    }
+}
+
+fn run_batches_without_snapshot(dir: &str) {
+    let config = Config::new()
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(100))
+        .path(dir.to_string())
+        .snapshot_after_ops(1 << 56)
+        .segment_size(1024);
+
+    match thread::spawn(|| run_batches(config)).join() {
+        Err(e) => {
+            println!("worker thread failed: {:?}", e);
+            std::process::exit(15);
+        }
+        _ => {}
+    }
+}
+
+fn run_batches_with_snapshot(dir: &str) {
+    let config = Config::new()
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(100))
+        .path(dir.to_string())
+        .snapshot_after_ops(5000)
+        .segment_size(1024);
+
+    match thread::spawn(|| run_batches(config)).join() {
         Err(e) => {
             println!("worker thread failed: {:?}", e);
             std::process::exit(15);
@@ -230,6 +354,40 @@ fn test_crash_recovery_no_runtime_snapshot() {
 
     for _ in 0..N_TESTS {
         let mut child = run_child_process(RECOVERY_NO_SNAPSHOT);
+
+        child
+            .wait()
+            .map(|status| handle_child_exit_status(dir, status))
+            .map_err(|e| handle_child_wait_err(dir, e))
+            .unwrap();
+    }
+
+    cleanup(dir);
+}
+
+fn test_crash_batches_with_runtime_snapshot() {
+    let dir = BATCHES_WITH_SNAPSHOT;
+    cleanup(dir);
+
+    for _ in 0..N_TESTS {
+        let mut child = run_child_process(BATCHES_WITH_SNAPSHOT);
+
+        child
+            .wait()
+            .map(|status| handle_child_exit_status(dir, status))
+            .map_err(|e| handle_child_wait_err(dir, e))
+            .unwrap();
+    }
+
+    cleanup(dir);
+}
+
+fn test_crash_batches_no_runtime_snapshot() {
+    let dir = BATCHES_NO_SNAPSHOT;
+    cleanup(dir);
+
+    for _ in 0..N_TESTS {
+        let mut child = run_child_process(BATCHES_NO_SNAPSHOT);
 
         child
             .wait()
