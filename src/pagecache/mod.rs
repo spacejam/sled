@@ -1095,10 +1095,14 @@ impl PageCache {
                 panic!("rewriting pid {} failed (no longer exists)", pid);
             };
 
-            if !unsafe { page_view.read.deref() }.cache_infos.iter().any(|ce| {
-                ce.pointer.lid() / self.config.segment_size as u64
-                    == purge_segment_id
-            }) {
+            let already_moved = !unsafe { page_view.read.deref() }
+                .cache_infos
+                .iter()
+                .any(|ce| {
+                    ce.pointer.lid() / self.config.segment_size as u64
+                        == purge_segment_id
+                });
+            if already_moved {
                 return Ok(());
             }
 

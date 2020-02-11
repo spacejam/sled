@@ -120,10 +120,9 @@ impl Drop for SegmentAccountant {
     fn drop(&mut self) {
         for segment in &self.segments {
             let segment_utilization = match segment {
-                Segment::Free(_) => 0,
+                Segment::Free(_) | Segment::Draining(_) => 0,
                 Segment::Active(Active { rss, .. })
                 | Segment::Inactive(Inactive { rss, .. }) => *rss,
-                Segment::Draining(_) => 0,
             };
             #[allow(clippy::cast_precision_loss)]
             M.segment_utilization_shutdown.measure(segment_utilization as f64);
@@ -877,7 +876,7 @@ impl SegmentAccountant {
             None
         } else {
             let pid_opt =
-                pids.iter().filter(|p| Some(**p) != ignore_pid).next().copied();
+                pids.iter().find(|p| Some(**p) != ignore_pid).copied();
 
             pid_opt.map(|pid| {
                 pids.remove(&pid);
