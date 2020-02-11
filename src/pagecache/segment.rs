@@ -439,7 +439,11 @@ impl Segment {
 
     fn can_free(&self) -> bool {
         if let Segment::Draining(draining) = self {
-            draining.replaced_pids == draining.max_pids
+            let ret = draining.replaced_pids == draining.max_pids;
+            if ret {
+                assert!(draining.pids.is_empty());
+            }
+            ret
         } else {
             false
         }
