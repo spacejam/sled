@@ -237,12 +237,12 @@ fn run_batches(config: Config) {
     }
 }
 
-fn run_with_snapshot(dir: &str) {
+fn run_without_snapshot(dir: &str) {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .path(dir.to_string())
-        .snapshot_after_ops(5000)
+        .snapshot_after_ops(1 << 56)
         .segment_size(1024);
 
     match thread::spawn(|| run(config)).join() {
@@ -254,12 +254,12 @@ fn run_with_snapshot(dir: &str) {
     }
 }
 
-fn run_without_snapshot(dir: &str) {
+fn run_with_snapshot(dir: &str) {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .path(dir.to_string())
-        .snapshot_after_ops(1 << 56)
+        .snapshot_after_ops(5000)
         .segment_size(1024);
 
     match thread::spawn(|| run(config)).join() {
