@@ -56,12 +56,27 @@
 
 #![allow(unused_results)]
 
-use std::mem;
+use std::{collections::BTreeSet, mem};
 
 use super::PageState;
 
 use crate::pagecache::*;
 use crate::*;
+
+/// The log may be configured to write data
+/// in several different ways, depending on
+/// the constraints of the system using it.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum SegmentMode {
+    /// Write to the end of the log, always.
+    Linear,
+    /// Keep track of segment utilization, and
+    /// reuse segments when their contents are
+    /// fully relocated elsewhere.
+    /// Will try to copy data out of segments
+    /// once they reach a configurable threshold.
+    Gc,
+}
 
 /// A operation that can be applied asynchronously.
 #[derive(Debug)]
@@ -88,15 +103,14 @@ pub(crate) struct SegmentAccountant {
 
     // TODO these should be sharded to improve performance
     segments: Vec<Segment>,
-    clean_counter: usize,
 
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
     // and free!
-    free: VecSet<LogOffset>,
+    free: BTreeSet<LogOffset>,
     tip: LogOffset,
     max_stabilized_lsn: Lsn,
-    to_clean: VecSet<LogOffset>,
+    to_clean: BTreeSet<LogOffset>,
     pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogOffset>,
     async_truncations: BTreeMap<LogOffset, OneShot<Result<()>>>,
