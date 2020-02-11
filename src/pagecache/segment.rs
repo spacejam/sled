@@ -150,19 +150,19 @@ struct Active {
 #[derive(Debug, Clone, Default)]
 struct Inactive {
     lsn: Lsn,
-    pids_max_count: usize,
-    pids_replaced_count: usize,
     rss: usize,
     pids: FastSet8<PageId>,
+    max_pids: usize,
+    replaced_pids: usize,
     latest_replacement_lsn: Lsn,
 }
 
 #[derive(Debug, Clone, Default)]
 struct Draining {
     lsn: Lsn,
-    pids_max_count: usize,
-    pids_replaced_count: usize,
     pids: FastSet8<PageId>,
+    max_pids: usize,
+    replaced_pids: usize,
     latest_replacement_lsn: Lsn,
 }
 
@@ -221,14 +221,6 @@ impl Segment {
         }
     }
 
-    fn is_draining(&self) -> bool {
-        if let Segment::Draining { .. } = self {
-            true
-        } else {
-            false
-        }
-    }
-
     fn free_to_active(&mut self, new_lsn: Lsn) {
         trace!("setting Segment to Active with new lsn {:?}", new_lsn,);
         assert!(self.is_free());
@@ -271,9 +263,12 @@ impl Segment {
 
             let inactive = Segment::Inactive(Inactive {
                 lsn: active.lsn,
-                pids_max_count: active.pids.len(),
-                pids_replaced_count: active.deferred_replaced_pids.len(),
-                rss: active.rss - active.deferred_replaced_rss,
+                rss: active
+                    .rss
+                    .checked_sub(active.deferred_replaced_rss)
+                    .unwrap(),
+                max_pids: active.pids.len(),
+                replaced_pids: active.deferred_replaced_pids.len(),
                 pids: &active.pids - &active.deferred_replaced_pids,
                 latest_replacement_lsn: active.latest_replacement_lsn,
             });
@@ -299,9 +294,9 @@ impl Segment {
             assert!(lsn >= inactive.lsn);
             *self = Segment::Draining(Draining {
                 lsn: inactive.lsn,
-                pids_max_count: inactive.pids_max_count,
-                pids_replaced_count: inactive.pids_replaced_count,
                 pids: mem::replace(&mut inactive.pids, FastSet8::default()),
+                max_pids: inactive.max_pids,
+                replaced_pids: inactive.replaced_pids,
                 latest_replacement_lsn: inactive.latest_replacement_lsn,
             });
         } else {
@@ -367,7 +362,9 @@ impl Segment {
         match self {
             Segment::Active(active) => {
                 assert!(active.lsn <= replacement_lsn);
-                active.deferred_replaced_pids.insert(pid);
+                if replacement_lsn != active.lsn {
+                    active.deferred_replaced_pids.insert(pid);
+                }
                 active.deferred_replaced_rss += sz;
                 if replacement_lsn > active.latest_replacement_lsn {
                     active.latest_replacement_lsn = replacement_lsn;
@@ -378,10 +375,14 @@ impl Segment {
                 lsn,
                 rss,
                 latest_replacement_lsn,
+                replaced_pids,
                 ..
             }) => {
                 assert!(*lsn <= replacement_lsn);
-                pids.remove(&pid);
+                if replacement_lsn != *lsn {
+                    pids.remove(&pid);
+                    *replaced_pids += 1;
+                }
                 *rss = rss.checked_sub(sz).unwrap();
                 if replacement_lsn > *latest_replacement_lsn {
                     *latest_replacement_lsn = replacement_lsn;
@@ -391,10 +392,14 @@ impl Segment {
                 pids,
                 lsn,
                 latest_replacement_lsn,
+                replaced_pids,
                 ..
             }) => {
                 assert!(*lsn <= replacement_lsn);
-                pids.remove(&pid);
+                if replacement_lsn != *lsn {
+                    pids.remove(&pid);
+                    *replaced_pids += 1;
+                }
                 if replacement_lsn > *latest_replacement_lsn {
                     *latest_replacement_lsn = replacement_lsn;
                 }
@@ -433,7 +438,11 @@ impl Segment {
     }
 
     fn can_free(&self) -> bool {
-        self.is_draining() && self.is_empty()
+        if let Segment::Draining(draining) = self {
+            draining.replaced_pids == draining.max_pids
+        } else {
+            false
+        }
     }
 
     fn is_empty(&self) -> bool {
@@ -649,8 +658,10 @@ impl SegmentAccountant {
         let idx = self.segment_id(lid);
         assert!(
             self.tip > lid,
-            "freed a segment above our current file tip, \
-             please report this bug!"
+            "freed a segment at {} above our current file tip {}, \
+             please report this bug!",
+            lid,
+            self.tip,
         );
         assert!(self.segments[idx].is_free());
         assert!(!self.free.contains(&lid), "double-free of a segment occurred");
@@ -719,6 +730,8 @@ impl SegmentAccountant {
     ) -> Result<()> {
         let _measure = Measure::new(&M.accountant_mark_replace);
 
+        self.mark_link(pid, new_cache_info);
+
         trace!(
             "mark_replace pid {} from cache infos {:?} to cache info {:?} with lsn {}",
             pid,
@@ -761,11 +774,8 @@ impl SegmentAccountant {
                 self.config.normalize(lsn),
                 usize::try_from(old_cache_info.log_size).unwrap(),
             );
-
             self.possibly_clean_or_free_segment(old_idx, new_cache_info.lsn);
         }
-
-        self.mark_link(pid, new_cache_info);
 
         Ok(())
     }
@@ -951,6 +961,8 @@ impl SegmentAccountant {
         } else {
             Default::default()
         };
+
+        self.possibly_clean_or_free_segment(idx, lsn);
 
         for lsn in freeable_segments {
             let segment_start = self.ordering[&lsn];

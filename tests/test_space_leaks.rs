@@ -1,5 +1,9 @@
+mod common;
+
 #[test]
 fn size_leak() -> sled::Result<()> {
+    common::setup_logger();
+
     let tree = sled::Config::new()
         .temporary(true)
         .segment_size(2048)
