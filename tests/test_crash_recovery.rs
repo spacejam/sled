@@ -365,6 +365,7 @@ fn test_crash_recovery_no_runtime_snapshot() {
     cleanup(dir);
 }
 
+#[allow(dead_code)]
 fn test_crash_batches_with_runtime_snapshot() {
     let dir = BATCHES_WITH_SNAPSHOT;
     cleanup(dir);
@@ -382,6 +383,7 @@ fn test_crash_batches_with_runtime_snapshot() {
     cleanup(dir);
 }
 
+#[allow(dead_code)]
 fn test_crash_batches_no_runtime_snapshot() {
     let dir = BATCHES_NO_SNAPSHOT;
     cleanup(dir);
