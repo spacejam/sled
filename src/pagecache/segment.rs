@@ -551,8 +551,10 @@ impl SegmentAccountant {
 
     fn initialize_from_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let segment_size = self.config.segment_size;
-        let (mut segments, segment_utilizations) =
+        let (segments, segment_utilizations) =
             self.initial_segments(snapshot)?;
+
+        self.segments = segments;
 
         let currently_active_segment = {
             // this logic allows us to free the last
@@ -561,7 +563,7 @@ impl SegmentAccountant {
                 usize::try_from(snapshot.last_lid / segment_size as LogOffset)
                     .unwrap();
             if let Some(segment) =
-                segments.get(prospective_currently_active_segment)
+                self.segments.get(prospective_currently_active_segment)
             {
                 if segment.is_empty() {
                     // we want to add this to the free list below,
@@ -576,7 +578,10 @@ impl SegmentAccountant {
             }
         };
 
-        for (idx, segment) in segments.iter_mut().enumerate() {
+        let mut to_free = vec![];
+        let mut maybe_clean = vec![];
+
+        for (idx, segment) in self.segments.iter_mut().enumerate() {
             let segment_base = idx as LogOffset * segment_size as LogOffset;
 
             if segment_base >= self.tip {
@@ -596,7 +601,7 @@ impl SegmentAccountant {
             if segment.is_free() {
                 // this segment was not used in the recovered
                 // snapshot, so we can assume it is free
-                self.free_segment(segment_base, false);
+                to_free.push(segment_base);
                 continue;
             }
 
@@ -606,12 +611,19 @@ impl SegmentAccountant {
                 && segment_lsn + segment_size as Lsn
                     <= snapshot.max_header_stable_lsn
             {
-                self.possibly_clean_or_free_segment(idx, segment_lsn);
+                maybe_clean.push((idx, segment_lsn));
             }
         }
 
-        trace!("initialized self.segments to {:?}", segments);
-        self.segments = segments;
+        for segment_base in to_free {
+            self.free_segment(segment_base, false);
+        }
+
+        for (idx, segment_lsn) in maybe_clean {
+            self.possibly_clean_or_free_segment(idx, segment_lsn);
+        }
+
+        trace!("initialized self.segments to {:?}", self.segments);
 
         self.ordering = self
             .segments
@@ -750,6 +762,8 @@ impl SegmentAccountant {
                 self.config.normalize(lsn),
                 usize::try_from(old_cache_info.log_size).unwrap(),
             );
+
+            self.possibly_clean_or_free_segment(old_idx, new_cache_info.lsn);
         }
 
         self.mark_link(pid, new_cache_info);
