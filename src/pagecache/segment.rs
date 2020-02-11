@@ -56,7 +56,7 @@
 
 #![allow(unused_results)]
 
-use std::{collections::BTreeSet, mem, sync::mpsc::Sender};
+use std::{collections::BTreeSet, mem};
 
 use super::PageState;
 
@@ -110,10 +110,43 @@ pub(crate) struct SegmentAccountant {
     free: BTreeSet<LogOffset>,
     tip: LogOffset,
     max_stabilized_lsn: Lsn,
-    clean_sender: Sender<(PageId, LogOffset)>,
+    segment_cleaner: SegmentCleaner,
     pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogOffset>,
     async_truncations: BTreeMap<LogOffset, OneShot<Result<()>>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SegmentCleaner {
+    inner: Arc<Mutex<BTreeMap<LogOffset, BTreeSet<PageId>>>>,
+}
+
+impl SegmentCleaner {
+    pub(crate) fn pop(&self) -> Option<(PageId, LogOffset)> {
+        let mut inner = self.inner.lock();
+        let offset = {
+            let (offset, pids) = inner.iter_mut().next()?;
+            if !pids.is_empty() {
+                let pid = pids.iter().next().copied().unwrap();
+                pids.remove(&pid);
+                return Some((pid, *offset));
+            }
+            *offset
+        };
+        inner.remove(&offset);
+        None
+    }
+
+    fn add_pids(&self, offset: LogOffset, pids: BTreeSet<PageId>) {
+        let mut inner = self.inner.lock();
+        let prev = inner.insert(offset, pids);
+        assert!(prev.is_none());
+    }
+
+    fn remove_pids(&self, offset: LogOffset) {
+        let mut inner = self.inner.lock();
+        inner.remove(&offset);
+    }
 }
 
 impl Drop for SegmentAccountant {
@@ -466,7 +499,7 @@ impl SegmentAccountant {
     pub(super) fn start(
         config: RunningConfig,
         snapshot: &Snapshot,
-        clean_sender: Sender<(PageId, LogOffset)>,
+        segment_cleaner: SegmentCleaner,
     ) -> Result<Self> {
         let _measure = Measure::new(&M.start_segment_accountant);
         let mut ret = Self {
@@ -475,7 +508,7 @@ impl SegmentAccountant {
             free: BTreeSet::default(),
             tip: 0,
             max_stabilized_lsn: -1,
-            clean_sender,
+            segment_cleaner,
             pause_rewriting: false,
             ordering: BTreeMap::default(),
             async_truncations: BTreeMap::default(),
@@ -648,6 +681,7 @@ impl SegmentAccountant {
     fn free_segment(&mut self, lid: LogOffset, in_recovery: bool) {
         debug!("freeing segment {}", lid);
         debug!("free list before free {:?}", self.free);
+        self.segment_cleaner.remove_pids(lid);
 
         let idx = self.segment_id(lid);
         assert!(
@@ -824,11 +858,7 @@ impl SegmentAccountant {
                     segment_start
                 );
                 let to_clean = self.segments[idx].inactive_to_draining(lsn);
-                for pid in to_clean.into_iter() {
-                    self.clean_sender
-                        .send((pid, segment_start))
-                        .expect("should always be able to send");
-                }
+                self.segment_cleaner.add_pids(segment_start, to_clean);
             }
         }
 
@@ -944,11 +974,7 @@ impl SegmentAccountant {
                 (last_index * self.config.segment_size) as LogOffset;
 
             let to_clean = self.segments[last_index].inactive_to_draining(lsn);
-            for pid in to_clean.into_iter() {
-                self.clean_sender
-                    .send((pid, segment_start))
-                    .expect("should always be able to send");
-            }
+            self.segment_cleaner.add_pids(segment_start, to_clean);
         }
 
         Ok(())

@@ -40,7 +40,7 @@ use self::{
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
-    segment::{SegmentAccountant, SegmentOp},
+    segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
     snapshot::advance_snapshot,
 };
 
@@ -734,8 +734,8 @@ impl PageCache {
             return Ok(false);
         }
         let guard = pin();
-        let to_clean = self.log.iobufs.clean_receiver.lock().try_recv();
-        let ret = if let Ok((pid_to_clean, segment_to_clean)) = to_clean {
+        let to_clean = self.log.iobufs.segment_cleaner.pop();
+        let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
             self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
                 .map(|_| true)
         } else {
@@ -1047,8 +1047,8 @@ impl PageCache {
         let result =
             self.cas_page(pid, old, Update::Node(new), false, guard)?;
 
-        if let Ok((pid_to_clean, segment_to_clean)) =
-            self.log.iobufs.clean_receiver.lock().try_recv()
+        if let Some((pid_to_clean, segment_to_clean)) =
+            self.log.iobufs.segment_cleaner.pop()
         {
             self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
         }
