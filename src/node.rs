@@ -73,7 +73,7 @@ impl Node {
 
     pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
         if !self.hi.is_empty() {
-            assert!(prefix::decode(self.prefix(), &key) < self.hi);
+            assert!(&*key < &self.hi[self.prefix_len as usize..]);
         }
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by_key(&&key, |(k, _)| k);
