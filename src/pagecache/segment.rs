@@ -140,8 +140,8 @@ struct Active {
     lsn: Lsn,
     rss: usize,
     deferred_replaced_rss: usize,
-    deferred_replaced_pids: FastSet8<PageId>,
-    pids: FastSet8<PageId>,
+    deferred_replaced_pids: BTreeSet<PageId>,
+    pids: BTreeSet<PageId>,
     latest_replacement_lsn: Lsn,
     can_free_upon_deactivation: FastSet8<Lsn>,
     deferred_rm_blob: FastSet8<BlobPointer>,
@@ -151,7 +151,7 @@ struct Active {
 struct Inactive {
     lsn: Lsn,
     rss: usize,
-    pids: FastSet8<PageId>,
+    pids: BTreeSet<PageId>,
     max_pids: usize,
     replaced_pids: usize,
     latest_replacement_lsn: Lsn,
@@ -160,7 +160,7 @@ struct Inactive {
 #[derive(Debug, Clone, Default)]
 struct Draining {
     lsn: Lsn,
-    pids: FastSet8<PageId>,
+    pids: BTreeSet<PageId>,
     max_pids: usize,
     replaced_pids: usize,
     latest_replacement_lsn: Lsn,
@@ -229,8 +229,8 @@ impl Segment {
             lsn: new_lsn,
             rss: 0,
             deferred_replaced_rss: 0,
-            deferred_replaced_pids: FastSet8::default(),
-            pids: FastSet8::default(),
+            deferred_replaced_pids: BTreeSet::default(),
+            pids: BTreeSet::default(),
             latest_replacement_lsn: 0,
             can_free_upon_deactivation: FastSet8::default(),
             deferred_rm_blob: FastSet8::default(),
@@ -294,7 +294,7 @@ impl Segment {
             assert!(lsn >= inactive.lsn);
             *self = Segment::Draining(Draining {
                 lsn: inactive.lsn,
-                pids: mem::replace(&mut inactive.pids, FastSet8::default()),
+                pids: mem::replace(&mut inactive.pids, BTreeSet::default()),
                 max_pids: inactive.max_pids,
                 replaced_pids: inactive.replaced_pids,
                 latest_replacement_lsn: inactive.latest_replacement_lsn,
