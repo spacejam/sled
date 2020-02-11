@@ -187,7 +187,6 @@ mod subscription;
 mod sys_limits;
 mod transaction;
 mod tree;
-mod vecset;
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod threadpool {
@@ -272,7 +271,6 @@ use {
         result::CasResult,
         subscription::Subscriptions,
         tree::TreeInner,
-        vecset::VecSet,
     },
     crossbeam_utils::{Backoff, CachePadded},
     log::{debug, error, trace, warn},
