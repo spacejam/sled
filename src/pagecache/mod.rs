@@ -1050,7 +1050,6 @@ impl PageCache {
         if let Ok((pid_to_clean, segment_to_clean)) =
             self.log.iobufs.clean_receiver.lock().try_recv()
         {
-            assert_ne!(pid, pid_to_clean);
             self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
         }
 
