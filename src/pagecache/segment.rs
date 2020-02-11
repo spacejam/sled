@@ -119,27 +119,52 @@ pub(crate) struct SegmentAccountant {
 impl Drop for SegmentAccountant {
     fn drop(&mut self) {
         for segment in &self.segments {
-            let segment_utilization = segment.resident_size;
+            let segment_utilization = match segment {
+                Segment::Free(_) => 0,
+                Segment::Active(Active { rss, .. })
+                | Segment::Inactive(Inactive { rss, .. }) => *rss,
+                Segment::Draining(_) => 0,
+            };
             #[allow(clippy::cast_precision_loss)]
             M.segment_utilization_shutdown.measure(segment_utilization as f64);
         }
     }
 }
 
-#[derive(Default, Clone, Debug, PartialEq)]
-struct SegmentReplacements(FastMap8<SegmentId, (u64, FastSet8<PageId>)>);
+#[derive(Debug, Clone, Default)]
+struct Free {
+    previous_lsn: Option<Lsn>,
+}
 
-impl SegmentReplacements {
-    fn merge(&mut self, other: SegmentReplacements) {
-        for (sid, (log_size, pids)) in other.0 {
-            let mut entry =
-                self.0.entry(sid).or_insert((0, FastSet8::default()));
-            entry.0 += log_size;
-            for pid in pids {
-                entry.1.insert(pid);
-            }
-        }
-    }
+#[derive(Debug, Clone, Default)]
+struct Active {
+    lsn: Lsn,
+    rss: usize,
+    deferred_replaced_rss: usize,
+    deferred_replaced_pids: FastSet8<PageId>,
+    pids: FastSet8<PageId>,
+    latest_replacement_lsn: Lsn,
+    can_free_upon_deactivation: FastSet8<Lsn>,
+    deferred_rm_blob: FastSet8<BlobPointer>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Inactive {
+    lsn: Lsn,
+    pids_max_count: usize,
+    pids_replaced_count: usize,
+    rss: usize,
+    pids: FastSet8<PageId>,
+    latest_replacement_lsn: Lsn,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Draining {
+    lsn: Lsn,
+    pids_max_count: usize,
+    pids_replaced_count: usize,
+    pids: FastSet8<PageId>,
+    latest_replacement_lsn: Lsn,
 }
 
 /// A `Segment` holds the bookkeeping information for
@@ -147,83 +172,78 @@ impl SegmentReplacements {
 /// fragments from different pages. Over time, we track
 /// when segments become reusable and allow them to be
 /// overwritten for new data.
-#[derive(Default, Clone, Debug, PartialEq)]
-struct Segment {
-    resident_size: u64,
-    present: FastSet8<PageId>,
-    // a copy of present that lets us make decisions
-    // about draining without waiting for
-    // deferred_replacements to take effect during
-    // segment deactivation.
-    not_yet_replaced: FastSet8<PageId>,
-    deferred_rm_blob: FastSet8<BlobPointer>,
-    // set of pages that we replaced from other segments
-    deferred_replacements: SegmentReplacements,
-    lsn: Option<Lsn>,
-    state: SegmentState,
-}
-
-#[derive(Debug, Copy, Eq, Hash, Ord, PartialOrd, PartialEq, Clone)]
-pub(crate) enum SegmentState {
+#[derive(Clone, Debug)]
+enum Segment {
     /// the segment is marked for reuse, should never receive
     /// new pids,
-    Free,
+    Free(Free),
 
     /// the segment is being written to or actively recovered, and
     /// will have pages assigned to it
-    Active,
+    Active(Active),
 
     /// the segment is no longer being written to or recovered, and
     /// will have pages marked as relocated from it
-    Inactive,
+    Inactive(Inactive),
 
     /// the segment is having its resident pages relocated before
     /// becoming free
-    Draining,
+    Draining(Draining),
 }
 
-use self::SegmentState::{Active, Draining, Free, Inactive};
-
-impl Default for SegmentState {
+impl Default for Segment {
     fn default() -> Self {
-        Free
+        Segment::Free(Free { previous_lsn: None })
     }
 }
 
 impl Segment {
-    fn len(&self) -> usize {
-        self.present.len()
+    fn is_free(&self) -> bool {
+        if let Segment::Free(_) = self {
+            true
+        } else {
+            false
+        }
     }
 
-    fn is_free(&self) -> bool {
-        self.state == Free
+    fn is_active(&self) -> bool {
+        if let Segment::Active { .. } = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn is_inactive(&self) -> bool {
-        self.state == Inactive
-    }
-
-    fn _is_active(&self) -> bool {
-        self.state == Active
+        if let Segment::Inactive { .. } = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn is_draining(&self) -> bool {
-        self.state == Draining
+        if let Segment::Draining { .. } = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
-        trace!(
-            "setting Segment to Active with new lsn {:?}, was {:?}",
-            new_lsn,
-            self.lsn
-        );
-        assert_eq!(self.state, Free);
-        self.present.clear();
-        self.not_yet_replaced.clear();
-        self.deferred_rm_blob.clear();
-        self.deferred_replacements.0.clear();
-        self.lsn = Some(new_lsn);
-        self.state = Active;
+        trace!("setting Segment to Active with new lsn {:?}", new_lsn,);
+        assert!(self.is_free());
+
+        *self = Segment::Active(Active {
+            lsn: new_lsn,
+            rss: 0,
+            deferred_replaced_rss: 0,
+            deferred_replaced_pids: FastSet8::default(),
+            pids: FastSet8::default(),
+            latest_replacement_lsn: 0,
+            can_free_upon_deactivation: FastSet8::default(),
+            deferred_rm_blob: FastSet8::default(),
+        })
     }
 
     /// Transitions a segment to being in the `Inactive` state.
@@ -232,132 +252,158 @@ impl Segment {
     fn active_to_inactive(
         &mut self,
         lsn: Lsn,
-        from_recovery: bool,
         config: &Config,
-    ) -> Result<SegmentReplacements> {
+    ) -> Result<FastSet8<Lsn>> {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
-        assert!(
-            self.state == Active || self.state == Draining,
-            "segment {} should have been \
-             Active or Draining, before deactivating, but was {:?}",
-            self.lsn(),
-            self.state
-        );
-        if from_recovery {
-            assert!(lsn >= self.lsn());
-        } else {
-            assert_eq!(self.lsn(), lsn);
-        }
-        self.state = Inactive;
 
-        // now we can push any deferred blob removals to the removed set
-        let deferred_rm_blob =
-            mem::replace(&mut self.deferred_rm_blob, FastSet8::default());
-        for ptr in deferred_rm_blob {
-            trace!(
-                "removing blob {} while transitioning \
+        let (inactive, ret) = if let Segment::Active(active) = self {
+            assert!(lsn >= active.lsn);
+
+            // now we can push any deferred blob removals to the removed set
+            for ptr in &active.deferred_rm_blob {
+                trace!(
+                    "removing blob {} while transitioning \
                  segment lsn {:?} to Inactive",
-                ptr,
-                self.lsn,
+                    ptr,
+                    active.lsn,
+                );
+                remove_blob(*ptr, config)?;
+            }
+
+            let inactive = Segment::Inactive(Inactive {
+                lsn: active.lsn,
+                pids_max_count: active.pids.len(),
+                pids_replaced_count: active.deferred_replaced_pids.len(),
+                rss: active.rss - active.deferred_replaced_rss,
+                pids: &active.pids - &active.deferred_replaced_pids,
+                latest_replacement_lsn: active.latest_replacement_lsn,
+            });
+
+            let can_free = mem::replace(
+                &mut active.can_free_upon_deactivation,
+                FastSet8::default(),
             );
-            remove_blob(ptr, config)?;
-        }
 
-        let deferred_replacements = mem::replace(
-            &mut self.deferred_replacements,
-            SegmentReplacements::default(),
-        );
+            (inactive, can_free)
+        } else {
+            panic!("called active_to_inactive on {:?}", self);
+        };
 
-        Ok(deferred_replacements)
+        *self = inactive;
+        Ok(ret)
     }
 
     fn inactive_to_draining(&mut self, lsn: Lsn) {
         trace!("setting Segment with lsn {:?} to Draining", self.lsn());
-        assert_eq!(
-            self.state, Inactive,
-            "segment with lsn {:?} should have been \
-             Inactive before draining",
-            self.lsn
-        );
-        assert!(lsn >= self.lsn());
-        self.state = Draining;
+
+        if let Segment::Inactive(inactive) = self {
+            assert!(lsn >= inactive.lsn);
+            *self = Segment::Draining(Draining {
+                lsn: inactive.lsn,
+                pids_max_count: inactive.pids_max_count,
+                pids_replaced_count: inactive.pids_replaced_count,
+                pids: mem::replace(&mut inactive.pids, FastSet8::default()),
+                latest_replacement_lsn: inactive.latest_replacement_lsn,
+            });
+        } else {
+            panic!("called inactive_to_draining on {:?}", self);
+        };
     }
 
-    fn draining_to_free(&mut self, lsn: Lsn) {
+    fn defer_free_lsn(&mut self, lsn: Lsn) {
+        if let Segment::Active(active) = self {
+            active.can_free_upon_deactivation.insert(lsn);
+        } else {
+            panic!("called defer_free_lsn on segment {:?}", self);
+        }
+    }
+
+    fn draining_to_free(&mut self, lsn: Lsn) -> Lsn {
         trace!("setting Segment with lsn {:?} to Free", self.lsn());
-        assert!(self.is_draining());
-        assert!(lsn >= self.lsn());
-        self.present.clear();
-        self.not_yet_replaced.clear();
-        self.state = Free;
+
+        if let Segment::Draining(draining) = self {
+            let old_lsn = draining.lsn;
+            assert!(lsn >= old_lsn);
+            let replacement_lsn = draining.latest_replacement_lsn;
+            *self = Segment::Free(Free { previous_lsn: Some(old_lsn) });
+            replacement_lsn
+        } else {
+            panic!("called draining_to_free on {:?}", self);
+        }
     }
 
     fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
-        if let Some(current_lsn) = self.lsn {
-            if current_lsn != lsn {
-                trace!("(snapshot) recovering segment with base lsn {}", lsn);
-                assert!(lsn > current_lsn);
-                self.state = Free;
-                self.free_to_active(lsn);
-            }
-        } else {
+        if self.is_free() {
             trace!("(snapshot) recovering segment with base lsn {}", lsn);
             self.free_to_active(lsn);
         }
     }
 
     fn lsn(&self) -> Lsn {
-        self.lsn.unwrap()
+        match self {
+            Segment::Active(Active { lsn, .. })
+            | Segment::Inactive(Inactive { lsn, .. })
+            | Segment::Draining(Draining { lsn, .. }) => *lsn,
+            Segment::Free(_) => panic!("called lsn on Segment::Free"),
+        }
     }
 
     /// Add a pid to the Segment. The caller must provide
     /// the Segment's LSN.
-    fn insert_pid(&mut self, pid: PageId, lsn: Lsn) {
-        assert_eq!(lsn, self.lsn());
+    fn insert_pid(&mut self, pid: PageId, lsn: Lsn, size: usize) {
         // if this breaks, maybe we didn't implement the transition
         // logic right in write_to_log, and maybe a thread is
         // using the SA to add pids AFTER their calls to
         // res.complete() worked.
-        assert_eq!(
-            self.state, Active,
-            "expected segment with lsn {} to be Active",
-            lsn
-        );
-        self.not_yet_replaced.insert(pid);
-        self.present.insert(pid);
-    }
-
-    /// Mark that a pid in this Segment has been relocated.
-    /// The caller must provide the LSN of the removal.
-    fn remove_pid(&mut self, pid: PageId, lsn: Lsn, in_recovery: bool) {
-        assert!(lsn >= self.lsn());
-        match self.state {
-            Active => {
-                // we have received a removal before
-                // transferring this segment to Inactive.
-                // This should have been deferred by the
-                // segment that actually replaced this,
-                // and if we're still Active, something is
-                // wrong.
-                if !in_recovery {
-                    panic!("remove_pid called on Active segment");
-                }
-                assert!(
-                    !self.present.contains(&pid),
-                    "did not expect present to contain pid {} during recovery",
-                    pid,
-                );
-            }
-            Inactive | Draining => {
-                self.present.remove(&pid);
-            }
-            Free => panic!("remove_pid called on a Free Segment"),
+        if let Segment::Active(active) = self {
+            assert_eq!(lsn, active.lsn);
+            active.pids.insert(pid);
+            active.rss += size;
+        } else {
+            panic!("called insert_pid on {:?}", self);
         }
     }
 
-    fn defer_replace_pids(&mut self, deferred: SegmentReplacements, lsn: Lsn) {
-        assert!(lsn >= self.lsn());
-        self.deferred_replacements.merge(deferred);
+    fn remove_pid(&mut self, pid: PageId, replacement_lsn: Lsn, sz: usize) {
+        match self {
+            Segment::Active(active) => {
+                assert!(active.lsn <= replacement_lsn);
+                active.deferred_replaced_pids.insert(pid);
+                active.deferred_replaced_rss += sz;
+                if replacement_lsn > active.latest_replacement_lsn {
+                    active.latest_replacement_lsn = replacement_lsn;
+                }
+            }
+            Segment::Inactive(Inactive {
+                pids,
+                lsn,
+                rss,
+                latest_replacement_lsn,
+                ..
+            }) => {
+                assert!(*lsn <= replacement_lsn);
+                pids.remove(&pid);
+                *rss = rss.checked_sub(sz).unwrap();
+                if replacement_lsn > *latest_replacement_lsn {
+                    *latest_replacement_lsn = replacement_lsn;
+                }
+            }
+            Segment::Draining(Draining {
+                pids,
+                lsn,
+                latest_replacement_lsn,
+                ..
+            }) => {
+                assert!(*lsn <= replacement_lsn);
+                pids.remove(&pid);
+                if replacement_lsn > *latest_replacement_lsn {
+                    *latest_replacement_lsn = replacement_lsn;
+                }
+            }
+            Segment::Free(_) => {
+                panic!("called remove pid {} on Segment::Free", pid)
+            }
+        }
     }
 
     fn remove_blob(
@@ -365,14 +411,14 @@ impl Segment {
         blob_ptr: BlobPointer,
         config: &Config,
     ) -> Result<()> {
-        match self.state {
-            Active => {
+        match self {
+            Segment::Active(active) => {
                 // we have received a removal before
                 // transferring this segment to Inactive, so
                 // we defer this pid's removal until the transfer.
-                self.deferred_rm_blob.insert(blob_ptr);
+                active.deferred_rm_blob.insert(blob_ptr);
             }
-            Inactive | Draining => {
+            Segment::Inactive(_) | Segment::Draining(_) => {
                 trace!(
                     "directly removing blob {} that was referred-to \
                      in a segment that has already been marked as Inactive \
@@ -381,18 +427,23 @@ impl Segment {
                 );
                 remove_blob(blob_ptr, config)?;
             }
-            Free => panic!("remove_blob called on a Free Segment"),
+            Segment::Free(_) => panic!("remove_blob called on a Free Segment"),
         }
 
         Ok(())
     }
 
     fn can_free(&self) -> bool {
-        self.state == Draining && self.is_empty()
+        self.is_draining() && self.is_empty()
     }
 
     fn is_empty(&self) -> bool {
-        self.present.is_empty()
+        match self {
+            Segment::Active(Active { pids, .. })
+            | Segment::Inactive(Inactive { pids, .. })
+            | Segment::Draining(Draining { pids, .. }) => pids.is_empty(),
+            Segment::Free(_) => false,
+        }
     }
 }
 
