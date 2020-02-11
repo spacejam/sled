@@ -457,11 +457,10 @@ impl SegmentAccountant {
         let mut ret = Self {
             config,
             segments: vec![],
-            clean_counter: 0,
-            free: VecSet::default(),
+            free: BTreeSet::default(),
             tip: 0,
             max_stabilized_lsn: -1,
-            to_clean: VecSet::default(),
+            to_clean: BTreeSet::default(),
             pause_rewriting: false,
             ordering: BTreeMap::default(),
             async_truncations: BTreeMap::default(),
