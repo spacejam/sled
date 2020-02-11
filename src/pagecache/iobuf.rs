@@ -1,6 +1,8 @@
 use std::{
-    cell::UnsafeCell, sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst,
+    cell::UnsafeCell,
+    sync::atomic::AtomicBool,
     sync::Arc,
+    sync::{atomic::Ordering::SeqCst, mpsc::Receiver},
 };
 
 use crate::{pagecache::*, *};
@@ -63,6 +65,7 @@ pub(crate) struct IoBufs {
     pub max_reserved_lsn: AtomicLsn,
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
+    pub clean_receiver: Mutex<Receiver<(PageId, LogOffset)>>,
     deferred_segment_ops: stack::Stack<SegmentOp>,
     #[cfg(feature = "io_uring")]
     pub submission_mutex: Mutex<()>,
@@ -83,8 +86,10 @@ impl IoBufs {
         let snapshot_last_lid = snapshot.last_lid;
         let snapshot_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
+        let (clean_sender, clean_receiver) = std::sync::mpsc::channel();
+
         let mut segment_accountant: SegmentAccountant =
-            SegmentAccountant::start(config.clone(), snapshot)?;
+            SegmentAccountant::start(config.clone(), snapshot, clean_sender)?;
 
         let (next_lsn, next_lid) =
             if snapshot_last_lsn % segment_size as Lsn == 0 {
@@ -182,6 +187,7 @@ impl IoBufs {
                 snapshot_max_header_stable_lsn,
             )),
             segment_accountant: Mutex::new(segment_accountant),
+            clean_receiver: Mutex::new(clean_receiver),
             deferred_segment_ops: stack::Stack::default(),
             #[cfg(feature = "io_uring")]
             submission_mutex: Mutex::new(()),

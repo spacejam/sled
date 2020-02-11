@@ -734,8 +734,8 @@ impl PageCache {
             return Ok(false);
         }
         let guard = pin();
-        let to_clean = self.log.with_sa(|sa| sa.clean(None));
-        let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
+        let to_clean = self.log.iobufs.clean_receiver.lock().try_recv();
+        let ret = if let Ok((pid_to_clean, segment_to_clean)) = to_clean {
             self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
                 .map(|_| true)
         } else {
@@ -1047,8 +1047,8 @@ impl PageCache {
         let result =
             self.cas_page(pid, old, Update::Node(new), false, guard)?;
 
-        if let Some((pid_to_clean, segment_to_clean)) =
-            self.log.with_sa(|sa| sa.clean(Some(pid)))
+        if let Ok((pid_to_clean, segment_to_clean)) =
+            self.log.iobufs.clean_receiver.lock().try_recv()
         {
             assert_ne!(pid, pid_to_clean);
             self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
