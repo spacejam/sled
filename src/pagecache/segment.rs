@@ -863,7 +863,7 @@ impl SegmentAccountant {
             if self.segments[replacement_idx].is_active() {
                 self.segments[replacement_idx].defer_free_lsn(segment_lsn);
             } else {
-                assert!(replacement_lsn < self.max_stabilized_lsn);
+                assert!(replacement_lsn <= self.max_stabilized_lsn);
                 self.free_segment(segment_start, false);
             }
         }
