@@ -359,6 +359,12 @@ impl Segment {
     }
 
     fn remove_pid(&mut self, pid: PageId, replacement_lsn: Lsn, sz: usize) {
+        trace!(
+            "removing pid {} at lsn {} from segment {:?}",
+            pid,
+            replacement_lsn,
+            self
+        );
         match self {
             Segment::Active(active) => {
                 assert!(active.lsn <= replacement_lsn);
@@ -441,7 +447,11 @@ impl Segment {
         if let Segment::Draining(draining) = self {
             let ret = draining.replaced_pids == draining.max_pids;
             if ret {
-                assert!(draining.pids.is_empty());
+                assert!(
+                    draining.pids.is_empty(),
+                    "expected segment {:?} to be empty",
+                    self
+                );
             }
             ret
         } else {
@@ -489,10 +499,7 @@ impl SegmentAccountant {
         Ok(ret)
     }
 
-    fn initial_segments(
-        &self,
-        snapshot: &Snapshot,
-    ) -> Result<(Vec<Segment>, Vec<u64>)> {
+    fn initial_segments(&self, snapshot: &Snapshot) -> Result<Vec<Segment>> {
         let segment_size = self.config.segment_size;
         let file_len = self.config.file.metadata()?.len();
         let empty_snapshot = snapshot.pt.is_empty();
@@ -513,31 +520,27 @@ impl SegmentAccountant {
 
         // generate segments from snapshot lids
         let mut segments = vec![Segment::default(); number_of_segments];
-        let mut segment_utilizations = vec![0_u64; number_of_segments];
 
-        let mut add = |pid,
-                       lsn: Lsn,
-                       sz,
-                       lid: LogOffset,
-                       segments: &mut Vec<Segment>| {
-            let idx = assert_usize(lid / segment_size as LogOffset);
-            trace!(
-                "adding lsn: {} lid: {} sz: {} for pid {} to segment {} during SA recovery",
-                lsn,
-                lid,
-                sz,
-                pid,
-                idx
-            );
-            let segment_lsn = self.config.normalize(lsn);
-            segments[idx].recovery_ensure_initialized(segment_lsn);
-            segments[idx].insert_pid(
-                pid,
-                segment_lsn,
-                usize::try_from(sz).unwrap(),
-            );
-            segment_utilizations[idx] += sz;
-        };
+        let add =
+            |pid, lsn: Lsn, sz, lid: LogOffset, segments: &mut Vec<Segment>| {
+                let idx = assert_usize(lid / segment_size as LogOffset);
+                trace!(
+                    "adding lsn: {} lid: {} sz: {} for \
+                    pid {} to segment {} during SA recovery",
+                    lsn,
+                    lid,
+                    sz,
+                    pid,
+                    idx
+                );
+                let segment_lsn = self.config.normalize(lsn);
+                segments[idx].recovery_ensure_initialized(segment_lsn);
+                segments[idx].insert_pid(
+                    pid,
+                    segment_lsn,
+                    usize::try_from(sz).unwrap(),
+                );
+            };
 
         for (pid, state) in &snapshot.pt {
             match state {
@@ -558,13 +561,12 @@ impl SegmentAccountant {
             }
         }
 
-        Ok((segments, segment_utilizations))
+        Ok(segments)
     }
 
     fn initialize_from_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let segment_size = self.config.segment_size;
-        let (segments, segment_utilizations) =
-            self.initial_segments(snapshot)?;
+        let segments = self.initial_segments(snapshot)?;
 
         self.segments = segments;
 
@@ -604,11 +606,6 @@ impl SegmentAccountant {
                     self.tip
                 );
             }
-
-            let segment_utilization = segment_utilizations[idx];
-
-            #[allow(clippy::cast_precision_loss)]
-            M.segment_utilization_startup.measure(segment_utilization as f64);
 
             if segment.is_free() {
                 // this segment was not used in the recovered
@@ -741,8 +738,8 @@ impl SegmentAccountant {
             pid,
             old_cache_infos,
             new_cache_info,
-            lsn
-        );
+            self.config.normalize(lsn)
+            );
 
         let new_idx = self.segment_id(new_cache_info.pointer.lid());
 
@@ -759,6 +756,8 @@ impl SegmentAccountant {
         let schedule_rm_blob = !(old_cache_infos.len() == 1
             && old_cache_infos[0].pointer.is_blob());
 
+        let mut removals = FastMap8::default();
+
         for old_cache_info in old_cache_infos {
             let old_ptr = &old_cache_info.pointer;
             let old_lid = old_ptr.lid();
@@ -773,10 +772,15 @@ impl SegmentAccountant {
             }
 
             let old_idx = self.segment_id(old_lid);
+            let entry = removals.entry(old_idx).or_insert(0);
+            *entry += old_cache_info.log_size;
+        }
+
+        for (old_idx, replaced_size) in removals {
             self.segments[old_idx].remove_pid(
                 pid,
                 self.config.normalize(lsn),
-                usize::try_from(old_cache_info.log_size).unwrap(),
+                usize::try_from(replaced_size).unwrap(),
             );
             self.possibly_clean_or_free_segment(old_idx, new_cache_info.lsn);
         }
