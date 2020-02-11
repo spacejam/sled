@@ -276,6 +276,18 @@ impl Inner {
         path.push("conf");
         path
     }
+
+    pub(crate) fn normalize<T>(&self, value: T) -> T
+    where
+        T: Copy
+            + TryFrom<usize>
+            + std::ops::Div<Output = T>
+            + std::ops::Mul<Output = T>,
+        <T as std::convert::TryFrom<usize>>::Error: Debug,
+    {
+        let segment_size: T = T::try_from(self.segment_size).unwrap();
+        value / segment_size * segment_size
+    }
 }
 
 macro_rules! supported {
