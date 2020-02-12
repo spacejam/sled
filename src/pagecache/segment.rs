@@ -110,10 +110,43 @@ pub(crate) struct SegmentAccountant {
     free: BTreeSet<LogOffset>,
     tip: LogOffset,
     max_stabilized_lsn: Lsn,
-    to_clean: BTreeSet<LogOffset>,
+    segment_cleaner: SegmentCleaner,
     pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogOffset>,
     async_truncations: BTreeMap<LogOffset, OneShot<Result<()>>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SegmentCleaner {
+    inner: Arc<Mutex<BTreeMap<LogOffset, BTreeSet<PageId>>>>,
+}
+
+impl SegmentCleaner {
+    pub(crate) fn pop(&self) -> Option<(PageId, LogOffset)> {
+        let mut inner = self.inner.lock();
+        let offset = {
+            let (offset, pids) = inner.iter_mut().next()?;
+            if !pids.is_empty() {
+                let pid = pids.iter().next().copied().unwrap();
+                pids.remove(&pid);
+                return Some((pid, *offset));
+            }
+            *offset
+        };
+        inner.remove(&offset);
+        None
+    }
+
+    fn add_pids(&self, offset: LogOffset, pids: BTreeSet<PageId>) {
+        let mut inner = self.inner.lock();
+        let prev = inner.insert(offset, pids);
+        assert!(prev.is_none());
+    }
+
+    fn remove_pids(&self, offset: LogOffset) {
+        let mut inner = self.inner.lock();
+        inner.remove(&offset);
+    }
 }
 
 impl Drop for SegmentAccountant {
@@ -160,7 +193,6 @@ struct Inactive {
 #[derive(Debug, Clone, Default)]
 struct Draining {
     lsn: Lsn,
-    pids: BTreeSet<PageId>,
     max_pids: usize,
     replaced_pids: usize,
     latest_replacement_lsn: Lsn,
@@ -287,21 +319,22 @@ impl Segment {
         Ok(ret)
     }
 
-    fn inactive_to_draining(&mut self, lsn: Lsn) {
+    fn inactive_to_draining(&mut self, lsn: Lsn) -> BTreeSet<PageId> {
         trace!("setting Segment with lsn {:?} to Draining", self.lsn());
 
         if let Segment::Inactive(inactive) = self {
             assert!(lsn >= inactive.lsn);
+            let ret = mem::replace(&mut inactive.pids, BTreeSet::default());
             *self = Segment::Draining(Draining {
                 lsn: inactive.lsn,
-                pids: mem::replace(&mut inactive.pids, BTreeSet::default()),
                 max_pids: inactive.max_pids,
                 replaced_pids: inactive.replaced_pids,
                 latest_replacement_lsn: inactive.latest_replacement_lsn,
             });
+            ret
         } else {
             panic!("called inactive_to_draining on {:?}", self);
-        };
+        }
     }
 
     fn defer_free_lsn(&mut self, lsn: Lsn) {
@@ -395,7 +428,6 @@ impl Segment {
                 }
             }
             Segment::Draining(Draining {
-                pids,
                 lsn,
                 latest_replacement_lsn,
                 replaced_pids,
@@ -403,7 +435,6 @@ impl Segment {
             }) => {
                 assert!(*lsn <= replacement_lsn);
                 if replacement_lsn != *lsn {
-                    pids.remove(&pid);
                     *replaced_pids += 1;
                 }
                 if replacement_lsn > *latest_replacement_lsn {
@@ -445,15 +476,7 @@ impl Segment {
 
     fn can_free(&self) -> bool {
         if let Segment::Draining(draining) = self {
-            let ret = draining.replaced_pids == draining.max_pids;
-            if ret {
-                assert!(
-                    draining.pids.is_empty(),
-                    "expected segment {:?} to be empty",
-                    self
-                );
-            }
-            ret
+            draining.replaced_pids == draining.max_pids
         } else {
             false
         }
@@ -462,8 +485,10 @@ impl Segment {
     fn is_empty(&self) -> bool {
         match self {
             Segment::Active(Active { pids, .. })
-            | Segment::Inactive(Inactive { pids, .. })
-            | Segment::Draining(Draining { pids, .. }) => pids.is_empty(),
+            | Segment::Inactive(Inactive { pids, .. }) => pids.is_empty(),
+            Segment::Draining(Draining { replaced_pids, max_pids, .. }) => {
+                replaced_pids == max_pids
+            }
             Segment::Free(_) => false,
         }
     }
@@ -474,6 +499,7 @@ impl SegmentAccountant {
     pub(super) fn start(
         config: RunningConfig,
         snapshot: &Snapshot,
+        segment_cleaner: SegmentCleaner,
     ) -> Result<Self> {
         let _measure = Measure::new(&M.start_segment_accountant);
         let mut ret = Self {
@@ -482,7 +508,7 @@ impl SegmentAccountant {
             free: BTreeSet::default(),
             tip: 0,
             max_stabilized_lsn: -1,
-            to_clean: BTreeSet::default(),
+            segment_cleaner,
             pause_rewriting: false,
             ordering: BTreeMap::default(),
             async_truncations: BTreeMap::default(),
@@ -655,6 +681,7 @@ impl SegmentAccountant {
     fn free_segment(&mut self, lid: LogOffset, in_recovery: bool) {
         debug!("freeing segment {}", lid);
         debug!("free list before free {:?}", self.free);
+        self.segment_cleaner.remove_pids(lid);
 
         let idx = self.segment_id(lid);
         assert!(
@@ -743,12 +770,6 @@ impl SegmentAccountant {
 
         let new_idx = self.segment_id(new_cache_info.pointer.lid());
 
-        // make sure we're not actively trying to replace the destination
-        let new_segment_start =
-            new_idx as LogOffset * self.config.segment_size as LogOffset;
-
-        assert!(!self.to_clean.contains(&new_segment_start));
-
         // Do we need to schedule any blob cleanups?
         // Not if we just moved the pointer without changing
         // the underlying blob, as is the case with a single Blob
@@ -797,12 +818,6 @@ impl SegmentAccountant {
         trace!("mark_link pid {} at cache info {:?}", pid, cache_info);
         let idx = self.segment_id(cache_info.pointer.lid());
 
-        // make sure we're not actively trying to replace the destination
-        let new_segment_start =
-            idx as LogOffset * self.config.segment_size as LogOffset;
-
-        assert!(!self.to_clean.contains(&new_segment_start));
-
         let segment = &mut self.segments[idx];
 
         let segment_lsn = cache_info.lsn / self.config.segment_size as Lsn
@@ -842,8 +857,8 @@ impl SegmentAccountant {
                     "SA inserting {} into to_clean from possibly_clean_or_free_segment",
                     segment_start
                 );
-                self.segments[idx].inactive_to_draining(lsn);
-                self.to_clean.insert(segment_start);
+                let to_clean = self.segments[idx].inactive_to_draining(lsn);
+                self.segment_cleaner.add_pids(segment_start, to_clean);
             }
         }
 
@@ -852,7 +867,6 @@ impl SegmentAccountant {
         if self.segments[idx].can_free() {
             // can be reused immediately
             let replacement_lsn = self.segments[idx].draining_to_free(lsn);
-            self.to_clean.remove(&segment_start);
             trace!(
                 "freed segment {} in possibly_clean_or_free_segment",
                 segment_start
@@ -870,45 +884,6 @@ impl SegmentAccountant {
                 assert!(replacement_lsn <= self.max_stabilized_lsn);
                 self.free_segment(segment_start, false);
             }
-        }
-    }
-
-    /// Called by the `PageCache` to find pages that are in
-    /// segments eligible for cleaning that it should
-    /// try to rewrite elsewhere.
-    pub(super) fn clean(
-        &mut self,
-        ignore_pid: Option<PageId>,
-    ) -> Option<(PageId, LogOffset)> {
-        let lid = self.to_clean.iter().next().copied()?;
-
-        let idx = self.segment_id(lid);
-        let segment = &mut self.segments[idx];
-
-        let pids = match segment {
-            Segment::Inactive(Inactive { pids, .. })
-            | Segment::Draining(Draining { pids, .. }) => pids,
-            Segment::Active(_) | Segment::Free(_) => {
-                panic!("called clean on {:?}", self)
-            }
-        };
-
-        if pids.is_empty() {
-            self.to_clean.remove(&lid);
-            None
-        } else {
-            let pid_opt =
-                pids.iter().find(|p| Some(**p) != ignore_pid).copied();
-
-            pid_opt.map(|pid| {
-                pids.remove(&pid);
-                trace!(
-                    "telling caller to clean {} from segment at {}",
-                    pid,
-                    lid
-                );
-                (pid, lid)
-            })
         }
     }
 
@@ -998,7 +973,8 @@ impl SegmentAccountant {
             let segment_start =
                 (last_index * self.config.segment_size) as LogOffset;
 
-            self.to_clean.insert(segment_start);
+            let to_clean = self.segments[last_index].inactive_to_draining(lsn);
+            self.segment_cleaner.add_pids(segment_start, to_clean);
         }
 
         Ok(())

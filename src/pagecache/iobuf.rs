@@ -63,6 +63,7 @@ pub(crate) struct IoBufs {
     pub max_reserved_lsn: AtomicLsn,
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
+    pub segment_cleaner: SegmentCleaner,
     deferred_segment_ops: stack::Stack<SegmentOp>,
     #[cfg(feature = "io_uring")]
     pub submission_mutex: Mutex<()>,
@@ -83,8 +84,14 @@ impl IoBufs {
         let snapshot_last_lid = snapshot.last_lid;
         let snapshot_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
+        let segment_cleaner = SegmentCleaner::default();
+
         let mut segment_accountant: SegmentAccountant =
-            SegmentAccountant::start(config.clone(), snapshot)?;
+            SegmentAccountant::start(
+                config.clone(),
+                snapshot,
+                segment_cleaner.clone(),
+            )?;
 
         let (next_lsn, next_lid) =
             if snapshot_last_lsn % segment_size as Lsn == 0 {
@@ -182,6 +189,7 @@ impl IoBufs {
                 snapshot_max_header_stable_lsn,
             )),
             segment_accountant: Mutex::new(segment_accountant),
+            segment_cleaner,
             deferred_segment_ops: stack::Stack::default(),
             #[cfg(feature = "io_uring")]
             submission_mutex: Mutex::new(()),

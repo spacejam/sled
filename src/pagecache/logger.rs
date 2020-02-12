@@ -5,9 +5,9 @@ use super::{
     arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, iobuf, lsn_to_arr,
     maybe_decompress, pread_exact, pread_exact_or_eof, read_blob, u32_to_arr,
     BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
-    MessageKind, Reservation, SegmentAccountant, Serialize, Snapshot,
-    BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
-    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
+    MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
+    COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
+    SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -96,14 +96,6 @@ impl Log {
     /// bytes written during this call.
     pub fn make_stable(&self, lsn: Lsn) -> Result<usize> {
         iobuf::make_stable(&self.iobufs, lsn)
-    }
-
-    // SegmentAccountant access for coordination with the `PageCache`
-    pub(in crate::pagecache) fn with_sa<B, F>(&self, f: F) -> B
-    where
-        F: FnOnce(&mut SegmentAccountant) -> B,
-    {
-        self.iobufs.with_sa(f)
     }
 
     /// Reserve a replacement buffer for a previously written
