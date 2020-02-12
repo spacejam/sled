@@ -1,14 +1,21 @@
-use std::cmp::Ordering::{self, Greater, Less};
+use std::cmp::Ordering;
 
+#[cfg(any(unix, windows))]
 #[allow(unsafe_code)]
 pub(crate) fn fastcmp(l: &[u8], r: &[u8]) -> Ordering {
     let len = std::cmp::min(l.len(), r.len());
     let cmp = unsafe { libc::memcmp(l.as_ptr() as _, r.as_ptr() as _, len) };
     match cmp {
-        a if a > 0 => Greater,
-        a if a < 0 => Less,
+        a if a > 0 => Ordering::Greater,
+        a if a < 0 => Ordering::Less,
         _ => l.len().cmp(&r.len()),
     }
+}
+
+#[cfg(not(any(unix, windows)))]
+#[allow(unsafe_code)]
+pub(crate) fn fastcmp(l: &[u8], r: &[u8]) -> Ordering {
+    l.cmp(r)
 }
 
 #[cfg(test)]
