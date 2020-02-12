@@ -41,7 +41,6 @@ mod qc {
     }
     quickcheck::quickcheck! {
         fn qc_fastcmp(l: Vec<u8>, r: Vec<u8>) -> bool {
-            println!("{:?}", l);
             prop_cmp_matches(&l, &r)
         }
     }
