@@ -73,7 +73,7 @@ impl Node {
 
     pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
         if !self.hi.is_empty() {
-            assert!(&*key < &self.hi[self.prefix_len as usize..]);
+            assert!(*key < self.hi[self.prefix_len as usize..]);
         }
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by(|(k, _)| fastcmp(k, &key));
@@ -89,7 +89,7 @@ impl Node {
 
     pub(crate) fn del_leaf(&mut self, key: &IVec) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search = records.binary_search_by(|(k, _)| fastcmp(k, &key));
+            let search = records.binary_search_by(|(k, _)| fastcmp(k, key));
             if let Ok(idx) = search {
                 records.remove(idx);
             }
@@ -102,7 +102,7 @@ impl Node {
     pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) -> bool {
         if let Data::Index(ref mut pointers) = self.data {
             let encoded_sep = &at[self.prefix_len as usize..];
-            match pointers.binary_search_by(|(k, _)| fastcmp(k, &encoded_sep)) {
+            match pointers.binary_search_by(|(k, _)| fastcmp(k, encoded_sep)) {
                 Ok(_) => {
                     debug!(
                         "parent_split skipped because \
