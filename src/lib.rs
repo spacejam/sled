@@ -168,6 +168,7 @@ mod config;
 mod context;
 mod db;
 mod dll;
+mod fastcmp;
 mod fastlock;
 mod histogram;
 mod iter;
@@ -262,6 +263,7 @@ use {
     self::{
         binary_search::binary_search_lub,
         context::Context,
+        fastcmp::fastcmp,
         histogram::Histogram,
         lru::Lru,
         meta::Meta,
