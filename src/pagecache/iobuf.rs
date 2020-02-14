@@ -662,6 +662,7 @@ impl IoBufs {
         // even though we just created a new reference to it, leading
         // to double-frees.
         let arc = unsafe { Arc::from_raw(self.iobuf.load(SeqCst)) };
+        #[allow(clippy::mem_forget)]
         std::mem::forget(arc.clone());
         arc
     }
