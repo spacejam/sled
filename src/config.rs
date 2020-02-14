@@ -385,7 +385,7 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
-    pub fn snapshot_after_ops(self, _: &u64) -> Self {
+    pub fn snapshot_after_ops(self, _: u64) -> Self {
         self
     }
 
