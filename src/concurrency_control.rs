@@ -41,7 +41,7 @@ impl ConcurrencyControl {
         }
     }
 
-    pub(crate) fn write<'a>(&'a self) -> Protector<'a> {
+    pub(crate) fn write(&self) -> Protector<'_> {
         self.enable();
         Protector::Write(self.rw.write())
     }

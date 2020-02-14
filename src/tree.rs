@@ -153,7 +153,7 @@ impl Tree {
 
         loop {
             let View { node_view, pid, .. } =
-                self.view_for_key(key.as_ref(), &guard)?;
+                self.view_for_key(key.as_ref(), guard)?;
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
@@ -164,7 +164,7 @@ impl Tree {
                 pid,
                 node_view.0,
                 frag.clone(),
-                &guard,
+                guard,
             )?;
             if let Ok(_new_cas_key) = link {
                 // success
@@ -422,7 +422,7 @@ impl Tree {
 
         loop {
             let View { pid, node_view, .. } =
-                self.view_for_key(key.as_ref(), &guard)?;
+                self.view_for_key(key.as_ref(), guard)?;
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
@@ -430,7 +430,7 @@ impl Tree {
                 node_view.node_kv_pair(key.as_ref());
             let frag = Link::Del(encoded_key);
             let link =
-                self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
+                self.context.pagecache.link(pid, node_view.0, frag, guard)?;
 
             if link.is_ok() {
                 // success
