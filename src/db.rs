@@ -112,7 +112,7 @@ impl Db {
                 subscriptions: Subscriptions::default(),
                 context: context.clone(),
                 root: AtomicU64::new(root),
-                concurrency_control: RwLock::new(()),
+                concurrency_control: ConcurrencyControl::default(),
                 merge_operator: RwLock::new(None),
             }));
             assert!(tenants.insert(id, tree).is_none());

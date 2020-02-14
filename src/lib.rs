@@ -164,6 +164,7 @@ macro_rules! maybe_fail {
 
 mod batch;
 mod binary_search;
+mod concurrency_control;
 mod config;
 mod context;
 mod db;
@@ -262,6 +263,7 @@ pub use self::{
 use {
     self::{
         binary_search::binary_search_lub,
+        concurrency_control::{ConcurrencyControl, Protector},
         context::Context,
         fastcmp::fastcmp,
         histogram::Histogram,
