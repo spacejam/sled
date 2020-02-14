@@ -380,6 +380,15 @@ impl Config {
         Log::start_raw_log(config)
     }
 
+    #[doc(hidden)]
+    #[deprecated(
+        since = "0.31.0",
+        note = "this does nothing for now. maybe it will come back in the future."
+    )]
+    pub fn snapshot_after_ops(self, _: &u64) -> Self {
+        self
+    }
+
     /// Finalize the configuration.
     ///
     /// # Panics
@@ -452,7 +461,6 @@ impl Config {
         (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
         (use_compression, bool, "whether to use zstd compression"),
         (compression_factor, i32, "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."),
-        (snapshot_after_ops, u64, "number of operations between page table snapshots"),
         (segment_cleanup_threshold, u8, "the proportion of remaining valid pages in the segment before GC defragments it"),
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, SegmentMode, "the file segment selection mode"),
