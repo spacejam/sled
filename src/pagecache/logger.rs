@@ -398,7 +398,7 @@ impl Log {
     /// Called by Reservation on termination (completion or abort).
     /// Handles departure from shared state, and possibly writing
     /// the buffer to stable storage if necessary.
-    pub(super) fn exit_reservation(&self, iobuf: &Arc<IoBuf>) -> Result<()> {
+    pub(super) fn exit_reservation(&self, iobuf: &'static IoBuf) -> Result<()> {
         let mut header = iobuf.get_header();
 
         // Decrement writer count, retrying until successful.

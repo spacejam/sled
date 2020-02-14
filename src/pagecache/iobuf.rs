@@ -1,6 +1,6 @@
 use std::{
-    cell::UnsafeCell, sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst,
-    sync::Arc,
+    cell::UnsafeCell,
+    sync::atomic::{AtomicBool, AtomicPtr},
 };
 
 use crate::{pagecache::*, *};
@@ -47,7 +47,13 @@ unsafe impl Sync for IoBuf {}
 pub(crate) struct IoBufs {
     pub config: RunningConfig,
 
-    pub iobuf: RwLock<Arc<IoBuf>>,
+    // A pointer to the current IoBuf. This relies on crossbeam-epoch
+    // for garbage collection when it gets swapped out, to ensure that
+    // no witnessing threads experience use-after-free.
+    // mutated from the maybe_seal_and_write_iobuf method.
+    // finally dropped in the Drop impl, without using crossbeam-epoch,
+    // because if this drops, all witnessing threads should be done.
+    pub iobuf: AtomicPtr<IoBuf>,
 
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
@@ -69,6 +75,14 @@ pub(crate) struct IoBufs {
     pub submission_mutex: Mutex<()>,
     #[cfg(feature = "io_uring")]
     pub io_uring: rio::Rio,
+}
+
+impl Drop for IoBufs {
+    fn drop(&mut self) {
+        unsafe {
+            Box::from_raw(self.iobuf.load(SeqCst));
+        }
+    }
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -175,10 +189,10 @@ impl IoBufs {
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
-        Ok(Self {
+        Ok(IoBufs {
             config,
 
-            iobuf: RwLock::new(Arc::new(iobuf)),
+            iobuf: AtomicPtr::new(Box::into_raw(Box::new(iobuf))),
 
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
@@ -640,8 +654,8 @@ impl IoBufs {
         }
     }
 
-    pub(in crate::pagecache) fn current_iobuf(&self) -> Arc<IoBuf> {
-        self.iobuf.read().clone()
+    pub(in crate::pagecache) fn current_iobuf(&self) -> &'static IoBuf {
+        unsafe { &*self.iobuf.load(SeqCst) }
     }
 }
 
@@ -742,7 +756,7 @@ pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
 /// operating on it.
 pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     iobufs: &Arc<IoBufs>,
-    iobuf: &Arc<IoBuf>,
+    iobuf: &'static IoBuf,
     header: Header,
     from_reserve: bool,
 ) -> Result<()> {
@@ -874,9 +888,12 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     // the change.
     debug_delay();
     let intervals = iobufs.intervals.lock();
-    let mut mu = iobufs.iobuf.write();
-    *mu = Arc::new(next_iobuf);
-    drop(mu);
+    let old_ptr =
+        iobufs.iobuf.swap(Box::into_raw(Box::new(next_iobuf)), SeqCst);
+
+    let old_arc = unsafe { Box::from_raw(old_ptr) };
+
+    pin().defer(move || drop(old_arc));
 
     // having held the mutex makes this linearized
     // with the notify below.
