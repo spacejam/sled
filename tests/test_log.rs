@@ -14,8 +14,9 @@ use rand::{thread_rng, Rng};
 use sled::*;
 
 use sled::{
-    BatchManifest, DiskPtr, Log, LogKind, LogRead, Lsn, PageId, SegmentMode,
-    Serialize, MAX_MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
+    pin, BatchManifest, DiskPtr, Log, LogKind, LogRead, Lsn, PageId,
+    SegmentMode, Serialize, MAX_MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT,
+    SEG_HEADER_LEN,
 };
 
 const PID: PageId = 0;
@@ -28,25 +29,28 @@ fn log_writebatch() -> crate::Result<()> {
         Config::new().temporary(true).segment_mode(SegmentMode::Linear);
     let log = config.open_raw_log().unwrap();
 
-    log.reserve(REPLACE, PID, &IVec::from(b"1"))?.complete()?;
-    log.reserve(REPLACE, PID, &IVec::from(b"2"))?.complete()?;
-    log.reserve(REPLACE, PID, &IVec::from(b"3"))?.complete()?;
-    log.reserve(REPLACE, PID, &IVec::from(b"4"))?.complete()?;
-    log.reserve(REPLACE, PID, &IVec::from(b"5"))?.complete()?;
+    let guard = pin();
+
+    log.reserve(REPLACE, PID, &IVec::from(b"1"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"2"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"3"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"4"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"5"), &guard)?.complete()?;
 
     // simulate a torn batch by
     // writing an LSN higher than
     // is possible to recover into
     // a batch manifest before
     // some writes.
-    let mut batch_res = log.reserve(REPLACE, PID, &BatchManifest::default())?;
-    log.reserve(REPLACE, PID, &IVec::from(b"6"))?.complete()?;
-    log.reserve(REPLACE, PID, &IVec::from(b"7"))?.complete()?;
-    log.reserve(REPLACE, PID, &IVec::from(b"8"))?.complete()?;
-    log.reserve(REPLACE, PID, &IVec::from(b"9"))?.complete()?;
+    let mut batch_res =
+        log.reserve(REPLACE, PID, &BatchManifest::default(), &guard)?;
+    log.reserve(REPLACE, PID, &IVec::from(b"6"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"7"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"8"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"9"), &guard)?.complete()?;
     batch_res.mark_writebatch(Lsn::max_value() / 2);
     batch_res.complete()?;
-    log.reserve(REPLACE, PID, &IVec::from(b"10"))?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"10"), &guard)?.complete()?;
 
     drop(log);
     let log = config.open_raw_log().unwrap();
@@ -78,8 +82,9 @@ fn more_log_reservations_than_buffers() -> Result<()> {
     let big_msg_sz = config.segment_size - big_msg_overhead;
 
     for _ in 0..=30 {
+        let guard = pin();
         reservations.push(
-            log.reserve(REPLACE, PID, &IVec::from(vec![0; big_msg_sz]))
+            log.reserve(REPLACE, PID, &IVec::from(vec![0; big_msg_sz]), &guard)
                 .unwrap(),
         )
     }
@@ -105,10 +110,13 @@ fn non_contiguous_log_flush() -> Result<()> {
     let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
         - (MAX_MSG_HEADER_LEN + seg_overhead);
 
-    let res1 =
-        log.reserve(REPLACE, PID, &IVec::from(vec![0; buf_len])).unwrap();
-    let res2 =
-        log.reserve(REPLACE, PID, &IVec::from(vec![0; buf_len])).unwrap();
+    let guard = pin();
+    let res1 = log
+        .reserve(REPLACE, PID, &IVec::from(vec![0; buf_len]), &guard)
+        .unwrap();
+    let res2 = log
+        .reserve(REPLACE, PID, &IVec::from(vec![0; buf_len]), &guard)
+        .unwrap();
     let lsn = res2.lsn();
     res2.abort()?;
     res1.abort()?;
@@ -143,7 +151,8 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = IVec::from(vec![1; i % buf_len]);
-                    log.reserve(REPLACE, PID, &buf)
+                    let guard = pin();
+                    log.reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -156,8 +165,9 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = IVec::from(vec![2; i % buf_len]);
+                    let guard = pin();
                     iobs2
-                        .reserve(REPLACE, PID, &buf)
+                        .reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -170,8 +180,9 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = IVec::from(vec![3; i % buf_len]);
+                    let guard = pin();
                     iobs3
-                        .reserve(REPLACE, PID, &buf)
+                        .reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -184,8 +195,9 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = IVec::from(vec![4; i % buf_len]);
+                    let guard = pin();
                     iobs4
-                        .reserve(REPLACE, PID, &buf)
+                        .reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -196,9 +208,10 @@ fn concurrent_logging() {
             .name("c5".to_string())
             .spawn(move || {
                 for i in 0..1_000 {
+                    let guard = pin();
                     let buf = IVec::from(vec![5; i % buf_len]);
                     iobs5
-                        .reserve(REPLACE, PID, &buf)
+                        .reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -211,8 +224,9 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = IVec::from(vec![6; i % buf_len]);
+                    let guard = pin();
                     let (lsn, _lid) = iobs6
-                        .reserve(REPLACE, PID, &buf)
+                        .reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -255,8 +269,9 @@ fn concurrent_log_404() {
                 for _ in 0..ITERATIONS {
                     let current = SHARED_COUNTER.load(Ordering::SeqCst);
                     let raw_value = current as u64;
+                    let guard = pin();
                     let res = log
-                        .reserve(REPLACE, current as PageId, &raw_value)
+                        .reserve(REPLACE, current as PageId, &raw_value, &guard)
                         .unwrap();
                     match SHARED_COUNTER.compare_and_swap(
                         current,
@@ -307,8 +322,12 @@ fn concurrent_log_404() {
 
 fn write(log: &Log) {
     let data_bytes = IVec::from(b"yoyoyoyo");
-    let (lsn, ptr) =
-        log.reserve(REPLACE, PID, &data_bytes).unwrap().complete().unwrap();
+    let guard = pin();
+    let (lsn, ptr) = log
+        .reserve(REPLACE, PID, &data_bytes, &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
     let read_buf = log.read(PID, lsn, ptr).unwrap().into_data().unwrap();
     assert_eq!(
         *read_buf,
@@ -318,7 +337,8 @@ fn write(log: &Log) {
 }
 
 fn abort(log: &Log) {
-    let res = log.reserve(REPLACE, PID, &IVec::from(&[0; 5])).unwrap();
+    let guard = pin();
+    let res = log.reserve(REPLACE, PID, &IVec::from(&[0; 5]), &guard).unwrap();
     let (lsn, ptr) = res.abort().unwrap();
     match log.read(PID, lsn, ptr) {
         Ok(LogRead::Canceled(_)) => {}
@@ -353,30 +373,42 @@ fn log_iterator() {
         .segment_size(1024);
 
     let log = config.open_raw_log().unwrap();
+    let guard = pin();
     let (first_lsn, _) = log
-        .reserve(REPLACE, PID, &IVec::from(b""))
+        .reserve(REPLACE, PID, &IVec::from(b""), &guard)
         .unwrap()
         .complete()
         .unwrap();
-    log.reserve(REPLACE, PID, &IVec::from(b"1")).unwrap().complete().unwrap();
-    log.reserve(REPLACE, PID, &IVec::from(b"22")).unwrap().complete().unwrap();
-    log.reserve(REPLACE, PID, &IVec::from(b"333")).unwrap().complete().unwrap();
+    log.reserve(REPLACE, PID, &IVec::from(b"1"), &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
+    log.reserve(REPLACE, PID, &IVec::from(b"22"), &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
+    log.reserve(REPLACE, PID, &IVec::from(b"333"), &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
 
     // stick an abort in the middle, which should not be
     // returned
     {
+        let guard = pin();
         let res = log
-            .reserve(REPLACE, PID, &IVec::from(b"never_gonna_hit_disk"))
+            .reserve(REPLACE, PID, &IVec::from(b"never_gonna_hit_disk"), &guard)
             .unwrap();
         res.abort().unwrap();
     }
 
-    log.reserve(REPLACE, PID, &IVec::from(b"4444"))
+    let guard = pin();
+    log.reserve(REPLACE, PID, &IVec::from(b"4444"), &guard)
         .unwrap()
         .complete()
         .unwrap();
     let (last_lsn, _) = log
-        .reserve(REPLACE, PID, &IVec::from(b"55555"))
+        .reserve(REPLACE, PID, &IVec::from(b"55555"), &guard)
         .unwrap()
         .complete()
         .unwrap();
@@ -423,14 +455,16 @@ fn log_chunky_iterator() {
 
                 let pid = (tn * 10000) + i;
 
+                let guard = pin();
+
                 if abort {
                     let res = log
-                        .reserve(REPLACE, pid, &buf)
+                        .reserve(REPLACE, pid, &buf, &guard)
                         .expect("should be able to reserve");
                     res.abort().unwrap();
                 } else {
                     let (lsn, lid) = log
-                        .reserve(REPLACE, pid, &buf)
+                        .reserve(REPLACE, pid, &buf, &guard)
                         .expect("should be able to write reservation")
                         .complete()
                         .unwrap();
@@ -477,7 +511,11 @@ fn multi_segment_log_iteration() -> Result<()> {
 
     for i in 0..48 {
         let buf = IVec::from(vec![i as u8; big_msg_sz * i]);
-        log.reserve(REPLACE, i as PageId, &buf).unwrap().complete().unwrap();
+        let guard = pin();
+        log.reserve(REPLACE, i as PageId, &buf, &guard)
+            .unwrap()
+            .complete()
+            .unwrap();
     }
     log.flush()?;
 
@@ -603,8 +641,9 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Write(buf) => {
                 let len = buf.len();
+                let guard = pin();
                 let (lsn, ptr) = log
-                    .reserve(REPLACE, PID, &IVec::from(&*buf))
+                    .reserve(REPLACE, PID, &IVec::from(&*buf), &guard)
                     .unwrap()
                     .complete()
                     .unwrap();
@@ -618,7 +657,10 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             AbortReservation(buf) => {
                 let len = buf.len();
-                let res = log.reserve(REPLACE, PID, &IVec::from(buf)).unwrap();
+                let guard = pin();
+                let res = log
+                    .reserve(REPLACE, PID, &IVec::from(buf), &guard)
+                    .unwrap();
                 let lsn = res.lsn();
                 let lid = res.lid();
                 let ptr = res.pointer();

@@ -105,12 +105,14 @@ impl Log {
         &self,
         pid: PageId,
         blob_pointer: BlobPointer,
+        guard: &Guard,
     ) -> Result<Reservation<'_>> {
         self.reserve_inner(
             LogKind::Replace,
             pid,
             &blob_pointer,
             Some(blob_pointer),
+            guard,
         )
     }
 
@@ -125,6 +127,7 @@ impl Log {
         log_kind: LogKind,
         pid: PageId,
         item: &T,
+        guard: &Guard,
     ) -> Result<Reservation<'_>> {
         #[cfg(feature = "compression")]
         {
@@ -143,11 +146,12 @@ impl Log {
                     pid,
                     &IVec::from(compressed_buf),
                     None,
+                    guard,
                 );
             }
         }
 
-        self.reserve_inner(log_kind, pid, item, None)
+        self.reserve_inner(log_kind, pid, item, None, guard)
     }
 
     fn reserve_inner<T: Serialize + Debug>(
@@ -156,6 +160,7 @@ impl Log {
         pid: PageId,
         item: &T,
         blob_rewrite: Option<Lsn>,
+        _: &Guard,
     ) -> Result<Reservation<'_>> {
         let _measure = Measure::new(&M.reserve_lat);
 

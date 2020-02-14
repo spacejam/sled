@@ -753,11 +753,12 @@ impl PageCache {
     /// to facilitate transactions and write batches when
     /// combined with a concurrency control system in another
     /// component.
-    pub fn pin_log(&self) -> Result<RecoveryGuard<'_>> {
+    pub fn pin_log(&self, guard: &Guard) -> Result<RecoveryGuard<'_>> {
         let batch_res = self.log.reserve(
             LogKind::Skip,
             BATCH_MANIFEST_PID,
             &BatchManifest::default(),
+            guard,
         )?;
         Ok(RecoveryGuard { batch_res })
     }
@@ -883,7 +884,8 @@ impl PageCache {
         }));
 
         loop {
-            let log_reservation = self.log.reserve(LogKind::Link, pid, &new)?;
+            let log_reservation =
+                self.log.reserve(LogKind::Link, pid, &new, guard)?;
             let lsn = log_reservation.lsn();
             let pointer = log_reservation.pointer();
 
@@ -1094,7 +1096,7 @@ impl PageCache {
                 let blob_pointer = disk_pointer.blob().1;
 
                 let log_reservation =
-                    self.log.rewrite_blob_pointer(pid, blob_pointer)?;
+                    self.log.rewrite_blob_pointer(pid, blob_pointer, guard)?;
 
                 let cache_info = CacheInfo {
                     ts: page_view.ts(),
@@ -1282,10 +1284,14 @@ impl PageCache {
         loop {
             let mut page_ptr = new_page.take().unwrap();
             let log_reservation = match page_ptr.update.as_ref().unwrap() {
-                Update::Counter(c) => self.log.reserve(log_kind, pid, c)?,
-                Update::Meta(m) => self.log.reserve(log_kind, pid, m)?,
-                Update::Free => self.log.reserve(log_kind, pid, &())?,
-                Update::Node(node) => self.log.reserve(log_kind, pid, node)?,
+                Update::Counter(c) => {
+                    self.log.reserve(log_kind, pid, c, guard)?
+                }
+                Update::Meta(m) => self.log.reserve(log_kind, pid, m, guard)?,
+                Update::Free => self.log.reserve(log_kind, pid, &(), guard)?,
+                Update::Node(node) => {
+                    self.log.reserve(log_kind, pid, node, guard)?
+                }
                 other => {
                     panic!("non-replacement used in cas_page: {:?}", other)
                 }

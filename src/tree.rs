@@ -333,7 +333,7 @@ impl Tree {
         batch: Batch,
         guard: &Guard,
     ) -> Result<()> {
-        let peg = self.context.pin_log()?;
+        let peg = self.context.pin_log(guard)?;
         for (k, v_opt) in batch.writes {
             if let Some(v) = v_opt {
                 let _old = self.insert_inner(k, v, guard)?;
