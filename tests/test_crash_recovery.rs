@@ -71,41 +71,6 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     (contiguous, highest)
 }
 
-/// Verifies that the keys in the tree are correctly recovered (i.e., equal).
-/// Panics if they are incorrect.
-fn verify_batches(tree: &sled::Tree) -> u32 {
-    let mut iter = tree.iter();
-    let first_value = match iter.next() {
-        Some(Ok((_k, v))) => slice_to_u32(&*v),
-        Some(Err(e)) => panic!("{:?}", e),
-        None => return 0,
-    };
-    for key in 0..BATCH_SIZE {
-        let res = tree.get(u32_to_vec(key));
-        let option = res.unwrap();
-        let v = match option {
-            Some(v) => v,
-            None => panic!(
-                "expected key {} to have a value, instead it was missing in db: {:?}",
-                key,
-                tree
-            ),
-        };
-        let value = slice_to_u32(&*v);
-        assert_eq!(
-            first_value,
-            value,
-            "expected key {} to have value {}, instead it had value {} in db: {:?}",
-            key,
-            first_value,
-            value,
-            tree
-        );
-    }
-
-    first_value
-}
-
 fn u32_to_vec(u: u32) -> Vec<u8> {
     let buf: [u8; size_of::<u32>()] = u.to_be_bytes();
     buf.to_vec()
@@ -128,7 +93,23 @@ fn spawn_killah() {
     });
 }
 
-fn run(config: Config) {
+fn run(dir: &str) {
+    let config = Config::new()
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(100))
+        .path(dir.to_string())
+        .segment_size(1024);
+
+    match thread::spawn(|| run_inner(config)).join() {
+        Err(e) => {
+            println!("worker thread failed: {:?}", e);
+            std::process::exit(15);
+        }
+        _ => {}
+    }
+}
+
+fn run_inner(config: Config) {
     common::setup_logger();
 
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
@@ -166,7 +147,64 @@ fn run(config: Config) {
     }
 }
 
-fn run_batches(config: Config) {
+#[test]
+fn test_crash_recovery() {
+    let dir = "test_crashes";
+    cleanup(dir);
+    for _ in 0..N_TESTS {
+        let child = unsafe { libc::fork() };
+        if child == 0 {
+            run(dir)
+        } else {
+            let mut status = 0;
+            unsafe {
+                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
+            }
+            if status != 9 {
+                cleanup(dir);
+                panic!("child exited abnormally");
+            }
+        }
+    }
+    cleanup(dir);
+}
+
+/// Verifies that the keys in the tree are correctly recovered (i.e., equal).
+/// Panics if they are incorrect.
+fn verify_batches(tree: &sled::Tree) -> u32 {
+    let mut iter = tree.iter();
+    let first_value = match iter.next() {
+        Some(Ok((_k, v))) => slice_to_u32(&*v),
+        Some(Err(e)) => panic!("{:?}", e),
+        None => return 0,
+    };
+    for key in 0..BATCH_SIZE {
+        let res = tree.get(u32_to_vec(key));
+        let option = res.unwrap();
+        let v = match option {
+            Some(v) => v,
+            None => panic!(
+                "expected key {} to have a value, instead it was missing in db: {:?}",
+                key,
+                tree
+            ),
+        };
+        let value = slice_to_u32(&*v);
+        assert_eq!(
+            first_value,
+            value,
+            "expected key {} to have value {}, instead it had value {} in db: {:?}",
+            key,
+            first_value,
+            value,
+            tree
+        );
+    }
+
+    first_value
+}
+
+fn run_batches(dir: &str) {
     fn do_batch(i: u32, tree: &sled::Tree) {
         let mut rng = rand::thread_rng();
         let base_value = u32_to_vec(i);
@@ -189,11 +227,14 @@ fn run_batches(config: Config) {
     }
 
     common::setup_logger();
-    let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
-    if crash_during_initialization {
-        spawn_killah();
-    }
+    let config = Config::new()
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(100))
+        .path(dir)
+        .segment_size(1024);
+
+    let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     let tree = config.open().unwrap();
 
@@ -211,150 +252,22 @@ fn run_batches(config: Config) {
     }
 }
 
-fn run_without_snapshot(dir: &str) {
-    let config = Config::new()
-        .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
-        .path(dir.to_string())
-        .snapshot_after_ops(1 << 56)
-        .segment_size(1024);
-
-    match thread::spawn(|| run(config)).join() {
-        Err(e) => {
-            println!("worker thread failed: {:?}", e);
-            std::process::exit(15);
-        }
-        _ => {}
-    }
-}
-
-fn run_with_snapshot(dir: &str) {
-    let config = Config::new()
-        .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
-        .path(dir.to_string())
-        .snapshot_after_ops(5000)
-        .segment_size(1024);
-
-    match thread::spawn(|| run(config)).join() {
-        Err(e) => {
-            println!("worker thread failed: {:?}", e);
-            std::process::exit(15);
-        }
-        _ => {}
-    }
-}
-
-fn run_batches_without_snapshot(dir: &str) {
-    let config = Config::new()
-        .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
-        .path(dir.to_string())
-        .snapshot_after_ops(1 << 56)
-        .segment_size(1024);
-
-    match thread::spawn(|| run_batches(config)).join() {
-        Err(e) => {
-            println!("worker thread failed: {:?}", e);
-            std::process::exit(15);
-        }
-        _ => {}
-    }
-}
-
-fn run_batches_with_snapshot(dir: &str) {
-    let config = Config::new()
-        .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
-        .path(dir.to_string())
-        .snapshot_after_ops(5000)
-        .segment_size(1024);
-
-    match thread::spawn(|| run_batches(config)).join() {
-        Err(e) => {
-            println!("worker thread failed: {:?}", e);
-            std::process::exit(15);
-        }
-        _ => {}
-    }
-}
-
-#[test]
-fn test_crash_recovery_with_runtime_snapshot() {
-    let dir = "test_crashes_with_snapshot";
-    cleanup(dir);
-    for _ in 0..N_TESTS {
-        let child = unsafe { libc::fork() };
-        if child == 0 {
-            run_with_snapshot(dir)
-        } else {
-            let mut status = 0;
-            unsafe {
-                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
-            }
-            if status != 9 {
-                cleanup(dir);
-                panic!("child exited abnormally");
-            }
-        }
-    }
-    cleanup(dir);
-}
-
-#[test]
-fn test_crash_recovery_no_runtime_snapshot() {
-    let dir = "test_crashes";
-    cleanup(dir);
-    for _ in 0..N_TESTS {
-        let child = unsafe { libc::fork() };
-        if child == 0 {
-            run_without_snapshot(dir)
-        } else {
-            let mut status = 0;
-            unsafe {
-                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
-            }
-            if status != 9 {
-                cleanup(dir);
-                panic!("child exited abnormally");
-            }
-        }
-    }
-    cleanup(dir);
-}
-
 #[test]
 #[ignore]
-fn test_crash_batches_with_runtime_snapshot() {
-    let dir = "test_batches_with_snapshot";
-    cleanup(dir);
-    for _ in 0..N_TESTS {
-        let child = unsafe { libc::fork() };
-        if child == 0 {
-            run_batches_with_snapshot(dir)
-        } else {
-            let mut status = 0;
-            unsafe {
-                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
-            }
-            if status != 9 {
-                cleanup(dir);
-                panic!("child exited abnormally");
-            }
-        }
-    }
-    cleanup(dir);
-}
-
-#[test]
-#[ignore]
-fn test_crash_batches_no_runtime_snapshot() {
+fn test_crash_batches() {
     let dir = "test_batches";
     cleanup(dir);
     for _ in 0..N_TESTS {
         let child = unsafe { libc::fork() };
         if child == 0 {
-            run_batches_without_snapshot(dir)
+            //let dir = dir.to_string();
+            match thread::spawn(move || run_batches(dir)).join() {
+                Err(e) => {
+                    println!("worker thread failed: {:?}", e);
+                    std::process::exit(15);
+                }
+                _ => {}
+            }
         } else {
             let mut status = 0;
             unsafe {

@@ -284,7 +284,6 @@ impl Metrics {
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("pagecache:");
         p(vec![
-            lat("snapshot", &self.advance_snapshot),
             lat("get", &self.get_page),
             lat("get pt", &self.get_pagetable),
             lat("rewrite", &self.rewrite_page),

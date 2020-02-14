@@ -723,14 +723,6 @@ impl SegmentAccountant {
         self.pause_rewriting = true;
     }
 
-    /// Re-enables segment rewriting after iteration is complete.
-    pub(super) fn resume_rewriting(&mut self) {
-        // we never want to resume segment rewriting in Linear mode
-        if self.config.segment_mode != SegmentMode::Linear {
-            self.pause_rewriting = false;
-        }
-    }
-
     /// Asynchronously apply a GC-related operation. Used in a flat-combining
     /// style that allows callers to avoid blocking while sending these
     /// messages to this module.
