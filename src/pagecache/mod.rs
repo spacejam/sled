@@ -461,8 +461,6 @@ pub struct PageCache {
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
     lru: Lru,
-    updates: AtomicU64,
-    last_snapshot: Arc<Mutex<Option<Snapshot>>>,
     idgen: Arc<AtomicU64>,
     idgen_persists: Arc<AtomicU64>,
     idgen_persist_mu: Arc<Mutex<()>>,
@@ -549,8 +547,6 @@ impl PageCache {
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, &snapshot)?,
             lru,
-            updates: AtomicU64::new(0),
-            last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
             idgen_persist_mu: Arc::new(Mutex::new(())),
             idgen: Arc::new(AtomicU64::new(0)),
             idgen_persists: Arc::new(AtomicU64::new(0)),
@@ -558,7 +554,7 @@ impl PageCache {
         };
 
         // now we read it back in
-        pc.load_snapshot()?;
+        pc.load_snapshot(&snapshot)?;
 
         #[cfg(feature = "event_log")]
         {
@@ -959,13 +955,6 @@ impl PageCache {
                         self.page_out(to_evict, guard)?;
                     }
 
-                    let count = self.updates.fetch_add(1, Relaxed) + 1;
-                    let should_snapshot =
-                        count % self.config.snapshot_after_ops == 0;
-                    if should_snapshot {
-                        self.advance_snapshot()?;
-                    }
-
                     old.read = new_shared;
 
                     return Ok(Ok(old));
@@ -1051,12 +1040,6 @@ impl PageCache {
             self.log.iobufs.segment_cleaner.pop()
         {
             self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
-        }
-
-        let count = self.updates.fetch_add(1, Relaxed) + 1;
-        let should_snapshot = count % self.config.snapshot_after_ops == 0;
-        if should_snapshot {
-            self.advance_snapshot()?;
         }
 
         Ok(result.map_err(|fail| {
@@ -1853,113 +1836,7 @@ impl PageCache {
         }
     }
 
-    // caller is expected to have instantiated self.last_snapshot
-    // in recovery already.
-    fn advance_snapshot(&self) -> Result<()> {
-        let snapshot_mu = self.last_snapshot.clone();
-        let config = self.config.clone();
-        let iobufs = self.log.iobufs.clone();
-
-        let gen_snapshot = move || {
-            let snapshot_opt_res = snapshot_mu.try_lock();
-            if snapshot_opt_res.is_none() {
-                // some other thread is snapshotting
-                debug!(
-                    "snapshot skipped because previous attempt \
-                     appears not to have completed"
-                );
-                return Ok(());
-            }
-
-            let mut snapshot_opt = snapshot_opt_res.unwrap();
-            let last_snapshot = snapshot_opt
-                .take()
-                .expect("PageCache::advance_snapshot called before recovery");
-
-            if let Err(e) = iobuf::flush(&iobufs) {
-                error!("failed to flush log during advance_snapshot: {}", e);
-                iobufs.with_sa(SegmentAccountant::resume_rewriting);
-                *snapshot_opt = Some(last_snapshot);
-                return Err(e);
-            }
-
-            // we disable rewriting so that our log becomes link-only,
-            // allowing us to iterate through it without corrupting ourselves.
-            // NB must be called after taking the snapshot mutex.
-            iobufs.with_sa(SegmentAccountant::pause_rewriting);
-
-            let last_lsn = last_snapshot.last_lsn;
-            let start_lsn = last_lsn - (last_lsn % config.segment_size as Lsn);
-
-            let iter = iobufs.iter_from(start_lsn);
-
-            debug!(
-                "snapshot starting from offset {} to the segment containing ~{}",
-                last_snapshot.last_lsn,
-                iobufs.stable(),
-            );
-
-            let res = advance_snapshot(iter, last_snapshot, &config);
-
-            // NB it's important to resume writing before replacing the snapshot
-            // into the mutex, otherwise we create a race condition where the SA
-            // is not actually paused when a snapshot happens.
-            iobufs.with_sa(SegmentAccountant::resume_rewriting);
-
-            match res {
-                Err(e) => {
-                    *snapshot_opt = Some(Snapshot::default());
-                    error!("failed to generate snapshot: {:?}", e);
-                    Err(e)
-                }
-                Ok(next_snapshot) => {
-                    *snapshot_opt = Some(next_snapshot);
-                    Ok(())
-                }
-            }
-        };
-
-        if let Err(e) = self.config.global_error() {
-            // having held the mutex makes this linearized
-            // with the notify below.
-            let intervals = self.log.iobufs.intervals.lock();
-            drop(intervals);
-
-            let _notified = self.log.iobufs.interval_updated.notify_all();
-            return Err(e);
-        }
-
-        debug!("asynchronously spawning snapshot generation task");
-        let config = self.config.clone();
-        let _result = threadpool::spawn(move || {
-            let result = gen_snapshot();
-            match &result {
-                Ok(_) => {}
-                Err(Error::Io(ref ioe))
-                    if ioe.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    error!(
-                        "encountered error while generating snapshot: {:?}",
-                        error,
-                    );
-                    config.set_global_error(error.clone());
-                }
-            }
-            result
-        });
-
-        #[cfg(test)]
-        _result.unwrap()?;
-
-        // TODO add future for waiting on the result of this if desired
-        Ok(())
-    }
-
-    fn load_snapshot(&mut self) -> Result<()> {
-        // panic if not set
-        let snapshot_mu = self.last_snapshot.try_lock().unwrap();
-        let snapshot = snapshot_mu.as_ref().unwrap();
-
+    fn load_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let next_pid_to_allocate = if snapshot.pt.is_empty() {
             0
         } else {
