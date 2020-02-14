@@ -72,7 +72,7 @@
 //! ```
 use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
 
-use crate::{pin, Batch, Error, IVec, Protector, Result, Tree};
+use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};
 
 /// A transaction that will
 /// be applied atomically to the
@@ -386,8 +386,8 @@ impl TransactionalTrees {
         true
     }
 
-    fn commit(&self) -> Result<()> {
-        let peg = self.inner[0].tree.context.pin_log()?;
+    fn commit(&self, guard: &Guard) -> Result<()> {
+        let peg = self.inner[0].tree.context.pin_log(guard)?;
         for tree in &self.inner {
             tree.commit()?;
         }
@@ -445,7 +445,8 @@ pub trait Transactional<E = ()> {
             }
             match ret {
                 Ok(r) => {
-                    tt.commit()?;
+                    let guard = pin();
+                    tt.commit(&guard)?;
                     return Ok(r);
                 }
                 Err(ConflictableTransactionError::Abort(e)) => {

@@ -6,7 +6,7 @@ use crate::{pagecache::*, *};
 /// buffer to become blocked.
 pub struct Reservation<'a> {
     pub(super) log: &'a Log,
-    pub(super) iobuf: &'static IoBuf,
+    pub(super) iobuf: Arc<IoBuf>,
     pub(super) buf: &'a mut [u8],
     pub(super) flushed: bool,
     pub(super) pointer: DiskPtr,

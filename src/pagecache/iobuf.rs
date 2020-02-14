@@ -79,8 +79,10 @@ pub(crate) struct IoBufs {
 
 impl Drop for IoBufs {
     fn drop(&mut self) {
+        let ptr = self.iobuf.swap(std::ptr::null_mut(), SeqCst);
+        assert!(!ptr.is_null());
         unsafe {
-            Box::from_raw(self.iobuf.load(SeqCst));
+            Arc::from_raw(ptr);
         }
     }
 }
@@ -192,7 +194,7 @@ impl IoBufs {
         Ok(IoBufs {
             config,
 
-            iobuf: AtomicPtr::new(Box::into_raw(Box::new(iobuf))),
+            iobuf: AtomicPtr::new(Arc::into_raw(Arc::new(iobuf)) as *mut IoBuf),
 
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
@@ -654,8 +656,14 @@ impl IoBufs {
         }
     }
 
-    pub(in crate::pagecache) fn current_iobuf(&self) -> &'static IoBuf {
-        unsafe { &*self.iobuf.load(SeqCst) }
+    pub(in crate::pagecache) fn current_iobuf(&self) -> Arc<IoBuf> {
+        // we bump up the ref count, and forget the arc to retain a +1.
+        // If we didn't forget it, it would then go back down again,
+        // even though we just created a new reference to it, leading
+        // to double-frees.
+        let arc = unsafe { Arc::from_raw(self.iobuf.load(SeqCst)) };
+        std::mem::forget(arc.clone());
+        arc
     }
 }
 
@@ -756,7 +764,7 @@ pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
 /// operating on it.
 pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     iobufs: &Arc<IoBufs>,
-    iobuf: &'static IoBuf,
+    iobuf: &Arc<IoBuf>,
     header: Header,
     from_reserve: bool,
 ) -> Result<()> {
@@ -888,10 +896,11 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     // the change.
     debug_delay();
     let intervals = iobufs.intervals.lock();
-    let old_ptr =
-        iobufs.iobuf.swap(Box::into_raw(Box::new(next_iobuf)), SeqCst);
+    let old_ptr = iobufs
+        .iobuf
+        .swap(Arc::into_raw(Arc::new(next_iobuf)) as *mut IoBuf, SeqCst);
 
-    let old_arc = unsafe { Box::from_raw(old_ptr) };
+    let old_arc = unsafe { Arc::from_raw(old_ptr) };
 
     pin().defer(move || drop(old_arc));
 
