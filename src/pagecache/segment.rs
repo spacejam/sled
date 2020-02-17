@@ -651,11 +651,11 @@ impl SegmentAccountant {
         }
 
         for segment_base in to_free {
-            self.free_segment(segment_base, false);
+            self.free_segment(segment_base, false)?;
         }
 
         for (idx, segment_lsn) in maybe_clean {
-            self.possibly_clean_or_free_segment(idx, segment_lsn);
+            self.possibly_clean_or_free_segment(idx, segment_lsn)?;
         }
 
         trace!("initialized self.segments to {:?}", self.segments);
@@ -678,7 +678,11 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    fn free_segment(&mut self, lid: LogOffset, in_recovery: bool) {
+    fn free_segment(
+        &mut self,
+        lid: LogOffset,
+        in_recovery: bool,
+    ) -> Result<()> {
         debug!("freeing segment {}", lid);
         debug!("free list before free {:?}", self.free);
         self.segment_cleaner.remove_pids(lid);
@@ -714,6 +718,26 @@ impl SegmentAccountant {
         }
 
         self.free.insert(lid);
+
+        // remove the old ordering from our list
+        if let Segment::Free(Free { previous_lsn: Some(last_lsn) }) =
+            self.segments[idx]
+        {
+            self.ordering.remove(&last_lsn);
+        }
+
+        // truncate if possible
+        while self.tip != 0 && self.free.len() > 1 {
+            let last_segment = self.tip - self.config.segment_size as LogOffset;
+            if self.free.contains(&last_segment) {
+                self.free.remove(&last_segment);
+                self.truncate(last_segment)?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     /// Causes all new allocations to occur at the end of the file, which
@@ -795,7 +819,7 @@ impl SegmentAccountant {
                 self.config.normalize(lsn),
                 usize::try_from(replaced_size).unwrap(),
             );
-            self.possibly_clean_or_free_segment(old_idx, new_cache_info.lsn);
+            self.possibly_clean_or_free_segment(old_idx, new_cache_info.lsn)?;
         }
 
         Ok(())
@@ -832,7 +856,11 @@ impl SegmentAccountant {
         );
     }
 
-    fn possibly_clean_or_free_segment(&mut self, idx: usize, lsn: Lsn) {
+    fn possibly_clean_or_free_segment(
+        &mut self,
+        idx: usize,
+        lsn: Lsn,
+    ) -> Result<()> {
         let cleanup_threshold =
             usize::from(self.config.segment_cleanup_threshold);
 
@@ -859,24 +887,32 @@ impl SegmentAccountant {
         if self.segments[idx].can_free() {
             // can be reused immediately
             let replacement_lsn = self.segments[idx].draining_to_free(lsn);
-            trace!(
-                "freed segment {} in possibly_clean_or_free_segment",
-                segment_start
-            );
 
-            let replacement_lid = self.ordering[&replacement_lsn];
-            let replacement_idx = usize::try_from(
-                replacement_lid / self.config.segment_size as u64,
-            )
-            .unwrap();
+            if self.ordering.contains_key(&replacement_lsn) {
+                let replacement_lid = self.ordering[&replacement_lsn];
+                let replacement_idx = usize::try_from(
+                    replacement_lid / self.config.segment_size as u64,
+                )
+                .unwrap();
 
-            if self.segments[replacement_idx].is_active() {
-                self.segments[replacement_idx].defer_free_lsn(segment_lsn);
+                if self.segments[replacement_idx].is_active() {
+                    trace!(
+                        "deferring free of segment {} in possibly_clean_or_free_segment",
+                        segment_start
+                    );
+                    self.segments[replacement_idx].defer_free_lsn(segment_lsn);
+                } else {
+                    assert!(replacement_lsn <= self.max_stabilized_lsn);
+                    self.free_segment(segment_start, false)?;
+                }
             } else {
-                assert!(replacement_lsn <= self.max_stabilized_lsn);
-                self.free_segment(segment_start, false);
+                // replacement segment has already been freed, so we can
+                // go right to freeing this one too
+                self.free_segment(segment_start, false)?;
             }
         }
+
+        Ok(())
     }
 
     pub(super) fn stabilize(&mut self, stable_lsn: Lsn) -> Result<()> {
@@ -944,10 +980,10 @@ impl SegmentAccountant {
         for lsn in freeable_segments {
             let segment_start = self.ordering[&lsn];
             assert_ne!(segment_start, lid);
-            self.free_segment(segment_start, false);
+            self.free_segment(segment_start, false)?;
         }
 
-        self.possibly_clean_or_free_segment(idx, lsn);
+        self.possibly_clean_or_free_segment(idx, lsn)?;
 
         // if we have a lot of free segments in our whole file,
         // let's start relocating the current tip to boil it down
@@ -1003,40 +1039,10 @@ impl SegmentAccountant {
             "unaligned Lsn provided to next!"
         );
 
-        let free: Vec<LogOffset> = self
-            .free
-            .iter()
-            .filter(|lid| {
-                let idx = usize::try_from(
-                    *lid / self.config.segment_size as LogOffset,
-                )
-                .unwrap();
-                if let Segment::Free(Free { previous_lsn: Some(last_lsn) }) =
-                    self.segments[idx]
-                {
-                    last_lsn < self.max_stabilized_lsn
-                } else {
-                    true
-                }
-            })
-            .copied()
-            .collect();
-
-        trace!("evaluating free list {:?} in SA::next", free);
-
-        // truncate if possible
-        while self.tip != 0 && self.free.len() > 1 {
-            let last_segment = self.tip - self.config.segment_size as LogOffset;
-            if free.contains(&last_segment) {
-                self.free.remove(&last_segment);
-                self.truncate(last_segment)?;
-            } else {
-                break;
-            }
-        }
+        trace!("evaluating free list {:?} in SA::next", &self.free);
 
         // pop free or add to end
-        let safe = free.first();
+        let safe = self.free.iter().next();
 
         let lid = match (self.pause_rewriting, safe) {
             (true, _) | (_, None) => self.bump_tip(),
@@ -1048,15 +1054,6 @@ impl SegmentAccountant {
 
         // pin lsn to this segment
         let idx = self.segment_id(lid);
-
-        assert!(self.segments[idx].is_free());
-
-        // remove the old ordering from our list
-        if let Segment::Free(Free { previous_lsn: Some(last_lsn) }) =
-            self.segments[idx]
-        {
-            self.ordering.remove(&last_lsn);
-        }
 
         self.segments[idx].free_to_active(lsn);
 
