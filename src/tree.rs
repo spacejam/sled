@@ -45,6 +45,7 @@ impl IntoIterator for &'_ Tree {
 /// ```
 /// use sled::{open, IVec};
 ///
+/// # let _ = std::fs::remove_dir_all("db");
 /// let t = open("db").unwrap();
 /// t.insert(b"yo!", b"v1".to_vec());
 /// assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
@@ -308,6 +309,7 @@ impl Tree {
     /// ```
     /// use sled::{Batch, open};
     ///
+    /// # let _ = std::fs::remove_dir_all("batch_db");
     /// let db = open("batch_db").unwrap();
     /// db.insert("key_0", "val_0").unwrap();
     ///

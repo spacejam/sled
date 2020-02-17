@@ -48,6 +48,7 @@
 //! # Examples
 //!
 //! ```
+//! # let _ = std::fs::remove_dir_all("my_db");
 //! let t = sled::open("my_db").unwrap();
 //!
 //! // insert and get
