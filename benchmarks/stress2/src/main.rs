@@ -131,9 +131,15 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
             thread_rng().gen::<usize>()
         } % args.flag_entries;
 
-        let i_bytes = i.to_le_bytes();
+        let i_bytes = i.to_be_bytes();
 
-        i_bytes.iter().cycle().take(len).copied().collect()
+        i_bytes
+            .iter()
+            .skip_while(|v| **v == 0)
+            .cycle()
+            .take(len)
+            .copied()
+            .collect()
     };
     let mut rng = thread_rng();
 
