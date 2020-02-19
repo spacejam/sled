@@ -410,7 +410,7 @@ impl<'a> RecoveryGuard<'a> {
 #[derive(Debug, Clone)]
 pub struct Page {
     pub(crate) update: Option<Update>,
-    pub(crate) cache_infos: Vec<CacheInfo>,
+    pub(crate) cache_infos: StackVec<CacheInfo>,
 }
 
 impl Page {
@@ -698,7 +698,8 @@ impl PageCache {
 
             trace!("allocating pid {} for the first time", pid);
 
-            let new_page = Page { update: None, cache_infos: vec![] };
+            let new_page =
+                Page { update: None, cache_infos: StackVec::default() };
 
             let page_view = self.inner.insert(pid, new_page, guard);
 
@@ -880,10 +881,12 @@ impl PageCache {
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(Update::Node(node)),
-            cache_infos: vec![],
+            cache_infos: StackVec::default(),
         }));
 
         loop {
+            // TODO handle replacement on threshold here instead
+
             let log_reservation =
                 self.log.reserve(LogKind::Link, pid, &new, guard)?;
             let lsn = log_reservation.lsn();
@@ -912,8 +915,7 @@ impl PageCache {
                 log_size: log_reservation.reservation_len() as u64,
             };
 
-            let mut new_cache_infos =
-                Vec::with_capacity(old.cache_infos.len() + 1);
+            let mut new_cache_infos = StackVec::default();
             new_cache_infos.extend_from_slice(&old.cache_infos);
             new_cache_infos.push(cache_info);
 
@@ -1108,7 +1110,7 @@ impl PageCache {
 
                 let new_page = Owned::new(Page {
                     update: page_view.update.clone(),
-                    cache_infos: vec![cache_info],
+                    cache_infos: StackVec::single(cache_info),
                 });
 
                 debug_delay();
@@ -1278,7 +1280,7 @@ impl PageCache {
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(update),
-            cache_infos: vec![],
+            cache_infos: StackVec::default(),
         }));
 
         loop {
@@ -1326,7 +1328,7 @@ impl PageCache {
                     .unwrap(),
             };
 
-            page_ptr.cache_infos = vec![cache_info];
+            page_ptr.cache_infos = StackVec::single(cache_info);
 
             debug_delay();
             let result =
@@ -1864,7 +1866,7 @@ impl PageCache {
 
             trace!("load_snapshot pid {} {:?}", pid, state);
 
-            let mut cache_infos = vec![];
+            let mut cache_infos = StackVec::default();
 
             let guard = pin();
 

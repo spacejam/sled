@@ -186,6 +186,7 @@ mod prefix;
 mod result;
 mod serialization;
 mod stack;
+mod stackvec;
 mod subscription;
 mod sys_limits;
 mod transaction;
@@ -274,6 +275,7 @@ use {
         node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
+        stackvec::StackVec,
         subscription::Subscriptions,
         tree::TreeInner,
     },
