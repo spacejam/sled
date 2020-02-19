@@ -874,7 +874,7 @@ impl PageCache {
         node.apply(&new);
 
         // see if we should short-circuit replace
-        if old.cache_infos.len() > PAGE_CONSOLIDATION_THRESHOLD {
+        if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {
             let short_circuit = self.replace(pid, old, node, guard)?;
             return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
         }
