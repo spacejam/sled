@@ -157,7 +157,7 @@ mod qc {
                     }
                     Op::Insert(at, item) => {
                         if at <= v.len() && v.len() < PAGE_CONSOLIDATION_THRESHOLD {
-                            sv.insert(at, item);
+                            sv._insert(at, item);
                             v.insert(at, item);
                         }
                     }
@@ -168,7 +168,7 @@ mod qc {
                         }
                     }
                     Op::Pop => {
-                        assert_eq!(sv.pop(), v.pop());
+                        assert_eq!(sv._pop(), v.pop());
                     }
                 }
                 assert_eq!(&*sv, &*v);
