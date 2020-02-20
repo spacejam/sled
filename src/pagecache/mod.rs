@@ -390,6 +390,7 @@ impl Update {
 ///
 /// If this is dropped without calling `seal_batch`, the complete
 /// recovery effect will not occur.
+#[derive(Debug)]
 pub struct RecoveryGuard<'a> {
     batch_res: Reservation<'a>,
 }
