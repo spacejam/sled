@@ -1521,7 +1521,7 @@ impl PageCache {
 
         let page = Owned::new(Page {
             update: Some(base),
-            cache_infos: page_view.cache_infos.clone(),
+            cache_infos: page_view.cache_infos,
         });
 
         debug_delay();
@@ -1732,7 +1732,7 @@ impl PageCache {
                     }
                     let new_page = Owned::new(Page {
                         update: None,
-                        cache_infos: page_view.cache_infos.clone(),
+                        cache_infos: page_view.cache_infos,
                     });
                     debug_delay();
                     if page_view
