@@ -23,7 +23,7 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 static TOTAL: AtomicUsize = AtomicUsize::new(0);
 static SEQ: AtomicUsize = AtomicUsize::new(0);
 
-const USAGE: &'static str = "
+const USAGE: &str = "
 Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
     [--key-len=<l>] [--val-len=<l>] \
     [--get-prop=<p>] \
@@ -131,10 +131,15 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
             thread_rng().gen::<usize>()
         } % args.flag_entries;
 
-        let i_bytes: [u8; std::mem::size_of::<usize>()] =
-            unsafe { std::mem::transmute(i) };
+        let i_bytes = i.to_be_bytes();
 
-        i_bytes.iter().cycle().take(len).cloned().collect()
+        i_bytes
+            .iter()
+            .skip_while(|v| **v == 0)
+            .cycle()
+            .take(len)
+            .copied()
+            .collect()
     };
     let mut rng = thread_rng();
 
@@ -217,7 +222,7 @@ fn main() {
 
     let args = unsafe {
         ARGS = Docopt::new(USAGE)
-            .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
+            .and_then(|d| d.argv(std::env::args()).deserialize())
             .unwrap_or_else(|e| e.exit());
         ARGS.clone()
     };
@@ -227,7 +232,6 @@ fn main() {
     let config = sled::Config::new()
         .cache_capacity(256 * 1024 * 1024)
         .flush_every_ms(Some(200))
-        .snapshot_after_ops(100_000_000_000)
         .print_profile_on_drop(true);
 
     let tree = Arc::new(config.open().unwrap());
@@ -239,7 +243,7 @@ fn main() {
 
     let n_threads = args.flag_threads;
 
-    for i in 0..n_threads + 1 {
+    for i in 0..=n_threads {
         let tree = tree.clone();
         let shutdown = shutdown.clone();
 

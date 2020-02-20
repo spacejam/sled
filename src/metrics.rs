@@ -83,62 +83,58 @@ impl<'h> Drop for Measure<'h> {
     }
 }
 
-/// Measure the time spent on calling a given function in a given `Histogram`.
-#[cfg_attr(not(feature = "no_inline"), inline)]
-pub(crate) fn measure<F: FnOnce() -> R, R>(_histo: &Histogram, f: F) -> R {
-    #[cfg(not(feature = "no_metrics"))]
-    let _measure = Measure::new(_histo);
-    f()
-}
-
 #[derive(Default, Debug)]
 pub struct Metrics {
-    pub advance_snapshot: Histogram,
-    pub tree_set: Histogram,
-    pub tree_get: Histogram,
-    pub tree_del: Histogram,
-    pub tree_cas: Histogram,
-    pub tree_scan: Histogram,
-    pub tree_reverse_scan: Histogram,
-    pub tree_merge: Histogram,
-    pub tree_start: Histogram,
-    pub tree_traverse: Histogram,
-    pub tree_child_split_attempt: CachePadded<AtomicUsize>,
-    pub tree_child_split_success: CachePadded<AtomicUsize>,
-    pub tree_parent_split_attempt: CachePadded<AtomicUsize>,
-    pub tree_parent_split_success: CachePadded<AtomicUsize>,
-    pub tree_root_split_attempt: CachePadded<AtomicUsize>,
-    pub tree_root_split_success: CachePadded<AtomicUsize>,
-    pub get_page: Histogram,
-    pub rewrite_page: Histogram,
-    pub replace_page: Histogram,
-    pub link_page: Histogram,
-    pub merge_page: Histogram,
-    pub page_out: Histogram,
-    pub pull: Histogram,
-    pub serialize: Histogram,
-    pub deserialize: Histogram,
-    pub compress: Histogram,
-    pub decompress: Histogram,
-    pub make_stable: Histogram,
-    pub assign_offset: Histogram,
-    pub assign_spinloop: Histogram,
-    pub reserve_lat: Histogram,
-    pub reserve_sz: Histogram,
-    pub reserve_current_condvar_wait: Histogram,
-    pub reserve_written_condvar_wait: Histogram,
-    pub write_to_log: Histogram,
-    pub written_bytes: Histogram,
-    pub read: Histogram,
-    pub tree_loops: CachePadded<AtomicUsize>,
-    pub log_reservations: CachePadded<AtomicUsize>,
-    pub log_reservation_attempts: CachePadded<AtomicUsize>,
-    pub accountant_lock: Histogram,
+    pub accountant_bump_tip: Histogram,
     pub accountant_hold: Histogram,
-    pub accountant_next: Histogram,
+    pub accountant_lock: Histogram,
     pub accountant_mark_link: Histogram,
     pub accountant_mark_replace: Histogram,
-    pub accountant_bump_tip: Histogram,
+    pub accountant_next: Histogram,
+    pub advance_snapshot: Histogram,
+    pub assign_offset: Histogram,
+    pub compress: Histogram,
+    pub decompress: Histogram,
+    pub deserialize: Histogram,
+    pub get_page: Histogram,
+    pub get_pagetable: Histogram,
+    pub link_page: Histogram,
+    pub log_reservation_attempts: CachePadded<AtomicUsize>,
+    pub log_reservations: CachePadded<AtomicUsize>,
+    pub make_stable: Histogram,
+    pub page_out: Histogram,
+    pub pull: Histogram,
+    pub read: Histogram,
+    pub read_segment_message: Histogram,
+    pub replace_page: Histogram,
+    pub reserve_lat: Histogram,
+    pub reserve_sz: Histogram,
+    pub rewrite_page: Histogram,
+    pub segment_read: Histogram,
+    pub segment_utilization_startup: Histogram,
+    pub segment_utilization_shutdown: Histogram,
+    pub serialize: Histogram,
+    pub snapshot_apply: Histogram,
+    pub start_pagecache: Histogram,
+    pub start_segment_accountant: Histogram,
+    pub tree_cas: Histogram,
+    pub tree_child_split_attempt: CachePadded<AtomicUsize>,
+    pub tree_child_split_success: CachePadded<AtomicUsize>,
+    pub tree_del: Histogram,
+    pub tree_get: Histogram,
+    pub tree_loops: CachePadded<AtomicUsize>,
+    pub tree_merge: Histogram,
+    pub tree_parent_split_attempt: CachePadded<AtomicUsize>,
+    pub tree_parent_split_success: CachePadded<AtomicUsize>,
+    pub tree_reverse_scan: Histogram,
+    pub tree_root_split_attempt: CachePadded<AtomicUsize>,
+    pub tree_root_split_success: CachePadded<AtomicUsize>,
+    pub tree_scan: Histogram,
+    pub tree_set: Histogram,
+    pub tree_start: Histogram,
+    pub tree_traverse: Histogram,
+    pub write_to_log: Histogram,
+    pub written_bytes: Histogram,
     #[cfg(feature = "measure_allocs")]
     pub allocations: CachePadded<AtomicUsize>,
     #[cfg(feature = "measure_allocs")]
@@ -194,7 +190,7 @@ impl Metrics {
 
     pub fn print_profile(&self) {
         println!(
-            "pagecache profile:\n\
+            "sled profile:\n\
              {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}",
             "op",
             "min (us)",
@@ -253,7 +249,6 @@ impl Metrics {
 
         println!("tree:");
         p(vec![
-            lat("start", &self.tree_start),
             lat("traverse", &self.tree_traverse),
             lat("get", &self.tree_get),
             lat("set", &self.tree_set),
@@ -263,7 +258,19 @@ impl Metrics {
             lat("scan", &self.tree_scan),
             lat("rev scan", &self.tree_reverse_scan),
         ]);
-        println!("tree contention loops: {}", self.tree_loops.load(Acquire));
+        let total_loops = self.tree_loops.load(Acquire);
+        let total_ops = self.tree_get.count()
+            + self.tree_set.count()
+            + self.tree_merge.count()
+            + self.tree_del.count()
+            + self.tree_cas.count()
+            + self.tree_scan.count()
+            + self.tree_reverse_scan.count();
+        let loop_pct = total_loops * 100 / total_ops;
+        println!(
+            "tree contention loops: {} ({}% retry rate)",
+            total_loops, loop_pct
+        );
         println!(
             "tree split success rates: child({}/{}) parent({}/{}) root({}/{})",
             self.tree_child_split_success.load(Acquire),
@@ -277,22 +284,26 @@ impl Metrics {
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("pagecache:");
         p(vec![
-            lat("snapshot", &self.advance_snapshot),
             lat("get", &self.get_page),
+            lat("get pt", &self.get_pagetable),
             lat("rewrite", &self.rewrite_page),
             lat("replace", &self.replace_page),
             lat("link", &self.link_page),
-            lat("merge", &self.merge_page),
             lat("pull", &self.pull),
             lat("page_out", &self.page_out),
         ]);
+        let hit_ratio = (self.get_page.count() - self.pull.count()) * 100
+            / std::cmp::max(1, self.get_page.count());
+        println!("hit ratio: {}%", hit_ratio);
 
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("serialization and compression:");
         p(vec![
             lat("serialize", &self.serialize),
             lat("deserialize", &self.deserialize),
+            #[cfg(feature = "compression")]
             lat("compress", &self.compress),
+            #[cfg(feature = "compression")]
             lat("decompress", &self.decompress),
         ]);
 
@@ -304,16 +315,20 @@ impl Metrics {
             lat("write", &self.write_to_log),
             sz("written bytes", &self.written_bytes),
             lat("assign offset", &self.assign_offset),
-            lat("assign spinloop", &self.assign_spinloop),
             lat("reserve lat", &self.reserve_lat),
             sz("reserve sz", &self.reserve_sz),
-            lat("res cvar r", &self.reserve_current_condvar_wait),
-            lat("res cvar w", &self.reserve_written_condvar_wait),
         ]);
-        println!("log reservations: {}", self.log_reservations.load(Acquire));
+        let log_reservations =
+            std::cmp::max(1, self.log_reservations.load(Acquire));
+        let log_reservation_attempts =
+            self.log_reservation_attempts.load(Acquire);
+        let log_reservation_retry_rate =
+            (log_reservation_attempts - log_reservations) * 100
+                / log_reservations;
+        println!("log reservations: {}", log_reservations);
         println!(
-            "log res attempts: {}",
-            self.log_reservation_attempts.load(Acquire)
+            "log res attempts: {}, ({}% retry rate)",
+            log_reservation_attempts, log_reservation_retry_rate,
         );
 
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
@@ -324,6 +339,20 @@ impl Metrics {
             lat("next", &self.accountant_next),
             lat("replace", &self.accountant_mark_replace),
             lat("link", &self.accountant_mark_link),
+        ]);
+
+        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
+        println!("recovery:");
+        p(vec![
+            lat("start", &self.tree_start),
+            lat("advance snapshot", &self.advance_snapshot),
+            lat("load SA", &self.start_segment_accountant),
+            lat("load PC", &self.start_pagecache),
+            lat("snap apply", &self.snapshot_apply),
+            lat("segment read", &self.segment_read),
+            lat("log message read", &self.read_segment_message),
+            sz("seg util start", &self.segment_utilization_startup),
+            sz("seg util end", &self.segment_utilization_shutdown),
         ]);
 
         #[cfg(feature = "measure_allocs")]

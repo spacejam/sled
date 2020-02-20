@@ -1,6 +1,6 @@
 use std::{
-    cell::UnsafeCell, sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst,
-    sync::Arc,
+    cell::UnsafeCell,
+    sync::atomic::{AtomicBool, AtomicPtr},
 };
 
 use crate::{pagecache::*, *};
@@ -18,7 +18,12 @@ macro_rules! io_fail {
         fail_point!($e, |_| {
             $self.config.set_global_error(Error::FailPoint);
             // wake up any waiting threads so they don't stall forever
-            let _ = $self.intervals.lock();
+            let _mu = $self.intervals.lock();
+
+            // having held the mutex makes this linearized
+            // with the notify below.
+            drop(_mu);
+
             let _notified = $self.interval_updated.notify_all();
             Err(Error::FailPoint)
         });
@@ -42,7 +47,13 @@ unsafe impl Sync for IoBuf {}
 pub(crate) struct IoBufs {
     pub config: RunningConfig,
 
-    pub iobuf: RwLock<Arc<IoBuf>>,
+    // A pointer to the current IoBuf. This relies on crossbeam-epoch
+    // for garbage collection when it gets swapped out, to ensure that
+    // no witnessing threads experience use-after-free.
+    // mutated from the maybe_seal_and_write_iobuf method.
+    // finally dropped in the Drop impl, without using crossbeam-epoch,
+    // because if this drops, all witnessing threads should be done.
+    pub iobuf: AtomicPtr<IoBuf>,
 
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
@@ -58,8 +69,22 @@ pub(crate) struct IoBufs {
     pub max_reserved_lsn: AtomicLsn,
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
+    pub segment_cleaner: SegmentCleaner,
+    deferred_segment_ops: stack::Stack<SegmentOp>,
     #[cfg(feature = "io_uring")]
-    pub write_uring: Mutex<io_uring::Uring<IoBuf>>,
+    pub submission_mutex: Mutex<()>,
+    #[cfg(feature = "io_uring")]
+    pub io_uring: rio::Rio,
+}
+
+impl Drop for IoBufs {
+    fn drop(&mut self) {
+        let ptr = self.iobuf.swap(std::ptr::null_mut(), SeqCst);
+        assert!(!ptr.is_null());
+        unsafe {
+            Arc::from_raw(ptr);
+        }
+    }
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -75,25 +100,32 @@ impl IoBufs {
         let snapshot_last_lid = snapshot.last_lid;
         let snapshot_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
+        let segment_cleaner = SegmentCleaner::default();
+
         let mut segment_accountant: SegmentAccountant =
-            SegmentAccountant::start(config.clone(), snapshot)?;
+            SegmentAccountant::start(
+                config.clone(),
+                snapshot,
+                segment_cleaner.clone(),
+            )?;
 
         let (next_lsn, next_lid) =
             if snapshot_last_lsn % segment_size as Lsn == 0 {
                 (snapshot_last_lsn, snapshot_last_lid)
             } else {
                 let width = match read_message(
-                    file,
+                    &**file,
                     snapshot_last_lid,
-                    snapshot_last_lsn,
+                    SegmentNumber(
+                        u64::try_from(snapshot_last_lsn).unwrap()
+                            / u64::try_from(config.segment_size).unwrap(),
+                    ),
                     &config,
                 ) {
-                    Ok(LogRead::Failed(_, len))
-                    | Ok(LogRead::Inline(_, _, len)) => {
-                        len + u32::try_from(MSG_HEADER_LEN).unwrap()
-                    }
-                    Ok(LogRead::Blob(_header, _buf, _blob_ptr)) => {
-                        u32::try_from(BLOB_INLINE_LEN + MSG_HEADER_LEN).unwrap()
+                    Ok(LogRead::Canceled(inline_len))
+                    | Ok(LogRead::Inline(_, _, inline_len)) => inline_len,
+                    Ok(LogRead::Blob(_header, _buf, _blob_ptr, inline_len)) => {
+                        inline_len
                     }
                     other => {
                         // we can overwrite this non-flush
@@ -159,13 +191,10 @@ impl IoBufs {
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
-        #[cfg(feature = "io_uring")]
-        let file = config.file.clone();
-
-        Ok(Self {
+        Ok(IoBufs {
             config,
 
-            iobuf: RwLock::new(Arc::new(iobuf)),
+            iobuf: AtomicPtr::new(Arc::into_raw(Arc::new(iobuf)) as *mut IoBuf),
 
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
@@ -176,9 +205,64 @@ impl IoBufs {
                 snapshot_max_header_stable_lsn,
             )),
             segment_accountant: Mutex::new(segment_accountant),
+            segment_cleaner,
+            deferred_segment_ops: stack::Stack::default(),
             #[cfg(feature = "io_uring")]
-            write_uring: Mutex::new(io_uring::Uring::new(file, 16, 0)?),
-            // TODO: queue and flags configurable
+            submission_mutex: Mutex::new(()),
+            #[cfg(feature = "io_uring")]
+            io_uring: rio::new()?,
+        })
+    }
+
+    pub(in crate::pagecache) fn sa_mark_link(
+        &self,
+        pid: PageId,
+        cache_info: CacheInfo,
+        guard: &Guard,
+    ) {
+        let op = SegmentOp::Link { pid, cache_info };
+        self.deferred_segment_ops.push(op, guard);
+    }
+
+    pub(in crate::pagecache) fn sa_mark_replace(
+        &self,
+        pid: PageId,
+        lsn: Lsn,
+        old_cache_infos: &[CacheInfo],
+        new_cache_info: CacheInfo,
+        guard: &Guard,
+    ) -> Result<()> {
+        debug_delay();
+        if let Some(mut sa) = self.segment_accountant.try_lock() {
+            let start = clock();
+            sa.mark_replace(pid, lsn, old_cache_infos, new_cache_info)?;
+            for op in self.deferred_segment_ops.take_iter(guard) {
+                sa.apply_op(op)?;
+            }
+            M.accountant_hold.measure(clock() - start);
+        } else {
+            let op = SegmentOp::Replace {
+                pid,
+                lsn,
+                old_cache_infos: old_cache_infos.to_vec(),
+                new_cache_info,
+            };
+            self.deferred_segment_ops.push(op, guard);
+        }
+        Ok(())
+    }
+
+    pub(in crate::pagecache) fn sa_stabilize(
+        &self,
+        lsn: Lsn,
+        guard: &Guard,
+    ) -> Result<()> {
+        self.with_sa(|sa| {
+            for op in self.deferred_segment_ops.take_iter(guard) {
+                sa.apply_op(op)?;
+            }
+            sa.stabilize(lsn)?;
+            Ok(())
         })
     }
 
@@ -203,29 +287,6 @@ impl IoBufs {
         M.accountant_hold.measure(clock() - locked_at);
 
         ret
-    }
-
-    /// `SegmentAccountant` access for coordination with the `PageCache`
-    pub(in crate::pagecache) fn try_with_sa<B, F>(&self, f: F) -> Option<B>
-    where
-        F: FnOnce(&mut SegmentAccountant) -> B,
-    {
-        let start = clock();
-
-        debug_delay();
-        let mut sa = self.segment_accountant.try_lock()?;
-
-        let locked_at = clock();
-
-        M.accountant_lock.measure(locked_at - start);
-
-        let ret = f(&mut sa);
-
-        drop(sa);
-
-        M.accountant_hold.measure(clock() - locked_at);
-
-        Some(ret)
     }
 
     /// Return an iterator over the log, starting with
@@ -258,62 +319,51 @@ impl IoBufs {
     }
 
     // Adds a header to the front of the buffer
-    pub(crate) fn encapsulate(
+    #[allow(clippy::mut_mut)]
+    pub(crate) fn encapsulate<T: Serialize + Debug>(
         &self,
-        in_buf: &[u8],
-        out_buf: &mut [u8],
-        kind: MessageKind,
-        pid: PageId,
-        lsn: Lsn,
-        over_blob_threshold: bool,
+        item: &T,
+        header: MessageHeader,
+        mut out_buf: &mut [u8],
+        blob_id: Option<Lsn>,
     ) -> Result<()> {
-        let blob_ptr;
+        // we create this double ref to allow scooting
+        // the slice forward without doing anything
+        // to the argument
+        let out_buf_ref: &mut &mut [u8] = &mut out_buf;
+        {
+            let _ = Measure::new(&M.serialize);
+            header.serialize_into(out_buf_ref);
+        }
 
-        let to_reserve = if over_blob_threshold {
+        if let Some(blob_id) = blob_id {
             // write blob to file
             io_fail!(self, "blob blob write");
-            write_blob(&self.config, kind, lsn, in_buf)?;
+            write_blob(&self.config, header.kind, blob_id, item)?;
 
-            let lsn_buf = u64_to_arr(u64::try_from(lsn).unwrap());
-
-            blob_ptr = lsn_buf;
-            &blob_ptr
+            let _ = Measure::new(&M.serialize);
+            blob_id.serialize_into(out_buf_ref);
         } else {
-            in_buf
+            let _ = Measure::new(&M.serialize);
+            item.serialize_into(out_buf_ref);
         };
 
-        assert_eq!(out_buf.len(), to_reserve.len() + MSG_HEADER_LEN);
-
-        let header = MessageHeader {
-            kind,
-            pid,
-            lsn,
-            len: u32::try_from(to_reserve.len()).unwrap(),
-            crc32: 0,
-        };
-
-        let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
-
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                header_bytes.as_ptr(),
-                out_buf.as_mut_ptr(),
-                MSG_HEADER_LEN,
-            );
-            std::ptr::copy_nonoverlapping(
-                to_reserve.as_ptr(),
-                out_buf.as_mut_ptr().add(MSG_HEADER_LEN),
-                to_reserve.len(),
-            );
-        }
+        assert_eq!(
+            out_buf_ref.len(),
+            0,
+            "trying to serialize header {:?} \
+             and item {:?} but there were \
+             buffer leftovers at the end",
+            header,
+            item
+        );
 
         Ok(())
     }
 
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
-    pub(crate) fn write_to_log(&self, iobuf: Arc<IoBuf>) -> Result<()> {
+    pub(crate) fn write_to_log(&self, iobuf: &IoBuf) -> Result<()> {
         let _measure = Measure::new(&M.write_to_log);
         let header = iobuf.get_header();
         let log_offset = iobuf.offset;
@@ -346,56 +396,61 @@ impl IoBufs {
 
         let maxed = iobuf.linearized(|| iobuf.get_maxed());
         let unused_space = capacity - bytes_to_write;
-        let should_pad = maxed && unused_space >= MSG_HEADER_LEN;
+        let should_pad = maxed && unused_space >= MAX_MSG_HEADER_LEN;
 
         // a pad is a null message written to the end of a buffer
         // to signify that nothing else will be written into it
         if should_pad {
             #[allow(unsafe_code)]
             let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
-            let pad_len = capacity - bytes_to_write - MSG_HEADER_LEN;
+            let pad_len = capacity - bytes_to_write - MAX_MSG_HEADER_LEN;
 
             // take the crc of the random bytes already after where we
             // would place our header.
             let padding_bytes = vec![MessageKind::Corrupted.into(); pad_len];
 
+            let segment_number = SegmentNumber(
+                u64::try_from(base_lsn).unwrap()
+                    / u64::try_from(self.config.segment_size).unwrap(),
+            );
+
             let header = MessageHeader {
-                kind: MessageKind::Pad,
+                kind: MessageKind::Cap,
                 pid: PageId::max_value(),
-                lsn: base_lsn + bytes_to_write as Lsn,
-                len: u32::try_from(pad_len).unwrap(),
+                segment_number,
+                len: u64::try_from(pad_len).unwrap(),
                 crc32: 0,
             };
 
-            let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
+            let header_bytes = header.serialize();
 
             #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     header_bytes.as_ptr(),
                     data.as_mut_ptr().add(bytes_to_write),
-                    MSG_HEADER_LEN,
+                    header_bytes.len(),
                 );
                 std::ptr::copy_nonoverlapping(
                     padding_bytes.as_ptr(),
-                    data.as_mut_ptr().add(bytes_to_write + MSG_HEADER_LEN),
+                    data.as_mut_ptr().add(bytes_to_write + header_bytes.len()),
                     pad_len,
                 );
             }
 
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(&padding_bytes);
-            hasher.update(&header_bytes);
-            let crc32 = hasher.finalize();
-            let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
+            // this as to stay aligned with the hashing
+            let crc32_arr = u32_to_arr(calculate_message_crc32(
+                &header_bytes,
+                &padding_bytes,
+            ));
 
             #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     crc32_arr.as_ptr(),
                     data.as_mut_ptr().add(
-                        bytes_to_write + MSG_HEADER_LEN
-                            - std::mem::size_of::<u32>(),
+                        // the crc32 is the first part of the buffer
+                        bytes_to_write,
                     ),
                     std::mem::size_of::<u32>(),
                 );
@@ -411,18 +466,76 @@ impl IoBufs {
         io_fail!(self, "buffer write");
         #[cfg(feature = "io_uring")]
         {
-            self.write_uring.lock().pwrite_all(
-                &mut data[..total_len],
-                iobuf,
-                log_offset,
-                !self.config.temporary,
-            )?;
+            let mut remaining_len = total_len;
+            let mut to_write = &data[..remaining_len];
+            let mut offset = log_offset;
+            while remaining_len > 0 {
+                // we take out this mutex to guarantee
+                // that our `Link` write operation below
+                // is serialized with the following sync.
+                // we don't put the `Rio` instance into
+                // the `Mutex` because we want to drop the
+                // `Mutex` right after beginning the async
+                // submission.
+                let link_mu = self.submission_mutex.lock();
+
+                // using the `Link` ordering, we specify
+                // that `io_uring` should not begin
+                // the following `sync_file_range`
+                // until the previous write is
+                // complete.
+                let wrote_completion = self.io_uring.write_at_ordered(
+                    &*self.config.file,
+                    &to_write,
+                    offset,
+                    rio::Ordering::Link,
+                );
+
+                let sync_completion = self.io_uring.sync_file_range(
+                    &*self.config.file,
+                    offset,
+                    remaining_len,
+                );
+
+                sync_completion.wait()?;
+
+                // TODO we want to move this above the previous `wait`
+                // but there seems to be an issue in `rio` that is
+                // triggered when multiple threads are submitting
+                // events while events from other threads are in play.
+                drop(link_mu);
+
+                let wrote = wrote_completion.wait()?;
+
+                remaining_len -= wrote;
+                to_write = &to_write[wrote..];
+                offset += wrote as u64;
+            }
         }
         #[cfg(not(feature = "io_uring"))]
         {
             let f = &self.config.file;
             pwrite_all(f, &data[..total_len], log_offset)?;
             if !self.config.temporary {
+                #[cfg(target_os = "linux")]
+                {
+                    use std::os::unix::io::AsRawFd;
+                    let ret = unsafe {
+                        libc::sync_file_range(
+                            f.as_raw_fd(),
+                            i64::try_from(log_offset).unwrap(),
+                            i64::try_from(total_len).unwrap(),
+                            libc::SYNC_FILE_RANGE_WAIT_BEFORE
+                                | libc::SYNC_FILE_RANGE_WRITE
+                                | libc::SYNC_FILE_RANGE_WAIT_AFTER,
+                        )
+                    };
+                    if ret < 0 {
+                        return Err(std::io::Error::last_os_error().into());
+                    }
+                }
+
+                #[cfg(not(target_os = "linux"))]
                 f.sync_all()?;
             }
         }
@@ -462,20 +575,13 @@ impl IoBufs {
             trace!("bumping atomic header lsn to {}", stored_max_stable_lsn);
             bump_atomic_lsn(&max_header_stable_lsn, stored_max_stable_lsn)
         });
+
         guard.flush();
-        drop(guard);
 
         let current_max_header_stable_lsn =
             self.max_header_stable_lsn.load(SeqCst);
 
-        // TODO make SA lock-free so we don't have to defer this occasionally
-        if let Some(ret) =
-            self.try_with_sa(|sa| sa.stabilize(current_max_header_stable_lsn))
-        {
-            ret
-        } else {
-            Ok(())
-        }
+        self.sa_stabilize(current_max_header_stable_lsn, &guard)
     }
 
     // It's possible that IO buffers are written out of order!
@@ -542,13 +648,23 @@ impl IoBufs {
         }
 
         if updated {
-            // safe because self.intervals mutex is already held
+            // having held the mutex makes this linearized
+            // with the notify below.
+            drop(intervals);
+
             let _notified = self.interval_updated.notify_all();
         }
     }
 
     pub(in crate::pagecache) fn current_iobuf(&self) -> Arc<IoBuf> {
-        self.iobuf.read().clone()
+        // we bump up the ref count, and forget the arc to retain a +1.
+        // If we didn't forget it, it would then go back down again,
+        // even though we just created a new reference to it, leading
+        // to double-frees.
+        let arc = unsafe { Arc::from_raw(self.iobuf.load(SeqCst)) };
+        #[allow(clippy::mem_forget)]
+        std::mem::forget(arc.clone());
+        arc
     }
 }
 
@@ -571,7 +687,12 @@ pub(in crate::pagecache) fn make_stable(
 
     while stable < lsn {
         if let Err(e) = iobufs.config.global_error() {
-            let _ = iobufs.intervals.lock();
+            let intervals = iobufs.intervals.lock();
+
+            // having held the mutex makes this linearized
+            // with the notify below.
+            drop(intervals);
+
             let _notified = iobufs.interval_updated.notify_all();
             return Err(e);
         }
@@ -668,7 +789,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     let sealed = mk_sealed(header);
     let res_len = offset(sealed);
 
-    let maxed = from_reserve || capacity - res_len < MSG_HEADER_LEN;
+    let maxed = from_reserve || capacity - res_len < MAX_MSG_HEADER_LEN;
 
     let worked = iobuf.linearized(|| {
         if iobuf.cas_header(header, sealed).is_err() {
@@ -730,7 +851,12 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             Ok(ret) => ret,
             Err(e) => {
                 iobufs.config.set_global_error(e.clone());
-                let _ = iobufs.intervals.lock();
+                let intervals = iobufs.intervals.lock();
+
+                // having held the mutex makes this linearized
+                // with the notify below.
+                drop(intervals);
+
                 let _notified = iobufs.interval_updated.notify_all();
                 return Err(e);
             }
@@ -771,11 +897,19 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     // the change.
     debug_delay();
     let intervals = iobufs.intervals.lock();
-    let mut mu = iobufs.iobuf.write();
-    *mu = Arc::new(next_iobuf);
-    drop(mu);
-    let _notified = iobufs.interval_updated.notify_all();
+    let old_ptr = iobufs
+        .iobuf
+        .swap(Arc::into_raw(Arc::new(next_iobuf)) as *mut IoBuf, SeqCst);
+
+    let old_arc = unsafe { Arc::from_raw(old_ptr) };
+
+    pin().defer(move || drop(old_arc));
+
+    // having held the mutex makes this linearized
+    // with the notify below.
     drop(intervals);
+
+    let _notified = iobufs.interval_updated.notify_all();
 
     drop(measure_assign_offset);
 
@@ -789,18 +923,23 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         let iobufs = iobufs.clone();
         let iobuf = iobuf.clone();
         let _result = threadpool::spawn(move || {
-            if let Err(e) = iobufs.write_to_log(iobuf) {
+            if let Err(e) = iobufs.write_to_log(&iobuf) {
                 error!(
                     "hit error while writing iobuf with lsn {}: {:?}",
                     lsn, e
                 );
-                let _ = iobufs.intervals.lock();
+                let intervals = iobufs.intervals.lock();
+
+                // having held the mutex makes this linearized
+                // with the notify below.
+                drop(intervals);
+
                 let _notified = iobufs.interval_updated.notify_all();
                 iobufs.config.set_global_error(e);
             }
         });
 
-        #[cfg(test)]
+        #[cfg(feature = "event_log")]
         _result.unwrap();
 
         Ok(())

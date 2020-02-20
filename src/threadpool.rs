@@ -2,21 +2,35 @@
 
 use std::{
     collections::VecDeque,
+    sync::atomic::AtomicBool,
     thread,
     time::{Duration, Instant},
 };
 
 use parking_lot::{Condvar, Mutex};
 
-use crate::{
-    debug_delay, warn, AtomicBool, AtomicUsize, Lazy, OneShot, Relaxed, SeqCst,
-};
+use crate::{debug_delay, warn, AtomicUsize, Lazy, OneShot, Relaxed, SeqCst};
 
+#[cfg(windows)]
+const MAX_THREADS: usize = 16;
+
+#[cfg(not(windows))]
 const MAX_THREADS: usize = 128;
+
 const MIN_THREADS: usize = 2;
 
 static STANDBY_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+macro_rules! once {
+    ($args:block) => {
+        static E: AtomicBool = AtomicBool::new(false);
+        if !E.compare_and_swap(false, true, Relaxed) {
+            // only execute this once
+            $args;
+        }
+    };
+}
 
 type Work = Box<dyn FnOnce() + Send + 'static>;
 
@@ -49,6 +63,11 @@ impl Queue {
     fn send(&self, work: Work) {
         let mut queue = self.mu.lock();
         queue.push_back(work);
+
+        // having held the mutex makes this linearized
+        // with the notify below.
+        drop(queue);
+
         self.cv.notify_one();
     }
 }

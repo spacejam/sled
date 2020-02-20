@@ -5,7 +5,7 @@ use crate::*;
 
 use super::{
     arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
-    DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind, MSG_HEADER_LEN,
+    DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind, MAX_MSG_HEADER_LEN,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -45,7 +45,7 @@ impl PageState {
         match *self {
             PageState::Present(ref items) => items.clone().into_iter(),
             PageState::Free(lsn, ptr) => {
-                vec![(lsn, ptr, u64::try_from(MSG_HEADER_LEN).unwrap())]
+                vec![(lsn, ptr, u64::try_from(MAX_MSG_HEADER_LEN).unwrap())]
                     .into_iter()
             }
         }
@@ -71,6 +71,7 @@ impl Snapshot {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
         trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
+        let _measure = Measure::new(&M.snapshot_apply);
 
         match log_kind {
             LogKind::Replace => {
@@ -261,8 +262,11 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
 
     #[cfg(feature = "zstd")]
     let bytes = if config.use_compression {
+        use std::convert::TryInto;
+
         let len_expected: u64 =
-            crate::pagecache::arr_to_u64(&len_expected_bytes);
+            u64::from_le_bytes(len_expected_bytes.as_ref().try_into().unwrap());
+
         decompress(&*buf, usize::try_from(len_expected).unwrap()).unwrap()
     } else {
         buf

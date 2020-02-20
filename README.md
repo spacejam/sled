@@ -1,12 +1,33 @@
-| key | value |
-| :-: | --- |
-| [documentation](https://docs.rs/sled) | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
-| [chat about databases with us](https://discord.gg/Z6VsXds) | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
-| [help us build what you want to use](https://github.com/sponsors/spacejam) | [![Open Collective backers](https://img.shields.io/opencollective/backers/sled)](https://github.com/sponsors/spacejam) |
 
+<table style="width:100%">
+<tr>
+  <td>
+    <table style="width:100%">
+      <tr>
+        <td> key </td>
+        <td> value </td>
+      </tr>
+      <tr>
+        <td><a href="https://docs.rs/sled">documentation</a></td>
+        <td><a href="https://docs.rs/sled"><img src="https://docs.rs/sled/badge.svg"></a></td>
+      </tr>
+      <tr>
+        <td><a href="https://discord.gg/Z6VsXds">chat about databases with us</a></td>
+        <td><a href="https://discord.gg/Z6VsXds"><img src="https://img.shields.io/discord/509773073294295082.svg?logo=discord"></a></td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/sponsors/spacejam">help us build what you want to use</a></td>
+        <td><a href="https://github.com/sponsors/spacejam"><img src="https://img.shields.io/opencollective/backers/sled"></a></td>
+      </tr>
+     </table>
+  </td>
+  <td>
 <p align="center">
-  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="20%" height="auto" />
-</p>
+  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="40%" height="auto" />
+  </p>
+  </td>
+ </tr>
+</table>
 
 
 # sled - ~~it's all downhill from here!!!~~
@@ -14,9 +35,7 @@
 A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
 
 ```rust
-use sled::Db;
-
-let tree = Db::open(path)?;
+let tree = sled::open(path)?;
 
 // insert and get, similar to std's BTreeMap
 tree.insert(k, v1);
@@ -101,7 +120,7 @@ for a more detailed overview of where we're at and where we see things going!
 * if reliability is your primary constraint, use SQLite. sled is beta.
 * if storage price performance is your primary constraint, use RocksDB. sled uses too much space sometimes.
 * quite young, should be considered unstable for the time being.
-* the on-disk format is going to change in ways that require manual migrations before the `1.0.0` release!
+* the on-disk format is going to change in ways that require [manual migrations](https://docs.rs/sled/latest/sled/struct.Db.html#method.export) before the `1.0.0` release!
 * until `1.0.0`, sled targets the *current* stable version of rust. after `1.0.0`, we will aim to trail current by at least one version. If this is an issue for your business, please consider helping us reach `1.0.0` sooner by financially supporting our efforts to get there.
 
 # plans
@@ -129,7 +148,7 @@ Want to support development? Help us out via [GitHub Sponsors](https://github.co
   </a>
 </p>
 
-[Ferrous Systems](https://ferrous-systems.com) provided a huge amount of engineer time for sled in 2018 and 2019. They are the world's leading Rust education and embedded consulting company. [Get in touch!](mailto:inquiries+via+sled@ferrous-systems.com)
+[Ferrous Systems](https://ferrous-systems.com) provided a huge amount of engineer time for sled in 2018 and 2019. They are the world's leading embedded Rust consulting company.
 
 <p align="center">
   <a href="https://www.meilisearch.com/">

@@ -6,7 +6,9 @@ use std::{
 };
 
 use crate::{
-    pagecache::{PageState, Snapshot},
+    pagecache::{
+        BatchManifest, MessageHeader, PageState, SegmentNumber, Snapshot,
+    },
     Data, DiskPtr, Error, IVec, Link, Meta, Node, Result,
 };
 
@@ -53,9 +55,71 @@ fn scoot(buf: &mut &mut [u8], amount: usize) {
     }
 }
 
+impl Serialize for BatchManifest {
+    fn serialized_size(&self) -> u64 {
+        8
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        buf[..8].copy_from_slice(&self.0.to_le_bytes());
+        scoot(buf, 8);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        if buf.len() < 8 {
+            return Err(Error::Corruption { at: DiskPtr::Inline(103) });
+        }
+
+        let array = buf[..8].try_into().unwrap();
+        *buf = &buf[8..];
+        Ok(BatchManifest(i64::from_le_bytes(array)))
+    }
+}
+
+impl Serialize for () {
+    fn serialized_size(&self) -> u64 {
+        0
+    }
+
+    fn serialize_into(&self, _: &mut &mut [u8]) {}
+
+    fn deserialize(_: &mut &[u8]) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl Serialize for MessageHeader {
+    fn serialized_size(&self) -> u64 {
+        1 + 4
+            + self.segment_number.serialized_size()
+            + self.pid.serialized_size()
+            + self.len.serialized_size()
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        crate::trace!("serializing {:?}", self);
+        self.crc32.serialize_into(buf);
+        self.kind.into().serialize_into(buf);
+        self.len.serialize_into(buf);
+        self.segment_number.serialize_into(buf);
+        self.pid.serialize_into(buf);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<MessageHeader> {
+        Ok(MessageHeader {
+            crc32: u32::deserialize(buf)?,
+            kind: u8::deserialize(buf)?.into(),
+            len: u64::deserialize(buf)?,
+            segment_number: SegmentNumber(u64::deserialize(buf)?),
+            pid: u64::deserialize(buf)?,
+        })
+    }
+}
+
 impl Serialize for IVec {
     fn serialized_size(&self) -> u64 {
-        8 + self.len() as u64
+        let len = self.len() as u64;
+        len + len.serialized_size()
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
@@ -75,22 +139,94 @@ impl Serialize for IVec {
 
 impl Serialize for u64 {
     fn serialized_size(&self) -> u64 {
-        8
+        if *self <= 240 {
+            1
+        } else if *self <= 2287 {
+            2
+        } else if *self <= 67823 {
+            3
+        } else if *self <= 0x00FF_FFFF {
+            4
+        } else if *self <= 0xFFFF_FFFF {
+            5
+        } else if *self <= 0x00FF_FFFF_FFFF {
+            6
+        } else if *self <= 0xFFFF_FFFF_FFFF {
+            7
+        } else if *self <= 0x00FF_FFFF_FFFF_FFFF {
+            8
+        } else {
+            9
+        }
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        buf[..8].copy_from_slice(&self.to_le_bytes());
-        scoot(buf, 8);
+        let sz = if *self <= 240 {
+            buf[0] = u8::try_from(*self).unwrap();
+            1
+        } else if *self <= 2287 {
+            buf[0] = u8::try_from((*self - 240) / 256 + 241).unwrap();
+            buf[1] = u8::try_from((*self - 240) % 256).unwrap();
+            2
+        } else if *self <= 67823 {
+            buf[0] = 249;
+            buf[1] = u8::try_from((*self - 2288) / 256).unwrap();
+            buf[2] = u8::try_from((*self - 2288) % 256).unwrap();
+            3
+        } else if *self <= 0x00FF_FFFF {
+            buf[0] = 250;
+            let bytes = self.to_le_bytes();
+            buf[1..4].copy_from_slice(&bytes[..3]);
+            4
+        } else if *self <= 0xFFFF_FFFF {
+            buf[0] = 251;
+            let bytes = self.to_le_bytes();
+            buf[1..5].copy_from_slice(&bytes[..4]);
+            5
+        } else if *self <= 0x00FF_FFFF_FFFF {
+            buf[0] = 252;
+            let bytes = self.to_le_bytes();
+            buf[1..6].copy_from_slice(&bytes[..5]);
+            6
+        } else if *self <= 0xFFFF_FFFF_FFFF {
+            buf[0] = 253;
+            let bytes = self.to_le_bytes();
+            buf[1..7].copy_from_slice(&bytes[..6]);
+            7
+        } else if *self <= 0x00FF_FFFF_FFFF_FFFF {
+            buf[0] = 254;
+            let bytes = self.to_le_bytes();
+            buf[1..8].copy_from_slice(&bytes[..7]);
+            8
+        } else {
+            buf[0] = 255;
+            let bytes = self.to_le_bytes();
+            buf[1..9].copy_from_slice(&bytes[..8]);
+            9
+        };
+
+        scoot(buf, sz);
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
-        if buf.len() < 8 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(86) });
+        if buf.is_empty() {
+            return Err(Error::Corruption { at: DiskPtr::Inline(150) });
         }
-
-        let array = buf[..8].try_into().unwrap();
-        *buf = &buf[8..];
-        Ok(u64::from_le_bytes(array))
+        let (res, scoot) = match buf[0] {
+            0..=240 => (u64::from(buf[0]), 1),
+            241..=248 => {
+                (240 + 256 * (u64::from(buf[0]) - 241) + u64::from(buf[1]), 2)
+            }
+            249 => (2288 + 256 * u64::from(buf[1]) + u64::from(buf[2]), 3),
+            other => {
+                let sz = other as usize - 247;
+                let mut aligned = [0; 8];
+                aligned[..sz].copy_from_slice(&buf[1..=sz]);
+                (u64::from_le_bytes(aligned), sz + 1)
+            }
+        };
+        *buf = &buf[scoot..];
+        Ok(res)
     }
 }
 
@@ -112,6 +248,27 @@ impl Serialize for i64 {
         let array = buf[..8].try_into().unwrap();
         *buf = &buf[8..];
         Ok(i64::from_le_bytes(array))
+    }
+}
+
+impl Serialize for u32 {
+    fn serialized_size(&self) -> u64 {
+        4
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        buf[..4].copy_from_slice(&self.to_le_bytes());
+        scoot(buf, 4);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        if buf.len() < 4 {
+            return Err(Error::Corruption { at: DiskPtr::Inline(250) });
+        }
+
+        let array = buf[..4].try_into().unwrap();
+        *buf = &buf[4..];
+        Ok(u32::from_le_bytes(array))
     }
 }
 
@@ -160,7 +317,11 @@ impl Serialize for Meta {
     fn serialized_size(&self) -> u64 {
         self.inner
             .iter()
-            .map(|(k, _)| 16 + u64::try_from(k.len()).unwrap())
+            .map(|(k, v)| {
+                (k.len() as u64).serialized_size()
+                    + u64::try_from(k.len()).unwrap()
+                    + v.serialized_size()
+            })
             .sum()
     }
 
@@ -177,11 +338,16 @@ impl Serialize for Link {
     fn serialized_size(&self) -> u64 {
         match self {
             Link::Set(key, value) => {
-                17 + u64::try_from(key.len()).unwrap()
+                1 + (key.len() as u64).serialized_size()
+                    + (value.len() as u64).serialized_size()
+                    + u64::try_from(key.len()).unwrap()
                     + u64::try_from(value.len()).unwrap()
             }
-            Link::Del(key) => 9 + u64::try_from(key.len()).unwrap(),
-            Link::ParentMergeIntention(_) => 9,
+            Link::Del(key) => {
+                1 + (key.len() as u64).serialized_size()
+                    + u64::try_from(key.len()).unwrap()
+            }
+            Link::ParentMergeIntention(a) => 1 + a.serialized_size(),
             Link::ParentMergeConfirm | Link::ChildMergeCap => 1,
         }
     }
@@ -229,8 +395,14 @@ impl Serialize for Link {
 
 impl Serialize for Node {
     fn serialized_size(&self) -> u64 {
-        34 + self.lo.len() as u64
-            + self.hi.len() as u64
+        let next_sz = self.next.unwrap_or(0_u64).serialized_size();
+        let merging_child_sz =
+            self.merging_child.unwrap_or(0_u64).serialized_size();
+
+        2 + next_sz
+            + merging_child_sz
+            + self.lo.serialized_size()
+            + self.hi.serialized_size()
             + self.data.serialized_size()
     }
 
@@ -265,11 +437,16 @@ impl Serialize for Node {
 
 impl Serialize for Snapshot {
     fn serialized_size(&self) -> u64 {
-        24 + self
-            .pt
-            .iter()
-            .map(|(_, page_state)| 8 + page_state.serialized_size())
-            .sum::<u64>()
+        self.last_lsn.serialized_size()
+            + self.last_lid.serialized_size()
+            + self.max_header_stable_lsn.serialized_size()
+            + self
+                .pt
+                .iter()
+                .map(|(pid, page_state)| {
+                    pid.serialized_size() + page_state.serialized_size()
+                })
+                .sum::<u64>()
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
@@ -296,14 +473,23 @@ impl Serialize for Data {
                 1_u64
                     + pointers
                         .iter()
-                        .map(|(k, _)| 16 + k.len() as u64)
+                        .map(|(k, v)| {
+                            (k.len() as u64).serialized_size()
+                                + v.serialized_size()
+                                + k.len() as u64
+                        })
                         .sum::<u64>()
             }
             Data::Leaf(ref items) => {
                 1_u64
                     + items
                         .iter()
-                        .map(|(k, v)| 16 + k.len() as u64 + v.len() as u64)
+                        .map(|(k, v)| {
+                            (k.len() as u64).serialized_size()
+                                + (v.len() as u64).serialized_size()
+                                + k.len() as u64
+                                + v.len() as u64
+                        })
                         .sum::<u64>()
             }
         }
@@ -339,8 +525,10 @@ impl Serialize for Data {
 impl Serialize for DiskPtr {
     fn serialized_size(&self) -> u64 {
         match self {
-            DiskPtr::Inline(_) => 9,
-            DiskPtr::Blob(_, _) => 17,
+            DiskPtr::Inline(a) => 1 + a.serialized_size(),
+            DiskPtr::Blob(a, b) => {
+                1 + a.serialized_size() + b.serialized_size()
+            }
         }
     }
 
@@ -359,7 +547,7 @@ impl Serialize for DiskPtr {
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<DiskPtr> {
-        if buf.len() < 9 {
+        if buf.len() < 2 {
             return Err(Error::Corruption { at: DiskPtr::Inline(136) });
         }
         let discriminant = buf[0];
@@ -375,7 +563,9 @@ impl Serialize for DiskPtr {
 impl Serialize for PageState {
     fn serialized_size(&self) -> u64 {
         match self {
-            PageState::Free(_, disk_ptr) => 9 + disk_ptr.serialized_size(),
+            PageState::Free(a, disk_ptr) => {
+                1 + a.serialized_size() + disk_ptr.serialized_size()
+            }
             PageState::Present(items) => {
                 1 + items
                     .iter()
@@ -547,6 +737,25 @@ mod qc {
     use rand::Rng;
 
     use super::*;
+    use crate::pagecache::MessageKind;
+
+    impl Arbitrary for MessageHeader {
+        fn arbitrary<G: Gen>(g: &mut G) -> MessageHeader {
+            MessageHeader {
+                crc32: g.gen(),
+                len: g.gen(),
+                kind: MessageKind::arbitrary(g),
+                segment_number: SegmentNumber(SpreadU64::arbitrary(g).0),
+                pid: g.gen(),
+            }
+        }
+    }
+
+    impl Arbitrary for MessageKind {
+        fn arbitrary<G: Gen>(g: &mut G) -> MessageKind {
+            g.gen_range(0, 12).into()
+        }
+    }
 
     impl Arbitrary for Data {
         fn arbitrary<G: Gen>(g: &mut G) -> Data {
@@ -677,6 +886,28 @@ mod qc {
         }
     }
 
+    #[derive(Debug, Clone)]
+    struct SpreadI64(i64);
+
+    impl Arbitrary for SpreadI64 {
+        fn arbitrary<G: Gen>(g: &mut G) -> SpreadI64 {
+            let uniform = g.gen::<i64>();
+            let shift = g.gen_range(0, 64);
+            SpreadI64(uniform >> shift)
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct SpreadU64(u64);
+
+    impl Arbitrary for SpreadU64 {
+        fn arbitrary<G: Gen>(g: &mut G) -> SpreadU64 {
+            let uniform = g.gen::<u64>();
+            let shift = g.gen_range(0, 64);
+            SpreadU64(uniform >> shift)
+        }
+    }
+
     fn prop_serialize<T>(item: T) -> bool
     where
         T: Serialize + PartialEq + Clone + std::fmt::Debug,
@@ -711,12 +942,12 @@ mod qc {
             prop_serialize(item)
         }
 
-        fn i64(item: i64) -> bool {
-            prop_serialize(item)
+        fn i64(item: SpreadI64) -> bool {
+            prop_serialize(item.0)
         }
 
-        fn u64(item: u64) -> bool {
-            prop_serialize(item)
+        fn u64(item: SpreadU64) -> bool {
+            prop_serialize(item.0)
         }
 
         fn disk_ptr(item: DiskPtr) -> bool {
@@ -744,6 +975,10 @@ mod qc {
         }
 
         fn link(item: Link) -> bool {
+            prop_serialize(item)
+        }
+
+        fn msg_header(item: MessageHeader) -> bool {
             prop_serialize(item)
         }
     }

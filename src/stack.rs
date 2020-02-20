@@ -90,7 +90,7 @@ impl<T: Send + 'static> Deref for Node<T> {
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> Stack<T> {
+impl<T: Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
     pub fn push(&self, inner: T, guard: &Guard) {
         debug_delay();
@@ -129,6 +129,25 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
 
             iter.map(|shared| *shared.deref()).collect()
         }
+    }
+
+    /// Clears the stack and returns all items
+    pub fn take_iter<'a>(
+        &self,
+        guard: &'a Guard,
+    ) -> impl Iterator<Item = &'a T> {
+        debug_delay();
+        let node = self.head.swap(Shared::null(), Release, guard);
+
+        let iter = StackIter { inner: node, guard };
+
+        if !node.is_null() {
+            unsafe {
+                guard.defer_destroy(node);
+            }
+        }
+
+        iter
     }
 
     /// Pop the next item off the stack. Returns None if nothing is there.

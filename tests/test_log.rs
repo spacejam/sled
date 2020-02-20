@@ -1,7 +1,6 @@
 mod common;
 
 use std::{
-    mem::size_of,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -15,12 +14,13 @@ use rand::{thread_rng, Rng};
 use sled::*;
 
 use sled::{
-    DiskPtr, Log, LogKind, LogRead, Lsn, PageId, SegmentMode,
-    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    pin, BatchManifest, DiskPtr, Log, LogKind, LogRead, Lsn, PageId,
+    SegmentMode, Serialize, MAX_MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT,
+    SEG_HEADER_LEN,
 };
 
 const PID: PageId = 0;
-const KIND: LogKind = LogKind::Replace;
+const REPLACE: LogKind = LogKind::Replace;
 
 #[test]
 fn log_writebatch() -> crate::Result<()> {
@@ -29,11 +29,13 @@ fn log_writebatch() -> crate::Result<()> {
         Config::new().temporary(true).segment_mode(SegmentMode::Linear);
     let log = config.open_raw_log().unwrap();
 
-    log.reserve(KIND, PID, b"1")?.complete()?;
-    log.reserve(KIND, PID, b"2")?.complete()?;
-    log.reserve(KIND, PID, b"3")?.complete()?;
-    log.reserve(KIND, PID, b"4")?.complete()?;
-    log.reserve(KIND, PID, b"5")?.complete()?;
+    let guard = pin();
+
+    log.reserve(REPLACE, PID, &IVec::from(b"1"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"2"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"3"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"4"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"5"), &guard)?.complete()?;
 
     // simulate a torn batch by
     // writing an LSN higher than
@@ -41,14 +43,14 @@ fn log_writebatch() -> crate::Result<()> {
     // a batch manifest before
     // some writes.
     let mut batch_res =
-        log.reserve(KIND, PID, &[0; std::mem::size_of::<Lsn>()])?;
-    log.reserve(KIND, PID, b"6")?.complete()?;
-    log.reserve(KIND, PID, b"7")?.complete()?;
-    log.reserve(KIND, PID, b"8")?.complete()?;
-    log.reserve(KIND, PID, b"9")?.complete()?;
+        log.reserve(REPLACE, PID, &BatchManifest::default(), &guard)?;
+    log.reserve(REPLACE, PID, &IVec::from(b"6"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"7"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"8"), &guard)?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"9"), &guard)?.complete()?;
     batch_res.mark_writebatch(Lsn::max_value() / 2);
     batch_res.complete()?;
-    log.reserve(KIND, PID, b"10")?.complete()?;
+    log.reserve(REPLACE, PID, &IVec::from(b"10"), &guard)?.complete()?;
 
     drop(log);
     let log = config.open_raw_log().unwrap();
@@ -76,11 +78,15 @@ fn more_log_reservations_than_buffers() -> Result<()> {
     let mut reservations = vec![];
 
     let total_seg_overhead = SEG_HEADER_LEN;
-    let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
+    let big_msg_overhead = MAX_MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = config.segment_size - big_msg_overhead;
 
     for _ in 0..=30 {
-        reservations.push(log.reserve(KIND, PID, &vec![0; big_msg_sz]).unwrap())
+        let guard = pin();
+        reservations.push(
+            log.reserve(REPLACE, PID, &IVec::from(vec![0; big_msg_sz]), &guard)
+                .unwrap(),
+        )
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
@@ -102,10 +108,15 @@ fn non_contiguous_log_flush() -> Result<()> {
 
     let seg_overhead = SEG_HEADER_LEN;
     let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
-        - (MSG_HEADER_LEN + seg_overhead);
+        - (MAX_MSG_HEADER_LEN + seg_overhead);
 
-    let res1 = log.reserve(KIND, PID, &vec![0; buf_len]).unwrap();
-    let res2 = log.reserve(KIND, PID, &vec![0; buf_len]).unwrap();
+    let guard = pin();
+    let res1 = log
+        .reserve(REPLACE, PID, &IVec::from(vec![0; buf_len]), &guard)
+        .unwrap();
+    let res2 = log
+        .reserve(REPLACE, PID, &IVec::from(vec![0; buf_len]), &guard)
+        .unwrap();
     let lsn = res2.lsn();
     res2.abort()?;
     res1.abort()?;
@@ -122,7 +133,7 @@ fn concurrent_logging() {
             .temporary(true)
             .segment_mode(SegmentMode::Linear)
             .flush_every_ms(Some(50))
-            .segment_size(1024);
+            .segment_size(256);
 
         let log = Arc::new(config.open_raw_log().unwrap());
         let iobs2 = log.clone();
@@ -133,14 +144,18 @@ fn concurrent_logging() {
 
         let seg_overhead = SEG_HEADER_LEN;
         let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
-            - (MSG_HEADER_LEN + seg_overhead);
+            - (MAX_MSG_HEADER_LEN + seg_overhead);
 
         let t1 = thread::Builder::new()
             .name("c1".to_string())
             .spawn(move || {
                 for i in 0..1_000 {
-                    let buf = vec![1; i % buf_len];
-                    log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
+                    let buf = IVec::from(vec![1; i % buf_len]);
+                    let guard = pin();
+                    log.reserve(REPLACE, PID, &buf, &guard)
+                        .unwrap()
+                        .complete()
+                        .unwrap();
                 }
             })
             .unwrap();
@@ -149,8 +164,13 @@ fn concurrent_logging() {
             .name("c2".to_string())
             .spawn(move || {
                 for i in 0..1_000 {
-                    let buf = vec![2; i % buf_len];
-                    iobs2.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
+                    let buf = IVec::from(vec![2; i % buf_len]);
+                    let guard = pin();
+                    iobs2
+                        .reserve(REPLACE, PID, &buf, &guard)
+                        .unwrap()
+                        .complete()
+                        .unwrap();
                 }
             })
             .unwrap();
@@ -159,8 +179,13 @@ fn concurrent_logging() {
             .name("c3".to_string())
             .spawn(move || {
                 for i in 0..1_000 {
-                    let buf = vec![3; i % buf_len];
-                    iobs3.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
+                    let buf = IVec::from(vec![3; i % buf_len]);
+                    let guard = pin();
+                    iobs3
+                        .reserve(REPLACE, PID, &buf, &guard)
+                        .unwrap()
+                        .complete()
+                        .unwrap();
                 }
             })
             .unwrap();
@@ -169,8 +194,13 @@ fn concurrent_logging() {
             .name("c4".to_string())
             .spawn(move || {
                 for i in 0..1_000 {
-                    let buf = vec![4; i % buf_len];
-                    iobs4.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
+                    let buf = IVec::from(vec![4; i % buf_len]);
+                    let guard = pin();
+                    iobs4
+                        .reserve(REPLACE, PID, &buf, &guard)
+                        .unwrap()
+                        .complete()
+                        .unwrap();
                 }
             })
             .unwrap();
@@ -178,8 +208,13 @@ fn concurrent_logging() {
             .name("c5".to_string())
             .spawn(move || {
                 for i in 0..1_000 {
-                    let buf = vec![5; i % buf_len];
-                    iobs5.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
+                    let guard = pin();
+                    let buf = IVec::from(vec![5; i % buf_len]);
+                    iobs5
+                        .reserve(REPLACE, PID, &buf, &guard)
+                        .unwrap()
+                        .complete()
+                        .unwrap();
                 }
             })
             .unwrap();
@@ -188,9 +223,10 @@ fn concurrent_logging() {
             .name("c6".to_string())
             .spawn(move || {
                 for i in 0..1_000 {
-                    let buf = vec![6; i % buf_len];
+                    let buf = IVec::from(vec![6; i % buf_len]);
+                    let guard = pin();
                     let (lsn, _lid) = iobs6
-                        .reserve(KIND, PID, &buf)
+                        .reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -199,17 +235,17 @@ fn concurrent_logging() {
             })
             .unwrap();
 
-        t1.join().unwrap();
-        t2.join().unwrap();
-        t3.join().unwrap();
-        t4.join().unwrap();
-        t5.join().unwrap();
         t6.join().unwrap();
+        t5.join().unwrap();
+        t4.join().unwrap();
+        t3.join().unwrap();
+        t2.join().unwrap();
+        t1.join().unwrap();
     }
 }
 
 #[test]
-fn concurrent_logging_404() {
+fn concurrent_log_404() {
     common::setup_logger();
 
     let config = Config::new()
@@ -232,10 +268,10 @@ fn concurrent_logging_404() {
             .spawn(move || {
                 for _ in 0..ITERATIONS {
                     let current = SHARED_COUNTER.load(Ordering::SeqCst);
-                    let raw_value: [u8; size_of::<usize>()] =
-                        current.to_be_bytes();
+                    let raw_value = current as u64;
+                    let guard = pin();
                     let res = log
-                        .reserve(KIND, current as PageId, &raw_value)
+                        .reserve(REPLACE, current as PageId, &raw_value, &guard)
                         .unwrap();
                     match SHARED_COUNTER.compare_and_swap(
                         current,
@@ -277,7 +313,7 @@ fn concurrent_logging_404() {
         });
 
         let msg = log.read(pid, lsn, ptr).unwrap().into_data().unwrap();
-        assert_eq!(&msg, &i.to_be_bytes());
+        assert_eq!(&msg, &(i as u64).serialize());
         assert_eq!(kind, LogKind::Replace);
     }
     // Assert that there is nothing left in the log.
@@ -285,21 +321,27 @@ fn concurrent_logging_404() {
 }
 
 fn write(log: &Log) {
-    let data_bytes = b"yoyoyoyo";
-    let (lsn, ptr) =
-        log.reserve(KIND, PID, data_bytes).unwrap().complete().unwrap();
+    let data_bytes = IVec::from(b"yoyoyoyo");
+    let guard = pin();
+    let (lsn, ptr) = log
+        .reserve(REPLACE, PID, &data_bytes, &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
     let read_buf = log.read(PID, lsn, ptr).unwrap().into_data().unwrap();
     assert_eq!(
-        read_buf, data_bytes,
+        *read_buf,
+        *data_bytes.serialize(),
         "after writing data, it should be readable"
     );
 }
 
 fn abort(log: &Log) {
-    let res = log.reserve(KIND, PID, &[0; 5]).unwrap();
+    let guard = pin();
+    let res = log.reserve(REPLACE, PID, &IVec::from(&[0; 5]), &guard).unwrap();
     let (lsn, ptr) = res.abort().unwrap();
     match log.read(PID, lsn, ptr) {
-        Ok(LogRead::Failed(_, _)) => {}
+        Ok(LogRead::Canceled(_)) => {}
         other => {
             panic!(
                 "expected to successfully read \
@@ -331,22 +373,45 @@ fn log_iterator() {
         .segment_size(1024);
 
     let log = config.open_raw_log().unwrap();
-    let (first_lsn, _) =
-        log.reserve(KIND, PID, b"").unwrap().complete().unwrap();
-    log.reserve(KIND, PID, b"1").unwrap().complete().unwrap();
-    log.reserve(KIND, PID, b"22").unwrap().complete().unwrap();
-    log.reserve(KIND, PID, b"333").unwrap().complete().unwrap();
+    let guard = pin();
+    let (first_lsn, _) = log
+        .reserve(REPLACE, PID, &IVec::from(b""), &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
+    log.reserve(REPLACE, PID, &IVec::from(b"1"), &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
+    log.reserve(REPLACE, PID, &IVec::from(b"22"), &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
+    log.reserve(REPLACE, PID, &IVec::from(b"333"), &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
 
     // stick an abort in the middle, which should not be
     // returned
     {
-        let res = log.reserve(KIND, PID, b"never_gonna_hit_disk").unwrap();
+        let guard = pin();
+        let res = log
+            .reserve(REPLACE, PID, &IVec::from(b"never_gonna_hit_disk"), &guard)
+            .unwrap();
         res.abort().unwrap();
     }
 
-    log.reserve(KIND, PID, b"4444").unwrap().complete().unwrap();
-    let (last_lsn, _) =
-        log.reserve(KIND, PID, b"55555").unwrap().complete().unwrap();
+    let guard = pin();
+    log.reserve(REPLACE, PID, &IVec::from(b"4444"), &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
+    let (last_lsn, _) = log
+        .reserve(REPLACE, PID, &IVec::from(b"55555"), &guard)
+        .unwrap()
+        .complete()
+        .unwrap();
     log.make_stable(last_lsn).unwrap();
 
     drop(log);
@@ -380,28 +445,30 @@ fn log_chunky_iterator() {
             let mut reference = vec![];
 
             let max_valid_size =
-                config.segment_size - (MSG_HEADER_LEN + SEG_HEADER_LEN);
+                config.segment_size - (MAX_MSG_HEADER_LEN + SEG_HEADER_LEN);
 
             for i in 0..1000 {
                 let len = thread_rng().gen_range(0, max_valid_size * 2);
                 let item = thread_rng().gen::<u8>();
-                let buf = vec![item; len];
+                let buf = IVec::from(vec![item; len]);
                 let abort = thread_rng().gen::<bool>();
 
                 let pid = (tn * 10000) + i;
 
+                let guard = pin();
+
                 if abort {
                     let res = log
-                        .reserve(KIND, pid, &buf)
+                        .reserve(REPLACE, pid, &buf, &guard)
                         .expect("should be able to reserve");
                     res.abort().unwrap();
                 } else {
                     let (lsn, lid) = log
-                        .reserve(KIND, pid, &buf)
+                        .reserve(REPLACE, pid, &buf, &guard)
                         .expect("should be able to write reservation")
                         .complete()
                         .unwrap();
-                    reference.push((KIND, pid, lsn, lid, buf));
+                    reference.push((REPLACE, pid, lsn, lid, buf));
                 }
             }
 
@@ -437,14 +504,18 @@ fn multi_segment_log_iteration() -> Result<()> {
         .segment_size(512);
 
     let total_seg_overhead = SEG_HEADER_LEN;
-    let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
+    let big_msg_overhead = MAX_MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = (config.segment_size - big_msg_overhead) / 64;
 
     let log = config.open_raw_log().unwrap();
 
     for i in 0..48 {
-        let buf = vec![i as u8; big_msg_sz * i];
-        log.reserve(KIND, i as PageId, &buf).unwrap().complete().unwrap();
+        let buf = IVec::from(vec![i as u8; big_msg_sz * i]);
+        let guard = pin();
+        log.reserve(REPLACE, i as PageId, &buf, &guard)
+            .unwrap()
+            .complete()
+            .unwrap();
     }
     log.flush()?;
 
@@ -482,7 +553,7 @@ impl Arbitrary for Op {
 
         let incr = || {
             let len = thread_rng().gen_range(0, 2);
-            LEN.fetch_add(len + MSG_HEADER_LEN, Ordering::Relaxed);
+            LEN.fetch_add(len + MAX_MSG_HEADER_LEN, Ordering::Relaxed);
             vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; len]
         };
 
@@ -544,11 +615,11 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
     for op in ops.into_iter() {
         match op {
-            Read(lid) => {
-                if reference.len() <= lid as usize {
+            Read(id) => {
+                if reference.len() <= id as usize {
                     continue;
                 }
-                let (lsn, ptr, ref expected, _len) = reference[lid as usize];
+                let (lsn, ptr, ref expected, _len) = reference[id as usize];
                 // log.make_stable(lid);
                 let read_res = log.read(PID, lsn, ptr);
                 // println!( "expected {:?} read_res {:?} tip {} lid {}",
@@ -560,27 +631,41 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 } else {
                     let flush = read_res.unwrap().into_data();
                     assert_eq!(
-                        flush, *expected,
-                        "read unexpected value at lid {}",
-                        lid
+                        flush,
+                        *expected,
+                        "read unexpected value at lid {}. reference: {:?}",
+                        ptr.lid(),
+                        reference
                     );
                 }
             }
             Write(buf) => {
                 let len = buf.len();
-                let (lsn, ptr) =
-                    log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
-                tip = ptr.lid() as usize + len + MSG_HEADER_LEN;
-                reference.push((lsn, ptr, Some(buf), len));
+                let guard = pin();
+                let (lsn, ptr) = log
+                    .reserve(REPLACE, PID, &IVec::from(&*buf), &guard)
+                    .unwrap()
+                    .complete()
+                    .unwrap();
+                tip = ptr.lid() as usize + len + MAX_MSG_HEADER_LEN;
+                reference.push((
+                    lsn,
+                    ptr,
+                    Some(IVec::from(&*buf).serialize()),
+                    len,
+                ));
             }
             AbortReservation(buf) => {
                 let len = buf.len();
-                let res = log.reserve(KIND, PID, &buf).unwrap();
+                let guard = pin();
+                let res = log
+                    .reserve(REPLACE, PID, &IVec::from(buf), &guard)
+                    .unwrap();
                 let lsn = res.lsn();
                 let lid = res.lid();
                 let ptr = res.pointer();
                 res.abort().unwrap();
-                tip = lid as usize + len + MSG_HEADER_LEN;
+                tip = lid as usize + len + MAX_MSG_HEADER_LEN;
                 reference.push((lsn, ptr, None, len));
             }
             Restart => {
@@ -612,7 +697,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                     for &mut (_lsn, ptr, ref mut expected, sz) in &mut reference
                     {
-                        let tip = ptr.lid() as usize + sz + MSG_HEADER_LEN;
+                        let tip = ptr.lid() as usize + sz + MAX_MSG_HEADER_LEN;
                         if new_len < tip as u64 {
                             *expected = None;
                         }
@@ -647,6 +732,13 @@ fn quickcheck_log_works() {
 }
 
 #[test]
+fn log_bug_00() {
+    // postmortem:
+    use self::Op::*;
+    prop_log_works(vec![Write(vec![66]), Read(0)], true);
+}
+
+#[test]
 fn log_bug_01() {
     // postmortem: test was not stabilizing its buffers before
     // reading
@@ -664,7 +756,7 @@ fn log_bug_01() {
 }
 
 #[test]
-fn log_bug_2() {
+fn log_bug_02() {
     // postmortem: the logic that scans through zeroed entries
     // until the next readable byte hit the end of the file.
     // fix: when something hits the end of the file, return
@@ -674,7 +766,7 @@ fn log_bug_2() {
 }
 
 #[test]
-fn log_bug_3() {
+fn log_bug_03() {
     // postmortem: the skip-ahead logic for continuing to
     // the next valid log entry when reading a zeroed entry
     // was being triggered on valid entries of size 0.
@@ -684,7 +776,7 @@ fn log_bug_3() {
 }
 
 #[test]
-fn log_bug_7() {
+fn log_bug_07() {
     // postmortem: test alignment
     use self::Op::*;
     prop_log_works(
@@ -704,7 +796,7 @@ fn log_bug_7() {
 }
 
 #[test]
-fn log_bug_9() {
+fn log_bug_09() {
     // postmortem: test was mishandling truncation, which
     // should test loss, not extension
     use self::Op::*;

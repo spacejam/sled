@@ -82,10 +82,12 @@ fn run(
             }
             Ok(_) => {
                 wrote_data = true;
-                // at some point, we may want to
-                // put adaptive logic here to tune
-                // sleeps based on how much work
-                // we accomplished
+                if !shutdown.is_running() {
+                    // loop right away if we're in
+                    // shutdown mode, to flush data
+                    // more quickly.
+                    continue;
+                }
             }
             Err(e) => {
                 error!("failed to flush from periodic flush thread: {}", e);
@@ -94,6 +96,11 @@ fn run(
                 pagecache.set_failpoint(e);
 
                 *shutdown = ShutdownState::ShutDown;
+
+                // having held the mutex makes this linearized
+                // with the notify below.
+                drop(shutdown);
+
                 let _notified = sc.notify_all();
                 return;
             }
@@ -103,8 +110,11 @@ fn run(
         // cleaning up the segments. try not to
         // spend more than half of our sleep
         // time rewriting pages though.
-        while shutdown.is_running() && before.elapsed() < flush_every / 2 {
-            match pagecache.attempt_gc() {
+        //
+        // this looks weird because it's a rust-style do-while
+        // where the conditional is the full body
+        while {
+            let made_progress = match pagecache.attempt_gc() {
                 Err(e) => {
                     error!(
                         "failed to clean file from periodic flush thread: {}",
@@ -115,21 +125,43 @@ fn run(
                     pagecache.set_failpoint(e);
 
                     *shutdown = ShutdownState::ShutDown;
+
+                    // having held the mutex makes this linearized
+                    // with the notify below.
+                    drop(shutdown);
+
                     let _notified = sc.notify_all();
                     return;
                 }
-                Ok(false) => break,
-                Ok(true) => {}
-            }
+                Ok(false) => false,
+                Ok(true) => true,
+            };
+            made_progress
+                && shutdown.is_running()
+                && before.elapsed() < flush_every / 2
+        } {}
+
+        if let Err(e) = pagecache.config.file.sync_all() {
+            error!("failed to fsync from periodic flush thread: {}", e);
         }
 
         let sleep_duration = flush_every
             .checked_sub(before.elapsed())
-            .unwrap_or(Duration::from_millis(1));
+            .unwrap_or_else(|| Duration::from_millis(1));
 
-        let _ = sc.wait_for(&mut shutdown, sleep_duration);
+        if shutdown.is_running() {
+            // only sleep before the next flush if we are
+            // running normally. if we're shutting down,
+            // flush faster.
+            sc.wait_for(&mut shutdown, sleep_duration);
+        }
     }
     *shutdown = ShutdownState::ShutDown;
+
+    // having held the mutex makes this linearized
+    // with the notify below.
+    drop(shutdown);
+
     let _notified = sc.notify_all();
 }
 

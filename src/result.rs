@@ -117,6 +117,7 @@ impl From<io::Error> for Error {
 }
 
 impl StdError for Error {
+    #[allow(deprecated, deprecated_in_future)]
     fn description(&self) -> &str {
         use self::Error::*;
 

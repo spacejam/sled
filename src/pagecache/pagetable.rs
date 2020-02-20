@@ -13,6 +13,7 @@ use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use crate::{
     debug_delay,
     pagecache::{Page, PageView},
+    Measure, M,
 };
 
 #[allow(unused)]
@@ -133,6 +134,7 @@ impl PageTable {
         pid: PageId,
         guard: &'g Guard,
     ) -> Option<PageView<'g>> {
+        let _measure = Measure::new(&M.get_pagetable);
         debug_delay();
         let tip = self.traverse(pid, guard);
 

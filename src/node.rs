@@ -73,10 +73,10 @@ impl Node {
 
     pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
         if !self.hi.is_empty() {
-            assert!(prefix::decode(self.prefix(), &key) < self.hi);
+            assert!(*key < self.hi[self.prefix_len as usize..]);
         }
         if let Data::Leaf(ref mut records) = self.data {
-            let search = records.binary_search_by_key(&&key, |(k, _)| k);
+            let search = records.binary_search_by(|(k, _)| fastcmp(k, &key));
             match search {
                 Ok(idx) => records[idx] = (key, val),
                 Err(idx) => records.insert(idx, (key, val)),
@@ -89,7 +89,7 @@ impl Node {
 
     pub(crate) fn del_leaf(&mut self, key: &IVec) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search = records.binary_search_by_key(&key, |(k, _)| k);
+            let search = records.binary_search_by(|(k, _)| fastcmp(k, key));
             if let Ok(idx) = search {
                 records.remove(idx);
             }
@@ -102,7 +102,7 @@ impl Node {
     pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) -> bool {
         if let Data::Index(ref mut pointers) = self.data {
             let encoded_sep = &at[self.prefix_len as usize..];
-            match pointers.binary_search_by_key(&encoded_sep, |(k, _)| k) {
+            match pointers.binary_search_by(|(k, _)| fastcmp(k, encoded_sep)) {
                 Ok(_) => {
                     debug!(
                         "parent_split skipped because \
@@ -467,7 +467,8 @@ impl Node {
         };
 
         let records = self.data.leaf_ref().unwrap();
-        let search = records.binary_search_by_key(&&successor_key, |(k, _)| k);
+        let search =
+            records.binary_search_by(|(k, _)| fastcmp(k, &successor_key));
 
         let idx = match search {
             Ok(idx) => idx,
@@ -505,7 +506,7 @@ impl Node {
 
         let suffix = &key[self.prefix_len as usize..];
 
-        let search = records.binary_search_by_key(&suffix, |(k, _)| k).ok();
+        let search = records.binary_search_by(|(k, _)| fastcmp(k, suffix)).ok();
 
         search.map(|idx| (&records[idx].0, &records[idx].1))
     }

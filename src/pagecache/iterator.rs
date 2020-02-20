@@ -1,16 +1,16 @@
 use std::{collections::BTreeMap, io};
 
 use super::{
-    read_message, read_segment_header, DiskPtr, LogKind, LogOffset, LogRead,
-    Lsn, SegmentHeader, BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN,
-    MSG_HEADER_LEN, SEG_HEADER_LEN,
+    pread_exact_or_eof, read_message, read_segment_header, BasedBuf, DiskPtr,
+    LogKind, LogOffset, LogRead, Lsn, SegmentHeader, SegmentNumber,
+    MAX_MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 use crate::*;
 
 pub struct LogIter {
     pub config: RunningConfig,
     pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogOffset)>>,
-    pub segment_base: Option<LogOffset>,
+    pub segment_base: Option<BasedBuf>,
     pub max_lsn: Lsn,
     pub cur_lsn: Lsn,
 }
@@ -54,68 +54,76 @@ impl Iterator for LogIter {
                 }
             }
 
+            // self.segment_base is `Some` now.
+            let _measure = Measure::new(&M.read_segment_message);
+
             if self.cur_lsn > self.max_lsn {
                 // all done
                 trace!("hit max_lsn {} in iterator, stopping", self.max_lsn);
                 return None;
             }
 
-            let lid = self.segment_base.unwrap()
+            let segment_base = &self.segment_base.as_ref().unwrap();
+
+            let lid = segment_base.1
                 + LogOffset::try_from(
                     self.cur_lsn % self.config.segment_size as Lsn,
                 )
                 .unwrap();
 
-            let f = &self.config.file;
+            let expected_segment_number = SegmentNumber(
+                u64::try_from(self.cur_lsn).unwrap()
+                    / u64::try_from(self.config.segment_size).unwrap(),
+            );
 
-            match read_message(f, lid, self.cur_lsn, &self.config) {
-                Ok(LogRead::Blob(header, _buf, blob_ptr)) => {
+            match read_message(
+                &**segment_base,
+                lid,
+                expected_segment_number,
+                &self.config,
+            ) {
+                Ok(LogRead::Blob(header, _buf, blob_ptr, inline_len)) => {
                     trace!("read blob flush in LogIter::next");
-                    let sz = u64::try_from(MSG_HEADER_LEN + BLOB_INLINE_LEN)
-                        .unwrap();
-                    self.cur_lsn += Lsn::try_from(sz).unwrap();
+                    let lsn = self.cur_lsn;
+                    self.cur_lsn += Lsn::from(inline_len);
 
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
-                        header.lsn,
+                        lsn,
                         DiskPtr::Blob(lid, blob_ptr),
-                        sz,
+                        u64::from(inline_len),
                     ));
                 }
-                Ok(LogRead::Inline(header, _buf, on_disk_len)) => {
+                Ok(LogRead::Inline(header, _buf, inline_len)) => {
                     trace!(
                         "read inline flush with header {:?} in LogIter::next",
                         header,
                     );
-                    let sz = u64::try_from(MSG_HEADER_LEN).unwrap()
-                        + u64::try_from(on_disk_len).unwrap();
-                    self.cur_lsn += Lsn::try_from(sz).unwrap();
+                    let lsn = self.cur_lsn;
+                    self.cur_lsn += Lsn::from(inline_len);
 
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
-                        header.lsn,
+                        lsn,
                         DiskPtr::Inline(lid),
-                        sz,
+                        u64::from(inline_len),
                     ));
                 }
-                Ok(LogRead::BatchManifest(last_lsn_in_batch)) => {
+                Ok(LogRead::BatchManifest(last_lsn_in_batch, inline_len)) => {
                     if last_lsn_in_batch > self.max_lsn {
                         return None;
                     } else {
-                        self.cur_lsn +=
-                            (MSG_HEADER_LEN + BATCH_MANIFEST_INLINE_LEN) as Lsn;
+                        self.cur_lsn += Lsn::from(inline_len);
                         continue;
                     }
                 }
-                Ok(LogRead::Failed(_, on_disk_len)) => {
+                Ok(LogRead::Canceled(inline_len)) => {
                     trace!("read zeroed in LogIter::next");
-                    self.cur_lsn += Lsn::from(
-                        u32::try_from(MSG_HEADER_LEN).unwrap() + on_disk_len,
-                    );
+                    self.cur_lsn += Lsn::from(inline_len);
                 }
-                Ok(LogRead::Corrupted(_len)) => {
+                Ok(LogRead::Corrupted) => {
                     trace!(
                         "read corrupted msg in LogIter::next as lid {} lsn {}",
                         lid,
@@ -123,18 +131,18 @@ impl Iterator for LogIter {
                     );
                     return None;
                 }
-                Ok(LogRead::Pad(_lsn)) => {
+                Ok(LogRead::Cap(_segment_number)) => {
                     let _taken = self.segment_base.take().unwrap();
 
                     continue;
                 }
-                Ok(LogRead::DanglingBlob(header, blob_ptr)) => {
+                Ok(LogRead::DanglingBlob(_, blob_ptr, inline_len)) => {
                     debug!(
                         "encountered dangling blob \
                          pointer at lsn {} ptr {}",
-                        header.lsn, blob_ptr
+                        self.cur_lsn, blob_ptr
                     );
-                    self.cur_lsn += (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
+                    self.cur_lsn += Lsn::from(inline_len);
                     continue;
                 }
                 Err(e) => {
@@ -154,6 +162,7 @@ impl LogIter {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
     fn read_segment(&mut self, lsn: Lsn, offset: LogOffset) -> Result<()> {
+        let _measure = Measure::new(&M.segment_read);
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,
@@ -193,7 +202,13 @@ impl LogIter {
         trace!("read segment header {:?}", segment_header);
 
         self.cur_lsn = segment_header.lsn + SEG_HEADER_LEN as Lsn;
-        self.segment_base = Some(offset);
+
+        let mut buf = vec![0; self.config.segment_size];
+        let size = pread_exact_or_eof(f, &mut buf, offset)?;
+
+        trace!("setting stored segment buffer length to {} after read", size);
+        buf.truncate(size);
+        self.segment_base = Some(BasedBuf(buf, offset));
 
         Ok(())
     }
@@ -225,7 +240,7 @@ fn valid_entry_offset(lid: LogOffset, segment_len: usize) -> bool {
     let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;
 
     let max_lid =
-        seg_start + segment_len as LogOffset - MSG_HEADER_LEN as LogOffset;
+        seg_start + segment_len as LogOffset - MAX_MSG_HEADER_LEN as LogOffset;
 
     let min_lid = seg_start + SEG_HEADER_LEN as LogOffset;
 

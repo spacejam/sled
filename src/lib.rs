@@ -48,9 +48,8 @@
 //! # Examples
 //!
 //! ```
-//! use sled::Db;
-//!
-//! let t = Db::open("my_db").unwrap();
+//! # let _ = std::fs::remove_dir_all("my_db");
+//! let t = sled::open("my_db").unwrap();
 //!
 //! // insert and get
 //! t.insert(b"yo!", b"v1");
@@ -72,6 +71,7 @@
 //!
 //! t.remove(b"yo!");
 //! assert_eq!(t.get(b"yo!"), Ok(None));
+//! # let _ = std::fs::remove_dir_all("my_db");
 //! ```
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png"
@@ -163,22 +163,14 @@ macro_rules! maybe_fail {
     };
 }
 
-macro_rules! once {
-    ($args:block) => {
-        static E: AtomicBool = AtomicBool::new(false);
-        if !E.compare_and_swap(false, true, Relaxed) {
-            // only execute this once
-            $args;
-        }
-    };
-}
-
 mod batch;
 mod binary_search;
+mod concurrency_control;
 mod config;
 mod context;
 mod db;
 mod dll;
+mod fastcmp;
 mod fastlock;
 mod histogram;
 mod iter;
@@ -194,11 +186,11 @@ mod prefix;
 mod result;
 mod serialization;
 mod stack;
+mod stackvec;
 mod subscription;
 mod sys_limits;
 mod transaction;
 mod tree;
-mod vecset;
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod threadpool {
@@ -211,12 +203,7 @@ mod threadpool {
         R: Send + 'static,
     {
         let (promise_filler, promise) = OneShot::pair();
-        let task = move || {
-            let result = (work)();
-            promise_filler.fill(result);
-        };
-
-        (task)();
+        promise_filler.fill((work)());
         return promise;
     }
 }
@@ -249,12 +236,13 @@ pub use {
         lazy::Lazy,
         pagecache::{
             constants::{
-                MAX_SPACE_AMPLIFICATION, MINIMUM_ITEMS_PER_SEGMENT,
-                MSG_HEADER_LEN, SEG_HEADER_LEN,
+                MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION,
+                MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
             },
-            DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, PageCache, PageId,
-            SegmentMode,
+            BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
+            PageCache, PageId, SegmentMode,
         },
+        serialization::Serialize,
     },
     crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared},
 };
@@ -262,7 +250,7 @@ pub use {
 pub use self::{
     batch::Batch,
     config::Config,
-    db::Db,
+    db::{open, Db},
     iter::Iter,
     ivec::IVec,
     result::{Error, Result},
@@ -277,18 +265,19 @@ pub use self::{
 use {
     self::{
         binary_search::binary_search_lub,
+        concurrency_control::{ConcurrencyControl, Protector},
         context::Context,
+        fastcmp::fastcmp,
         histogram::Histogram,
         lru::Lru,
         meta::Meta,
-        metrics::{clock, measure, Measure, M},
+        metrics::{clock, Measure, M},
         node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
-        serialization::Serialize,
+        stackvec::StackVec,
         subscription::Subscriptions,
         tree::TreeInner,
-        vecset::VecSet,
     },
     crossbeam_utils::{Backoff, CachePadded},
     log::{debug, error, trace, warn},
@@ -301,7 +290,7 @@ use {
         io::{Read, Write},
         sync::{
             atomic::{
-                AtomicBool, AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
+                AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
                 Ordering::{Acquire, Relaxed, Release, SeqCst},
             },
             Arc,
@@ -313,6 +302,14 @@ fn crc32(buf: &[u8]) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
     hasher.update(buf);
     hasher.finalize()
+}
+
+fn calculate_message_crc32(header: &[u8], body: &[u8]) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(body);
+    hasher.update(&header[4..]);
+    let crc32 = hasher.finalize();
+    crc32 ^ 0xFFFF_FFFF
 }
 
 #[cfg(any(test, feature = "lock_free_delays"))]

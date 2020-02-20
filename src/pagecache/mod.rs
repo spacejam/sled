@@ -7,15 +7,15 @@ pub mod logger;
 
 mod blob_io;
 mod disk_pointer;
-mod io_uring;
 mod iobuf;
 mod iterator;
 mod pagetable;
-#[cfg(not(unix))]
-mod parallel_io_not_unix;
+#[cfg(all(not(unix), not(windows)))]
+mod parallel_io_polyfill;
 #[cfg(unix)]
 mod parallel_io_unix;
-mod reader;
+#[cfg(windows)]
+mod parallel_io_windows;
 mod reservation;
 mod segment;
 mod snapshot;
@@ -23,11 +23,14 @@ mod snapshot;
 use crate::*;
 use std::{collections::BinaryHeap, ops::Deref};
 
-#[cfg(not(unix))]
-use parallel_io_not_unix::{pread_exact, pwrite_all};
+#[cfg(all(not(unix), not(windows)))]
+use parallel_io_polyfill::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 #[cfg(unix)]
-use parallel_io_unix::{pread_exact, pwrite_all};
+use parallel_io_unix::{pread_exact, pread_exact_or_eof, pwrite_all};
+
+#[cfg(windows)]
+use parallel_io_windows::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
@@ -37,21 +40,23 @@ use self::{
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
-    segment::SegmentAccountant,
+    segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
     snapshot::advance_snapshot,
 };
 
 pub(crate) use self::{
-    logger::{MessageHeader, SegmentHeader},
-    reader::{read_message, read_segment_header},
+    logger::{
+        read_message, read_segment_header, MessageHeader, SegmentHeader,
+        SegmentNumber,
+    },
     reservation::Reservation,
     snapshot::{read_snapshot_or_default, PageState, Snapshot},
 };
 
 pub use self::{
     constants::{
-        BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN, MAX_SPACE_AMPLIFICATION,
-        MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+        MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, MINIMUM_ITEMS_PER_SEGMENT,
+        SEG_HEADER_LEN,
     },
     disk_pointer::DiskPtr,
     logger::{Log, LogRead},
@@ -74,6 +79,15 @@ pub type Lsn = i64;
 /// A page identifier.
 pub type PageId = u64;
 
+/// Uses a non-varint `Lsn` to mark offsets.
+#[derive(Default, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[repr(transparent)]
+pub struct BatchManifest(pub Lsn);
+
+/// A buffer with an associated offset. Useful for
+/// batching many reads over a file segment.
+pub struct BasedBuf(pub Vec<u8>, pub u64);
+
 /// A byte used to disambiguate log message types
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -85,11 +99,11 @@ pub enum MessageKind {
     /// to a reservation for an in-memory operation that
     /// failed to complete. It should be skipped during
     /// recovery.
-    Cancelled = 1,
+    Canceled = 1,
     /// Indicates that the following buffer is used
     /// as padding to fill out the rest of the segment
     /// before sealing it.
-    Pad = 2,
+    Cap = 2,
     /// Indicates that the following buffer contains
     /// an Lsn for the last write in an atomic writebatch.
     BatchManifest = 3,
@@ -123,8 +137,8 @@ impl From<u8> for MessageKind {
         use MessageKind::*;
         match byte {
             0 => Corrupted,
-            1 => Cancelled,
-            2 => Pad,
+            1 => Canceled,
+            2 => Cap,
             3 => BatchManifest,
             4 => Free,
             5 => Counter,
@@ -178,8 +192,8 @@ impl From<MessageKind> for LogKind {
             | MessageKind::InlineMeta
             | MessageKind::BlobMeta => LogKind::Replace,
             MessageKind::InlineLink | MessageKind::BlobLink => LogKind::Link,
-            MessageKind::Cancelled
-            | MessageKind::Pad
+            MessageKind::Canceled
+            | MessageKind::Cap
             | MessageKind::BatchManifest => LogKind::Skip,
             other => {
                 debug!("encountered unexpected message kind byte {:?}", other);
@@ -214,9 +228,6 @@ fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
 
 use std::convert::{TryFrom, TryInto};
 
-#[cfg(feature = "compression")]
-use zstd::block::decompress;
-
 #[inline]
 pub(crate) fn lsn_to_arr(number: Lsn) -> [u8; 8] {
     number.to_le_bytes()
@@ -224,7 +235,7 @@ pub(crate) fn lsn_to_arr(number: Lsn) -> [u8; 8] {
 
 #[inline]
 pub(crate) fn arr_to_lsn(arr: &[u8]) -> Lsn {
-    arr.try_into().map(Lsn::from_le_bytes).unwrap()
+    Lsn::from_le_bytes(arr.try_into().unwrap())
 }
 
 #[inline]
@@ -233,13 +244,8 @@ pub(crate) fn u64_to_arr(number: u64) -> [u8; 8] {
 }
 
 #[inline]
-pub(crate) fn arr_to_u64(arr: &[u8]) -> u64 {
-    arr.try_into().map(u64::from_le_bytes).unwrap()
-}
-
-#[inline]
 pub(crate) fn arr_to_u32(arr: &[u8]) -> u32 {
-    arr.try_into().map(u32::from_le_bytes).unwrap()
+    u32::from_le_bytes(arr.try_into().unwrap())
 }
 
 #[inline]
@@ -248,38 +254,27 @@ pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
+pub(crate) fn maybe_decompress(in_buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "compression")]
     {
-        use super::*;
+        use zstd::stream::decode_all;
 
-        static MAX_COMPRESSION_RATIO: AtomicUsize = AtomicUsize::new(1);
-
+        let scootable_in_buf = &mut &*in_buf;
+        let _ivec_varint = u64::deserialize(scootable_in_buf)
+            .expect("this had to be serialized with an extra length frame");
         let _measure = Measure::new(&M.decompress);
-        loop {
-            let ratio = MAX_COMPRESSION_RATIO.load(Acquire);
-            match decompress(&*buf, buf.len() * ratio) {
-                Err(ref e) if e.kind() == std::io::ErrorKind::Other => {
-                    debug!(
-                        "bumping expected compression \
-                         ratio up from {} to {}: {:?}",
-                        ratio,
-                        ratio + 1,
-                        e
-                    );
-                    let _who_cares = MAX_COMPRESSION_RATIO.compare_and_swap(
-                        ratio,
-                        ratio + 1,
-                        Release,
-                    );
-                }
-                other => return other,
-            }
-        }
+        let out_buf = decode_all(scootable_in_buf).expect(
+            "failed to decompress data. \
+             This is not expected, please open an issue on \
+             https://github.com/spacejam/sled so we can \
+             fix this critical issue ASAP. Thank you :)",
+        );
+
+        Ok(out_buf)
     }
 
     #[cfg(not(feature = "compression"))]
-    Ok(buf)
+    Ok(in_buf)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -415,7 +410,7 @@ impl<'a> RecoveryGuard<'a> {
 #[derive(Debug, Clone)]
 pub struct Page {
     pub(crate) update: Option<Update>,
-    pub(crate) cache_infos: Vec<CacheInfo>,
+    pub(crate) cache_infos: StackVec<CacheInfo>,
 }
 
 impl Page {
@@ -460,14 +455,12 @@ impl Page {
 /// A lock-free pagecache which supports linkmented pages
 /// for dramatically improving write throughput.
 pub struct PageCache {
-    config: RunningConfig,
+    pub(crate) config: RunningConfig,
     inner: PageTable,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
     lru: Lru,
-    updates: AtomicU64,
-    last_snapshot: Arc<Mutex<Option<Snapshot>>>,
     idgen: Arc<AtomicU64>,
     idgen_persists: Arc<AtomicU64>,
     idgen_persist_mu: Arc<Mutex<()>>,
@@ -542,6 +535,8 @@ impl PageCache {
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
 
+        let _measure = Measure::new(&M.start_pagecache);
+
         let cache_capacity = config.cache_capacity;
         let lru = Lru::new(cache_capacity);
 
@@ -552,8 +547,6 @@ impl PageCache {
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, &snapshot)?,
             lru,
-            updates: AtomicU64::new(0),
-            last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
             idgen_persist_mu: Arc::new(Mutex::new(())),
             idgen: Arc::new(AtomicU64::new(0)),
             idgen_persists: Arc::new(AtomicU64::new(0)),
@@ -561,7 +554,7 @@ impl PageCache {
         };
 
         // now we read it back in
-        pc.load_snapshot()?;
+        pc.load_snapshot(&snapshot)?;
 
         #[cfg(feature = "event_log")]
         {
@@ -705,7 +698,8 @@ impl PageCache {
 
             trace!("allocating pid {} for the first time", pid);
 
-            let new_page = Page { update: None, cache_infos: vec![] };
+            let new_page =
+                Page { update: None, cache_infos: StackVec::default() };
 
             let page_view = self.inner.insert(pid, new_page, guard);
 
@@ -737,9 +731,10 @@ impl PageCache {
             return Ok(false);
         }
         let guard = pin();
-        let to_clean = self.log.with_sa(|sa| sa.clean(None));
-        let ret = if let Some(to_clean) = to_clean {
-            self.rewrite_page(to_clean, &guard).map(|_| true)
+        let to_clean = self.log.iobufs.segment_cleaner.pop();
+        let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
+            self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
+                .map(|_| true)
         } else {
             Ok(false)
         };
@@ -759,11 +754,12 @@ impl PageCache {
     /// to facilitate transactions and write batches when
     /// combined with a concurrency control system in another
     /// component.
-    pub fn pin_log(&self) -> Result<RecoveryGuard<'_>> {
+    pub fn pin_log(&self, guard: &Guard) -> Result<RecoveryGuard<'_>> {
         let batch_res = self.log.reserve(
             LogKind::Skip,
             BATCH_MANIFEST_PID,
-            &[0; std::mem::size_of::<Lsn>()],
+            &BatchManifest::default(),
+            guard,
         )?;
         Ok(RecoveryGuard { batch_res })
     }
@@ -776,7 +772,12 @@ impl PageCache {
 
             // wake up any waiting threads
             // so they don't stall forever
-            let _ = self.log.iobufs.intervals.lock();
+            let intervals = self.log.iobufs.intervals.lock();
+
+            // having held the mutex makes this linearized
+            // with the notify below.
+            drop(intervals);
+
             let _notified = self.log.iobufs.interval_updated.notify_all();
         }
     }
@@ -873,21 +874,21 @@ impl PageCache {
         node.apply(&new);
 
         // see if we should short-circuit replace
-        if old.cache_infos.len() > PAGE_CONSOLIDATION_THRESHOLD {
+        if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {
             let short_circuit = self.replace(pid, old, node, guard)?;
             return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
         }
 
-        let bytes = measure(&M.serialize, || new.serialize());
-
         let mut new_page = Some(Owned::new(Page {
             update: Some(Update::Node(node)),
-            cache_infos: vec![],
+            cache_infos: StackVec::default(),
         }));
 
         loop {
+            // TODO handle replacement on threshold here instead
+
             let log_reservation =
-                self.log.reserve(LogKind::Link, pid, &bytes)?;
+                self.log.reserve(LogKind::Link, pid, &new, guard)?;
             let lsn = log_reservation.lsn();
             let pointer = log_reservation.pointer();
 
@@ -914,8 +915,7 @@ impl PageCache {
                 log_size: log_reservation.reservation_len() as u64,
             };
 
-            let mut new_cache_infos =
-                Vec::with_capacity(old.cache_infos.len() + 1);
+            let mut new_cache_infos = StackVec::default();
             new_cache_infos.extend_from_slice(&old.cache_infos);
             new_cache_infos.push(cache_info);
 
@@ -934,27 +934,9 @@ impl PageCache {
                         guard.defer_destroy(old.read);
                     }
 
-                    // if the last update for this page was also
-                    // sent to this segment, we can skip marking it
-                    let previous_head_lsn = old.last_lsn();
+                    assert_ne!(old.last_lsn(), 0);
 
-                    assert_ne!(previous_head_lsn, 0);
-
-                    let previous_lsn_segment =
-                        previous_head_lsn / self.config.segment_size as i64;
-                    let new_lsn_segment = lsn / self.config.segment_size as i64;
-
-                    let to_clean = if previous_lsn_segment == new_lsn_segment {
-                        // can skip mark_link because we've
-                        // already accounted for this page
-                        // being resident on this segment
-                        self.log.with_sa(|sa| sa.clean(Some(pid)))
-                    } else {
-                        self.log.with_sa(|sa| {
-                            sa.mark_link(pid, lsn, pointer);
-                            sa.clean(Some(pid))
-                        })
-                    };
+                    self.log.iobufs.sa_mark_link(pid, cache_info, guard);
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
@@ -975,17 +957,6 @@ impl PageCache {
                     );
                     if !to_evict.is_empty() {
                         self.page_out(to_evict, guard)?;
-                    }
-
-                    if let Some(to_clean) = to_clean {
-                        self.rewrite_page(to_clean, guard)?;
-                    }
-
-                    let count = self.updates.fetch_add(1, Relaxed) + 1;
-                    let should_snapshot =
-                        count % self.config.snapshot_after_ops == 0;
-                    if should_snapshot {
-                        self.advance_snapshot()?;
                     }
 
                     old.read = new_shared;
@@ -1069,17 +1040,10 @@ impl PageCache {
         let result =
             self.cas_page(pid, old, Update::Node(new), false, guard)?;
 
-        let to_clean = self.log.with_sa(|sa| sa.clean(Some(pid)));
-
-        if let Some(to_clean) = to_clean {
-            assert_ne!(pid, to_clean);
-            self.rewrite_page(to_clean, guard)?;
-        }
-
-        let count = self.updates.fetch_add(1, Relaxed) + 1;
-        let should_snapshot = count % self.config.snapshot_after_ops == 0;
-        if should_snapshot {
-            self.advance_snapshot()?;
+        if let Some((pid_to_clean, segment_to_clean)) =
+            self.log.iobufs.segment_cleaner.pop()
+        {
+            self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
         }
 
         Ok(result.map_err(|fail| {
@@ -1096,126 +1060,159 @@ impl PageCache {
     // (at least partially) located in. This happens when a
     // segment has had enough resident page replacements moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page(&self, pid: PageId, guard: &Guard) -> Result<()> {
+    fn rewrite_page(
+        &self,
+        pid: PageId,
+        segment_to_purge: LogOffset,
+        guard: &Guard,
+    ) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);
 
-        let page_view = if let Some(page_view) = self.inner.get(pid, guard) {
-            page_view
-        } else {
-            panic!("rewriting pid {} failed (no longer exists)", pid);
-        };
+        let purge_segment_id =
+            segment_to_purge / self.config.segment_size as u64;
 
-        // if the page is just a single blob pointer, rewrite it.
-        if let Some(disk_pointer) = page_view.lone_blob() {
-            trace!("rewriting blob with pid {}", pid);
-            let blob_pointer = disk_pointer.blob().1;
-
-            let log_reservation =
-                self.log.rewrite_blob_pointer(pid, blob_pointer)?;
-
-            let cache_entry = CacheInfo {
-                ts: page_view.ts(),
-                lsn: log_reservation.lsn,
-                pointer: log_reservation.pointer,
-                log_size: u64::try_from(log_reservation.reservation_len())
-                    .unwrap(),
+        loop {
+            let page_view = if let Some(page_view) = self.inner.get(pid, guard)
+            {
+                page_view
+            } else {
+                panic!("rewriting pid {} failed (no longer exists)", pid);
             };
 
-            let new_page = Owned::new(Page {
-                update: page_view.update.clone(),
-                cache_infos: vec![cache_entry],
-            });
-
-            debug_delay();
-            let result = page_view.entry.compare_and_set(
-                page_view.read,
-                new_page,
-                SeqCst,
-                guard,
-            );
-
-            if let Ok(new_shared) = result {
-                unsafe {
-                    guard.defer_destroy(page_view.read);
-                }
-
-                let lsn = log_reservation.lsn();
-
-                let old_pointers =
-                    page_view.cache_infos.iter().map(|ci| ci.pointer).collect();
-
-                self.log.with_sa(|sa| {
-                    sa.mark_replace(pid, lsn, old_pointers, cache_entry.pointer)
-                })?;
-
-                // NB complete must happen AFTER calls to SA, because
-                // when the iobuf's n_writers hits 0, we may transition
-                // the segment to inactive, resulting in a race otherwise.
-                let _pointer = log_reservation.complete()?;
-
-                // possibly evict an item now that our cache has grown
-                let total_page_size = unsafe { new_shared.deref().log_size() };
-                let to_evict = self.lru.accessed(pid, total_page_size, guard);
-                trace!(
-                    "accessed pid {} -> paging out pids {:?}",
-                    pid,
-                    to_evict
-                );
-                if !to_evict.is_empty() {
-                    self.page_out(to_evict, guard)?;
-                }
-
-                trace!("rewriting pid {} succeeded", pid);
-
-                Ok(())
-            } else {
-                let _pointer = log_reservation.abort()?;
-
-                trace!("rewriting pid {} failed", pid);
-
-                Ok(())
+            let already_moved = !unsafe { page_view.read.deref() }
+                .cache_infos
+                .iter()
+                .any(|ce| {
+                    ce.pointer.lid() / self.config.segment_size as u64
+                        == purge_segment_id
+                });
+            if already_moved {
+                return Ok(());
             }
-        } else {
-            trace!("rewriting page with pid {}", pid);
 
-            // page-in whole page with a get
-            let (key, update): (_, Update) = if pid == META_PID {
-                let meta_view = self.get_meta(guard)?;
-                (meta_view.0, Update::Meta(meta_view.deref().clone()))
-            } else if pid == COUNTER_PID {
-                let (key, counter) = self.get_idgen(guard)?;
-                (key, Update::Counter(counter))
-            } else if let Some(node_view) = self.get(pid, guard)? {
-                (node_view.0, Update::Node(node_view.deref().clone()))
-            } else {
-                let page_view = match self.inner.get(pid, guard) {
-                    None => panic!("expected page missing in rewrite"),
-                    Some(p) => p,
+            // if the page is just a single blob pointer, rewrite it.
+            if let Some(disk_pointer) = page_view.lone_blob() {
+                trace!("rewriting blob with pid {}", pid);
+                let blob_pointer = disk_pointer.blob().1;
+
+                let log_reservation =
+                    self.log.rewrite_blob_pointer(pid, blob_pointer, guard)?;
+
+                let cache_info = CacheInfo {
+                    ts: page_view.ts(),
+                    lsn: log_reservation.lsn,
+                    pointer: log_reservation.pointer,
+                    log_size: u64::try_from(log_reservation.reservation_len())
+                        .unwrap(),
                 };
 
-                match &page_view.update {
-                    Some(Update::Free) => (page_view, Update::Free),
-                    other => {
-                        debug!(
-                            "when rewriting pid {} \
+                let new_page = Owned::new(Page {
+                    update: page_view.update.clone(),
+                    cache_infos: StackVec::single(cache_info),
+                });
+
+                debug_delay();
+                let result = page_view.entry.compare_and_set(
+                    page_view.read,
+                    new_page,
+                    SeqCst,
+                    guard,
+                );
+
+                if let Ok(new_shared) = result {
+                    unsafe {
+                        guard.defer_destroy(page_view.read);
+                    }
+
+                    let lsn = log_reservation.lsn();
+
+                    self.log.iobufs.sa_mark_replace(
+                        pid,
+                        lsn,
+                        &page_view.cache_infos,
+                        cache_info,
+                        guard,
+                    )?;
+
+                    // NB complete must happen AFTER calls to SA, because
+                    // when the iobuf's n_writers hits 0, we may transition
+                    // the segment to inactive, resulting in a race otherwise.
+                    let _pointer = log_reservation.complete()?;
+
+                    // possibly evict an item now that our cache has grown
+                    let total_page_size =
+                        unsafe { new_shared.deref().log_size() };
+                    let to_evict =
+                        self.lru.accessed(pid, total_page_size, guard);
+                    trace!(
+                        "accessed pid {} -> paging out pids {:?}",
+                        pid,
+                        to_evict
+                    );
+                    if !to_evict.is_empty() {
+                        self.page_out(to_evict, guard)?;
+                    }
+
+                    trace!("rewriting pid {} succeeded", pid);
+
+                    return Ok(());
+                } else {
+                    let _pointer = log_reservation.abort()?;
+
+                    trace!("rewriting pid {} failed", pid);
+                }
+            } else {
+                trace!("rewriting page with pid {}", pid);
+
+                // page-in whole page with a get
+                let (key, update): (_, Update) = if pid == META_PID {
+                    let meta_view = self.get_meta(guard)?;
+                    (meta_view.0, Update::Meta(meta_view.deref().clone()))
+                } else if pid == COUNTER_PID {
+                    let (key, counter) = self.get_idgen(guard)?;
+                    (key, Update::Counter(counter))
+                } else if let Some(node_view) = self.get(pid, guard)? {
+                    (node_view.0, Update::Node(node_view.deref().clone()))
+                } else {
+                    let page_view = match self.inner.get(pid, guard) {
+                        None => panic!("expected page missing in rewrite"),
+                        Some(p) => p,
+                    };
+
+                    match &page_view.update {
+                        Some(Update::Free) => (page_view, Update::Free),
+                        other => {
+                            debug!(
+                                "when rewriting pid {} \
                              we encountered a rewritten \
                              node with a link {:?} that \
                              we previously witnessed a Free \
                              for (PageCache::get returned None), \
                              assuming we can just return now since \
                              the Free was replace'd",
-                            pid, other
-                        );
-                        return Ok(());
+                                pid, other
+                            );
+                            return Ok(());
+                        }
                     }
-                }
-            };
+                };
 
-            self.cas_page(pid, key, update, true, guard).map(|res| {
-                trace!("rewriting pid {} success: {}", pid, res.is_ok());
-            })
+                let res = self.cas_page(pid, key, update, true, guard).map(
+                    |res| {
+                        trace!(
+                            "rewriting pid {} success: {}",
+                            pid,
+                            res.is_ok()
+                        );
+                        res
+                    },
+                )?;
+                if res.is_ok() {
+                    return Ok(());
+                }
+            }
         }
     }
 
@@ -1280,23 +1277,27 @@ impl PageCache {
 
         let log_kind = log_kind_from_update(&update);
         trace!("cas_page on pid {} has log kind: {:?}", pid, log_kind);
-        let serialize_latency = Measure::new(&M.serialize);
-        let bytes = match &update {
-            Update::Counter(c) => c.serialize(),
-            Update::Meta(m) => m.serialize(),
-            Update::Free => vec![],
-            Update::Node(node) => node.serialize(),
-            other => panic!("non-replacement used in cas_page: {:?}", other),
-        };
-        drop(serialize_latency);
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(update),
-            cache_infos: vec![],
+            cache_infos: StackVec::default(),
         }));
 
         loop {
-            let log_reservation = self.log.reserve(log_kind, pid, &bytes)?;
+            let mut page_ptr = new_page.take().unwrap();
+            let log_reservation = match page_ptr.update.as_ref().unwrap() {
+                Update::Counter(c) => {
+                    self.log.reserve(log_kind, pid, c, guard)?
+                }
+                Update::Meta(m) => self.log.reserve(log_kind, pid, m, guard)?,
+                Update::Free => self.log.reserve(log_kind, pid, &(), guard)?,
+                Update::Node(node) => {
+                    self.log.reserve(log_kind, pid, node, guard)?
+                }
+                other => {
+                    panic!("non-replacement used in cas_page: {:?}", other)
+                }
+            };
             let lsn = log_reservation.lsn();
             let new_pointer = log_reservation.pointer();
 
@@ -1327,8 +1328,7 @@ impl PageCache {
                     .unwrap(),
             };
 
-            let mut page_ptr = new_page.take().unwrap();
-            page_ptr.cache_infos = vec![cache_info];
+            page_ptr.cache_infos = StackVec::single(cache_info);
 
             debug_delay();
             let result =
@@ -1341,12 +1341,13 @@ impl PageCache {
                     }
 
                     trace!("cas_page succeeded on pid {}", pid);
-                    let pointers =
-                        old.cache_infos.iter().map(|ci| ci.pointer).collect();
-
-                    self.log.with_sa(|sa| {
-                        sa.mark_replace(pid, lsn, pointers, new_pointer)
-                    })?;
+                    self.log.iobufs.sa_mark_replace(
+                        pid,
+                        lsn,
+                        &old.cache_infos,
+                        cache_info,
+                        guard,
+                    )?;
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
@@ -1520,7 +1521,7 @@ impl PageCache {
 
         let page = Owned::new(Page {
             update: Some(base),
-            cache_infos: page_view.cache_infos.clone(),
+            cache_infos: page_view.cache_infos,
         });
 
         debug_delay();
@@ -1731,7 +1732,7 @@ impl PageCache {
                     }
                     let new_page = Owned::new(Page {
                         update: None,
-                        cache_infos: page_view.cache_infos.clone(),
+                        cache_infos: page_view.cache_infos,
                     });
                     debug_delay();
                     if page_view
@@ -1762,6 +1763,12 @@ impl PageCache {
 
         trace!("pulling pid {} lsn {} pointer {} from disk", pid, lsn, pointer);
         let _measure = Measure::new(&M.pull);
+
+        let expected_segment_number: SegmentNumber = SegmentNumber(
+            u64::try_from(lsn).unwrap()
+                / u64::try_from(self.config.segment_size).unwrap(),
+        );
+
         let (header, bytes) = match self.log.read(pid, lsn, pointer) {
             Ok(LogRead::Inline(header, buf, _len)) => {
                 assert_eq!(
@@ -1771,14 +1778,14 @@ impl PageCache {
                     pid, pointer, header.pid
                 );
                 assert_eq!(
-                    header.lsn, lsn,
-                    "expected lsn {} on pull of pointer {}, \
-                     but got lsn {} instead",
-                    lsn, pointer, header.lsn
+                    header.segment_number, expected_segment_number,
+                    "expected segment number {:?} on pull of pointer {}, \
+                     but got segment number {:?} instead",
+                    expected_segment_number, pointer, header.segment_number
                 );
                 Ok((header, buf))
             }
-            Ok(LogRead::Blob(header, buf, _blob_pointer)) => {
+            Ok(LogRead::Blob(header, buf, _blob_pointer, _inline_len)) => {
                 assert_eq!(
                     header.pid, pid,
                     "expected pid {} on pull of pointer {}, \
@@ -1786,10 +1793,10 @@ impl PageCache {
                     pid, pointer, header.pid
                 );
                 assert_eq!(
-                    header.lsn, lsn,
-                    "expected lsn {} on pull of pointer {}, \
-                     but got lsn {} instead",
-                    lsn, pointer, header.lsn
+                    header.segment_number, expected_segment_number,
+                    "expected segment number {:?} on pull of pointer {}, \
+                     but got segment number {:?} instead",
+                    expected_segment_number, pointer, header.segment_number
                 );
 
                 Ok((header, buf))
@@ -1817,7 +1824,7 @@ impl PageCache {
             BlobLink | InlineLink => Link::deserialize(buf).map(Update::Link),
             BlobNode | InlineNode => Node::deserialize(buf).map(Update::Node),
             Free => Ok(Update::Free),
-            Corrupted | Cancelled | Pad | BatchManifest => {
+            Corrupted | Canceled | Cap | BatchManifest => {
                 panic!("unexpected pull: {:?}", header.kind)
             }
         };
@@ -1837,108 +1844,7 @@ impl PageCache {
         }
     }
 
-    // caller is expected to have instantiated self.last_snapshot
-    // in recovery already.
-    fn advance_snapshot(&self) -> Result<()> {
-        let snapshot_mu = self.last_snapshot.clone();
-        let config = self.config.clone();
-        let iobufs = self.log.iobufs.clone();
-
-        let gen_snapshot = move || {
-            let snapshot_opt_res = snapshot_mu.try_lock();
-            if snapshot_opt_res.is_none() {
-                // some other thread is snapshotting
-                debug!(
-                    "snapshot skipped because previous attempt \
-                     appears not to have completed"
-                );
-                return Ok(());
-            }
-
-            let mut snapshot_opt = snapshot_opt_res.unwrap();
-            let last_snapshot = snapshot_opt
-                .take()
-                .expect("PageCache::advance_snapshot called before recovery");
-
-            if let Err(e) = iobuf::flush(&iobufs) {
-                error!("failed to flush log during advance_snapshot: {}", e);
-                iobufs.with_sa(SegmentAccountant::resume_rewriting);
-                *snapshot_opt = Some(last_snapshot);
-                return Err(e);
-            }
-
-            // we disable rewriting so that our log becomes link-only,
-            // allowing us to iterate through it without corrupting ourselves.
-            // NB must be called after taking the snapshot mutex.
-            iobufs.with_sa(SegmentAccountant::pause_rewriting);
-
-            let last_lsn = last_snapshot.last_lsn;
-            let start_lsn = last_lsn - (last_lsn % config.segment_size as Lsn);
-
-            let iter = iobufs.iter_from(start_lsn);
-
-            debug!(
-                "snapshot starting from offset {} to the segment containing ~{}",
-                last_snapshot.last_lsn,
-                iobufs.stable(),
-            );
-
-            let res = advance_snapshot(iter, last_snapshot, &config);
-
-            // NB it's important to resume writing before replacing the snapshot
-            // into the mutex, otherwise we create a race condition where the SA
-            // is not actually paused when a snapshot happens.
-            iobufs.with_sa(SegmentAccountant::resume_rewriting);
-
-            match res {
-                Err(e) => {
-                    *snapshot_opt = Some(Snapshot::default());
-                    error!("failed to generate snapshot: {:?}", e);
-                    Err(e)
-                }
-                Ok(next_snapshot) => {
-                    *snapshot_opt = Some(next_snapshot);
-                    Ok(())
-                }
-            }
-        };
-
-        if let Err(e) = self.config.global_error() {
-            let _notified = self.log.iobufs.interval_updated.notify_all();
-            return Err(e);
-        }
-
-        debug!("asynchronously spawning snapshot generation task");
-        let config = self.config.clone();
-        let _result = threadpool::spawn(move || {
-            let result = gen_snapshot();
-            match &result {
-                Ok(_) => {}
-                Err(Error::Io(ref ioe))
-                    if ioe.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    error!(
-                        "encountered error while generating snapshot: {:?}",
-                        error,
-                    );
-                    config.set_global_error(error.clone());
-                }
-            }
-            result
-        });
-
-        #[cfg(test)]
-        _result.unwrap()?;
-
-        // TODO add future for waiting on the result of this if desired
-        Ok(())
-    }
-
-    fn load_snapshot(&mut self) -> Result<()> {
-        // panic if not set
-        let snapshot_mu = self.last_snapshot.try_lock().unwrap();
-        let snapshot = snapshot_mu.as_ref().unwrap();
-
+    fn load_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let next_pid_to_allocate = if snapshot.pt.is_empty() {
             0
         } else {
@@ -1960,7 +1866,7 @@ impl PageCache {
 
             trace!("load_snapshot pid {} {:?}", pid, state);
 
-            let mut cache_infos = vec![];
+            let mut cache_infos = StackVec::default();
 
             let guard = pin();
 
@@ -1979,7 +1885,7 @@ impl PageCache {
                     let cache_info = CacheInfo {
                         lsn,
                         pointer,
-                        log_size: u64::try_from(MSG_HEADER_LEN).unwrap(),
+                        log_size: u64::try_from(MAX_MSG_HEADER_LEN).unwrap(),
                         ts: 0,
                     };
                     cache_infos.push(cache_info);

@@ -10,6 +10,18 @@ pub struct Db {
     tenants: Arc<RwLock<FastMap8<IVec, Tree>>>,
 }
 
+/// Opens a `Db` with a default configuration at the
+/// specified path. This will create a new storage
+/// directory at the specified path if it does
+/// not already exist. You can use the `Db::was_recovered`
+/// method to determine if your database was recovered
+/// from a previous instance. You can use `Config::create_new`
+/// if you want to increase the chances that the database
+/// will be freshly created.
+pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
+    Config::new().path(path).open()
+}
+
 #[allow(unsafe_code)]
 unsafe impl Send for Db {}
 
@@ -43,23 +55,16 @@ impl Debug for Db {
 }
 
 impl Db {
-    /// Load existing or create a new `Db` with a default configuration.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use sled::Db;
-    ///
-    /// let t = Db::open("my_db").unwrap();
-    /// ```
+    #[doc(hidden)]
+    #[deprecated(since = "0.30.2", note = "replaced by `sled::open`")]
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         Config::new().path(path).open()
     }
 
     #[doc(hidden)]
-    #[deprecated(since = "0.24.2", note = "replaced by `Db:open`")]
+    #[deprecated(since = "0.24.2", note = "replaced by `sled::open`")]
     pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        Self::open(path)
+        open(path)
     }
 
     #[doc(hidden)]
@@ -107,7 +112,7 @@ impl Db {
                 subscriptions: Subscriptions::default(),
                 context: context.clone(),
                 root: AtomicU64::new(root),
-                concurrency_control: RwLock::new(()),
+                concurrency_control: ConcurrencyControl::default(),
                 merge_operator: RwLock::new(None),
             }));
             assert!(tenants.insert(id, tree).is_none());
@@ -248,6 +253,37 @@ impl Db {
     ///
     /// Panics if any IO problems occur while trying
     /// to perform the export.
+    ///
+    /// # Examples
+    ///
+    /// If you want to migrate from one version of sled
+    /// to another, you need to pull in both versions
+    /// by using version renaming:
+    ///
+    /// `Cargo.toml`:
+    ///
+    /// ```toml
+    /// [dependencies]
+    /// sled = "0.30"
+    /// old_sled = { version = "0.29", package = "sled" }
+    /// ```
+    ///
+    /// and in your code, remember that old versions of
+    /// sled might have a different way to open them
+    /// than the current `sled::open` method:
+    ///
+    /// ```compile_fail
+    /// let old = old_sled::Db::open("my_old_db").unwrap();
+    ///
+    /// // may be a different version of sled,
+    /// // the export type is version agnostic.
+    /// let new = sled::open("my_new_db").unwrap();
+    ///
+    /// let export = old.export();
+    /// new.import(export);
+    ///
+    /// assert_eq!(old.checksum().unwrap(), new.checksum().unwrap());
+    /// ```
     pub fn export(
         &self,
     ) -> Vec<(CollectionType, CollectionName, impl Iterator<Item = Vec<Vec<u8>>>)>
@@ -276,6 +312,37 @@ impl Db {
     ///
     /// Panics if any IO problems occur while trying
     /// to perform the import.
+    ///
+    /// # Examples
+    ///
+    /// If you want to migrate from one version of sled
+    /// to another, you need to pull in both versions
+    /// by using version renaming:
+    ///
+    /// `Cargo.toml`:
+    ///
+    /// ```toml
+    /// [dependencies]
+    /// sled = "0.30"
+    /// old_sled = { version = "0.29", package = "sled" }
+    /// ```
+    ///
+    /// and in your code, remember that old versions of
+    /// sled might have a different way to open them
+    /// than the current `sled::open` method:
+    ///
+    /// ```compile_fail
+    /// let old = old_sled::Db::open("my_old_db").unwrap();
+    ///
+    /// // may be a different version of sled,
+    /// // the export type is version agnostic.
+    /// let new = sled::open("my_new_db").unwrap();
+    ///
+    /// let export = old.export();
+    /// new.import(export);
+    ///
+    /// assert_eq!(old.checksum().unwrap(), new.checksum().unwrap());
+    /// ```
     pub fn import(
         &self,
         export: Vec<(

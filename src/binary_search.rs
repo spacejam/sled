@@ -1,6 +1,6 @@
-use std::cmp::Ordering::*;
+use std::cmp::Ordering::{Equal, Greater, Less};
 
-use crate::IVec;
+use crate::{fastcmp, IVec};
 
 pub(crate) fn binary_search_lub<'a, T>(
     key: &[u8],
@@ -29,13 +29,15 @@ pub fn binary_search<'a, T>(
         // mid >= 0: by definition
         // mid < size: mid = size / 2 + size / 4 + size / 8 ...
         #[allow(unsafe_code)]
-        let cmp = unsafe { s.get_unchecked(mid).0.as_ref().cmp(key) };
+        let l = unsafe { s.get_unchecked(mid).0.as_ref() };
+        let cmp = fastcmp(l, key);
         base = if cmp == Greater { base } else { mid };
         size -= half;
     }
     // base is always in [0, size) because base <= mid.
     #[allow(unsafe_code)]
-    let cmp = unsafe { s.get_unchecked(base).0.as_ref().cmp(key) };
+    let l = unsafe { s.get_unchecked(base).0.as_ref() };
+    let cmp = fastcmp(l, key);
     if cmp == Equal {
         Ok(base)
     } else {
