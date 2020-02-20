@@ -70,10 +70,9 @@
 //! assert_eq!(unprocessed.get(b"k3").unwrap(), None);
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
 //! ```
-use parking_lot::RwLockWriteGuard;
 use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
 
-use crate::{Batch, Error, IVec, Result, Tree};
+use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};
 
 /// A transaction that will
 /// be applied atomically to the
@@ -289,7 +288,8 @@ impl TransactionalTree {
         }
 
         // not found in a cache, need to hit the backing db
-        let get = self.tree.get_inner(key.as_ref())?;
+        let guard = pin();
+        let get = self.tree.get_inner(key.as_ref(), &guard)?;
         let last = reads.insert(key.as_ref().into(), get.clone());
         assert!(last.is_none());
 
@@ -311,11 +311,9 @@ impl TransactionalTree {
         Ok(())
     }
 
-    fn stage(
-        &self,
-    ) -> UnabortableTransactionResult<Vec<RwLockWriteGuard<'_, ()>>> {
-        let guard = self.tree.concurrency_control.write();
-        Ok(vec![guard])
+    fn stage(&self) -> UnabortableTransactionResult<Vec<Protector<'_>>> {
+        let protector = self.tree.concurrency_control.write();
+        Ok(vec![protector])
     }
 
     fn unstage(&self) {
@@ -328,11 +326,12 @@ impl TransactionalTree {
 
     fn commit(&self) -> Result<()> {
         let writes = self.writes.borrow();
+        let guard = pin();
         for (k, v_opt) in &*writes {
             if let Some(v) = v_opt {
-                let _old = self.tree.insert_inner(k, v)?;
+                let _old = self.tree.insert_inner(k, v, &guard)?;
             } else {
-                let _old = self.tree.remove_inner(k)?;
+                let _old = self.tree.remove_inner(k, &guard)?;
             }
         }
         Ok(())
@@ -344,9 +343,7 @@ pub struct TransactionalTrees {
 }
 
 impl TransactionalTrees {
-    fn stage(
-        &self,
-    ) -> UnabortableTransactionResult<Vec<RwLockWriteGuard<'_, ()>>> {
+    fn stage(&self) -> UnabortableTransactionResult<Vec<Protector<'_>>> {
         // we want to stage our trees in
         // lexicographic order to guarantee
         // no deadlocks should they block
@@ -389,8 +386,8 @@ impl TransactionalTrees {
         true
     }
 
-    fn commit(&self) -> Result<()> {
-        let peg = self.inner[0].tree.context.pin_log()?;
+    fn commit(&self, guard: &Guard) -> Result<()> {
+        let peg = self.inner[0].tree.context.pin_log(guard)?;
         for tree in &self.inner {
             tree.commit()?;
         }
@@ -448,7 +445,8 @@ pub trait Transactional<E = ()> {
             }
             match ret {
                 Ok(r) => {
-                    tt.commit()?;
+                    let guard = pin();
+                    tt.commit(&guard)?;
                     return Ok(r);
                 }
                 Err(ConflictableTransactionError::Abort(e)) => {

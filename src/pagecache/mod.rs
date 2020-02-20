@@ -40,7 +40,7 @@ use self::{
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
-    segment::{SegmentAccountant, SegmentOp},
+    segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
     snapshot::advance_snapshot,
 };
 
@@ -410,7 +410,7 @@ impl<'a> RecoveryGuard<'a> {
 #[derive(Debug, Clone)]
 pub struct Page {
     pub(crate) update: Option<Update>,
-    pub(crate) cache_infos: Vec<CacheInfo>,
+    pub(crate) cache_infos: StackVec<CacheInfo>,
 }
 
 impl Page {
@@ -461,8 +461,6 @@ pub struct PageCache {
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
     lru: Lru,
-    updates: AtomicU64,
-    last_snapshot: Arc<Mutex<Option<Snapshot>>>,
     idgen: Arc<AtomicU64>,
     idgen_persists: Arc<AtomicU64>,
     idgen_persist_mu: Arc<Mutex<()>>,
@@ -549,8 +547,6 @@ impl PageCache {
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, &snapshot)?,
             lru,
-            updates: AtomicU64::new(0),
-            last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
             idgen_persist_mu: Arc::new(Mutex::new(())),
             idgen: Arc::new(AtomicU64::new(0)),
             idgen_persists: Arc::new(AtomicU64::new(0)),
@@ -558,7 +554,7 @@ impl PageCache {
         };
 
         // now we read it back in
-        pc.load_snapshot()?;
+        pc.load_snapshot(&snapshot)?;
 
         #[cfg(feature = "event_log")]
         {
@@ -702,7 +698,8 @@ impl PageCache {
 
             trace!("allocating pid {} for the first time", pid);
 
-            let new_page = Page { update: None, cache_infos: vec![] };
+            let new_page =
+                Page { update: None, cache_infos: StackVec::default() };
 
             let page_view = self.inner.insert(pid, new_page, guard);
 
@@ -734,9 +731,10 @@ impl PageCache {
             return Ok(false);
         }
         let guard = pin();
-        let to_clean = self.log.with_sa(|sa| sa.clean(None));
-        let ret = if let Some(to_clean) = to_clean {
-            self.rewrite_page(to_clean, &guard).map(|_| true)
+        let to_clean = self.log.iobufs.segment_cleaner.pop();
+        let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
+            self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
+                .map(|_| true)
         } else {
             Ok(false)
         };
@@ -756,11 +754,12 @@ impl PageCache {
     /// to facilitate transactions and write batches when
     /// combined with a concurrency control system in another
     /// component.
-    pub fn pin_log(&self) -> Result<RecoveryGuard<'_>> {
+    pub fn pin_log(&self, guard: &Guard) -> Result<RecoveryGuard<'_>> {
         let batch_res = self.log.reserve(
             LogKind::Skip,
             BATCH_MANIFEST_PID,
             &BatchManifest::default(),
+            guard,
         )?;
         Ok(RecoveryGuard { batch_res })
     }
@@ -875,18 +874,21 @@ impl PageCache {
         node.apply(&new);
 
         // see if we should short-circuit replace
-        if old.cache_infos.len() > PAGE_CONSOLIDATION_THRESHOLD {
+        if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {
             let short_circuit = self.replace(pid, old, node, guard)?;
             return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
         }
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(Update::Node(node)),
-            cache_infos: vec![],
+            cache_infos: StackVec::default(),
         }));
 
         loop {
-            let log_reservation = self.log.reserve(LogKind::Link, pid, &new)?;
+            // TODO handle replacement on threshold here instead
+
+            let log_reservation =
+                self.log.reserve(LogKind::Link, pid, &new, guard)?;
             let lsn = log_reservation.lsn();
             let pointer = log_reservation.pointer();
 
@@ -913,8 +915,7 @@ impl PageCache {
                 log_size: log_reservation.reservation_len() as u64,
             };
 
-            let mut new_cache_infos =
-                Vec::with_capacity(old.cache_infos.len() + 1);
+            let mut new_cache_infos = StackVec::default();
             new_cache_infos.extend_from_slice(&old.cache_infos);
             new_cache_infos.push(cache_info);
 
@@ -956,13 +957,6 @@ impl PageCache {
                     );
                     if !to_evict.is_empty() {
                         self.page_out(to_evict, guard)?;
-                    }
-
-                    let count = self.updates.fetch_add(1, Relaxed) + 1;
-                    let should_snapshot =
-                        count % self.config.snapshot_after_ops == 0;
-                    if should_snapshot {
-                        self.advance_snapshot()?;
                     }
 
                     old.read = new_shared;
@@ -1046,17 +1040,10 @@ impl PageCache {
         let result =
             self.cas_page(pid, old, Update::Node(new), false, guard)?;
 
-        let to_clean = self.log.with_sa(|sa| sa.clean(Some(pid)));
-
-        if let Some(to_clean) = to_clean {
-            assert_ne!(pid, to_clean);
-            self.rewrite_page(to_clean, guard)?;
-        }
-
-        let count = self.updates.fetch_add(1, Relaxed) + 1;
-        let should_snapshot = count % self.config.snapshot_after_ops == 0;
-        if should_snapshot {
-            self.advance_snapshot()?;
+        if let Some((pid_to_clean, segment_to_clean)) =
+            self.log.iobufs.segment_cleaner.pop()
+        {
+            self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
         }
 
         Ok(result.map_err(|fail| {
@@ -1073,127 +1060,159 @@ impl PageCache {
     // (at least partially) located in. This happens when a
     // segment has had enough resident page replacements moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page(&self, pid: PageId, guard: &Guard) -> Result<()> {
+    fn rewrite_page(
+        &self,
+        pid: PageId,
+        segment_to_purge: LogOffset,
+        guard: &Guard,
+    ) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);
 
-        let page_view = if let Some(page_view) = self.inner.get(pid, guard) {
-            page_view
-        } else {
-            panic!("rewriting pid {} failed (no longer exists)", pid);
-        };
+        let purge_segment_id =
+            segment_to_purge / self.config.segment_size as u64;
 
-        // if the page is just a single blob pointer, rewrite it.
-        if let Some(disk_pointer) = page_view.lone_blob() {
-            trace!("rewriting blob with pid {}", pid);
-            let blob_pointer = disk_pointer.blob().1;
-
-            let log_reservation =
-                self.log.rewrite_blob_pointer(pid, blob_pointer)?;
-
-            let cache_info = CacheInfo {
-                ts: page_view.ts(),
-                lsn: log_reservation.lsn,
-                pointer: log_reservation.pointer,
-                log_size: u64::try_from(log_reservation.reservation_len())
-                    .unwrap(),
+        loop {
+            let page_view = if let Some(page_view) = self.inner.get(pid, guard)
+            {
+                page_view
+            } else {
+                panic!("rewriting pid {} failed (no longer exists)", pid);
             };
 
-            let new_page = Owned::new(Page {
-                update: page_view.update.clone(),
-                cache_infos: vec![cache_info],
-            });
-
-            debug_delay();
-            let result = page_view.entry.compare_and_set(
-                page_view.read,
-                new_page,
-                SeqCst,
-                guard,
-            );
-
-            if let Ok(new_shared) = result {
-                unsafe {
-                    guard.defer_destroy(page_view.read);
-                }
-
-                let lsn = log_reservation.lsn();
-
-                self.log.iobufs.sa_mark_replace(
-                    pid,
-                    lsn,
-                    &page_view.cache_infos,
-                    cache_info,
-                    guard,
-                )?;
-
-                // NB complete must happen AFTER calls to SA, because
-                // when the iobuf's n_writers hits 0, we may transition
-                // the segment to inactive, resulting in a race otherwise.
-                let _pointer = log_reservation.complete()?;
-
-                // possibly evict an item now that our cache has grown
-                let total_page_size = unsafe { new_shared.deref().log_size() };
-                let to_evict = self.lru.accessed(pid, total_page_size, guard);
-                trace!(
-                    "accessed pid {} -> paging out pids {:?}",
-                    pid,
-                    to_evict
-                );
-                if !to_evict.is_empty() {
-                    self.page_out(to_evict, guard)?;
-                }
-
-                trace!("rewriting pid {} succeeded", pid);
-
-                Ok(())
-            } else {
-                let _pointer = log_reservation.abort()?;
-
-                trace!("rewriting pid {} failed", pid);
-
-                Ok(())
+            let already_moved = !unsafe { page_view.read.deref() }
+                .cache_infos
+                .iter()
+                .any(|ce| {
+                    ce.pointer.lid() / self.config.segment_size as u64
+                        == purge_segment_id
+                });
+            if already_moved {
+                return Ok(());
             }
-        } else {
-            trace!("rewriting page with pid {}", pid);
 
-            // page-in whole page with a get
-            let (key, update): (_, Update) = if pid == META_PID {
-                let meta_view = self.get_meta(guard)?;
-                (meta_view.0, Update::Meta(meta_view.deref().clone()))
-            } else if pid == COUNTER_PID {
-                let (key, counter) = self.get_idgen(guard)?;
-                (key, Update::Counter(counter))
-            } else if let Some(node_view) = self.get(pid, guard)? {
-                (node_view.0, Update::Node(node_view.deref().clone()))
-            } else {
-                let page_view = match self.inner.get(pid, guard) {
-                    None => panic!("expected page missing in rewrite"),
-                    Some(p) => p,
+            // if the page is just a single blob pointer, rewrite it.
+            if let Some(disk_pointer) = page_view.lone_blob() {
+                trace!("rewriting blob with pid {}", pid);
+                let blob_pointer = disk_pointer.blob().1;
+
+                let log_reservation =
+                    self.log.rewrite_blob_pointer(pid, blob_pointer, guard)?;
+
+                let cache_info = CacheInfo {
+                    ts: page_view.ts(),
+                    lsn: log_reservation.lsn,
+                    pointer: log_reservation.pointer,
+                    log_size: u64::try_from(log_reservation.reservation_len())
+                        .unwrap(),
                 };
 
-                match &page_view.update {
-                    Some(Update::Free) => (page_view, Update::Free),
-                    other => {
-                        debug!(
-                            "when rewriting pid {} \
+                let new_page = Owned::new(Page {
+                    update: page_view.update.clone(),
+                    cache_infos: StackVec::single(cache_info),
+                });
+
+                debug_delay();
+                let result = page_view.entry.compare_and_set(
+                    page_view.read,
+                    new_page,
+                    SeqCst,
+                    guard,
+                );
+
+                if let Ok(new_shared) = result {
+                    unsafe {
+                        guard.defer_destroy(page_view.read);
+                    }
+
+                    let lsn = log_reservation.lsn();
+
+                    self.log.iobufs.sa_mark_replace(
+                        pid,
+                        lsn,
+                        &page_view.cache_infos,
+                        cache_info,
+                        guard,
+                    )?;
+
+                    // NB complete must happen AFTER calls to SA, because
+                    // when the iobuf's n_writers hits 0, we may transition
+                    // the segment to inactive, resulting in a race otherwise.
+                    let _pointer = log_reservation.complete()?;
+
+                    // possibly evict an item now that our cache has grown
+                    let total_page_size =
+                        unsafe { new_shared.deref().log_size() };
+                    let to_evict =
+                        self.lru.accessed(pid, total_page_size, guard);
+                    trace!(
+                        "accessed pid {} -> paging out pids {:?}",
+                        pid,
+                        to_evict
+                    );
+                    if !to_evict.is_empty() {
+                        self.page_out(to_evict, guard)?;
+                    }
+
+                    trace!("rewriting pid {} succeeded", pid);
+
+                    return Ok(());
+                } else {
+                    let _pointer = log_reservation.abort()?;
+
+                    trace!("rewriting pid {} failed", pid);
+                }
+            } else {
+                trace!("rewriting page with pid {}", pid);
+
+                // page-in whole page with a get
+                let (key, update): (_, Update) = if pid == META_PID {
+                    let meta_view = self.get_meta(guard)?;
+                    (meta_view.0, Update::Meta(meta_view.deref().clone()))
+                } else if pid == COUNTER_PID {
+                    let (key, counter) = self.get_idgen(guard)?;
+                    (key, Update::Counter(counter))
+                } else if let Some(node_view) = self.get(pid, guard)? {
+                    (node_view.0, Update::Node(node_view.deref().clone()))
+                } else {
+                    let page_view = match self.inner.get(pid, guard) {
+                        None => panic!("expected page missing in rewrite"),
+                        Some(p) => p,
+                    };
+
+                    match &page_view.update {
+                        Some(Update::Free) => (page_view, Update::Free),
+                        other => {
+                            debug!(
+                                "when rewriting pid {} \
                              we encountered a rewritten \
                              node with a link {:?} that \
                              we previously witnessed a Free \
                              for (PageCache::get returned None), \
                              assuming we can just return now since \
                              the Free was replace'd",
-                            pid, other
-                        );
-                        return Ok(());
+                                pid, other
+                            );
+                            return Ok(());
+                        }
                     }
-                }
-            };
+                };
 
-            self.cas_page(pid, key, update, true, guard).map(|res| {
-                trace!("rewriting pid {} success: {}", pid, res.is_ok());
-            })
+                let res = self.cas_page(pid, key, update, true, guard).map(
+                    |res| {
+                        trace!(
+                            "rewriting pid {} success: {}",
+                            pid,
+                            res.is_ok()
+                        );
+                        res
+                    },
+                )?;
+                if res.is_ok() {
+                    return Ok(());
+                }
+            }
         }
     }
 
@@ -1261,16 +1280,20 @@ impl PageCache {
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(update),
-            cache_infos: vec![],
+            cache_infos: StackVec::default(),
         }));
 
         loop {
             let mut page_ptr = new_page.take().unwrap();
             let log_reservation = match page_ptr.update.as_ref().unwrap() {
-                Update::Counter(c) => self.log.reserve(log_kind, pid, c)?,
-                Update::Meta(m) => self.log.reserve(log_kind, pid, m)?,
-                Update::Free => self.log.reserve(log_kind, pid, &())?,
-                Update::Node(node) => self.log.reserve(log_kind, pid, node)?,
+                Update::Counter(c) => {
+                    self.log.reserve(log_kind, pid, c, guard)?
+                }
+                Update::Meta(m) => self.log.reserve(log_kind, pid, m, guard)?,
+                Update::Free => self.log.reserve(log_kind, pid, &(), guard)?,
+                Update::Node(node) => {
+                    self.log.reserve(log_kind, pid, node, guard)?
+                }
                 other => {
                     panic!("non-replacement used in cas_page: {:?}", other)
                 }
@@ -1305,7 +1328,7 @@ impl PageCache {
                     .unwrap(),
             };
 
-            page_ptr.cache_infos = vec![cache_info];
+            page_ptr.cache_infos = StackVec::single(cache_info);
 
             debug_delay();
             let result =
@@ -1498,7 +1521,7 @@ impl PageCache {
 
         let page = Owned::new(Page {
             update: Some(base),
-            cache_infos: page_view.cache_infos.clone(),
+            cache_infos: page_view.cache_infos,
         });
 
         debug_delay();
@@ -1709,7 +1732,7 @@ impl PageCache {
                     }
                     let new_page = Owned::new(Page {
                         update: None,
-                        cache_infos: page_view.cache_infos.clone(),
+                        cache_infos: page_view.cache_infos,
                     });
                     debug_delay();
                     if page_view
@@ -1821,113 +1844,7 @@ impl PageCache {
         }
     }
 
-    // caller is expected to have instantiated self.last_snapshot
-    // in recovery already.
-    fn advance_snapshot(&self) -> Result<()> {
-        let snapshot_mu = self.last_snapshot.clone();
-        let config = self.config.clone();
-        let iobufs = self.log.iobufs.clone();
-
-        let gen_snapshot = move || {
-            let snapshot_opt_res = snapshot_mu.try_lock();
-            if snapshot_opt_res.is_none() {
-                // some other thread is snapshotting
-                debug!(
-                    "snapshot skipped because previous attempt \
-                     appears not to have completed"
-                );
-                return Ok(());
-            }
-
-            let mut snapshot_opt = snapshot_opt_res.unwrap();
-            let last_snapshot = snapshot_opt
-                .take()
-                .expect("PageCache::advance_snapshot called before recovery");
-
-            if let Err(e) = iobuf::flush(&iobufs) {
-                error!("failed to flush log during advance_snapshot: {}", e);
-                iobufs.with_sa(SegmentAccountant::resume_rewriting);
-                *snapshot_opt = Some(last_snapshot);
-                return Err(e);
-            }
-
-            // we disable rewriting so that our log becomes link-only,
-            // allowing us to iterate through it without corrupting ourselves.
-            // NB must be called after taking the snapshot mutex.
-            iobufs.with_sa(SegmentAccountant::pause_rewriting);
-
-            let last_lsn = last_snapshot.last_lsn;
-            let start_lsn = last_lsn - (last_lsn % config.segment_size as Lsn);
-
-            let iter = iobufs.iter_from(start_lsn);
-
-            debug!(
-                "snapshot starting from offset {} to the segment containing ~{}",
-                last_snapshot.last_lsn,
-                iobufs.stable(),
-            );
-
-            let res = advance_snapshot(iter, last_snapshot, &config);
-
-            // NB it's important to resume writing before replacing the snapshot
-            // into the mutex, otherwise we create a race condition where the SA
-            // is not actually paused when a snapshot happens.
-            iobufs.with_sa(SegmentAccountant::resume_rewriting);
-
-            match res {
-                Err(e) => {
-                    *snapshot_opt = Some(Snapshot::default());
-                    error!("failed to generate snapshot: {:?}", e);
-                    Err(e)
-                }
-                Ok(next_snapshot) => {
-                    *snapshot_opt = Some(next_snapshot);
-                    Ok(())
-                }
-            }
-        };
-
-        if let Err(e) = self.config.global_error() {
-            // having held the mutex makes this linearized
-            // with the notify below.
-            let intervals = self.log.iobufs.intervals.lock();
-            drop(intervals);
-
-            let _notified = self.log.iobufs.interval_updated.notify_all();
-            return Err(e);
-        }
-
-        debug!("asynchronously spawning snapshot generation task");
-        let config = self.config.clone();
-        let _result = threadpool::spawn(move || {
-            let result = gen_snapshot();
-            match &result {
-                Ok(_) => {}
-                Err(Error::Io(ref ioe))
-                    if ioe.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    error!(
-                        "encountered error while generating snapshot: {:?}",
-                        error,
-                    );
-                    config.set_global_error(error.clone());
-                }
-            }
-            result
-        });
-
-        #[cfg(test)]
-        _result.unwrap()?;
-
-        // TODO add future for waiting on the result of this if desired
-        Ok(())
-    }
-
-    fn load_snapshot(&mut self) -> Result<()> {
-        // panic if not set
-        let snapshot_mu = self.last_snapshot.try_lock().unwrap();
-        let snapshot = snapshot_mu.as_ref().unwrap();
-
+    fn load_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let next_pid_to_allocate = if snapshot.pt.is_empty() {
             0
         } else {
@@ -1949,7 +1866,7 @@ impl PageCache {
 
             trace!("load_snapshot pid {} {:?}", pid, state);
 
-            let mut cache_infos = vec![];
+            let mut cache_infos = StackVec::default();
 
             let guard = pin();
 

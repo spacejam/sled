@@ -97,6 +97,7 @@ pub struct Metrics {
     pub decompress: Histogram,
     pub deserialize: Histogram,
     pub get_page: Histogram,
+    pub get_pagetable: Histogram,
     pub link_page: Histogram,
     pub log_reservation_attempts: CachePadded<AtomicUsize>,
     pub log_reservations: CachePadded<AtomicUsize>,
@@ -283,8 +284,8 @@ impl Metrics {
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("pagecache:");
         p(vec![
-            lat("snapshot", &self.advance_snapshot),
             lat("get", &self.get_page),
+            lat("get pt", &self.get_pagetable),
             lat("rewrite", &self.rewrite_page),
             lat("replace", &self.replace_page),
             lat("link", &self.link_page),
@@ -292,7 +293,7 @@ impl Metrics {
             lat("page_out", &self.page_out),
         ]);
         let hit_ratio = (self.get_page.count() - self.pull.count()) * 100
-            / self.get_page.count();
+            / std::cmp::max(1, self.get_page.count());
         println!("hit ratio: {}%", hit_ratio);
 
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
@@ -317,7 +318,8 @@ impl Metrics {
             lat("reserve lat", &self.reserve_lat),
             sz("reserve sz", &self.reserve_sz),
         ]);
-        let log_reservations = self.log_reservations.load(Acquire);
+        let log_reservations =
+            std::cmp::max(1, self.log_reservations.load(Acquire));
         let log_reservation_attempts =
             self.log_reservation_attempts.load(Acquire);
         let log_reservation_retry_rate =

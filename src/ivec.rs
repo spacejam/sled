@@ -2,6 +2,7 @@ use std::{
     convert::TryFrom,
     fmt,
     hash::{Hash, Hasher},
+    iter::FromIterator,
     ops::Deref,
     sync::Arc,
 };
@@ -57,6 +58,16 @@ impl IVec {
 
     fn remote(arc: Arc<[u8]>) -> Self {
         Self(IVecInner::Remote(arc))
+    }
+}
+
+impl FromIterator<u8> for IVec {
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = u8>,
+    {
+        let bs: Box<[u8]> = iter.into_iter().collect();
+        bs.into()
     }
 }
 

@@ -48,6 +48,7 @@
 //! # Examples
 //!
 //! ```
+//! # let _ = std::fs::remove_dir_all("my_db");
 //! let t = sled::open("my_db").unwrap();
 //!
 //! // insert and get
@@ -164,10 +165,12 @@ macro_rules! maybe_fail {
 
 mod batch;
 mod binary_search;
+mod concurrency_control;
 mod config;
 mod context;
 mod db;
 mod dll;
+mod fastcmp;
 mod fastlock;
 mod histogram;
 mod iter;
@@ -183,11 +186,11 @@ mod prefix;
 mod result;
 mod serialization;
 mod stack;
+mod stackvec;
 mod subscription;
 mod sys_limits;
 mod transaction;
 mod tree;
-mod vecset;
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod threadpool {
@@ -262,7 +265,9 @@ pub use self::{
 use {
     self::{
         binary_search::binary_search_lub,
+        concurrency_control::{ConcurrencyControl, Protector},
         context::Context,
+        fastcmp::fastcmp,
         histogram::Histogram,
         lru::Lru,
         meta::Meta,
@@ -270,9 +275,9 @@ use {
         node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
+        stackvec::StackVec,
         subscription::Subscriptions,
         tree::TreeInner,
-        vecset::VecSet,
     },
     crossbeam_utils::{Backoff, CachePadded},
     log::{debug, error, trace, warn},

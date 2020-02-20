@@ -56,12 +56,27 @@
 
 #![allow(unused_results)]
 
-use std::mem;
+use std::{collections::BTreeSet, mem};
 
 use super::PageState;
 
 use crate::pagecache::*;
 use crate::*;
+
+/// The log may be configured to write data
+/// in several different ways, depending on
+/// the constraints of the system using it.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum SegmentMode {
+    /// Write to the end of the log, always.
+    Linear,
+    /// Keep track of segment utilization, and
+    /// reuse segments when their contents are
+    /// fully relocated elsewhere.
+    /// Will try to copy data out of segments
+    /// once they reach a configurable threshold.
+    Gc,
+}
 
 /// A operation that can be applied asynchronously.
 #[derive(Debug)]
@@ -88,44 +103,99 @@ pub(crate) struct SegmentAccountant {
 
     // TODO these should be sharded to improve performance
     segments: Vec<Segment>,
-    clean_counter: usize,
 
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
     // and free!
-    free: VecSet<LogOffset>,
+    free: BTreeSet<LogOffset>,
     tip: LogOffset,
     max_stabilized_lsn: Lsn,
-    to_clean: VecSet<LogOffset>,
+    segment_cleaner: SegmentCleaner,
     pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogOffset>,
     async_truncations: BTreeMap<LogOffset, OneShot<Result<()>>>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SegmentCleaner {
+    inner: Arc<Mutex<BTreeMap<LogOffset, BTreeSet<PageId>>>>,
+}
+
+impl SegmentCleaner {
+    pub(crate) fn pop(&self) -> Option<(PageId, LogOffset)> {
+        let mut inner = self.inner.lock();
+        let offset = {
+            let (offset, pids) = inner.iter_mut().next()?;
+            if !pids.is_empty() {
+                let pid = pids.iter().next().copied().unwrap();
+                pids.remove(&pid);
+                return Some((pid, *offset));
+            }
+            *offset
+        };
+        inner.remove(&offset);
+        None
+    }
+
+    fn add_pids(&self, offset: LogOffset, pids: BTreeSet<PageId>) {
+        let mut inner = self.inner.lock();
+        let prev = inner.insert(offset, pids);
+        assert!(prev.is_none());
+    }
+
+    fn remove_pids(&self, offset: LogOffset) {
+        let mut inner = self.inner.lock();
+        inner.remove(&offset);
+    }
+}
+
 impl Drop for SegmentAccountant {
     fn drop(&mut self) {
         for segment in &self.segments {
-            let segment_utilization = segment.resident_size;
+            let segment_utilization = match segment {
+                Segment::Free(_) | Segment::Draining(_) => 0,
+                Segment::Active(Active { rss, .. })
+                | Segment::Inactive(Inactive { rss, .. }) => *rss,
+            };
             #[allow(clippy::cast_precision_loss)]
             M.segment_utilization_shutdown.measure(segment_utilization as f64);
         }
     }
 }
 
-#[derive(Default, Clone, Debug, PartialEq)]
-struct SegmentReplacements(FastMap8<SegmentId, (u64, FastSet8<PageId>)>);
+#[derive(Debug, Clone, Default)]
+struct Free {
+    previous_lsn: Option<Lsn>,
+}
 
-impl SegmentReplacements {
-    fn merge(&mut self, other: SegmentReplacements) {
-        for (sid, (log_size, pids)) in other.0 {
-            let mut entry =
-                self.0.entry(sid).or_insert((0, FastSet8::default()));
-            entry.0 += log_size;
-            for pid in pids {
-                entry.1.insert(pid);
-            }
-        }
-    }
+#[derive(Debug, Clone, Default)]
+struct Active {
+    lsn: Lsn,
+    rss: usize,
+    deferred_replaced_rss: usize,
+    deferred_replaced_pids: BTreeSet<PageId>,
+    pids: BTreeSet<PageId>,
+    latest_replacement_lsn: Lsn,
+    can_free_upon_deactivation: FastSet8<Lsn>,
+    deferred_rm_blob: FastSet8<BlobPointer>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Inactive {
+    lsn: Lsn,
+    rss: usize,
+    pids: BTreeSet<PageId>,
+    max_pids: usize,
+    replaced_pids: usize,
+    latest_replacement_lsn: Lsn,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Draining {
+    lsn: Lsn,
+    max_pids: usize,
+    replaced_pids: usize,
+    latest_replacement_lsn: Lsn,
 }
 
 /// A `Segment` holds the bookkeeping information for
@@ -133,83 +203,70 @@ impl SegmentReplacements {
 /// fragments from different pages. Over time, we track
 /// when segments become reusable and allow them to be
 /// overwritten for new data.
-#[derive(Default, Clone, Debug, PartialEq)]
-struct Segment {
-    resident_size: u64,
-    present: FastSet8<PageId>,
-    // a copy of present that lets us make decisions
-    // about draining without waiting for
-    // deferred_replacements to take effect during
-    // segment deactivation.
-    not_yet_replaced: FastSet8<PageId>,
-    deferred_rm_blob: FastSet8<BlobPointer>,
-    // set of pages that we replaced from other segments
-    deferred_replacements: SegmentReplacements,
-    lsn: Option<Lsn>,
-    state: SegmentState,
-}
-
-#[derive(Debug, Copy, Eq, Hash, Ord, PartialOrd, PartialEq, Clone)]
-pub(crate) enum SegmentState {
+#[derive(Clone, Debug)]
+enum Segment {
     /// the segment is marked for reuse, should never receive
     /// new pids,
-    Free,
+    Free(Free),
 
     /// the segment is being written to or actively recovered, and
     /// will have pages assigned to it
-    Active,
+    Active(Active),
 
     /// the segment is no longer being written to or recovered, and
     /// will have pages marked as relocated from it
-    Inactive,
+    Inactive(Inactive),
 
     /// the segment is having its resident pages relocated before
     /// becoming free
-    Draining,
+    Draining(Draining),
 }
 
-use self::SegmentState::{Active, Draining, Free, Inactive};
-
-impl Default for SegmentState {
+impl Default for Segment {
     fn default() -> Self {
-        Free
+        Segment::Free(Free { previous_lsn: None })
     }
 }
 
 impl Segment {
-    fn len(&self) -> usize {
-        self.present.len()
+    fn is_free(&self) -> bool {
+        if let Segment::Free(_) = self {
+            true
+        } else {
+            false
+        }
     }
 
-    fn is_free(&self) -> bool {
-        self.state == Free
+    fn is_active(&self) -> bool {
+        if let Segment::Active { .. } = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn is_inactive(&self) -> bool {
-        self.state == Inactive
-    }
-
-    fn _is_active(&self) -> bool {
-        self.state == Active
-    }
-
-    fn is_draining(&self) -> bool {
-        self.state == Draining
+        if let Segment::Inactive { .. } = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
-        trace!(
-            "setting Segment to Active with new lsn {:?}, was {:?}",
-            new_lsn,
-            self.lsn
-        );
-        assert_eq!(self.state, Free);
-        self.present.clear();
-        self.not_yet_replaced.clear();
-        self.deferred_rm_blob.clear();
-        self.deferred_replacements.0.clear();
-        self.lsn = Some(new_lsn);
-        self.state = Active;
+        trace!("setting Segment to Active with new lsn {:?}", new_lsn,);
+        assert!(self.is_free());
+
+        *self = Segment::Active(Active {
+            lsn: new_lsn,
+            rss: 0,
+            deferred_replaced_rss: 0,
+            deferred_replaced_pids: BTreeSet::default(),
+            pids: BTreeSet::default(),
+            latest_replacement_lsn: 0,
+            can_free_upon_deactivation: FastSet8::default(),
+            deferred_rm_blob: FastSet8::default(),
+        })
     }
 
     /// Transitions a segment to being in the `Inactive` state.
@@ -218,132 +275,176 @@ impl Segment {
     fn active_to_inactive(
         &mut self,
         lsn: Lsn,
-        from_recovery: bool,
         config: &Config,
-    ) -> Result<SegmentReplacements> {
+    ) -> Result<FastSet8<Lsn>> {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
-        assert!(
-            self.state == Active || self.state == Draining,
-            "segment {} should have been \
-             Active or Draining, before deactivating, but was {:?}",
-            self.lsn(),
-            self.state
-        );
-        if from_recovery {
-            assert!(lsn >= self.lsn());
-        } else {
-            assert_eq!(self.lsn(), lsn);
-        }
-        self.state = Inactive;
 
-        // now we can push any deferred blob removals to the removed set
-        let deferred_rm_blob =
-            mem::replace(&mut self.deferred_rm_blob, FastSet8::default());
-        for ptr in deferred_rm_blob {
-            trace!(
-                "removing blob {} while transitioning \
+        let (inactive, ret) = if let Segment::Active(active) = self {
+            assert!(lsn >= active.lsn);
+
+            // now we can push any deferred blob removals to the removed set
+            for ptr in &active.deferred_rm_blob {
+                trace!(
+                    "removing blob {} while transitioning \
                  segment lsn {:?} to Inactive",
-                ptr,
-                self.lsn,
+                    ptr,
+                    active.lsn,
+                );
+                remove_blob(*ptr, config)?;
+            }
+
+            let inactive = Segment::Inactive(Inactive {
+                lsn: active.lsn,
+                rss: active
+                    .rss
+                    .checked_sub(active.deferred_replaced_rss)
+                    .unwrap(),
+                max_pids: active.pids.len(),
+                replaced_pids: active.deferred_replaced_pids.len(),
+                pids: &active.pids - &active.deferred_replaced_pids,
+                latest_replacement_lsn: active.latest_replacement_lsn,
+            });
+
+            let can_free = mem::replace(
+                &mut active.can_free_upon_deactivation,
+                FastSet8::default(),
             );
-            remove_blob(ptr, config)?;
-        }
 
-        let deferred_replacements = mem::replace(
-            &mut self.deferred_replacements,
-            SegmentReplacements::default(),
-        );
+            (inactive, can_free)
+        } else {
+            panic!("called active_to_inactive on {:?}", self);
+        };
 
-        Ok(deferred_replacements)
+        *self = inactive;
+        Ok(ret)
     }
 
-    fn inactive_to_draining(&mut self, lsn: Lsn) {
+    fn inactive_to_draining(&mut self, lsn: Lsn) -> BTreeSet<PageId> {
         trace!("setting Segment with lsn {:?} to Draining", self.lsn());
-        assert_eq!(
-            self.state, Inactive,
-            "segment with lsn {:?} should have been \
-             Inactive before draining",
-            self.lsn
-        );
-        assert!(lsn >= self.lsn());
-        self.state = Draining;
+
+        if let Segment::Inactive(inactive) = self {
+            assert!(lsn >= inactive.lsn);
+            let ret = mem::replace(&mut inactive.pids, BTreeSet::default());
+            *self = Segment::Draining(Draining {
+                lsn: inactive.lsn,
+                max_pids: inactive.max_pids,
+                replaced_pids: inactive.replaced_pids,
+                latest_replacement_lsn: inactive.latest_replacement_lsn,
+            });
+            ret
+        } else {
+            panic!("called inactive_to_draining on {:?}", self);
+        }
     }
 
-    fn draining_to_free(&mut self, lsn: Lsn) {
+    fn defer_free_lsn(&mut self, lsn: Lsn) {
+        if let Segment::Active(active) = self {
+            active.can_free_upon_deactivation.insert(lsn);
+        } else {
+            panic!("called defer_free_lsn on segment {:?}", self);
+        }
+    }
+
+    fn draining_to_free(&mut self, lsn: Lsn) -> Lsn {
         trace!("setting Segment with lsn {:?} to Free", self.lsn());
-        assert!(self.is_draining());
-        assert!(lsn >= self.lsn());
-        self.present.clear();
-        self.not_yet_replaced.clear();
-        self.state = Free;
+
+        if let Segment::Draining(draining) = self {
+            let old_lsn = draining.lsn;
+            assert!(lsn >= old_lsn);
+            let replacement_lsn = draining.latest_replacement_lsn;
+            *self = Segment::Free(Free { previous_lsn: Some(old_lsn) });
+            replacement_lsn
+        } else {
+            panic!("called draining_to_free on {:?}", self);
+        }
     }
 
     fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
-        if let Some(current_lsn) = self.lsn {
-            if current_lsn != lsn {
-                trace!("(snapshot) recovering segment with base lsn {}", lsn);
-                assert!(lsn > current_lsn);
-                self.state = Free;
-                self.free_to_active(lsn);
-            }
-        } else {
+        if self.is_free() {
             trace!("(snapshot) recovering segment with base lsn {}", lsn);
             self.free_to_active(lsn);
         }
     }
 
     fn lsn(&self) -> Lsn {
-        self.lsn.unwrap()
+        match self {
+            Segment::Active(Active { lsn, .. })
+            | Segment::Inactive(Inactive { lsn, .. })
+            | Segment::Draining(Draining { lsn, .. }) => *lsn,
+            Segment::Free(_) => panic!("called lsn on Segment::Free"),
+        }
     }
 
     /// Add a pid to the Segment. The caller must provide
     /// the Segment's LSN.
-    fn insert_pid(&mut self, pid: PageId, lsn: Lsn) {
-        assert_eq!(lsn, self.lsn());
+    fn insert_pid(&mut self, pid: PageId, lsn: Lsn, size: usize) {
         // if this breaks, maybe we didn't implement the transition
         // logic right in write_to_log, and maybe a thread is
         // using the SA to add pids AFTER their calls to
         // res.complete() worked.
-        assert_eq!(
-            self.state, Active,
-            "expected segment with lsn {} to be Active",
-            lsn
-        );
-        self.not_yet_replaced.insert(pid);
-        self.present.insert(pid);
-    }
-
-    /// Mark that a pid in this Segment has been relocated.
-    /// The caller must provide the LSN of the removal.
-    fn remove_pid(&mut self, pid: PageId, lsn: Lsn, in_recovery: bool) {
-        assert!(lsn >= self.lsn());
-        match self.state {
-            Active => {
-                // we have received a removal before
-                // transferring this segment to Inactive.
-                // This should have been deferred by the
-                // segment that actually replaced this,
-                // and if we're still Active, something is
-                // wrong.
-                if !in_recovery {
-                    panic!("remove_pid called on Active segment");
-                }
-                assert!(
-                    !self.present.contains(&pid),
-                    "did not expect present to contain pid {} during recovery",
-                    pid,
-                );
-            }
-            Inactive | Draining => {
-                self.present.remove(&pid);
-            }
-            Free => panic!("remove_pid called on a Free Segment"),
+        if let Segment::Active(active) = self {
+            assert_eq!(lsn, active.lsn);
+            active.pids.insert(pid);
+            active.rss += size;
+        } else {
+            panic!("called insert_pid on {:?}", self);
         }
     }
 
-    fn defer_replace_pids(&mut self, deferred: SegmentReplacements, lsn: Lsn) {
-        assert!(lsn >= self.lsn());
-        self.deferred_replacements.merge(deferred);
+    fn remove_pid(&mut self, pid: PageId, replacement_lsn: Lsn, sz: usize) {
+        trace!(
+            "removing pid {} at lsn {} from segment {:?}",
+            pid,
+            replacement_lsn,
+            self
+        );
+        match self {
+            Segment::Active(active) => {
+                assert!(active.lsn <= replacement_lsn);
+                if replacement_lsn != active.lsn {
+                    active.deferred_replaced_pids.insert(pid);
+                }
+                active.deferred_replaced_rss += sz;
+                if replacement_lsn > active.latest_replacement_lsn {
+                    active.latest_replacement_lsn = replacement_lsn;
+                }
+            }
+            Segment::Inactive(Inactive {
+                pids,
+                lsn,
+                rss,
+                latest_replacement_lsn,
+                replaced_pids,
+                ..
+            }) => {
+                assert!(*lsn <= replacement_lsn);
+                if replacement_lsn != *lsn {
+                    pids.remove(&pid);
+                    *replaced_pids += 1;
+                }
+                *rss = rss.checked_sub(sz).unwrap();
+                if replacement_lsn > *latest_replacement_lsn {
+                    *latest_replacement_lsn = replacement_lsn;
+                }
+            }
+            Segment::Draining(Draining {
+                lsn,
+                latest_replacement_lsn,
+                replaced_pids,
+                ..
+            }) => {
+                assert!(*lsn <= replacement_lsn);
+                if replacement_lsn != *lsn {
+                    *replaced_pids += 1;
+                }
+                if replacement_lsn > *latest_replacement_lsn {
+                    *latest_replacement_lsn = replacement_lsn;
+                }
+            }
+            Segment::Free(_) => {
+                panic!("called remove pid {} on Segment::Free", pid)
+            }
+        }
     }
 
     fn remove_blob(
@@ -351,14 +452,14 @@ impl Segment {
         blob_ptr: BlobPointer,
         config: &Config,
     ) -> Result<()> {
-        match self.state {
-            Active => {
+        match self {
+            Segment::Active(active) => {
                 // we have received a removal before
                 // transferring this segment to Inactive, so
                 // we defer this pid's removal until the transfer.
-                self.deferred_rm_blob.insert(blob_ptr);
+                active.deferred_rm_blob.insert(blob_ptr);
             }
-            Inactive | Draining => {
+            Segment::Inactive(_) | Segment::Draining(_) => {
                 trace!(
                     "directly removing blob {} that was referred-to \
                      in a segment that has already been marked as Inactive \
@@ -367,18 +468,29 @@ impl Segment {
                 );
                 remove_blob(blob_ptr, config)?;
             }
-            Free => panic!("remove_blob called on a Free Segment"),
+            Segment::Free(_) => panic!("remove_blob called on a Free Segment"),
         }
 
         Ok(())
     }
 
     fn can_free(&self) -> bool {
-        self.state == Draining && self.is_empty()
+        if let Segment::Draining(draining) = self {
+            draining.replaced_pids == draining.max_pids
+        } else {
+            false
+        }
     }
 
     fn is_empty(&self) -> bool {
-        self.present.is_empty()
+        match self {
+            Segment::Active(Active { pids, .. })
+            | Segment::Inactive(Inactive { pids, .. }) => pids.is_empty(),
+            Segment::Draining(Draining { replaced_pids, max_pids, .. }) => {
+                replaced_pids == max_pids
+            }
+            Segment::Free(_) => false,
+        }
     }
 }
 
@@ -387,16 +499,16 @@ impl SegmentAccountant {
     pub(super) fn start(
         config: RunningConfig,
         snapshot: &Snapshot,
+        segment_cleaner: SegmentCleaner,
     ) -> Result<Self> {
         let _measure = Measure::new(&M.start_segment_accountant);
         let mut ret = Self {
             config,
             segments: vec![],
-            clean_counter: 0,
-            free: VecSet::default(),
+            free: BTreeSet::default(),
             tip: 0,
             max_stabilized_lsn: -1,
-            to_clean: VecSet::default(),
+            segment_cleaner,
             pause_rewriting: false,
             ordering: BTreeMap::default(),
             async_truncations: BTreeMap::default(),
@@ -413,10 +525,7 @@ impl SegmentAccountant {
         Ok(ret)
     }
 
-    fn initial_segments(
-        &self,
-        snapshot: &Snapshot,
-    ) -> Result<(Vec<Segment>, Vec<u64>)> {
+    fn initial_segments(&self, snapshot: &Snapshot) -> Result<Vec<Segment>> {
         let segment_size = self.config.segment_size;
         let file_len = self.config.file.metadata()?.len();
         let empty_snapshot = snapshot.pt.is_empty();
@@ -437,39 +546,39 @@ impl SegmentAccountant {
 
         // generate segments from snapshot lids
         let mut segments = vec![Segment::default(); number_of_segments];
-        let mut segment_utilizations = vec![0_u64; number_of_segments];
 
-        let mut add = |pid,
-                       lsn,
-                       sz,
-                       lid: LogOffset,
-                       segments: &mut Vec<Segment>| {
-            let idx = assert_usize(lid / segment_size as LogOffset);
-            trace!(
-                "adding lsn: {} lid: {} sz: {} for pid {} to segment {} during SA recovery",
-                lsn,
-                lid,
-                sz,
-                pid,
-                idx
-            );
-            let segment_lsn = lsn / segment_size as Lsn * segment_size as Lsn;
-            segments[idx].recovery_ensure_initialized(segment_lsn);
-            segments[idx].insert_pid(pid, segment_lsn);
-            segment_utilizations[idx] += sz;
-        };
+        let add =
+            |pid, lsn: Lsn, sz, lid: LogOffset, segments: &mut Vec<Segment>| {
+                let idx = assert_usize(lid / segment_size as LogOffset);
+                trace!(
+                    "adding lsn: {} lid: {} sz: {} for \
+                    pid {} to segment {} during SA recovery",
+                    lsn,
+                    lid,
+                    sz,
+                    pid,
+                    idx
+                );
+                let segment_lsn = self.config.normalize(lsn);
+                segments[idx].recovery_ensure_initialized(segment_lsn);
+                segments[idx].insert_pid(
+                    pid,
+                    segment_lsn,
+                    usize::try_from(sz).unwrap(),
+                );
+            };
 
         for (pid, state) in &snapshot.pt {
             match state {
                 PageState::Present(coords) => {
                     for (lsn, ptr, sz) in coords {
-                        add(*pid, lsn, *sz, ptr.lid(), &mut segments);
+                        add(*pid, *lsn, *sz, ptr.lid(), &mut segments);
                     }
                 }
                 PageState::Free(lsn, ptr) => {
                     add(
                         *pid,
-                        lsn,
+                        *lsn,
                         u64::try_from(MAX_MSG_HEADER_LEN).unwrap(),
                         ptr.lid(),
                         &mut segments,
@@ -478,13 +587,14 @@ impl SegmentAccountant {
             }
         }
 
-        Ok((segments, segment_utilizations))
+        Ok(segments)
     }
 
     fn initialize_from_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let segment_size = self.config.segment_size;
-        let (mut segments, segment_utilizations) =
-            self.initial_segments(snapshot)?;
+        let segments = self.initial_segments(snapshot)?;
+
+        self.segments = segments;
 
         let currently_active_segment = {
             // this logic allows us to free the last
@@ -493,7 +603,7 @@ impl SegmentAccountant {
                 usize::try_from(snapshot.last_lid / segment_size as LogOffset)
                     .unwrap();
             if let Some(segment) =
-                segments.get(prospective_currently_active_segment)
+                self.segments.get(prospective_currently_active_segment)
             {
                 if segment.is_empty() {
                     // we want to add this to the free list below,
@@ -508,12 +618,10 @@ impl SegmentAccountant {
             }
         };
 
-        let cleanup_threshold =
-            u64::from(self.config.segment_cleanup_threshold);
-        let drain_sz =
-            u64::try_from(segment_size).unwrap() * 100 / cleanup_threshold;
+        let mut to_free = vec![];
+        let mut maybe_clean = vec![];
 
-        for (idx, segment) in segments.iter_mut().enumerate() {
+        for (idx, segment) in self.segments.iter_mut().enumerate() {
             let segment_base = idx as LogOffset * segment_size as LogOffset;
 
             if segment_base >= self.tip {
@@ -525,64 +633,42 @@ impl SegmentAccountant {
                 );
             }
 
-            let segment_utilization = segment_utilizations[idx];
-
-            #[allow(clippy::cast_precision_loss)]
-            M.segment_utilization_startup.measure(segment_utilization as f64);
-
-            let segment_lsn = if let Some(lsn) = segment.lsn {
-                lsn
-            } else {
+            if segment.is_free() {
                 // this segment was not used in the recovered
                 // snapshot, so we can assume it is free
-                let idx = self.segment_id(segment_base);
-                self.segments[idx].state = Free;
-                self.free_segment(segment_base, false);
+                to_free.push(segment_base);
                 continue;
-            };
+            }
+
+            let segment_lsn = segment.lsn();
 
             if idx != currently_active_segment
                 && segment_lsn + segment_size as Lsn
                     <= snapshot.max_header_stable_lsn
             {
-                if segment_utilization == 0 {
-                    // can free
-                    trace!(
-                        "freeing segment with lid {} during SA initialization",
-                        segment_base
-                    );
-                    if self.tip == segment_base + segment_size as LogOffset {
-                        self.tip -= segment_size as LogOffset;
-                    } else {
-                        segment.state = Free;
-                        self.free_segment(segment_base, true);
-                    }
-                } else if segment_utilization <= drain_sz {
-                    trace!(
-                        "SA draining segment at {} during startup \
-                         with size {} being < drain size of {}",
-                        segment_base,
-                        segment_utilizations[idx],
-                        drain_sz
-                    );
-                    segment.state = Draining;
-                    self.to_clean.insert(segment_base);
-                }
+                maybe_clean.push((idx, segment_lsn));
             }
         }
 
-        trace!("initialized self.segments to {:?}", segments);
-        self.segments = segments;
+        for segment_base in to_free {
+            self.free_segment(segment_base, false)?;
+        }
+
+        for (idx, segment_lsn) in maybe_clean {
+            self.possibly_clean_or_free_segment(idx, segment_lsn)?;
+        }
+
+        trace!("initialized self.segments to {:?}", self.segments);
 
         self.ordering = self
             .segments
             .iter()
             .enumerate()
             .filter_map(|(id, s)| {
-                if s.lsn.is_some() {
-                    Some((s.lsn(), id as LogOffset * segment_size as LogOffset))
-                } else {
+                if s.is_free() {
                     None
+                } else {
+                    Some((s.lsn(), id as LogOffset * segment_size as LogOffset))
                 }
             })
             .collect();
@@ -592,17 +678,24 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    fn free_segment(&mut self, lid: LogOffset, in_recovery: bool) {
+    fn free_segment(
+        &mut self,
+        lid: LogOffset,
+        in_recovery: bool,
+    ) -> Result<()> {
         debug!("freeing segment {}", lid);
         debug!("free list before free {:?}", self.free);
+        self.segment_cleaner.remove_pids(lid);
 
         let idx = self.segment_id(lid);
         assert!(
             self.tip > lid,
-            "freed a segment above our current file tip, \
-             please report this bug!"
+            "freed a segment at {} above our current file tip {}, \
+             please report this bug!",
+            lid,
+            self.tip,
         );
-        assert_eq!(self.segments[idx].state, Free);
+        assert!(self.segments[idx].is_free());
         assert!(!self.free.contains(&lid), "double-free of a segment occurred");
 
         if in_recovery {
@@ -612,7 +705,9 @@ impl SegmentAccountant {
             // in IO buffers, before they have been flushed.
             // The latter will be removed from the mapping
             // before being reused, in the next() method.
-            if let Some(old_lsn) = self.segments[idx].lsn {
+            if let Segment::Free(Free { previous_lsn: Some(old_lsn) }) =
+                self.segments[idx]
+            {
                 trace!(
                     "removing segment {} with lsn {} from ordering",
                     lid,
@@ -623,6 +718,26 @@ impl SegmentAccountant {
         }
 
         self.free.insert(lid);
+
+        // remove the old ordering from our list
+        if let Segment::Free(Free { previous_lsn: Some(last_lsn) }) =
+            self.segments[idx]
+        {
+            self.ordering.remove(&last_lsn);
+        }
+
+        // truncate if possible
+        while self.tip != 0 && self.free.len() > 1 {
+            let last_segment = self.tip - self.config.segment_size as LogOffset;
+            if self.free.contains(&last_segment) {
+                self.free.remove(&last_segment);
+                self.truncate(last_segment)?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     /// Causes all new allocations to occur at the end of the file, which
@@ -630,14 +745,6 @@ impl SegmentAccountant {
     /// through the log during snapshot creation.
     pub(super) fn pause_rewriting(&mut self) {
         self.pause_rewriting = true;
-    }
-
-    /// Re-enables segment rewriting after iteration is complete.
-    pub(super) fn resume_rewriting(&mut self) {
-        // we never want to resume segment rewriting in Linear mode
-        if self.config.segment_mode != SegmentMode::Linear {
-            self.pause_rewriting = false;
-        }
     }
 
     /// Asynchronously apply a GC-related operation. Used in a flat-combining
@@ -667,21 +774,17 @@ impl SegmentAccountant {
     ) -> Result<()> {
         let _measure = Measure::new(&M.accountant_mark_replace);
 
+        self.mark_link(pid, new_cache_info);
+
         trace!(
             "mark_replace pid {} from cache infos {:?} to cache info {:?} with lsn {}",
             pid,
             old_cache_infos,
             new_cache_info,
-            lsn
-        );
+            self.config.normalize(lsn)
+            );
 
         let new_idx = self.segment_id(new_cache_info.pointer.lid());
-
-        // make sure we're not actively trying to replace the destination
-        let new_segment_start =
-            new_idx as LogOffset * self.config.segment_size as LogOffset;
-
-        assert!(!self.to_clean.contains(&new_segment_start));
 
         // Do we need to schedule any blob cleanups?
         // Not if we just moved the pointer without changing
@@ -690,7 +793,7 @@ impl SegmentAccountant {
         let schedule_rm_blob = !(old_cache_infos.len() == 1
             && old_cache_infos[0].pointer.is_blob());
 
-        let mut deferred_replacements = SegmentReplacements::default();
+        let mut removals = FastMap8::default();
 
         for old_cache_info in old_cache_infos {
             let old_ptr = &old_cache_info.pointer;
@@ -706,128 +809,20 @@ impl SegmentAccountant {
             }
 
             let old_idx = self.segment_id(old_lid);
-
-            if self.segments[old_idx].lsn() > lsn {
-                // has been replaced after this call already,
-                // quite a big race happened
-                panic!(
-                    "mark_replace called on previous version of segment. \
-                     this means it was reused while other threads still \
-                     had references to it."
-                );
-            }
-
-            if self.segments[old_idx].state == Free {
-                // this segment is already reused
-                panic!(
-                    "mark_replace called on Free segment with lid {}. \
-                     this means it was dropped while other threads still had \
-                     references to it.",
-                    old_idx * self.config.segment_size
-                );
-            }
-
-            self.segments[old_idx].not_yet_replaced.remove(&pid);
-
-            let mut entry = deferred_replacements
-                .0
-                .entry(old_idx)
-                .or_insert((0, FastSet8::default()));
-            entry.0 += old_cache_info.log_size;
-
-            if old_idx != new_idx {
-                // only remove the pid if it's added to a different segment
-                entry.1.insert(pid);
-            }
+            let entry = removals.entry(old_idx).or_insert(0);
+            *entry += old_cache_info.log_size;
         }
 
-        self.segments[new_idx].defer_replace_pids(deferred_replacements, lsn);
-
-        self.mark_link(pid, new_cache_info);
+        for (old_idx, replaced_size) in removals {
+            self.segments[old_idx].remove_pid(
+                pid,
+                self.config.normalize(lsn),
+                usize::try_from(replaced_size).unwrap(),
+            );
+            self.possibly_clean_or_free_segment(old_idx, new_cache_info.lsn)?;
+        }
 
         Ok(())
-    }
-
-    fn possibly_clean_or_free_segment(&mut self, idx: usize, lsn: Lsn) {
-        let can_drain = segment_is_drainable(
-            idx,
-            self.segments.len(),
-            self.segments[idx].resident_size,
-            self.segments[idx].len(),
-            &self.config,
-        ) && self.segments[idx].is_inactive();
-
-        let segment_start = (idx * self.config.segment_size) as LogOffset;
-
-        if can_drain {
-            // can be cleaned
-            trace!(
-                "SA inserting {} into to_clean from possibly_clean_or_free_segment",
-                segment_start
-            );
-            self.segments[idx].inactive_to_draining(lsn);
-            self.to_clean.insert(segment_start);
-        }
-
-        if self.segments[idx].can_free() {
-            // can be reused immediately
-            self.segments[idx].draining_to_free(lsn);
-            self.to_clean.remove(&segment_start);
-            trace!(
-                "freed segment {} in possibly_clean_or_free_segment",
-                segment_start
-            );
-            self.free_segment(segment_start, false);
-        }
-    }
-
-    /// Called by the `PageCache` to find pages that are in
-    /// segments eligible for cleaning that it should
-    /// try to rewrite elsewhere.
-    pub(super) fn clean(
-        &mut self,
-        ignore_pid: Option<PageId>,
-    ) -> Option<PageId> {
-        let seg_offset = if self.to_clean.is_empty() || self.to_clean.len() == 1
-        {
-            0
-        } else {
-            self.clean_counter % self.to_clean.len()
-        };
-
-        let item = self.to_clean.get(seg_offset).cloned();
-
-        if let Some(lid) = item {
-            let idx = self.segment_id(lid);
-            let segment = &self.segments[idx];
-            assert!(segment.state == Draining || segment.state == Inactive);
-
-            let present = &segment.not_yet_replaced;
-
-            if present.is_empty() {
-                // This could legitimately be empty if it's completely
-                // filled with failed flushes.
-                return None;
-            }
-
-            self.clean_counter += 1;
-
-            let offset = if present.len() == 1 {
-                0
-            } else {
-                self.clean_counter % present.len()
-            };
-
-            let pid = present.iter().nth(offset).unwrap();
-            if Some(*pid) == ignore_pid {
-                return None;
-            }
-            trace!("telling caller to clean {} from segment at {}", pid, lid,);
-
-            return Some(*pid);
-        }
-
-        None
     }
 
     /// Called from `PageCache` when some state has been added
@@ -838,12 +833,6 @@ impl SegmentAccountant {
 
         trace!("mark_link pid {} at cache info {:?}", pid, cache_info);
         let idx = self.segment_id(cache_info.pointer.lid());
-
-        // make sure we're not actively trying to replace the destination
-        let new_segment_start =
-            idx as LogOffset * self.config.segment_size as LogOffset;
-
-        assert!(!self.to_clean.contains(&new_segment_start));
 
         let segment = &mut self.segments[idx];
 
@@ -860,8 +849,70 @@ impl SegmentAccountant {
             segment.lsn()
         );
 
-        segment.insert_pid(pid, segment_lsn);
-        segment.resident_size += cache_info.log_size;
+        segment.insert_pid(
+            pid,
+            segment_lsn,
+            usize::try_from(cache_info.log_size).unwrap(),
+        );
+    }
+
+    fn possibly_clean_or_free_segment(
+        &mut self,
+        idx: usize,
+        lsn: Lsn,
+    ) -> Result<()> {
+        let cleanup_threshold =
+            usize::from(self.config.segment_cleanup_threshold);
+
+        let segment_start = (idx * self.config.segment_size) as LogOffset;
+
+        if let Segment::Inactive(inactive) = &mut self.segments[idx] {
+            let live_pct = inactive.rss * 100 / self.config.segment_size;
+
+            let can_drain = live_pct <= cleanup_threshold;
+
+            if can_drain {
+                // can be cleaned
+                trace!(
+                    "SA inserting {} into to_clean from possibly_clean_or_free_segment",
+                    segment_start
+                );
+                let to_clean = self.segments[idx].inactive_to_draining(lsn);
+                self.segment_cleaner.add_pids(segment_start, to_clean);
+            }
+        }
+
+        let segment_lsn = self.segments[idx].lsn();
+
+        if self.segments[idx].can_free() {
+            // can be reused immediately
+            let replacement_lsn = self.segments[idx].draining_to_free(lsn);
+
+            if self.ordering.contains_key(&replacement_lsn) {
+                let replacement_lid = self.ordering[&replacement_lsn];
+                let replacement_idx = usize::try_from(
+                    replacement_lid / self.config.segment_size as u64,
+                )
+                .unwrap();
+
+                if self.segments[replacement_idx].is_active() {
+                    trace!(
+                        "deferring free of segment {} in possibly_clean_or_free_segment",
+                        segment_start
+                    );
+                    self.segments[replacement_idx].defer_free_lsn(segment_lsn);
+                } else {
+                    assert!(replacement_lsn <= self.max_stabilized_lsn);
+                    self.free_segment(segment_start, false)?;
+                }
+            } else {
+                // replacement segment has already been freed, so we can
+                // go right to freeing this one too
+                self.free_segment(segment_start, false)?;
+            }
+        }
+
+        Ok(())
     }
 
     pub(super) fn stabilize(&mut self, stable_lsn: Lsn) -> Result<()> {
@@ -920,71 +971,19 @@ impl SegmentAccountant {
             self.segments[idx]
         );
 
-        let replacements = if self.segments[idx].state == Active {
-            self.segments[idx].active_to_inactive(lsn, false, &self.config)?
+        let freeable_segments = if self.segments[idx].is_active() {
+            self.segments[idx].active_to_inactive(lsn, &self.config)?
         } else {
             Default::default()
         };
 
-        let mut old_segments = FastSet8::default();
-
-        for (old_idx, (log_size, pids)) in &replacements.0 {
-            old_segments.insert(old_idx);
-
-            let old_segment = &mut self.segments[*old_idx];
-            old_segment.resident_size =
-                old_segment.resident_size.saturating_sub(*log_size);
-
-            if !(old_segment.state != Active && old_segment.state != Free) {
-                assert!(
-                    old_segment.state != Active && old_segment.state != Free,
-                    "segment {} is processing pids {:?} replacements for \
-                    old segment {}, which is in the {:?} state.",
-                    lid,
-                    pids,
-                    old_idx * self.config.segment_size,
-                    old_segment.state,
-                );
-            }
-
-            assert!(old_segment.lsn() <= lsn);
-
-            for pid in pids {
-                if !old_segment.present.contains(pid) {
-                    let error = Error::ReportableBug(format!(
-                        "segment {} does not contain pid {}. \
-                        we expect deferred replacements to provide \
-                        all previous segments so we can clean them. \
-                        segments with this pid include (segment \
-                        offset, state): {:?}",
-                        old_idx * self.config.segment_size,
-                        pid,
-                        self.segments
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, s)| {
-                                if s.present.contains(pid) {
-                                    Some((
-                                        i * self.config.segment_size,
-                                        s.state,
-                                    ))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    ));
-                    self.config.set_global_error(error.clone());
-                    panic!("{:?}", error);
-                }
-
-                old_segment.remove_pid(*pid, lsn, false);
-            }
+        for lsn in freeable_segments {
+            let segment_start = self.ordering[&lsn];
+            assert_ne!(segment_start, lid);
+            self.free_segment(segment_start, false)?;
         }
 
-        for old_idx in old_segments {
-            self.possibly_clean_or_free_segment(*old_idx, lsn);
-        }
+        self.possibly_clean_or_free_segment(idx, lsn)?;
 
         // if we have a lot of free segments in our whole file,
         // let's start relocating the current tip to boil it down
@@ -1002,7 +1001,8 @@ impl SegmentAccountant {
             let segment_start =
                 (last_index * self.config.segment_size) as LogOffset;
 
-            self.to_clean.insert(segment_start);
+            let to_clean = self.segments[last_index].inactive_to_draining(lsn);
+            self.segment_cleaner.add_pids(segment_start, to_clean);
         }
 
         Ok(())
@@ -1039,38 +1039,10 @@ impl SegmentAccountant {
             "unaligned Lsn provided to next!"
         );
 
-        let free: Vec<LogOffset> = self
-            .free
-            .iter()
-            .filter(|lid| {
-                let idx = usize::try_from(
-                    *lid / self.config.segment_size as LogOffset,
-                )
-                .unwrap();
-                if let Some(last_lsn) = self.segments[idx].lsn {
-                    last_lsn < self.max_stabilized_lsn
-                } else {
-                    true
-                }
-            })
-            .copied()
-            .collect();
-
-        trace!("evaluating free list {:?} in SA::next", free);
-
-        // truncate if possible
-        while self.tip != 0 && self.free.len() > 1 {
-            let last_segment = self.tip - self.config.segment_size as LogOffset;
-            if free.contains(&last_segment) {
-                self.free.remove(&last_segment);
-                self.truncate(last_segment)?;
-            } else {
-                break;
-            }
-        }
+        trace!("evaluating free list {:?} in SA::next", &self.free);
 
         // pop free or add to end
-        let safe = free.first();
+        let safe = self.free.iter().next();
 
         let lid = match (self.pause_rewriting, safe) {
             (true, _) | (_, None) => self.bump_tip(),
@@ -1082,13 +1054,6 @@ impl SegmentAccountant {
 
         // pin lsn to this segment
         let idx = self.segment_id(lid);
-
-        assert_eq!(self.segments[idx].state, Free);
-
-        // remove the old ordering from our list
-        if let Some(old_lsn) = self.segments[idx].lsn {
-            self.ordering.remove(&old_lsn);
-        }
 
         self.segments[idx].free_to_active(lsn);
 
@@ -1196,59 +1161,4 @@ impl SegmentAccountant {
 
         idx
     }
-}
-
-/// The log may be configured to write data
-/// in several different ways, depending on
-/// the constraints of the system using it.
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum SegmentMode {
-    /// Write to the end of the log, always.
-    Linear,
-    /// Keep track of segment utilization, and
-    /// reuse segments when their contents are
-    /// fully relocated elsewhere.
-    /// Will try to copy data out of segments
-    /// once they reach a configurable threshold.
-    Gc,
-}
-
-fn segment_is_drainable(
-    idx: usize,
-    num_segments: usize,
-    resident_size: u64,
-    len: usize,
-    config: &Config,
-) -> bool {
-    // we calculate the cleanup threshold in a skewed way,
-    // which encourages earlier segments to be rewritten
-    // more frequently.
-    let base_cleanup_threshold = usize::from(config.segment_cleanup_threshold);
-    let cleanup_skew = config.segment_cleanup_skew;
-
-    let relative_prop =
-        if num_segments == 0 { 50 } else { (idx * 100) / num_segments };
-
-    // we bias to having a higher threshold closer to segment 0
-    let inverse_prop = 100 - relative_prop;
-    let relative_threshold = cleanup_skew * inverse_prop / 100;
-    let computed_threshold = base_cleanup_threshold + relative_threshold;
-
-    // We should always be below 100, or we will rewrite everything
-    let cleanup_threshold = if computed_threshold == 0 {
-        1
-    } else if computed_threshold > 99 {
-        99
-    } else {
-        computed_threshold
-    };
-
-    let live_pct = resident_size * 100 / config.segment_size as u64;
-
-    let segment_low_pct = live_pct <= cleanup_threshold as u64;
-
-    let segment_low_count =
-        len < MINIMUM_ITEMS_PER_SEGMENT * 100 / cleanup_threshold;
-
-    segment_low_pct || segment_low_count
 }
