@@ -94,6 +94,8 @@ impl<T: Sized> StackVec<T> {
             "tried to insert into StackVec already at max capacity"
         );
 
+        assert!(idx <= self.len());
+
         if idx != self.len as usize {
             let items = self.len as usize - idx;
 
@@ -128,6 +130,77 @@ impl<T: Sized> StackVec<T> {
             }
         } else {
             None
+        }
+    }
+}
+
+#[cfg(test)]
+mod qc {
+    use quickcheck::{Arbitrary, Gen};
+    use rand::Rng;
+
+    use super::{StackVec, PAGE_CONSOLIDATION_THRESHOLD};
+
+    #[derive(Clone, Debug)]
+    enum Op {
+        Extend(Vec<u8>),
+        Insert(usize, u8),
+        Push(u8),
+        Pop,
+    }
+
+    impl Arbitrary for Op {
+        fn arbitrary<G: Gen>(g: &mut G) -> Op {
+            match g.gen_range(0, 4) {
+                0 => {
+                    let len = g.gen_range(0, PAGE_CONSOLIDATION_THRESHOLD);
+                    let items = vec![g.gen(); len];
+                    Op::Extend(items)
+                }
+                1 => Op::Insert(
+                    g.gen_range(0, PAGE_CONSOLIDATION_THRESHOLD),
+                    g.gen(),
+                ),
+                2 => Op::Push(g.gen()),
+                3 => Op::Pop,
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    quickcheck::quickcheck! {
+        fn qc_stackvec(ops: Vec<Op>) -> bool {
+            let mut sv = StackVec::default();
+            let mut v = vec![];
+
+            for op in ops {
+                match op {
+                    Op::Extend(items) => {
+                        if items.len() + v.len() < PAGE_CONSOLIDATION_THRESHOLD {
+                            sv.extend_from_slice(&items);
+                            v.extend_from_slice(&items);
+                        }
+                    }
+                    Op::Insert(at, item) => {
+                        if at <= v.len() && v.len() < PAGE_CONSOLIDATION_THRESHOLD {
+                            sv.insert(at, item);
+                            v.insert(at, item);
+                        }
+                    }
+                    Op::Push(item) => {
+                        if v.len() < PAGE_CONSOLIDATION_THRESHOLD {
+                            sv.push(item);
+                            v.push(item);
+                        }
+                    }
+                    Op::Pop => {
+                        assert_eq!(sv.pop(), v.pop());
+                    }
+                }
+                assert_eq!(&*sv, &*v);
+            }
+
+            true
         }
     }
 }
