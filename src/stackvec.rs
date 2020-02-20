@@ -2,8 +2,8 @@ use std::{convert::TryFrom, mem::MaybeUninit};
 
 use crate::pagecache::constants::PAGE_CONSOLIDATION_THRESHOLD;
 
-#[derive(Debug)]
-pub(crate) struct StackVec<T: Sized> {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StackVec<T: Copy + Sized> {
     items: [MaybeUninit<T>; PAGE_CONSOLIDATION_THRESHOLD],
     len: u8,
 }
@@ -17,30 +17,7 @@ impl<T: Copy> Default for StackVec<T> {
     }
 }
 
-impl<T> Drop for StackVec<T> {
-    fn drop(&mut self) {
-        for i in 0..self.len as usize {
-            #[allow(unsafe_code)]
-            unsafe {
-                self.items[i].as_mut_ptr().drop_in_place();
-            }
-        }
-    }
-}
-
-impl<T: Copy + Clone> Clone for StackVec<T> {
-    fn clone(&self) -> StackVec<T> {
-        let mut items = [MaybeUninit::uninit(); PAGE_CONSOLIDATION_THRESHOLD];
-
-        for (idx, item) in self.iter().enumerate() {
-            items[idx] = MaybeUninit::new(item.clone());
-        }
-
-        StackVec { items, len: self.len }
-    }
-}
-
-impl<T: Sized> std::ops::Deref for StackVec<T> {
+impl<T: Copy + Sized> std::ops::Deref for StackVec<T> {
     type Target = [T];
 
     fn deref(&self) -> &[T] {
@@ -52,7 +29,7 @@ impl<T: Sized> std::ops::Deref for StackVec<T> {
     }
 }
 
-impl<T: Sized> std::ops::DerefMut for StackVec<T> {
+impl<T: Copy + Sized> std::ops::DerefMut for StackVec<T> {
     fn deref_mut(&mut self) -> &mut [T] {
         #[allow(unsafe_code)]
         unsafe {
@@ -62,11 +39,8 @@ impl<T: Sized> std::ops::DerefMut for StackVec<T> {
     }
 }
 
-impl<T: Sized> StackVec<T> {
-    pub(crate) fn single(item: T) -> StackVec<T>
-    where
-        T: Copy,
-    {
+impl<T: Copy + Sized> StackVec<T> {
+    pub(crate) fn single(item: T) -> StackVec<T> {
         let mut sv = Self::default();
         sv.push(item);
         sv
