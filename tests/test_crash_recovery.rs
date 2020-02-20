@@ -1,8 +1,9 @@
-#![cfg(target_os = "linux")]
 
 mod common;
 
+use std::env::{self, VarError};
 use std::mem::size_of;
+use std::process::{exit, Child, Command, ExitStatus};
 use std::thread;
 use std::time::Duration;
 
@@ -12,9 +13,31 @@ use sled::Config;
 
 use common::cleanup;
 
+const TEST_ENV_VAR: &str = "SLED_CRASH_TEST";
 const N_TESTS: usize = 100;
 const CYCLE: usize = 256;
 const BATCH_SIZE: u32 = 8;
+
+// test names, also used as dir names
+const RECOVERY_NO_SNAPSHOT: &str = "crash_recovery_no_runtime_snapshot";
+const BATCHES_NO_SNAPSHOT: &str = "crash_batches_no_runtime_snapshot";
+
+fn main() {
+    match env::var(TEST_ENV_VAR) {
+        Err(VarError::NotPresent) => {
+            test_crash_recovery();
+
+            // TODO this is currently being ignored until it is fixed
+            // with a refactor of recovery logic.
+            // test_crash_batches();
+        }
+
+        Ok(ref s) if s == RECOVERY_NO_SNAPSHOT => run_without_snapshot(s),
+        Ok(ref s) if s == BATCHES_NO_SNAPSHOT => run_batches(s),
+
+        Ok(_) | Err(_) => panic!("invalid crash test case"),
+    }
+}
 
 /// Verifies that the keys in the tree are correctly recovered.
 /// Panics if they are incorrect.
@@ -87,26 +110,8 @@ fn spawn_killah() {
     thread::spawn(|| {
         let runtime = rand::thread_rng().gen_range(0, 200);
         thread::sleep(Duration::from_millis(runtime));
-        unsafe {
-            libc::raise(9);
-        }
+        exit(9);
     });
-}
-
-fn run(dir: &str) {
-    let config = Config::new()
-        .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
-        .path(dir.to_string())
-        .segment_size(1024);
-
-    match thread::spawn(|| run_inner(config)).join() {
-        Err(e) => {
-            println!("worker thread failed: {:?}", e);
-            std::process::exit(15);
-        }
-        _ => {}
-    }
 }
 
 fn run_inner(config: Config) {
@@ -147,28 +152,6 @@ fn run_inner(config: Config) {
     }
 }
 
-#[test]
-fn test_crash_recovery() {
-    let dir = "test_crashes";
-    cleanup(dir);
-    for _ in 0..N_TESTS {
-        let child = unsafe { libc::fork() };
-        if child == 0 {
-            run(dir)
-        } else {
-            let mut status = 0;
-            unsafe {
-                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
-            }
-            if status != 9 {
-                cleanup(dir);
-                panic!("child exited abnormally");
-            }
-        }
-    }
-    cleanup(dir);
-}
-
 /// Verifies that the keys in the tree are correctly recovered (i.e., equal).
 /// Panics if they are incorrect.
 fn verify_batches(tree: &sled::Tree) -> u32 {
@@ -204,7 +187,7 @@ fn verify_batches(tree: &sled::Tree) -> u32 {
     first_value
 }
 
-fn run_batches(dir: &str) {
+fn run_batches_inner(config: Config) {
     fn do_batch(i: u32, tree: &sled::Tree) {
         let mut rng = rand::thread_rng();
         let base_value = u32_to_vec(i);
@@ -228,12 +211,6 @@ fn run_batches(dir: &str) {
 
     common::setup_logger();
 
-    let config = Config::new()
-        .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
-        .path(dir)
-        .segment_size(1024);
-
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     let tree = config.open().unwrap();
@@ -252,32 +229,95 @@ fn run_batches(dir: &str) {
     }
 }
 
-#[test]
-#[ignore]
-fn test_crash_batches() {
-    let dir = "test_batches";
-    cleanup(dir);
-    for _ in 0..N_TESTS {
-        let child = unsafe { libc::fork() };
-        if child == 0 {
-            //let dir = dir.to_string();
-            match thread::spawn(move || run_batches(dir)).join() {
-                Err(e) => {
-                    println!("worker thread failed: {:?}", e);
-                    std::process::exit(15);
-                }
-                _ => {}
-            }
-        } else {
-            let mut status = 0;
-            unsafe {
-                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
-            }
-            if status != 9 {
-                cleanup(dir);
-                panic!("child exited abnormally");
-            }
+fn run_without_snapshot(dir: &str) {
+    let config = Config::new()
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(100))
+        .path(dir.to_string())
+        .segment_size(1024);
+
+    match thread::spawn(|| run_inner(config)).join() {
+        Err(e) => {
+            println!("worker thread failed: {:?}", e);
+            std::process::exit(15);
         }
+        _ => {}
     }
+}
+
+fn run_batches(dir: &str) {
+    let config = Config::new()
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(100))
+        .path(dir.to_string())
+        .segment_size(1024);
+
+    match thread::spawn(|| run_batches_inner(config)).join() {
+        Err(e) => {
+            println!("worker thread failed: {:?}", e);
+            std::process::exit(15);
+        }
+        _ => {}
+    }
+}
+
+fn run_child_process(test_name: &str) -> Child {
+    let bin = env::current_exe().expect("could not get test binary path");
+
+    env::set_var(TEST_ENV_VAR, test_name);
+
+    Command::new(bin).env(TEST_ENV_VAR, test_name).spawn().expect(&format!(
+        "could not spawn child process for {} test",
+        test_name
+    ))
+}
+
+fn handle_child_exit_status(dir: &str, status: ExitStatus) {
+    let code = status.code();
+
+    if code.is_none() || code.unwrap() != 9 {
+        cleanup(dir);
+        panic!("{} test child exited abnormally", dir);
+    }
+}
+
+fn handle_child_wait_err(dir: &str, e: std::io::Error) {
+    cleanup(dir);
+
+    panic!("error waiting for {} test child: {}", dir, e);
+}
+
+fn test_crash_recovery() {
+    let dir = RECOVERY_NO_SNAPSHOT;
+    cleanup(dir);
+
+    for _ in 0..N_TESTS {
+        let mut child = run_child_process(RECOVERY_NO_SNAPSHOT);
+
+        child
+            .wait()
+            .map(|status| handle_child_exit_status(dir, status))
+            .map_err(|e| handle_child_wait_err(dir, e))
+            .unwrap();
+    }
+
+    cleanup(dir);
+}
+
+#[allow(dead_code)]
+fn test_crash_batches() {
+    let dir = BATCHES_NO_SNAPSHOT;
+    cleanup(dir);
+
+    for _ in 0..N_TESTS {
+        let mut child = run_child_process(BATCHES_NO_SNAPSHOT);
+
+        child
+            .wait()
+            .map(|status| handle_child_exit_status(dir, status))
+            .map_err(|e| handle_child_wait_err(dir, e))
+            .unwrap();
+    }
+
     cleanup(dir);
 }
