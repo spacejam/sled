@@ -74,7 +74,6 @@ fn concurrent_tree_ops() {
         let config = Config::new()
             .temporary(true)
             .flush_every_ms(None)
-            .snapshot_after_ops(100_000_000)
             .segment_size(256);
 
         macro_rules! par {
@@ -719,11 +718,8 @@ fn tree_range() {
 fn recover_tree() {
     common::setup_logger();
 
-    let config = Config::new()
-        .temporary(true)
-        .flush_every_ms(None)
-        .snapshot_after_ops(N_PER_THREAD as u64)
-        .segment_size(4096);
+    let config =
+        Config::new().temporary(true).flush_every_ms(None).segment_size(4096);
 
     let t = config.open().unwrap();
     for i in 0..N_PER_THREAD {
@@ -842,14 +838,14 @@ fn quickcheck_tree_matches_btreemap() {
         .tests(n_tests)
         .max_tests(n_tests * 10)
         .quickcheck(
-            prop_tree_matches_btreemap as fn(Vec<Op>, u8, bool, bool) -> bool,
+            prop_tree_matches_btreemap as fn(Vec<Op>, bool, bool) -> bool,
         );
 }
 
 #[test]
 fn tree_bug_00() {
     // postmortem:
-    prop_tree_matches_btreemap(vec![Restart], 0, false, false);
+    prop_tree_matches_btreemap(vec![Restart], false, false);
 }
 
 #[test]
@@ -870,7 +866,6 @@ fn tree_bug_01() {
             Restart,
             Set(Key(vec![164]), 147),
         ],
-        0,
         true,
         false,
     );
@@ -897,7 +892,6 @@ fn tree_bug_02() {
             Set(Key(vec![216]), 203),
             Scan(Key(vec![210]), 4),
         ],
-        0,
         true,
         false,
     );
@@ -920,7 +914,6 @@ fn tree_bug_03() {
             Restart,
             Scan(Key(vec![198]), 11),
         ],
-        0,
         true,
         false,
     );
@@ -945,7 +938,6 @@ fn tree_bug_4() {
             Restart,
             Set(Key(vec![59]), 119),
         ],
-        0,
         true,
         false,
     );
@@ -966,7 +958,6 @@ fn tree_bug_5() {
             Set(Key(vec![98]), 78),
             Set(Key(vec![0]), 45),
         ],
-        0,
         true,
         false,
     );
@@ -989,7 +980,6 @@ fn tree_bug_6() {
             Set(Key(vec![150]), 146),
             Set(Key(vec![18]), 34),
         ],
-        0,
         true,
         false,
     );
@@ -1012,7 +1002,6 @@ fn tree_bug_7() {
             Set(Key(vec![64]), 9),
             Scan(Key(vec![196]), 25),
         ],
-        0,
         true,
         false,
     );
@@ -1034,7 +1023,6 @@ fn tree_bug_8() {
             Set(Key(vec![102]), 205),
             Restart,
         ],
-        0,
         true,
         false,
     );
@@ -1059,7 +1047,6 @@ fn tree_bug_9() {
             Set(Key(vec![190]), 16),
             Restart,
         ],
-        0,
         true,
         false,
     );
@@ -1097,7 +1084,6 @@ fn tree_bug_10() {
             Cas(Key(vec![201]), 93, 196),
             Set(Key(vec![172]), 84),
         ],
-        0,
         true,
         false,
     );
@@ -1122,7 +1108,6 @@ fn tree_bug_11() {
             Restart,
             Set(Key(vec![243]), 6),
         ],
-        0,
         true,
         false,
     );
@@ -1172,7 +1157,6 @@ fn tree_bug_12() {
             Get(Key(vec![156])),
             Set(Key(vec![214]), 72),
         ],
-        0,
         true,
         false,
     );
@@ -1202,7 +1186,6 @@ fn tree_bug_13() {
             Restart,
             Del(Key(vec![165])),
         ],
-        0,
         true,
         false,
     );
@@ -1222,7 +1205,6 @@ fn tree_bug_14() {
             Set(Key(vec![171]), 176),
             Scan(Key(vec![93]), 33),
         ],
-        0,
         true,
         false,
     );
@@ -1240,7 +1222,6 @@ fn tree_bug_15() {
             Del(Key(vec![141])),
             Scan(Key(vec![101]), 26),
         ],
-        0,
         true,
         false,
     );
@@ -1251,7 +1232,6 @@ fn tree_bug_16() {
     // postmortem: the test merge function was not properly adding numbers.
     prop_tree_matches_btreemap(
         vec![Merge(Key(vec![247]), 162), Scan(Key(vec![209]), 31)],
-        0,
         false,
         false,
     );
@@ -1267,7 +1247,6 @@ fn tree_bug_17() {
             Set(Key(vec![194, 215, 103, 0, 138, 11, 248, 131]), 70),
             Scan(Key(vec![]), 30),
         ],
-        0,
         false,
         false,
     );
@@ -1286,7 +1265,6 @@ fn tree_bug_18() {
             Get(Key(vec![255])),
             GetGt(Key(vec![89])),
         ],
-        0,
         false,
         false,
     );
@@ -1305,7 +1283,6 @@ fn tree_bug_19() {
             Set(Key(vec![]), 247),
             GetLt(Key(vec![100])),
         ],
-        0,
         false,
         false,
     );
@@ -1325,7 +1302,6 @@ fn tree_bug_20() {
             Set(Key(vec![]), 251),
             GetGt(Key(vec![94])),
         ],
-        0,
         false,
         false,
     );
@@ -1346,7 +1322,6 @@ fn tree_bug_21() {
             Set(Key(vec![]), 58),
             GetLt(Key(vec![176])),
         ],
-        0,
         false,
         false,
     );
@@ -1363,7 +1338,6 @@ fn tree_bug_22() {
             Merge(Key(vec![56]), 251),
             Scan(Key(vec![]), 2),
         ],
-        0,
         false,
         false,
     );
@@ -1374,7 +1348,6 @@ fn tree_bug_23() {
     // postmortem: when rewriting CRC handling code, mis-sized the blob crc
     prop_tree_matches_btreemap(
         vec![Set(Key(vec![6; 5120]), 92), Restart, Scan(Key(vec![]), 35)],
-        0,
         false,
         false,
     );
@@ -1398,7 +1371,6 @@ fn tree_bug_24() {
             Merge(Key(vec![62]), 34),
             GetGt(Key(vec![])),
         ],
-        0,
         false,
         false,
     );
@@ -1410,7 +1382,6 @@ fn tree_bug_25() {
     // the frag chain and a Del was encountered
     prop_tree_matches_btreemap(
         vec![Del(Key(vec![])), Merge(Key(vec![]), 84), Get(Key(vec![]))],
-        0,
         false,
         false,
     );
@@ -1434,7 +1405,6 @@ fn tree_bug_26() {
             GetGt(Key(vec![])),
             GetLt(Key(vec![80])),
         ],
-        0,
         false,
         false,
     );
@@ -1504,7 +1474,6 @@ fn tree_bug_27() {
             ])),
             Merge(Key(vec![]), 50),
         ],
-        0,
         false,
         false,
     );
@@ -1527,7 +1496,6 @@ fn tree_bug_28() {
             Merge(Key(vec![149]), 60),
             Scan(Key(vec![178]), 18),
         ],
-        0,
         false,
         false,
     );
@@ -1668,7 +1636,6 @@ fn tree_bug_29() {
             Set(Key(vec![145]), 43),
             GetLt(Key(vec![229])),
         ],
-        0,
         false,
         false,
     );
@@ -1707,7 +1674,6 @@ fn tree_bug_30() {
             Merge(Key(vec![119]), 152),
             Scan(Key(vec![]), 31),
         ],
-        0,
         false,
         false,
     );
@@ -1730,7 +1696,6 @@ fn tree_bug_31() {
             ),
             Scan(Key(vec![]), -18),
         ],
-        0,
         false,
         false,
     );
@@ -1743,7 +1708,6 @@ fn tree_bug_32() {
     // no longer perform per-key prefix encoding.
     prop_tree_matches_btreemap(
         vec![Set(Key(vec![57]), 141), Scan(Key(vec![]), -40)],
-        0,
         false,
         false,
     );
@@ -1761,7 +1725,6 @@ fn tree_bug_33() {
             Set(Key(vec![85]), 43),
             GetLt(Key(vec![])),
         ],
-        0,
         false,
         false,
     );
@@ -1781,7 +1744,6 @@ fn tree_bug_34() {
             Set(Key(vec![9, 70]), 188),
             Scan(Key(vec![]), -40),
         ],
-        0,
         false,
         false,
     );
@@ -1816,7 +1778,6 @@ fn tree_bug_35() {
             Set(Key(vec![0, 229]), 117),
             Set(Key(vec![]), 112),
         ],
-        0,
         false,
         false,
     );
@@ -1837,7 +1798,6 @@ fn tree_bug_36() {
             Set(Key(vec![254, 5]), 207),
             Scan(Key(vec![]), -30),
         ],
-        0,
         false,
         false,
     );
@@ -1856,7 +1816,6 @@ fn tree_bug_37() {
             Set(Key(vec![1]), 187),
             Scan(Key(vec![]), 33),
         ],
-        0,
         false,
         false,
     );
@@ -1875,7 +1834,6 @@ fn tree_bug_38() {
                 GetLt(Key(vec![123])),
                 Restart,
             ],
-            0,
             false,
             false,
         );
@@ -2139,7 +2097,6 @@ fn tree_bug_39() {
                 Get(Key(vec![61])),
                 Restart,
             ],
-            38,
             false,
             false,
         );

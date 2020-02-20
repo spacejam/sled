@@ -132,7 +132,6 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
     let config = Config::new()
         .temporary(true)
-        .snapshot_after_ops(1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .cache_capacity(256)
         .idgen_persist_interval(1)

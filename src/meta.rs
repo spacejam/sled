@@ -60,7 +60,7 @@ where
                     context: context.clone(),
                     subscriptions: Subscriptions::default(),
                     root: AtomicU64::new(root_id),
-                    concurrency_control: RwLock::new(()),
+                    concurrency_control: ConcurrencyControl::default(),
                     merge_operator: RwLock::new(None),
                 })));
             }
@@ -114,7 +114,7 @@ where
             subscriptions: Subscriptions::default(),
             context: context.clone(),
             root: AtomicU64::new(root_id),
-            concurrency_control: RwLock::new(()),
+            concurrency_control: ConcurrencyControl::default(),
             merge_operator: RwLock::new(None),
         })));
     }

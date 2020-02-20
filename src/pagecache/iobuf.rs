@@ -1,6 +1,6 @@
 use std::{
-    cell::UnsafeCell, sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst,
-    sync::Arc,
+    cell::UnsafeCell,
+    sync::atomic::{AtomicBool, AtomicPtr},
 };
 
 use crate::{pagecache::*, *};
@@ -47,7 +47,13 @@ unsafe impl Sync for IoBuf {}
 pub(crate) struct IoBufs {
     pub config: RunningConfig,
 
-    pub iobuf: RwLock<Arc<IoBuf>>,
+    // A pointer to the current IoBuf. This relies on crossbeam-epoch
+    // for garbage collection when it gets swapped out, to ensure that
+    // no witnessing threads experience use-after-free.
+    // mutated from the maybe_seal_and_write_iobuf method.
+    // finally dropped in the Drop impl, without using crossbeam-epoch,
+    // because if this drops, all witnessing threads should be done.
+    pub iobuf: AtomicPtr<IoBuf>,
 
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
@@ -63,11 +69,22 @@ pub(crate) struct IoBufs {
     pub max_reserved_lsn: AtomicLsn,
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
+    pub segment_cleaner: SegmentCleaner,
     deferred_segment_ops: stack::Stack<SegmentOp>,
     #[cfg(feature = "io_uring")]
     pub submission_mutex: Mutex<()>,
     #[cfg(feature = "io_uring")]
     pub io_uring: rio::Rio,
+}
+
+impl Drop for IoBufs {
+    fn drop(&mut self) {
+        let ptr = self.iobuf.swap(std::ptr::null_mut(), SeqCst);
+        assert!(!ptr.is_null());
+        unsafe {
+            Arc::from_raw(ptr);
+        }
+    }
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -83,8 +100,14 @@ impl IoBufs {
         let snapshot_last_lid = snapshot.last_lid;
         let snapshot_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
+        let segment_cleaner = SegmentCleaner::default();
+
         let mut segment_accountant: SegmentAccountant =
-            SegmentAccountant::start(config.clone(), snapshot)?;
+            SegmentAccountant::start(
+                config.clone(),
+                snapshot,
+                segment_cleaner.clone(),
+            )?;
 
         let (next_lsn, next_lid) =
             if snapshot_last_lsn % segment_size as Lsn == 0 {
@@ -168,10 +191,10 @@ impl IoBufs {
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
-        Ok(Self {
+        Ok(IoBufs {
             config,
 
-            iobuf: RwLock::new(Arc::new(iobuf)),
+            iobuf: AtomicPtr::new(Arc::into_raw(Arc::new(iobuf)) as *mut IoBuf),
 
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
@@ -182,6 +205,7 @@ impl IoBufs {
                 snapshot_max_header_stable_lsn,
             )),
             segment_accountant: Mutex::new(segment_accountant),
+            segment_cleaner,
             deferred_segment_ops: stack::Stack::default(),
             #[cfg(feature = "io_uring")]
             submission_mutex: Mutex::new(()),
@@ -633,7 +657,14 @@ impl IoBufs {
     }
 
     pub(in crate::pagecache) fn current_iobuf(&self) -> Arc<IoBuf> {
-        self.iobuf.read().clone()
+        // we bump up the ref count, and forget the arc to retain a +1.
+        // If we didn't forget it, it would then go back down again,
+        // even though we just created a new reference to it, leading
+        // to double-frees.
+        let arc = unsafe { Arc::from_raw(self.iobuf.load(SeqCst)) };
+        #[allow(clippy::mem_forget)]
+        std::mem::forget(arc.clone());
+        arc
     }
 }
 
@@ -866,9 +897,13 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     // the change.
     debug_delay();
     let intervals = iobufs.intervals.lock();
-    let mut mu = iobufs.iobuf.write();
-    *mu = Arc::new(next_iobuf);
-    drop(mu);
+    let old_ptr = iobufs
+        .iobuf
+        .swap(Arc::into_raw(Arc::new(next_iobuf)) as *mut IoBuf, SeqCst);
+
+    let old_arc = unsafe { Arc::from_raw(old_ptr) };
+
+    pin().defer(move || drop(old_arc));
 
     // having held the mutex makes this linearized
     // with the notify below.

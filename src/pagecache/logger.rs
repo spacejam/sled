@@ -5,9 +5,9 @@ use super::{
     arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, iobuf, lsn_to_arr,
     maybe_decompress, pread_exact, pread_exact_or_eof, read_blob, u32_to_arr,
     BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
-    MessageKind, Reservation, SegmentAccountant, Serialize, Snapshot,
-    BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
-    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
+    MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
+    COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
+    SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -98,14 +98,6 @@ impl Log {
         iobuf::make_stable(&self.iobufs, lsn)
     }
 
-    // SegmentAccountant access for coordination with the `PageCache`
-    pub(in crate::pagecache) fn with_sa<B, F>(&self, f: F) -> B
-    where
-        F: FnOnce(&mut SegmentAccountant) -> B,
-    {
-        self.iobufs.with_sa(f)
-    }
-
     /// Reserve a replacement buffer for a previously written
     /// blob write. This ensures the message header has the
     /// proper blob flag set.
@@ -113,12 +105,14 @@ impl Log {
         &self,
         pid: PageId,
         blob_pointer: BlobPointer,
+        guard: &Guard,
     ) -> Result<Reservation<'_>> {
         self.reserve_inner(
             LogKind::Replace,
             pid,
             &blob_pointer,
             Some(blob_pointer),
+            guard,
         )
     }
 
@@ -133,6 +127,7 @@ impl Log {
         log_kind: LogKind,
         pid: PageId,
         item: &T,
+        guard: &Guard,
     ) -> Result<Reservation<'_>> {
         #[cfg(feature = "compression")]
         {
@@ -151,11 +146,12 @@ impl Log {
                     pid,
                     &IVec::from(compressed_buf),
                     None,
+                    guard,
                 );
             }
         }
 
-        self.reserve_inner(log_kind, pid, item, None)
+        self.reserve_inner(log_kind, pid, item, None, guard)
     }
 
     fn reserve_inner<T: Serialize + Debug>(
@@ -164,6 +160,7 @@ impl Log {
         pid: PageId,
         item: &T,
         blob_rewrite: Option<Lsn>,
+        _: &Guard,
     ) -> Result<Reservation<'_>> {
         let _measure = Measure::new(&M.reserve_lat);
 

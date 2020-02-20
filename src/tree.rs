@@ -45,6 +45,7 @@ impl IntoIterator for &'_ Tree {
 /// ```
 /// use sled::{open, IVec};
 ///
+/// # let _ = std::fs::remove_dir_all("db");
 /// let t = open("db").unwrap();
 /// t.insert(b"yo!", b"v1".to_vec());
 /// assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
@@ -78,7 +79,7 @@ pub struct TreeInner {
     pub(crate) context: Context,
     pub(crate) subscriptions: Subscriptions,
     pub(crate) root: AtomicU64,
-    pub(crate) concurrency_control: RwLock<()>,
+    pub(crate) concurrency_control: ConcurrencyControl,
     pub(crate) merge_operator: RwLock<Option<MergeOperator>>,
 }
 
@@ -125,14 +126,16 @@ impl Tree {
         K: AsRef<[u8]>,
         IVec: From<V>,
     {
-        let _ = self.concurrency_control.read();
-        self.insert_inner(key, value)
+        let guard = pin();
+        let _ = self.concurrency_control.read(&guard);
+        self.insert_inner(key, value, &guard)
     }
 
     pub(crate) fn insert_inner<K, V>(
         &self,
         key: K,
         value: V,
+        guard: &Guard,
     ) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
@@ -150,9 +153,8 @@ impl Tree {
         let value = IVec::from(value);
 
         loop {
-            let guard = pin();
             let View { node_view, pid, .. } =
-                self.view_for_key(key.as_ref(), &guard)?;
+                self.view_for_key(key.as_ref(), guard)?;
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
@@ -163,7 +165,7 @@ impl Tree {
                 pid,
                 node_view.0,
                 frag.clone(),
-                &guard,
+                guard,
             )?;
             if let Ok(_new_cas_key) = link {
                 // success
@@ -307,6 +309,7 @@ impl Tree {
     /// ```
     /// use sled::{Batch, open};
     ///
+    /// # let _ = std::fs::remove_dir_all("batch_db");
     /// let db = open("batch_db").unwrap();
     /// db.insert("key_0", "val_0").unwrap();
     ///
@@ -323,16 +326,21 @@ impl Tree {
     /// ```
     pub fn apply_batch(&self, batch: Batch) -> Result<()> {
         let _ = self.concurrency_control.write();
-        self.apply_batch_inner(batch)
+        let guard = pin();
+        self.apply_batch_inner(batch, &guard)
     }
 
-    pub(crate) fn apply_batch_inner(&self, batch: Batch) -> Result<()> {
-        let peg = self.context.pin_log()?;
+    pub(crate) fn apply_batch_inner(
+        &self,
+        batch: Batch,
+        guard: &Guard,
+    ) -> Result<()> {
+        let peg = self.context.pin_log(guard)?;
         for (k, v_opt) in batch.writes {
             if let Some(v) = v_opt {
-                let _old = self.insert_inner(k, v)?;
+                let _old = self.insert_inner(k, v, guard)?;
             } else {
-                let _old = self.remove_inner(k)?;
+                let _old = self.remove_inner(k, guard)?;
             }
         }
 
@@ -356,21 +364,21 @@ impl Tree {
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let _ = self.concurrency_control.read();
-        self.get_inner(key)
+        let guard = pin();
+        let _ = self.concurrency_control.read(&guard);
+        self.get_inner(key, &guard)
     }
 
     pub(crate) fn get_inner<K: AsRef<[u8]>>(
         &self,
         key: K,
+        guard: &Guard,
     ) -> Result<Option<IVec>> {
         let _measure = Measure::new(&M.tree_get);
 
         trace!("getting key {:?}", key.as_ref());
 
-        let guard = pin();
-
-        let View { node_view, .. } = self.view_for_key(key.as_ref(), &guard)?;
+        let View { node_view, .. } = self.view_for_key(key.as_ref(), guard)?;
 
         let pair = node_view.leaf_pair_for_key(key.as_ref());
         let val = pair.map(|kv| kv.1.clone());
@@ -396,13 +404,15 @@ impl Tree {
     /// assert_eq!(t.remove(&[1]), Ok(None));
     /// ```
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let _ = self.concurrency_control.read();
-        self.remove_inner(key)
+        let guard = pin();
+        let _ = self.concurrency_control.read(&guard);
+        self.remove_inner(key, &guard)
     }
 
     pub(crate) fn remove_inner<K: AsRef<[u8]>>(
         &self,
         key: K,
+        guard: &Guard,
     ) -> Result<Option<IVec>> {
         let _measure = Measure::new(&M.tree_del);
 
@@ -413,10 +423,8 @@ impl Tree {
         }
 
         loop {
-            let guard = pin();
-
             let View { pid, node_view, .. } =
-                self.view_for_key(key.as_ref(), &guard)?;
+                self.view_for_key(key.as_ref(), guard)?;
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
@@ -424,7 +432,7 @@ impl Tree {
                 node_view.node_kv_pair(key.as_ref());
             let frag = Link::Del(encoded_key);
             let link =
-                self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
+                self.context.pagecache.link(pid, node_view.0, frag, guard)?;
 
             if link.is_ok() {
                 // success
@@ -504,7 +512,8 @@ impl Tree {
         trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
 
-        let _ = self.concurrency_control.read();
+        let guard = pin();
+        let _ = self.concurrency_control.read(&guard);
 
         if self.context.read_only {
             return Err(Error::Unsupported(
@@ -517,7 +526,6 @@ impl Tree {
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
         loop {
-            let guard = pin();
             let View { pid, node_view, .. } =
                 self.view_for_key(key.as_ref(), &guard)?;
 
@@ -848,7 +856,8 @@ impl Tree {
         K: AsRef<[u8]>,
     {
         let _measure = Measure::new(&M.tree_get);
-        let _ = self.concurrency_control.read();
+        let guard = pin();
+        let _ = self.concurrency_control.read(&guard);
         self.range(..key).next_back().transpose()
     }
 
@@ -903,7 +912,8 @@ impl Tree {
         K: AsRef<[u8]>,
     {
         let _measure = Measure::new(&M.tree_get);
-        let _ = self.concurrency_control.read();
+        let guard = pin();
+        let _ = self.concurrency_control.read(&guard);
         self.range((ops::Bound::Excluded(key), ops::Bound::Unbounded))
             .next()
             .transpose()
@@ -968,7 +978,8 @@ impl Tree {
         K: AsRef<[u8]>,
         V: AsRef<[u8]>,
     {
-        let _ = self.concurrency_control.read();
+        let guard = pin();
+        let _ = self.concurrency_control.read(&guard);
         self.merge_inner(key, value)
     }
 

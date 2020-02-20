@@ -64,7 +64,7 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
         .collect();
 
     match panic::catch_unwind(move || {
-        prop_tree_matches_btreemap(ops, 100, false, use_compression)
+        prop_tree_matches_btreemap(ops, false, use_compression)
     }) {
         Ok(_) => {}
         Err(_e) => panic!("TODO"),
@@ -191,16 +191,12 @@ fn test_merge_operator(
 
 pub fn prop_tree_matches_btreemap(
     ops: Vec<Op>,
-    snapshot_after: u8,
     flusher: bool,
     use_compression: bool,
 ) -> bool {
-    if let Err(e) = prop_tree_matches_btreemap_inner(
-        ops,
-        snapshot_after,
-        flusher,
-        use_compression,
-    ) {
+    if let Err(e) =
+        prop_tree_matches_btreemap_inner(ops, flusher, use_compression)
+    {
         eprintln!("hit error while running quickcheck on tree: {:?}", e);
         false
     } else {
@@ -210,7 +206,6 @@ pub fn prop_tree_matches_btreemap(
 
 fn prop_tree_matches_btreemap_inner(
     ops: Vec<Op>,
-    snapshot_after: u8,
     flusher: bool,
     use_compression: bool,
 ) -> Result<()> {
@@ -223,7 +218,6 @@ fn prop_tree_matches_btreemap_inner(
     let config = Config::new()
         .temporary(true)
         .use_compression(use_compression)
-        .snapshot_after_ops(u64::from(snapshot_after) + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .cache_capacity(256)
         .idgen_persist_interval(1)

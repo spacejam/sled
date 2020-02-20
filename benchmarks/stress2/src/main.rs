@@ -131,9 +131,15 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
             thread_rng().gen::<usize>()
         } % args.flag_entries;
 
-        let i_bytes = i.to_le_bytes();
+        let i_bytes = i.to_be_bytes();
 
-        i_bytes.iter().cycle().take(len).copied().collect()
+        i_bytes
+            .iter()
+            .skip_while(|v| **v == 0)
+            .cycle()
+            .take(len)
+            .copied()
+            .collect()
     };
     let mut rng = thread_rng();
 
@@ -226,7 +232,6 @@ fn main() {
     let config = sled::Config::new()
         .cache_capacity(256 * 1024 * 1024)
         .flush_every_ms(Some(200))
-        .snapshot_after_ops(100_000_000_000)
         .print_profile_on_drop(true);
 
     let tree = Arc::new(config.open().unwrap());

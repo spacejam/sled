@@ -4,6 +4,7 @@ use crate::{pagecache::*, *};
 /// NB the holder should quickly call `complete` or `abort` as
 /// taking too long to decide will cause the underlying IO
 /// buffer to become blocked.
+#[derive(Debug)]
 pub struct Reservation<'a> {
     pub(super) log: &'a Log,
     pub(super) iobuf: Arc<IoBuf>,
