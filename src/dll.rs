@@ -83,6 +83,7 @@ impl DoublyLinkedList {
         if !self.head.is_null() {
             unsafe {
                 (*self.head).next = ptr;
+                (*ptr).prev = self.head;
             }
         }
 
