@@ -254,7 +254,7 @@ impl Default for Inner {
             version: crate_version(),
 
             // useful in testing
-            segment_size: 2 << 22, // 8mb
+            segment_size: 512 * 1024, // 512kb in bytes
             segment_mode: SegmentMode::Gc,
             print_profile_on_drop: false,
             flush_every_ms: Some(500),
