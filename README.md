@@ -57,8 +57,8 @@ tree.flush();
 
 # performance
 
-* 2 million sustained writes per second with 8 threads, 1000 8 byte keys, 10 byte values, intel 9900k, nvme
-* 8.5 million sustained reads per second with 16 threads, 1000 8 byte keys, 10 byte values, intel 9900k, nvme
+* over a billion operations in under a minute at 95% read 5% writes on 16 cores on a small dataset
+* measure your own workloads rather than relying on some marketing for contrived workloads
 
 what's the trade-off? sled uses too much disk space sometimes. this will improve significantly before 1.0.
 
