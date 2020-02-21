@@ -20,18 +20,33 @@ use crate::{
 #[doc(hidden)]
 pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1>();
 
-const FAN_FACTOR: usize = 18;
-const FAN_OUT: usize = 1 << FAN_FACTOR;
-const FAN_MASK: usize = FAN_OUT - 1;
+// Allows for around 1 trillion items to be stored
+// (assuming 50% node fill, 8 items per leaf)
+// and well below 1% of nodes being non-leaf nodes.
+// Uses 2gb of virtual memory (almost free until used).
+#[cfg(target_pointer_width = "64")]
+const DESIRED_BITS: usize = 45;
+
+// Allows for around 2 billion items to be stored
+// (assuming 50% node fill, 8 items per leaf)
+// and well below 1% of nodes being non-leaf nodes.
+// Assumed to be enough for a 32-bit system.
+#[cfg(target_pointer_width = "32")]
+const DESIRED_BITS: usize = 36;
+
+const NODE2_FAN_FACTOR: usize = 18;
+const NODE1_FAN_OUT: usize = 1 << (DESIRED_BITS - NODE2_FAN_FACTOR);
+const NODE2_FAN_OUT: usize = 1 << NODE2_FAN_FACTOR;
+const FAN_MASK: u64 = (NODE2_FAN_OUT - 1) as u64;
 
 pub type PageId = u64;
 
 struct Node1 {
-    children: [Atomic<Node2>; FAN_OUT],
+    children: [Atomic<Node2>; NODE1_FAN_OUT],
 }
 
 struct Node2 {
-    children: [Atomic<Page>; FAN_OUT],
+    children: [Atomic<Page>; NODE2_FAN_OUT],
 }
 
 impl Node1 {
@@ -193,15 +208,15 @@ fn split_fanout(id: PageId) -> (usize, usize) {
     // right shift 32 on 32-bit pointer systems panics
     #[cfg(target_pointer_width = "64")]
     assert!(
-        id <= 1 << (FAN_FACTOR * 2),
+        id <= 1 << DESIRED_BITS,
         "trying to access key of {}, which is \
          higher than 2 ^ {}",
         id,
-        (FAN_FACTOR * 2)
+        DESIRED_BITS,
     );
 
-    let left = id >> FAN_FACTOR;
-    let right = id & u64::try_from(FAN_MASK).unwrap();
+    let left = id >> NODE2_FAN_FACTOR;
+    let right = id & FAN_MASK;
 
     (safe_usize(left), safe_usize(right))
 }

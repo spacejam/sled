@@ -297,12 +297,12 @@ fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
 
     let path_1_suffix = format!("snap.{:016X}.generating", snapshot.last_lsn);
 
-    let mut path_1 = config.snapshot_prefix();
+    let mut path_1 = config.get_path();
     path_1.push(path_1_suffix);
 
     let path_2_suffix = format!("snap.{:016X}", snapshot.last_lsn);
 
-    let mut path_2 = config.snapshot_prefix();
+    let mut path_2 = config.get_path();
     path_2.push(path_2_suffix);
 
     let parent = path_1.parent().unwrap();

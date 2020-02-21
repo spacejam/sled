@@ -1,3 +1,20 @@
+# Unreleased
+
+## Improvements
+
+* Added a config `Mode` which over time will be
+  the main performance-related tunable, with only
+  2 options: Fast or Small.
+* A number of memory optimizations have been implemented.
+* On 64-bit systems, we can now store 1-2 trillion items.
+
+## Breaking Changes
+
+* Changed the default `segment_size` from 8m to 512k.
+  This will result in far smaller database files.
+* deprecated several `Config` options that will be
+  removed over time.
+
 # 0.31
 
 ## Improvements
