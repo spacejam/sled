@@ -11,6 +11,7 @@ use parking_lot::{Condvar, Mutex};
 
 use crate::{debug_delay, warn, AtomicUsize, Lazy, OneShot, Relaxed, SeqCst};
 
+// This is lower for CI reasons.
 #[cfg(windows)]
 const MAX_THREADS: usize = 16;
 
