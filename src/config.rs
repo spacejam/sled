@@ -14,6 +14,23 @@ use crate::*;
 
 const DEFAULT_PATH: &str = "default.sled";
 
+/// The high-level database mode, according to
+/// the trade-offs of the RUM conjecture.
+#[derive(Debug, Clone, Copy)]
+pub enum Mode {
+    /// In this mode, the database will make
+    /// decisions that favor using less space
+    /// instead of supporting the highest possible
+    /// write throughput. This mode will also
+    /// rewrite data more frequently as it
+    /// strives to reduce fragmentation.
+    LowSpace,
+    /// In this mode, the database will try
+    /// to maximize write throughput while
+    /// potentially using more disk space.
+    HighThroughput,
+}
+
 /// A persisted configuration about high-level
 /// storage file information
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
@@ -195,6 +212,8 @@ pub struct Inner {
     #[doc(hidden)]
     pub segment_cleanup_skew: usize,
     #[doc(hidden)]
+    pub mode: Mode,
+    #[doc(hidden)]
     pub segment_mode: SegmentMode,
     #[doc(hidden)]
     pub snapshot_after_ops: u64,
@@ -222,27 +241,33 @@ pub struct Inner {
 impl Default for Inner {
     fn default() -> Self {
         Self {
-            segment_size: 2 << 22, // 8mb
+            // generally useful
             path: PathBuf::from(DEFAULT_PATH),
+            tmp_path: Config::gen_temp_path(),
             read_only: false,
             create_new: false,
             cache_capacity: 1024 * 1024 * 1024, // 1gb
+            mode: Mode::LowSpace,
             use_compression: false,
             compression_factor: 5,
+            temporary: false,
+            version: crate_version(),
+
+            // useful in testing
+            segment_size: 2 << 22, // 8mb
+            segment_mode: SegmentMode::Gc,
+            print_profile_on_drop: false,
             flush_every_ms: Some(500),
+            idgen_persist_interval: 1_000_000,
+            global_error: Arc::new(Atomic::default()),
+            #[cfg(feature = "event_log")]
+            event_log: Arc::new(crate::event_log::EventLog::default()),
+
+            // deprecated
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
             segment_cleanup_threshold: 40,
             segment_cleanup_skew: 10,
-            temporary: false,
-            segment_mode: SegmentMode::Gc,
-            print_profile_on_drop: false,
-            idgen_persist_interval: 1_000_000,
-            version: crate_version(),
-            tmp_path: Config::gen_temp_path(),
-            global_error: Arc::new(Atomic::default()),
-            #[cfg(feature = "event_log")]
-            event_log: Arc::new(crate::event_log::EventLog::default()),
         }
     }
 }
@@ -385,7 +410,76 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
+    pub fn segment_cleanup_skew(self, _: usize) -> Self {
+        self
+    }
+
+    #[doc(hidden)]
+    #[deprecated(
+        since = "0.31.0",
+        note = "this does nothing for now. maybe it will come back in the future."
+    )]
+    pub fn segment_cleanup_threshold(self, _: u8) -> Self {
+        self
+    }
+
+    #[doc(hidden)]
+    #[deprecated(
+        since = "0.31.0",
+        note = "this does nothing for now. maybe it will come back in the future."
+    )]
     pub fn snapshot_after_ops(self, _: u64) -> Self {
+        self
+    }
+
+    #[doc(hidden)]
+    #[deprecated(
+        since = "0.31.0",
+        note = "this does nothing for now. maybe it will come back in the future."
+    )]
+    pub fn snapshot_path<P: AsRef<Path>>(self, _: P) -> Self {
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn segment_mode(mut self, segment_mode: SegmentMode) -> Self {
+        if Arc::strong_count(&self.0) != 1 {
+            error!(
+                "config has already been used to start \
+                 the system and probably should not be \
+                 mutated",
+            );
+        }
+        let m = Arc::make_mut(&mut self.0);
+        m.segment_mode = segment_mode;
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn flush_every_ms(mut self, every_ms: Option<u64>) -> Self {
+        if Arc::strong_count(&self.0) != 1 {
+            error!(
+                "config has already been used to start \
+                 the system and probably should not be \
+                 mutated",
+            );
+        }
+        let m = Arc::make_mut(&mut self.0);
+        m.flush_every_ms = every_ms;
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn idgen_persist_interval(mut self, interval: u64) -> Self {
+        if Arc::strong_count(&self.0) != 1 {
+            error!(
+                "config has already been used to start \
+                 the system and probably should not be \
+                 mutated",
+            );
+        }
+        let m = Arc::make_mut(&mut self.0);
+        m.idgen_persist_interval = interval;
         self
     }
 
@@ -454,19 +548,14 @@ impl Config {
     }
 
     builder!(
-        (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
-        (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
-        (create_new, bool, "attempts to exclusively open the database, failing if it already exists"),
         (cache_capacity, u64, "maximum size in bytes for the system page cache"),
-        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
+        (mode, Mode, "specify whether the system should run in \"small\" or \"fast\" mode"),
         (use_compression, bool, "whether to use zstd compression"),
         (compression_factor, i32, "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."),
-        (segment_cleanup_threshold, u8, "the proportion of remaining valid pages in the segment before GC defragments it"),
-        (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
-        (segment_mode, SegmentMode, "the file segment selection mode"),
-        (snapshot_path, Option<PathBuf>, "snapshot file location"),
-        (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
-        (read_only, bool, "whether to run in read-only mode")
+        (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
+        (create_new, bool, "attempts to exclusively open the database, failing if it already exists"),
+        (read_only, bool, "whether to run in read-only mode"),
+        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped")
     );
 
     // panics if config options are outside of advised range
@@ -803,27 +892,18 @@ impl Drop for Inner {
 }
 
 impl RunningConfig {
-    // returns the current snapshot file prefix
-    #[doc(hidden)]
-    pub fn snapshot_prefix(&self) -> PathBuf {
-        let snapshot_path = self.snapshot_path.clone();
-        let path = self.get_path();
-
-        snapshot_path.unwrap_or(path)
-    }
-
     // returns the snapshot file paths for this system
     #[doc(hidden)]
     pub fn get_snapshot_files(&self) -> io::Result<Vec<PathBuf>> {
-        let mut prefix = self.snapshot_prefix();
+        let mut path = self.get_path();
 
-        prefix.push("snap.");
+        path.push("snap.");
 
-        let abs_prefix: PathBuf = if Path::new(&prefix).is_absolute() {
-            prefix
+        let absolute_path: PathBuf = if Path::new(&path).is_absolute() {
+            path
         } else {
             let mut abs_path = std::env::current_dir()?;
-            abs_path.push(prefix);
+            abs_path.push(path);
             abs_path
         };
 
@@ -832,7 +912,7 @@ impl RunningConfig {
                 let path_buf = de.path();
                 let path = path_buf.as_path();
                 let path_str = &*path.to_string_lossy();
-                if path_str.starts_with(&*abs_prefix.to_string_lossy())
+                if path_str.starts_with(&*absolute_path.to_string_lossy())
                     && !path_str.ends_with(".in___motion")
                 {
                     Some(path.to_path_buf())
@@ -844,7 +924,7 @@ impl RunningConfig {
             }
         };
 
-        let snap_dir = Path::new(&abs_prefix).parent().unwrap();
+        let snap_dir = Path::new(&absolute_path).parent().unwrap();
 
         if !snap_dir.exists() {
             fs::create_dir_all(snap_dir)?;
