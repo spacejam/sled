@@ -83,15 +83,6 @@ pub unsafe extern "C" fn sled_config_flush_every_ms(
     *config = (*config).clone().flush_every_ms(val);
 }
 
-/// Set the configured snapshot operation threshold.
-#[no_mangle]
-pub unsafe extern "C" fn sled_config_snapshot_after_ops(
-    config: *mut Config,
-    snapshot_after: size_t,
-) {
-    *config = (*config).clone().snapshot_after_ops(snapshot_after as u64);
-}
-
 /// Open a sled lock-free log-structured tree. Consumes the passed-in config.
 #[no_mangle]
 pub unsafe extern "C" fn sled_open_db(config: *mut Config) -> *mut Db {
