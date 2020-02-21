@@ -8,16 +8,16 @@
         <td> value </td>
       </tr>
       <tr>
+        <td><a href="https://github.com/sponsors/spacejam">buy a coffee for us to convert into databases</a></td>
+        <td><a href="https://github.com/sponsors/spacejam"><img src="https://img.shields.io/opencollective/backers/sled"></a></td>
+      </tr>
+      <tr>
         <td><a href="https://docs.rs/sled">documentation</a></td>
         <td><a href="https://docs.rs/sled"><img src="https://docs.rs/sled/badge.svg"></a></td>
       </tr>
       <tr>
         <td><a href="https://discord.gg/Z6VsXds">chat about databases with us</a></td>
         <td><a href="https://discord.gg/Z6VsXds"><img src="https://img.shields.io/discord/509773073294295082.svg?logo=discord"></a></td>
-      </tr>
-      <tr>
-        <td><a href="https://github.com/sponsors/spacejam">help us build what you want to use</a></td>
-        <td><a href="https://github.com/sponsors/spacejam"><img src="https://img.shields.io/opencollective/backers/sled"></a></td>
       </tr>
      </table>
   </td>
