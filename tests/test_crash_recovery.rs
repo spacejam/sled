@@ -1,4 +1,3 @@
-
 mod common;
 
 use std::env::{self, VarError};
@@ -212,6 +211,10 @@ fn run_batches_inner(config: Config) {
     common::setup_logger();
 
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
+
+    if crash_during_initialization {
+        spawn_killah();
+    }
 
     let tree = config.open().unwrap();
 
