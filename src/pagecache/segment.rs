@@ -365,21 +365,11 @@ impl Segment {
 
     fn mark_peg(&mut self, peg_lsn: Lsn) {
         match self {
-            Segment::Active(active) => {
-                assert!(active.lsn <= peg_lsn);
-                if peg_lsn > active.latest_replacement_lsn {
-                    active.latest_replacement_lsn = peg_lsn;
-                }
-            }
-            Segment::Inactive(Inactive {
+            Segment::Active(Active { lsn, latest_replacement_lsn, .. })
+            | Segment::Inactive(Inactive {
                 lsn, latest_replacement_lsn, ..
-            }) => {
-                assert!(*lsn <= peg_lsn);
-                if peg_lsn > *latest_replacement_lsn {
-                    *latest_replacement_lsn = peg_lsn;
-                }
-            }
-            Segment::Draining(Draining {
+            })
+            | Segment::Draining(Draining {
                 lsn, latest_replacement_lsn, ..
             }) => {
                 assert!(*lsn <= peg_lsn);
