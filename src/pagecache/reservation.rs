@@ -82,22 +82,24 @@ impl<'a> Reservation<'a> {
     /// Will panic if the reservation is not the correct
     /// size to hold a serialized Lsn.
     #[doc(hidden)]
-    pub fn mark_writebatch(&mut self, lsn: Lsn) {
+    pub fn mark_writebatch(&mut self, peg_lsn: Lsn, guard: &Guard) {
         trace!(
             "writing batch required stable lsn {} into \
-             BatchManifest at lid {} lsn {}",
-            lsn,
+             BatchManifest at lid {} peg_lsn {}",
+            peg_lsn,
             self.pointer.lid(),
             self.lsn
         );
 
         self.buf[4] = MessageKind::BatchManifest.into();
 
-        let buf = lsn_to_arr(lsn);
+        let buf = lsn_to_arr(peg_lsn);
 
         let dst = &mut self.buf[self.header_len..];
 
         dst.copy_from_slice(&buf);
+
+        self.log.iobufs.sa_mark_peg(self.pointer, peg_lsn, guard);
     }
 
     fn flush(&mut self, valid: bool) -> Result<(Lsn, DiskPtr)> {

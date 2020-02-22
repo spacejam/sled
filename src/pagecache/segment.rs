@@ -81,6 +81,10 @@ pub enum SegmentMode {
 /// A operation that can be applied asynchronously.
 #[derive(Debug)]
 pub(crate) enum SegmentOp {
+    Peg {
+        peg_location: DiskPtr,
+        peg_lsn: Lsn,
+    },
     Link {
         pid: PageId,
         cache_info: CacheInfo,
@@ -356,6 +360,26 @@ impl Segment {
             replacement_lsn
         } else {
             panic!("called draining_to_free on {:?}", self);
+        }
+    }
+
+    fn mark_peg(&mut self, peg_lsn: Lsn) {
+        match self {
+            Segment::Active(Active { lsn, latest_replacement_lsn, .. })
+            | Segment::Inactive(Inactive {
+                lsn, latest_replacement_lsn, ..
+            })
+            | Segment::Draining(Draining {
+                lsn, latest_replacement_lsn, ..
+            }) => {
+                assert!(*lsn <= peg_lsn);
+                if peg_lsn > *latest_replacement_lsn {
+                    *latest_replacement_lsn = peg_lsn;
+                }
+            }
+            Segment::Free(_) => {
+                panic!("called mark_peg {} on Segment::Free", peg_lsn)
+            }
         }
     }
 
@@ -753,12 +777,22 @@ impl SegmentAccountant {
     pub(super) fn apply_op(&mut self, op: &SegmentOp) -> Result<()> {
         use SegmentOp::*;
         match op {
+            Peg { peg_location, peg_lsn } => {
+                self.mark_peg(*peg_location, *peg_lsn)
+            }
             Link { pid, cache_info } => self.mark_link(*pid, *cache_info),
             Replace { pid, lsn, old_cache_infos, new_cache_info } => {
                 self.mark_replace(*pid, *lsn, old_cache_infos, *new_cache_info)?
             }
         }
         Ok(())
+    }
+
+    fn mark_peg(&mut self, peg_location: DiskPtr, peg_lsn: Lsn) {
+        let idx = self.segment_id(peg_location.lid());
+
+        let segment = &mut self.segments[idx];
+        segment.mark_peg(peg_lsn);
     }
 
     /// Called by the `PageCache` when a page has been rewritten completely.
