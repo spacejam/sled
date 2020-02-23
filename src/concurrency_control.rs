@@ -7,7 +7,7 @@ use super::*;
 #[derive(Default)]
 pub(crate) struct ConcurrencyControl {
     necessary: AtomicBool,
-    active_non_lockers: Arc<AtomicUsize>,
+    active_non_lockers: AtomicUsize,
     upgrade_complete: AtomicBool,
     rw: RwLock<()>,
 }
@@ -15,7 +15,7 @@ pub(crate) struct ConcurrencyControl {
 pub(crate) enum Protector<'a> {
     Write(RwLockWriteGuard<'a, ()>),
     Read(RwLockReadGuard<'a, ()>),
-    None(Arc<AtomicUsize>),
+    None(&'a AtomicUsize),
 }
 
 impl<'a> Drop for Protector<'a> {
@@ -44,7 +44,7 @@ impl ConcurrencyControl {
             Protector::Read(self.rw.read())
         } else {
             self.active_non_lockers.fetch_add(1, Release);
-            Protector::None(self.active_non_lockers.clone())
+            Protector::None(&self.active_non_lockers)
         }
     }
 
