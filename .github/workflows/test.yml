@@ -1,0 +1,96 @@
+name: Rust
+
+on:
+  pull_request:
+    branches:
+    - master
+
+jobs:
+  clippy_check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - id: component
+        uses: actions-rs/components-nightly@v1
+        with:
+          component: clippy
+      - uses: actions-rs/toolchain@v1
+        with:
+            toolchain: ${{ steps.component.outputs.toolchain }}
+            override: true
+      - run: rustup component add clippy
+      - uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features
+  default:
+    name: Cargo Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+    - uses: actions/checkout@v1
+    - name: Cache target
+      uses: actions/cache@v1
+      env:
+        cache-name: cache-target
+      with:
+        path: target
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ env.cache-name }}-
+    - name: cargo test
+      run: cargo test --release --features=testing -- --nocapture
+  examples:
+    name: Example Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Cache target
+      uses: actions/cache@v1
+      env:
+        cache-name: cache-target
+      with:
+        path: target
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ env.cache-name }}-
+    - run: cargo run --example playground
+  cross-compile:
+    name: Cross Compile
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Cache target
+      uses: actions/cache@v1
+      env:
+        cache-name: cache-target
+      with:
+        path: target
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ env.cache-name }}-
+    - run: |
+      set -eo pipefail
+      echo "cross build"
+      echo "https://github.com/rust-lang/cargo/issues/4753"
+      scripts/cross_compile.sh
+  burn-in:
+    name: Cross Compile
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - run: |
+      set -eo pipefail
+      pushd benchmarks/stress2
+      cargo run --release -- --duration=60
+      rm -rf default.sled
+  sanitizers:
+    name: Sanitizers
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - run: |
+      set -eo pipefail
+      scripts/sanitizers.sh
