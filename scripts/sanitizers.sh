@@ -3,6 +3,9 @@ set -eo pipefail
 
 pushd benchmarks/stress2
 
+rustup toolchain install nightly
+rustup update
+
 echo "asan"
 cargo clean
 export RUSTFLAGS="-Z sanitizer=address"

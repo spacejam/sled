@@ -8,6 +8,8 @@ targets="wasm32-unknown-unknown aarch64-fuchsia aarch64-linux-android \
          x86_64-linux-android x86_64-fuchsia \
          aarch64-apple-ios"
 
+rustup update
+
 for target in $targets; do
   echo "setting up $target..."
   rustup target add $target
