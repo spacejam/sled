@@ -37,9 +37,9 @@ jobs:
         cache-name: cache-target
       with:
         path: target
-        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+        key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
-          ${{ runner.os }}-${{ env.cache-name }}-
+          ${{ runner.os }}-
     - name: cargo test
       run: cargo test --release --features=testing -- --nocapture
   examples:
@@ -53,9 +53,9 @@ jobs:
         cache-name: cache-target
       with:
         path: target
-        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+        key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
-          ${{ runner.os }}-${{ env.cache-name }}-
+          ${{ runner.os }}-
     - run: cargo run --example playground
   cross-compile:
     name: Cross Compile
@@ -79,9 +79,9 @@ jobs:
         cache-name: cache-target
       with:
         path: target
-        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+        key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
-          ${{ runner.os }}-${{ env.cache-name }}-
+          ${{ runner.os }}-
     - name: burn in
       run: |
         set -eo pipefail
@@ -93,6 +93,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
+    - name: Cache rustup
+      uses: actions/cache@v1
+      env:
+        cache-name: cache-target
+      with:
+        path: ~/.rustup
+        key: ${{ runner.os }}-${{ env.cache-name }}
+        restore-keys: |
+          ${{ runner.os }}-
     - name: sanitizers
       run: |
         set -eo pipefail
