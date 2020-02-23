@@ -62,6 +62,17 @@ jobs:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v1
+    - name: cross compile
+      run: |
+        set -eo pipefail
+        echo "cross build"
+        echo "https://github.com/rust-lang/cargo/issues/4753"
+        scripts/cross_compile.sh
+  burn-in:
+    name: Burn In
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
     - name: Cache target
       uses: actions/cache@v1
       env:
@@ -71,26 +82,18 @@ jobs:
         key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-${{ env.cache-name }}-
-    - run: |
-      set -eo pipefail &&
-      echo "cross build" &&
-      echo "https://github.com/rust-lang/cargo/issues/4753" &&
-      scripts/cross_compile.sh
-  burn-in:
-    name: Cross Compile
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v1
-    - run: |
-      set -eo pipefail &&
-      pushd benchmarks/stress2 &&
-      cargo run --release -- --duration=60 &&
-      rm -rf default.sled
+    - name: burn in
+      run: |
+        set -eo pipefail
+        pushd benchmarks/stress2
+        cargo run --release -- --duration=60
+        rm -rf default.sled
   sanitizers:
     name: Sanitizers
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
-    - run: |
-      set -eo pipefail &&
-      scripts/sanitizers.sh
+    - name: sanitizers
+      run: |
+        set -eo pipefail
+        scripts/sanitizers.sh
