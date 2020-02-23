@@ -8,9 +8,31 @@ variables:
 
 strategy:
   matrix:
-    mac-stable:
-      imageName: 'macos-10.13'
+    windows-stable:
+      imageName: 'windows-2019'
       rustup_toolchain: stable
+    mac-stable:
+      imageName: 'macos-10.14'
+      rustup_toolchain: stable
+    burn-in:
+      imageName: 'ubuntu-18.04'
+      rustup_toolchain: stable
+      testKind: 'burn-in'
+    linux-stable:
+      imageName: 'ubuntu-18.04'
+      rustup_toolchain: stable
+    examples:
+      imageName: 'ubuntu-18.04'
+      rustup_toolchain: stable
+      testKind: 'examples'
+    sanitizers:
+      imageName: 'ubuntu-18.04'
+      rustup_toolchain: nightly
+      testKind: 'sanitizers'
+    cross-compile:
+      imageName: 'macos-10.14'
+      rustup_toolchain: nightly
+      testKind: 'cross-compile'
 
 pool:
   vmImage: $(imageName)
@@ -21,9 +43,47 @@ steps:
       echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
     displayName: Install rust
     condition: ne( variables['Agent.OS'], 'Windows_NT' )
-  - script: cargo build --all --release
+  - script: |
+      curl -sSf -o rustup-init.exe https://win.rustup.rs
+      rustup-init.exe -y --default-toolchain none
+      echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
+    displayName: Windows install rust
+    condition: eq( variables['Agent.OS'], 'Windows_NT' )
+  - task: CacheBeta@1
+    inputs:
+      path: target
+      key: Cargo.toml | $(testKind) | $(Agent.OS)
+    displayName: 'Cache Build'
+    condition: and(ne( variables['testKind'], 'sanitizers' ), ne( variables['testKind'], 'burn-in' ))
+  - script: |
+      find target -exec chmod +x {} \; || true
+    displayName: chmod cache workaround
+    condition: ne( variables['Agent.OS'], 'Windows_NT' )
+  - script: cargo build --release --tests --features=testing
     displayName: Cargo build
     condition: eq( variables['testKind'], 'default' )
-  - script: cargo test --all --release
+  - script: cargo test --release --tests --features=testing -- --nocapture
     displayName: Cargo test
     condition: eq( variables['testKind'], 'default' )
+  - script: |
+      cargo run --example playground
+    displayName: examples
+    condition: eq( variables['testKind'], 'examples' )
+  - script: |
+      set -eo pipefail
+      echo "cross build"
+      echo "https://github.com/rust-lang/cargo/issues/4753"
+      scripts/cross_compile.sh
+    displayName: cross-build
+    condition: eq( variables['testKind'], 'cross-compile' )
+  - script: |
+      set -eo pipefail
+      pushd benchmarks/stress2
+      cargo run --release -- --duration=60
+      rm -rf default.sled
+    condition: eq( variables['testKind'], 'burn-in' )
+  - script: |
+      set -eo pipefail
+      scripts/sanitizers.sh
+    displayName: sanitizers
+    condition: eq( variables['testKind'], 'sanitizers' )

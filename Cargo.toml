@@ -1,19 +1,68 @@
-[workspace]
-members = [
-  "crates/pagecache",
-  "crates/sled",
-  "tests",
-]
-exclude = [
-  "benchmarks/stress2",
-  "bindings/sled-native",
-  "examples/crdt_merge_store",
-  "examples/pessimistic_transactions",
-  "examples/playground",
-]
+[package]
+name = "sled"
+version = "0.31.0"
+authors = ["Tyler Neely <t@jujit.su>"]
+description = "a modern embedded database"
+license = "MIT/Apache-2.0"
+homepage = "https://github.com/spacejam/sled"
+repository = "https://github.com/spacejam/sled"
+keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
+categories = ["database-implementations", "concurrency", "data-structures", "algorithms", "caching"]
+documentation = "https://docs.rs/sled/"
+readme = "README.md"
+edition = "2018"
+exclude = ["benchmarks", "examples", "bindings", "scripts", "experiments"]
+
+[badges]
+maintenance = { status = "actively-developed" }
 
 [profile.release]
-debug = 2
+debug = true
+opt-level = 3
 
-[profile.dev]
-opt-level = 0
+[features]
+default = ["no_metrics"]
+testing = ["event_log", "lock_free_delays", "compression", "failpoints"]
+compression = ["zstd"]
+lock_free_delays = ["rand", "rand_chacha", "rand_distr"]
+failpoints = ["fail", "rand", "fail/failpoints"]
+event_log = []
+no_metrics = []
+no_logs = ["log/max_level_off"]
+no_inline = []
+measure_allocs = []
+pretty_backtrace = ["color-backtrace"]
+io_uring = ["rio"]
+
+[dependencies]
+crossbeam-epoch = "0.8.0"
+crossbeam-utils = "0.7.0"
+fxhash = "0.2.1"
+libc = "0.2.65"
+zstd = { version = "0.5.0", optional = true }
+fail = { version = "0.3.0", optional = true }
+rand = { version = "0.7.2", optional = true }
+rand_chacha = { version = "0.2.1", optional = true }
+rand_distr = { version = "0.2.2", optional = true }
+crc32fast = "1.2.0"
+log = "0.4.8"
+parking_lot = "0.10.0"
+color-backtrace = {version = "0.3.0", optional = true }
+rio = { version = "0.9.2", optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os="windows"))'.dependencies]
+fs2 = "0.4.3"
+
+[dev-dependencies]
+rand = "0.7.2"
+rand_chacha = "0.2.1"
+rand_distr = "0.2.2"
+quickcheck = "0.9.0"
+log = "0.4.8"
+env_logger = "0.7.1"
+fail = "0.3.0"
+
+[[test]]
+name = "test_crash_recovery"
+path = "tests/test_crash_recovery.rs"
+harness = false
