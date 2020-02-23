@@ -216,11 +216,11 @@ impl IoBufs {
 
     pub(in crate::pagecache) fn sa_mark_peg(
         &self,
-        peg_location: DiskPtr,
-        peg_lsn: Lsn,
+        peg_start_lsn: Lsn,
+        peg_end_lsn: Lsn,
         guard: &Guard,
     ) {
-        let op = SegmentOp::Peg { peg_location, peg_lsn };
+        let op = SegmentOp::Peg { peg_start_lsn, peg_end_lsn };
         self.deferred_segment_ops.push(op, guard);
     }
 

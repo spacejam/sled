@@ -47,8 +47,10 @@ fn log_writebatch() -> crate::Result<()> {
     log.reserve(REPLACE, PID, &IVec::from(b"6"), &guard)?.complete()?;
     log.reserve(REPLACE, PID, &IVec::from(b"7"), &guard)?.complete()?;
     log.reserve(REPLACE, PID, &IVec::from(b"8"), &guard)?.complete()?;
-    log.reserve(REPLACE, PID, &IVec::from(b"9"), &guard)?.complete()?;
-    batch_res.mark_writebatch(Lsn::max_value() / 2, &guard);
+    let last_res = log.reserve(REPLACE, PID, &IVec::from(b"9"), &guard)?;
+    let last_res_lsn = last_res.lsn();
+    last_res.complete()?;
+    batch_res.mark_writebatch(last_res_lsn + 50, &guard);
     batch_res.complete()?;
     log.reserve(REPLACE, PID, &IVec::from(b"10"), &guard)?.complete()?;
 
