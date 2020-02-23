@@ -99,7 +99,7 @@ impl<'a> Reservation<'a> {
 
         dst.copy_from_slice(&buf);
 
-        self.log.iobufs.sa_mark_peg(self.pointer, peg_lsn, guard);
+        self.log.iobufs.sa_mark_peg(self.lsn, peg_lsn, guard);
     }
 
     fn flush(&mut self, valid: bool) -> Result<(Lsn, DiskPtr)> {
