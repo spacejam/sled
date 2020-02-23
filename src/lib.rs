@@ -249,7 +249,7 @@ pub use {
 
 pub use self::{
     batch::Batch,
-    config::Config,
+    config::{Config, Mode},
     db::{open, Db},
     iter::Iter,
     ivec::IVec,

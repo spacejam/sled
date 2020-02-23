@@ -1,6 +1,6 @@
 [package]
 name = "sled-native"
-version = "0.1.0"
+version = "0.31.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a C-compatible API for sled"
 license = "Apache-2.0"
@@ -10,9 +10,9 @@ keywords = ["database", "embedded", "concurrent", "persistent", "c"]
 documentation = "https://docs.rs/sled-native/"
 
 [lib]
-name = "sled_native"
-crate-type = ["dylib"]
+name = "sled"
+crate-type = ["lib", "staticlib"]
 
 [dependencies]
 libc = "0.2.62"
-sled = {version = "0.28.0", path = "../.."}
+sled = {version = "0.31.0", path = "../.."}

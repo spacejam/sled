@@ -214,6 +214,16 @@ impl IoBufs {
         })
     }
 
+    pub(in crate::pagecache) fn sa_mark_peg(
+        &self,
+        peg_start_lsn: Lsn,
+        peg_end_lsn: Lsn,
+        guard: &Guard,
+    ) {
+        let op = SegmentOp::Peg { peg_start_lsn, peg_end_lsn };
+        self.deferred_segment_ops.push(op, guard);
+    }
+
     pub(in crate::pagecache) fn sa_mark_link(
         &self,
         pid: PageId,

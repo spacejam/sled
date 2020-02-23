@@ -76,9 +76,14 @@ impl DoublyLinkedList {
 
         let ptr = Box::into_raw(Box::new(node));
 
+        self.push_head_ptr(ptr)
+    }
+
+    fn push_head_ptr(&mut self, ptr: *mut Node) -> *mut Node {
         if !self.head.is_null() {
             unsafe {
                 (*self.head).next = ptr;
+                (*ptr).prev = self.head;
             }
         }
 
@@ -118,9 +123,17 @@ impl DoublyLinkedList {
         }
 
         unsafe {
-            let pid = self.pop_ptr(ptr);
+            if self.tail == ptr {
+                self.tail = (*ptr).next;
+            }
 
-            self.push_head(pid)
+            if self.head == ptr {
+                self.head = (*ptr).prev;
+            }
+
+            (*ptr).unwire();
+
+            self.push_head_ptr(ptr)
         }
     }
 
@@ -167,24 +180,6 @@ impl DoublyLinkedList {
 
             Some(tail.inner)
         }
-    }
-
-    pub(crate) unsafe fn pop_ptr(&mut self, ptr: *mut Node) -> Item {
-        self.len -= 1;
-
-        let mut node = Box::from_raw(ptr);
-
-        if self.tail == ptr {
-            self.tail = node.next;
-        }
-
-        if self.head == ptr {
-            self.head = node.prev;
-        }
-
-        node.unwire();
-
-        node.inner
     }
 
     #[cfg(test)]

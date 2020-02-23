@@ -390,6 +390,7 @@ impl Update {
 ///
 /// If this is dropped without calling `seal_batch`, the complete
 /// recovery effect will not occur.
+#[derive(Debug)]
 pub struct RecoveryGuard<'a> {
     batch_res: Reservation<'a>,
 }
@@ -397,10 +398,10 @@ pub struct RecoveryGuard<'a> {
 impl<'a> RecoveryGuard<'a> {
     /// Writes the last LSN for a batch into an earlier
     /// reservation, releasing it.
-    pub fn seal_batch(mut self) -> Result<()> {
+    pub fn seal_batch(mut self, guard: &Guard) -> Result<()> {
         let max_reserved =
             self.batch_res.log.iobufs.max_reserved_lsn.load(Acquire);
-        self.batch_res.mark_writebatch(max_reserved);
+        self.batch_res.mark_writebatch(max_reserved, guard);
         self.batch_res.complete().map(|_| ())
     }
 }
