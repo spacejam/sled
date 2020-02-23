@@ -72,9 +72,9 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-${{ env.cache-name }}-
     - run: |
-      set -eo pipefail
-      echo "cross build"
-      echo "https://github.com/rust-lang/cargo/issues/4753"
+      set -eo pipefail &&
+      echo "cross build" &&
+      echo "https://github.com/rust-lang/cargo/issues/4753" &&
       scripts/cross_compile.sh
   burn-in:
     name: Cross Compile
@@ -82,9 +82,9 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - run: |
-      set -eo pipefail
-      pushd benchmarks/stress2
-      cargo run --release -- --duration=60
+      set -eo pipefail &&
+      pushd benchmarks/stress2 &&
+      cargo run --release -- --duration=60 &&
       rm -rf default.sled
   sanitizers:
     name: Sanitizers
@@ -92,5 +92,5 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - run: |
-      set -eo pipefail
+      set -eo pipefail &&
       scripts/sanitizers.sh
