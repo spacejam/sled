@@ -7,6 +7,7 @@ use super::*;
 #[derive(Default)]
 pub(crate) struct ConcurrencyControl {
     necessary: AtomicBool,
+    active_non_lockers: AtomicUsize,
     upgrade_complete: AtomicBool,
     rw: RwLock<()>,
 }
@@ -14,23 +15,26 @@ pub(crate) struct ConcurrencyControl {
 pub(crate) enum Protector<'a> {
     Write(RwLockWriteGuard<'a, ()>),
     Read(RwLockReadGuard<'a, ()>),
-    None,
+    None(&'a AtomicUsize),
+}
+
+impl<'a> Drop for Protector<'a> {
+    fn drop(&mut self) {
+        match self {
+            Protector::None(active_non_lockers) => {
+                active_non_lockers.fetch_sub(1, Release);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl ConcurrencyControl {
     fn enable(&self) {
         if !self.necessary.load(Acquire) && !self.necessary.swap(true, SeqCst) {
-            // upgrade the system to using transactional
-            // concurrency control, which is a little
-            // more expensive for every operation.
-            let (tx, rx) = std::sync::mpsc::channel();
-
-            let guard = pin();
-            guard.defer(move || tx.send(()).unwrap());
-            guard.flush();
-            drop(guard);
-
-            rx.recv().unwrap();
+            while self.active_non_lockers.load(Acquire) != 0 {
+                std::sync::atomic::spin_loop_hint()
+            }
             self.upgrade_complete.store(true, Release);
         }
     }
@@ -39,7 +43,8 @@ impl ConcurrencyControl {
         if self.necessary.load(Acquire) {
             Protector::Read(self.rw.read())
         } else {
-            Protector::None
+            self.active_non_lockers.fetch_add(1, Release);
+            Protector::None(&self.active_non_lockers)
         }
     }
 
