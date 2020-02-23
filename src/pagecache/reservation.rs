@@ -20,7 +20,9 @@ impl<'a> Drop for Reservation<'a> {
     fn drop(&mut self) {
         // We auto-abort if the user never uses a reservation.
         if !self.flushed {
-            let _written = self.flush(false).unwrap();
+            if let Err(e) = self.flush(false) {
+                self.log.config.set_global_error(e);
+            }
         }
     }
 }
