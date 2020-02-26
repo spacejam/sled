@@ -55,7 +55,7 @@ tree.compare_and_swap(k, Some(v1), Some(v2));
 tree.flush();
 ```
 
-If you would like to work with structured data without paying deserialization costs, check out the [zerocopy](examples/zerocopy.rs) example!
+If you would like to work with structured data without paying expensive deserialization costs, check out the [zerocopy](examples/zerocopy.rs) example!
 
 # performance
 
