@@ -2,7 +2,14 @@
 //! keys and values without paying expensive (de)serialization
 //! costs.
 //!
-//! Running this example several times via `cargo run --example zerocopy`
+//! The `upsert` function shows how to use structured keys and values.
+//!
+//! The `variable_lengths` function shows how to put a variable length
+//! component in either the beginning or the end of your value.
+//!
+//! The `hash_join` function shows how to do some SQL-like joins.
+//!
+//! Running this example several times via `cargo run --example structured`
 //! will initialize the count field to 0, and on subsequent runs it will
 //! increment it.
 use {
