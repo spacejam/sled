@@ -7,6 +7,9 @@
   2 options: Fast or Small.
 * A number of memory optimizations have been implemented.
 * On 64-bit systems, we can now store 1-2 trillion items.
+* Added DerefMut and AsMut<[u8]> for `IVec` where it
+  works similarly to a `Cow`, making a private copy
+  if the backing `Arc`'s strong count is not 1.
 
 ## Breaking Changes
 
