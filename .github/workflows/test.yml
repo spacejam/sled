@@ -59,7 +59,7 @@ jobs:
     - name: example tests
       run: |
         cargo run --example playground
-        cargo run --example zerocopy
+        cargo run --example structured
   cross-compile:
     name: Cross Compile
     runs-on: macos-latest
