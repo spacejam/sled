@@ -58,8 +58,8 @@ jobs:
           ${{ runner.os }}-
     - name: run example tests
     - run: |
-      cargo run --example playground
-      cargo run --example zerocopy
+        cargo run --example playground
+        cargo run --example zerocopy
   cross-compile:
     name: Cross Compile
     runs-on: macos-latest
