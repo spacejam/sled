@@ -56,7 +56,10 @@ jobs:
         key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
           ${{ runner.os }}-
-    - run: cargo run --example playground
+    - name: run example tests
+    - run: |
+      cargo run --example playground
+      cargo run --example zerocopy
   cross-compile:
     name: Cross Compile
     runs-on: macos-latest
