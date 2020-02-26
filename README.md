@@ -55,6 +55,8 @@ tree.compare_and_swap(k, Some(v1), Some(v2));
 tree.flush();
 ```
 
+If you would like to work with structured data without paying deserialization costs, check out the [zerocopy](examples/zerocopy.rs) example!
+
 # performance
 
 * over a billion operations in under a minute at 95% read 5% writes on 16 cores on a small dataset
