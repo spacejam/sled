@@ -56,7 +56,7 @@ jobs:
         key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
           ${{ runner.os }}-
-    - name: run example tests
+    - name: example tests
     - run: |
         cargo run --example playground
         cargo run --example zerocopy
