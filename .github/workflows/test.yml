@@ -41,7 +41,9 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-
     - name: cargo test
-      run: cargo test --release --features=testing -- --nocapture
+      run: |
+        rustup update
+        cargo test --release --features=testing -- --nocapture
   examples:
     name: Example Tests
     runs-on: ubuntu-latest
@@ -56,7 +58,11 @@ jobs:
         key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
           ${{ runner.os }}-
-    - run: cargo run --example playground
+    - name: example tests
+      run: |
+        rustup update
+        cargo run --example playground
+        cargo run --example structured
   cross-compile:
     name: Cross Compile
     runs-on: macos-latest

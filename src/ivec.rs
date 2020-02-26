@@ -3,7 +3,7 @@ use std::{
     fmt,
     hash::{Hash, Hasher},
     iter::FromIterator,
-    ops::Deref,
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
@@ -58,6 +58,15 @@ impl IVec {
 
     fn remote(arc: Arc<[u8]>) -> Self {
         Self(IVecInner::Remote(arc))
+    }
+
+    fn make_mut(&mut self) {
+        match self.0 {
+            IVecInner::Remote(ref mut buf) if Arc::strong_count(buf) != 1 => {
+                self.0 = IVecInner::Remote(buf.to_vec().into());
+            }
+            _ => {}
+        }
     }
 }
 
@@ -181,6 +190,28 @@ impl AsRef<[u8]> for IVec {
                 buf.get_unchecked(..*sz as usize)
             },
             IVecInner::Remote(buf) => buf,
+        }
+    }
+}
+
+impl DerefMut for IVec {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u8] {
+        self.as_mut()
+    }
+}
+
+impl AsMut<[u8]> for IVec {
+    #[inline]
+    #[allow(unsafe_code)]
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.make_mut();
+
+        match self.0 {
+            IVecInner::Inline(ref sz, mut buf) => unsafe {
+                std::slice::from_raw_parts_mut(buf.as_mut_ptr(), *sz as usize)
+            },
+            IVecInner::Remote(ref mut buf) => Arc::get_mut(buf).unwrap(),
         }
     }
 }
