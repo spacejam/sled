@@ -57,7 +57,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-
     - name: example tests
-    - run: |
+      run: |
         cargo run --example playground
         cargo run --example zerocopy
   cross-compile:
