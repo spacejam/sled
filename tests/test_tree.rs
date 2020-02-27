@@ -831,7 +831,7 @@ fn tree_import_export() -> Result<()> {
 #[test]
 #[cfg(not(target_os = "fuchsia"))]
 fn quickcheck_tree_matches_btreemap() {
-    let n_tests = 100;
+    let n_tests = if cfg!(windows) { 25 } else { 100 };
 
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1000))
