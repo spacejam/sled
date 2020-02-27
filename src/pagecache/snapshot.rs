@@ -73,8 +73,11 @@ impl Snapshot {
         trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
         let _measure = Measure::new(&M.snapshot_apply);
 
-        if self.pt.len() <= pid as usize {
-            self.pt.resize(pid as usize + 1, PageState::Present(vec![]));
+        if self.pt.len() <= usize::try_from(pid).unwrap() {
+            self.pt.resize(
+                usize::try_from(pid + 1).unwrap(),
+                PageState::Present(vec![]),
+            );
         }
 
         match log_kind {
@@ -86,14 +89,16 @@ impl Snapshot {
                     lsn,
                 );
 
-                self.pt[pid as usize] =
+                self.pt[usize::try_from(pid).unwrap()] =
                     PageState::Present(vec![(lsn, disk_ptr, sz)]);
             }
             LogKind::Link => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
-                if let Some(lids) = self.pt.get_mut(pid as usize) {
+                if let Some(lids) =
+                    self.pt.get_mut(usize::try_from(pid).unwrap())
+                {
                     trace!(
                         "append of pid {} at lid {} lsn {}",
                         pid,
@@ -125,7 +130,8 @@ impl Snapshot {
             }
             LogKind::Free => {
                 trace!("free of pid {} at ptr {} lsn {}", pid, disk_ptr, lsn);
-                self.pt[pid as usize] = PageState::Free(lsn, disk_ptr);
+                self.pt[usize::try_from(pid).unwrap()] =
+                    PageState::Free(lsn, disk_ptr);
             }
             LogKind::Corrupted | LogKind::Skip => panic!(
                 "unexppected messagekind in snapshot application: {:?}",

@@ -20,11 +20,8 @@ pub(crate) enum Protector<'a> {
 
 impl<'a> Drop for Protector<'a> {
     fn drop(&mut self) {
-        match self {
-            Protector::None(active_non_lockers) => {
-                active_non_lockers.fetch_sub(1, Release);
-            }
-            _ => {}
+        if let Protector::None(active_non_lockers) = self {
+            active_non_lockers.fetch_sub(1, Release);
         }
     }
 }

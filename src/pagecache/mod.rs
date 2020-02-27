@@ -1852,7 +1852,9 @@ impl PageCache {
 
         debug!("load_snapshot loading pages from 0..{}", next_pid_to_allocate);
         for pid in 0..next_pid_to_allocate {
-            let state = if let Some(state) = snapshot.pt.get(pid as usize) {
+            let state = if let Some(state) =
+                snapshot.pt.get(usize::try_from(pid).unwrap())
+            {
                 state
             } else {
                 panic!(
