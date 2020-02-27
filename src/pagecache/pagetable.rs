@@ -21,18 +21,17 @@ use crate::{
 pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1>();
 
 // Allows for around 1 trillion items to be stored
-// (assuming 50% node fill, 8 items per leaf)
+// 2^37 * (assuming 50% node fill, 8 items per leaf)
 // and well below 1% of nodes being non-leaf nodes.
-// Uses 2gb of virtual memory (almost free until used).
 #[cfg(target_pointer_width = "64")]
-const DESIRED_BITS: usize = 45;
+const DESIRED_BITS: usize = 37;
 
-// Allows for around 2 billion items to be stored
-// (assuming 50% node fill, 8 items per leaf)
+// Allows for around 32 billion items to be stored
+// 2^32 * (assuming 50% node fill of 8 items per leaf)
 // and well below 1% of nodes being non-leaf nodes.
 // Assumed to be enough for a 32-bit system.
 #[cfg(target_pointer_width = "32")]
-const DESIRED_BITS: usize = 36;
+const DESIRED_BITS: usize = 32;
 
 const NODE2_FAN_FACTOR: usize = 18;
 const NODE1_FAN_OUT: usize = 1 << (DESIRED_BITS - NODE2_FAN_FACTOR);
