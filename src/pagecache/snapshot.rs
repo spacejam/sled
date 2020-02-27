@@ -21,7 +21,7 @@ pub struct Snapshot {
     /// into a segment header
     pub max_header_stable_lsn: Lsn,
     /// the mapping from pages to (lsn, lid)
-    pub pt: FastMap8<PageId, PageState>,
+    pub pt: Vec<PageState>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,6 +73,10 @@ impl Snapshot {
         trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
         let _measure = Measure::new(&M.snapshot_apply);
 
+        if self.pt.len() <= pid as usize {
+            self.pt.resize(pid as usize + 1, PageState::Present(vec![]));
+        }
+
         match log_kind {
             LogKind::Replace => {
                 trace!(
@@ -82,15 +86,14 @@ impl Snapshot {
                     lsn,
                 );
 
-                let _old = self
-                    .pt
-                    .insert(pid, PageState::Present(vec![(lsn, disk_ptr, sz)]));
+                self.pt[pid as usize] =
+                    PageState::Present(vec![(lsn, disk_ptr, sz)]);
             }
             LogKind::Link => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
-                if let Some(lids) = self.pt.get_mut(&pid) {
+                if let Some(lids) = self.pt.get_mut(pid as usize) {
                     trace!(
                         "append of pid {} at lid {} lsn {}",
                         pid,
@@ -122,7 +125,7 @@ impl Snapshot {
             }
             LogKind::Free => {
                 trace!("free of pid {} at ptr {} lsn {}", pid, disk_ptr, lsn);
-                let _old = self.pt.insert(pid, PageState::Free(lsn, disk_ptr));
+                self.pt[pid as usize] = PageState::Free(lsn, disk_ptr);
             }
             LogKind::Corrupted | LogKind::Skip => panic!(
                 "unexppected messagekind in snapshot application: {:?}",

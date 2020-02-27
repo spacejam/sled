@@ -592,16 +592,16 @@ impl SegmentAccountant {
                 );
             };
 
-        for (pid, state) in &snapshot.pt {
+        for (pid, state) in snapshot.pt.iter().enumerate() {
             match state {
                 PageState::Present(coords) => {
                     for (lsn, ptr, sz) in coords {
-                        add(*pid, *lsn, *sz, ptr.lid(), &mut segments);
+                        add(pid as PageId, *lsn, *sz, ptr.lid(), &mut segments);
                     }
                 }
                 PageState::Free(lsn, ptr) => {
                     add(
-                        *pid,
+                        pid as PageId,
                         *lsn,
                         u64::try_from(MAX_MSG_HEADER_LEN).unwrap(),
                         ptr.lid(),

@@ -1846,17 +1846,13 @@ impl PageCache {
     }
 
     fn load_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
-        let next_pid_to_allocate = if snapshot.pt.is_empty() {
-            0
-        } else {
-            *snapshot.pt.keys().max().unwrap() + 1
-        };
+        let next_pid_to_allocate = snapshot.pt.len() as PageId;
 
         self.next_pid_to_allocate = AtomicU64::from(next_pid_to_allocate);
 
         debug!("load_snapshot loading pages from 0..{}", next_pid_to_allocate);
         for pid in 0..next_pid_to_allocate {
-            let state = if let Some(state) = snapshot.pt.get(&pid) {
+            let state = if let Some(state) = snapshot.pt.get(pid as usize) {
                 state
             } else {
                 panic!(
