@@ -118,7 +118,7 @@ impl std::error::Error for UnabortableTransactionError {
     }
 }
 
-pub type UnabortableTransactionResult<T> =
+pub(crate) type UnabortableTransactionResult<T> =
     std::result::Result<T, UnabortableTransactionError>;
 
 impl From<Error> for UnabortableTransactionError {
@@ -338,6 +338,7 @@ impl TransactionalTree {
     }
 }
 
+/// A type which allows for pluggable transactional capabilities
 pub struct TransactionalTrees {
     inner: Vec<TransactionalTree>,
 }

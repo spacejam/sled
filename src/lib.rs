@@ -190,7 +190,7 @@ mod stack;
 mod stackvec;
 mod subscription;
 mod sys_limits;
-mod transaction;
+pub mod transaction;
 mod tree;
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
@@ -256,7 +256,7 @@ pub use self::{
     ivec::IVec,
     result::{Error, Result},
     subscription::{Event, Subscriber},
-    transaction::{abort, Transactional},
+    transaction::Transactional,
     tree::{CompareAndSwapError, Tree},
 };
 
