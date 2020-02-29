@@ -257,7 +257,7 @@ pub use self::{
     result::{Error, Result},
     subscription::{Event, Subscriber},
     transaction::{abort, Transactional},
-    tree::Tree,
+    tree::{CompareAndSwapError, Tree},
 };
 
 use {
