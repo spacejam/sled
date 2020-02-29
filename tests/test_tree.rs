@@ -838,14 +838,15 @@ fn quickcheck_tree_matches_btreemap() {
         .tests(n_tests)
         .max_tests(n_tests * 10)
         .quickcheck(
-            prop_tree_matches_btreemap as fn(Vec<Op>, bool, bool) -> bool,
+            prop_tree_matches_btreemap
+                as fn(Vec<Op>, bool, bool, u8, u8) -> bool,
         );
 }
 
 #[test]
 fn tree_bug_00() {
     // postmortem:
-    prop_tree_matches_btreemap(vec![Restart], false, false);
+    prop_tree_matches_btreemap(vec![Restart], false, false, 0, 0);
 }
 
 #[test]
@@ -868,6 +869,8 @@ fn tree_bug_01() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -894,6 +897,8 @@ fn tree_bug_02() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -916,6 +921,8 @@ fn tree_bug_03() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -940,6 +947,8 @@ fn tree_bug_4() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -960,6 +969,8 @@ fn tree_bug_5() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -982,6 +993,8 @@ fn tree_bug_6() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -1004,6 +1017,8 @@ fn tree_bug_7() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -1025,6 +1040,8 @@ fn tree_bug_8() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -1049,6 +1066,8 @@ fn tree_bug_9() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -1086,6 +1105,8 @@ fn tree_bug_10() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -1110,6 +1131,8 @@ fn tree_bug_11() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -1159,6 +1182,8 @@ fn tree_bug_12() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -1188,6 +1213,8 @@ fn tree_bug_13() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -1207,6 +1234,8 @@ fn tree_bug_14() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -1224,6 +1253,8 @@ fn tree_bug_15() {
         ],
         true,
         false,
+        0,
+        0,
     );
 }
 
@@ -1234,6 +1265,8 @@ fn tree_bug_16() {
         vec![Merge(Key(vec![247]), 162), Scan(Key(vec![209]), 31)],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1249,6 +1282,8 @@ fn tree_bug_17() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1267,6 +1302,8 @@ fn tree_bug_18() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1285,6 +1322,8 @@ fn tree_bug_19() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1304,6 +1343,8 @@ fn tree_bug_20() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1324,6 +1365,8 @@ fn tree_bug_21() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1340,6 +1383,8 @@ fn tree_bug_22() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1350,6 +1395,8 @@ fn tree_bug_23() {
         vec![Set(Key(vec![6; 5120]), 92), Restart, Scan(Key(vec![]), 35)],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1373,6 +1420,8 @@ fn tree_bug_24() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1384,6 +1433,8 @@ fn tree_bug_25() {
         vec![Del(Key(vec![])), Merge(Key(vec![]), 84), Get(Key(vec![]))],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1407,6 +1458,8 @@ fn tree_bug_26() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1476,6 +1529,8 @@ fn tree_bug_27() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1498,6 +1553,8 @@ fn tree_bug_28() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1638,6 +1695,8 @@ fn tree_bug_29() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1676,6 +1735,8 @@ fn tree_bug_30() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1698,6 +1759,8 @@ fn tree_bug_31() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1710,6 +1773,8 @@ fn tree_bug_32() {
         vec![Set(Key(vec![57]), 141), Scan(Key(vec![]), -40)],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1727,6 +1792,8 @@ fn tree_bug_33() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1746,6 +1813,8 @@ fn tree_bug_34() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1780,6 +1849,8 @@ fn tree_bug_35() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1800,6 +1871,8 @@ fn tree_bug_36() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1818,6 +1891,8 @@ fn tree_bug_37() {
         ],
         false,
         false,
+        0,
+        0,
     );
 }
 
@@ -1836,6 +1911,8 @@ fn tree_bug_38() {
             ],
             false,
             false,
+            0,
+            0,
         );
     }
 }
@@ -2099,6 +2176,8 @@ fn tree_bug_39() {
             ],
             false,
             false,
+            0,
+            0,
         );
     }
 }
