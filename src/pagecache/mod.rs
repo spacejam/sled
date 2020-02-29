@@ -824,7 +824,7 @@ impl PageCache {
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns
     /// `Err(Some(actual_key))` if the atomic link fails.
-    pub fn link<'g>(
+    pub(crate) fn link<'g>(
         &'g self,
         pid: PageId,
         mut old: PageView<'g>,

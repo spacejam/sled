@@ -541,7 +541,12 @@ impl IoBufs {
                         )
                     };
                     if ret < 0 {
-                        return Err(std::io::Error::last_os_error().into());
+                        let err = std::io::Error::last_os_error();
+                        if let Some(libc::ENOSYS) = err.raw_os_error() {
+                            f.sync_all()?;
+                        } else {
+                            return Err(err.into());
+                        }                        
                     }
                 }
 
