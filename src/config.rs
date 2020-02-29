@@ -172,7 +172,6 @@ impl StorageParameters {
 ///     .path("/path/to/data".to_owned())
 ///     .cache_capacity(10_000_000_000)
 ///     .flush_every_ms(Some(1000))
-///     .snapshot_after_ops(100_000);
 /// ```
 ///
 /// ```

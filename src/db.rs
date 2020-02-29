@@ -2,7 +2,9 @@ use std::ops::Deref;
 
 use crate::*;
 
-/// The `sled` embedded database!
+/// The `sled` embedded database! Implements
+/// `Deref<Target = sled::Tree>` to refer to
+/// a default keyspace.
 #[derive(Clone)]
 pub struct Db {
     context: Context,

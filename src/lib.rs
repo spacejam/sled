@@ -4,7 +4,8 @@
 //! assisting creators of stateful systems.
 //!
 //! It is fully thread-safe, and all operations are
-//! atomic. Multiple `Tree`s are supported with the
+//! atomic. Multiple `Tree`s with isolated keyspaces
+//! are supported with the
 //! [`Db::open_tree`](struct.Db.html#method.open_tree) method.
 //!
 //! ACID transactions involving reads and writes to
@@ -255,11 +256,8 @@ pub use self::{
     ivec::IVec,
     result::{Error, Result},
     subscription::{Event, Subscriber},
-    transaction::{
-        abort, ConflictableTransactionError, ConflictableTransactionResult,
-        TransactionError, TransactionResult, Transactional, TransactionalTree,
-    },
-    tree::{CompareAndSwapError, CompareAndSwapResult, Tree},
+    transaction::{abort, Transactional},
+    tree::Tree,
 };
 
 use {
@@ -327,7 +325,7 @@ const fn debug_delay() {}
 /// Link denotes a tree node or its modification fragment such as
 /// key addition or removal.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Link {
+pub(crate) enum Link {
     /// A new value is set for a given key
     Set(IVec, IVec),
     /// The associated value is removed for a given key
