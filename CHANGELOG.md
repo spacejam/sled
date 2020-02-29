@@ -17,6 +17,9 @@
   This will result in far smaller database files.
 * deprecated several `Config` options that will be
   removed over time.
+* rearranged some transaction-related imports, and
+  moved them to the `transaction` module away from
+  the library root to keep the top level docs clean.
 
 # 0.31
 
