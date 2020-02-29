@@ -187,7 +187,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// # use sled::{TransactionResult, Config};
+    /// # use sled::{transaction::TransactionResult, Config};
     ///
     /// # fn main() -> TransactionResult<()> {
     ///
@@ -226,7 +226,7 @@ impl Tree {
     /// combination with the try operator.
     ///
     /// ```
-    /// use sled::{TransactionError, TransactionResult, Config, abort};
+    /// use sled::{transaction::{abort, TransactionError, TransactionResult}, Config};
     ///
     /// #[derive(Debug, PartialEq)]
     /// struct MyBullshitError;

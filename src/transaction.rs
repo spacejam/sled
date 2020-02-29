@@ -2,7 +2,7 @@
 //!
 //! # Examples
 //! ```
-//! # use sled::{TransactionResult, Config};
+//! # use sled::{transaction::TransactionResult, Config};
 //! # fn main() -> TransactionResult<()> {
 //!
 //! let config = Config::new().temporary(true);

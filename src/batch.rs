@@ -13,8 +13,8 @@ use super::*;
 /// ```
 /// use sled::{Batch, open};
 ///
-/// # let _ = std::fs::remove_dir_all("batch_db");
-/// let db = open("batch_db").unwrap();
+/// # let _ = std::fs::remove_dir_all("batch_db_2");
+/// let db = open("batch_db_2").unwrap();
 /// db.insert("key_0", "val_0").unwrap();
 ///
 /// let mut batch = Batch::default();
@@ -26,7 +26,7 @@ use super::*;
 /// db.apply_batch(batch).unwrap();
 /// // key_0 no longer exists, and key_a, key_b, and key_c
 /// // now do exist.
-/// # let _ = std::fs::remove_dir_all("batch_db");
+/// # let _ = std::fs::remove_dir_all("batch_db_2");
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct Batch {
