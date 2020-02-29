@@ -608,6 +608,7 @@ impl SegmentAccountant {
                         &mut segments,
                     );
                 }
+                _ => panic!("tried to recover pagestate from a {:?}", state),
             }
         }
 

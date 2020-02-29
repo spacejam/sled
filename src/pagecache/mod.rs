@@ -1890,6 +1890,7 @@ impl PageCache {
                     cache_infos.push(cache_info);
                     self.free.lock().push(pid);
                 }
+                _ => panic!("tried to load a {:?}", state),
             }
 
             // Set up new page

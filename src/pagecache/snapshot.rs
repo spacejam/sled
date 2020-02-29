@@ -28,15 +28,14 @@ pub struct Snapshot {
 pub enum PageState {
     Present(Vec<(Lsn, DiskPtr, u64)>),
     Free(Lsn, DiskPtr),
+    Uninitialized,
 }
 
 impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr, u64)) {
         match *self {
             PageState::Present(ref mut items) => items.push(item),
-            PageState::Free(_, _) => {
-                panic!("pushed items to a PageState::Free")
-            }
+            _ => panic!("pushed items to {:?}", self),
         }
     }
 
@@ -48,6 +47,7 @@ impl PageState {
                 vec![(lsn, ptr, u64::try_from(MAX_MSG_HEADER_LEN).unwrap())]
                     .into_iter()
             }
+            PageState::Uninitialized => panic!("canned iter on a {:?}", self),
         }
     }
 
@@ -76,7 +76,7 @@ impl Snapshot {
         if self.pt.len() <= usize::try_from(pid).unwrap() {
             self.pt.resize(
                 usize::try_from(pid + 1).unwrap(),
-                PageState::Present(vec![]),
+                PageState::Uninitialized,
             );
         }
 
