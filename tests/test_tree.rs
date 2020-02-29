@@ -8,7 +8,7 @@ use log::{debug, warn};
 use quickcheck::{QuickCheck, StdGen};
 
 use sled::Transactional;
-use sled::*;
+use sled::{transaction::*, *};
 
 use tree::{
     prop_tree_matches_btreemap, Key,
