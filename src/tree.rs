@@ -187,7 +187,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// # use sled::{TransactionResult, Config};
+    /// # use sled::{transaction::TransactionResult, Config};
     ///
     /// # fn main() -> TransactionResult<()> {
     ///
@@ -226,7 +226,7 @@ impl Tree {
     /// combination with the try operator.
     ///
     /// ```
-    /// use sled::{TransactionError, TransactionResult, Config, abort};
+    /// use sled::{transaction::{abort, TransactionError, TransactionResult}, Config};
     ///
     /// #[derive(Debug, PartialEq)]
     /// struct MyBullshitError;
@@ -290,9 +290,14 @@ impl Tree {
     /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
     /// ```
-    pub fn transaction<F, A, E>(&self, f: F) -> TransactionResult<A, E>
+    pub fn transaction<F, A, E>(
+        &self,
+        f: F,
+    ) -> transaction::TransactionResult<A, E>
     where
-        F: Fn(&TransactionalTree) -> ConflictableTransactionResult<A, E>,
+        F: Fn(
+            &transaction::TransactionalTree,
+        ) -> transaction::ConflictableTransactionResult<A, E>,
     {
         Transactional::transaction(&self, f)
     }
@@ -2183,9 +2188,9 @@ impl From<Error> for CompareAndSwapResult {
 /// Compare and swap error.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompareAndSwapError {
-    /// Current value.
+    /// The current value which caused your CAS to fail.
     pub current: Option<IVec>,
-    /// New proposed value.
+    /// Returned value that was proposed unsuccessfully.
     pub proposed: Option<IVec>,
 }
 
