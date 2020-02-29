@@ -63,8 +63,17 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
         })
         .collect();
 
+    let cache_bits = *buf.get(1).unwrap_or(&0);
+    let segment_size_bits = *buf.get(2).unwrap_or(&0);
+
     match panic::catch_unwind(move || {
-        prop_tree_matches_btreemap(ops, false, use_compression)
+        prop_tree_matches_btreemap(
+            ops,
+            false,
+            use_compression,
+            cache_bits,
+            segment_size_bits,
+        )
     }) {
         Ok(_) => {}
         Err(_e) => panic!("TODO"),
@@ -193,10 +202,16 @@ pub fn prop_tree_matches_btreemap(
     ops: Vec<Op>,
     flusher: bool,
     use_compression: bool,
+    cache_bits: u8,
+    segment_size_bits: u8,
 ) -> bool {
-    if let Err(e) =
-        prop_tree_matches_btreemap_inner(ops, flusher, use_compression)
-    {
+    if let Err(e) = prop_tree_matches_btreemap_inner(
+        ops,
+        flusher,
+        use_compression,
+        cache_bits,
+        segment_size_bits,
+    ) {
         eprintln!("hit error while running quickcheck on tree: {:?}", e);
         false
     } else {
@@ -208,6 +223,8 @@ fn prop_tree_matches_btreemap_inner(
     ops: Vec<Op>,
     flusher: bool,
     use_compression: bool,
+    cache_bits: u8,
+    segment_size_bits: u8,
 ) -> Result<()> {
     use self::*;
 
@@ -219,9 +236,9 @@ fn prop_tree_matches_btreemap_inner(
         .temporary(true)
         .use_compression(use_compression)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .cache_capacity(256)
+        .cache_capacity(256 * (1 << (cache_bits as usize % 16)))
         .idgen_persist_interval(1)
-        .segment_size(8192);
+        .segment_size(256 * (1 << (segment_size_bits as usize % 16)));
 
     let mut tree = config.open().unwrap();
     tree.set_merge_operator(test_merge_operator);
