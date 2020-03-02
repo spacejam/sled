@@ -1816,22 +1816,28 @@ impl PageCache {
         // without taking ownership of them.
         let buf = &mut bytes.as_slice();
 
-        let deserialize_latency = Measure::new(&M.deserialize);
+        let update_res = {
+            let _deserialize_latency = Measure::new(&M.deserialize);
 
-        let update_res = match header.kind {
-            Counter => u64::deserialize(buf).map(Update::Counter),
-            BlobMeta | InlineMeta => Meta::deserialize(buf).map(Update::Meta),
-            BlobLink | InlineLink => Link::deserialize(buf).map(Update::Link),
-            BlobNode | InlineNode => Node::deserialize(buf).map(Update::Node),
-            Free => Ok(Update::Free),
-            Corrupted | Canceled | Cap | BatchManifest => {
-                panic!("unexpected pull: {:?}", header.kind)
+            match header.kind {
+                Counter => u64::deserialize(buf).map(Update::Counter),
+                BlobMeta | InlineMeta => {
+                    Meta::deserialize(buf).map(Update::Meta)
+                }
+                BlobLink | InlineLink => {
+                    Link::deserialize(buf).map(Update::Link)
+                }
+                BlobNode | InlineNode => {
+                    Node::deserialize(buf).map(Update::Node)
+                }
+                Free => Ok(Update::Free),
+                Corrupted | Canceled | Cap | BatchManifest => {
+                    panic!("unexpected pull: {:?}", header.kind)
+                }
             }
         };
-        drop(deserialize_latency);
 
-        let update =
-            update_res.map_err(|_| ()).expect("failed to deserialize data");
+        let update = update_res.expect("failed to deserialize data");
 
         // TODO this feels racy, test it better?
         if let Update::Free = update {
