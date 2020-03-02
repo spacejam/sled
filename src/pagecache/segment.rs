@@ -675,7 +675,13 @@ impl SegmentAccountant {
         }
 
         for segment_base in to_free {
-            self.free_segment(segment_base, false)?;
+            self.free_segment(segment_base)?;
+        }
+
+        // we want to complete all truncations because
+        // they could cause calls to `next` to block.
+        for (_, promise) in self.async_truncations.split_off(&0) {
+            promise.wait().unwrap()?;
         }
 
         for (idx, segment_lsn) in maybe_clean {
@@ -702,11 +708,7 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    fn free_segment(
-        &mut self,
-        lid: LogOffset,
-        in_recovery: bool,
-    ) -> Result<()> {
+    fn free_segment(&mut self, lid: LogOffset) -> Result<()> {
         debug!("freeing segment {}", lid);
         debug!("free list before free {:?}", self.free);
         self.segment_cleaner.remove_pids(lid);
@@ -722,36 +724,26 @@ impl SegmentAccountant {
         assert!(self.segments[idx].is_free());
         assert!(!self.free.contains(&lid), "double-free of a segment occurred");
 
-        if in_recovery {
-            // We only want to immediately remove the segment
-            // mapping if we're in recovery because otherwise
-            // we may be acting on updates relating to things
-            // in IO buffers, before they have been flushed.
-            // The latter will be removed from the mapping
-            // before being reused, in the next() method.
-            if let Segment::Free(Free { previous_lsn: Some(old_lsn) }) =
-                self.segments[idx]
-            {
-                trace!(
-                    "removing segment {} with lsn {} from ordering",
-                    lid,
-                    old_lsn
-                );
-                self.ordering.remove(&old_lsn);
-            }
-        }
-
         self.free.insert(lid);
 
         // remove the old ordering from our list
         if let Segment::Free(Free { previous_lsn: Some(last_lsn) }) =
             self.segments[idx]
         {
+            trace!(
+                "removing segment {} with lsn {} from ordering",
+                lid,
+                last_lsn
+            );
             self.ordering.remove(&last_lsn);
         }
 
+        // we want to avoid aggressive truncation because it can cause
+        // blocking if we allocate a segment that was just truncated.
+        let laziness_factor = 1;
+
         // truncate if possible
-        while self.tip != 0 && self.free.len() > 1 {
+        while self.tip != 0 && self.free.len() > laziness_factor {
             let last_segment = self.tip - self.config.segment_size as LogOffset;
             if self.free.contains(&last_segment) {
                 self.free.remove(&last_segment);
@@ -944,12 +936,12 @@ impl SegmentAccountant {
                     self.segments[replacement_idx].defer_free_lsn(segment_lsn);
                 } else {
                     assert!(replacement_lsn <= self.max_stabilized_lsn);
-                    self.free_segment(segment_start, false)?;
+                    self.free_segment(segment_start)?;
                 }
             } else {
                 // replacement segment has already been freed, so we can
                 // go right to freeing this one too
-                self.free_segment(segment_start, false)?;
+                self.free_segment(segment_start)?;
             }
         }
 
@@ -1021,7 +1013,7 @@ impl SegmentAccountant {
         for lsn in freeable_segments {
             let segment_start = self.ordering[&lsn];
             assert_ne!(segment_start, lid);
-            self.free_segment(segment_start, false)?;
+            self.free_segment(segment_start)?;
         }
 
         self.possibly_clean_or_free_segment(idx, lsn)?;
@@ -1152,6 +1144,8 @@ impl SegmentAccountant {
 
     // truncate the file to the desired length
     fn truncate(&mut self, at: LogOffset) -> Result<()> {
+        trace!("asynchronously truncating file to length {}", at);
+
         assert_eq!(
             at % self.config.segment_size as LogOffset,
             0,
@@ -1162,7 +1156,6 @@ impl SegmentAccountant {
 
         assert!(!self.free.contains(&at), "double-free of a segment occurred");
 
-        trace!("asynchronously truncating file to length {}", at);
         let (completer, promise) = OneShot::pair();
 
         let config = self.config.clone();
