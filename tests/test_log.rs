@@ -620,7 +620,7 @@ impl Arbitrary for Op {
     }
 }
 
-fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
+fn prop_log_works(ops: Vec<Op>, flusher: bool, segment_size_bits: u8) -> bool {
     common::setup_logger();
 
     use self::Op::*;
@@ -628,7 +628,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
         .temporary(true)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .segment_mode(SegmentMode::Linear)
-        .segment_size(256);
+        .segment_size(256 * (1 << (segment_size_bits as usize % 16)));
 
     let mut tip = 0;
     let mut log = config.open_raw_log().unwrap();
@@ -749,14 +749,14 @@ fn quickcheck_log_works() {
         .gen(StdGen::new(rand::thread_rng(), 100))
         .tests(100)
         .max_tests(10000)
-        .quickcheck(prop_log_works as fn(Vec<Op>, bool) -> bool);
+        .quickcheck(prop_log_works as fn(Vec<Op>, bool, u8) -> bool);
 }
 
 #[test]
 fn log_bug_00() {
     // postmortem:
     use self::Op::*;
-    prop_log_works(vec![Write(vec![66]), Read(0)], true);
+    prop_log_works(vec![Write(vec![66]), Read(0)], true, 0);
 }
 
 #[test]
@@ -773,6 +773,7 @@ fn log_bug_01() {
             Read(3),
         ],
         true,
+        0,
     );
 }
 
@@ -783,7 +784,7 @@ fn log_bug_02() {
     // fix: when something hits the end of the file, return
     // LogRead::Zeroed.
     use self::Op::*;
-    prop_log_works(vec![AbortReservation(vec![46]), Read(0)], true);
+    prop_log_works(vec![AbortReservation(vec![46]), Read(0)], true, 0);
 }
 
 #[test]
@@ -793,7 +794,7 @@ fn log_bug_03() {
     // was being triggered on valid entries of size 0.
     // fix: don't skip-ahead for empty valid entries.
     use self::Op::*;
-    prop_log_works(vec![Write(vec![]), Read(0)], true);
+    prop_log_works(vec![Write(vec![]), Read(0)], true, 0);
 }
 
 #[test]
@@ -813,6 +814,7 @@ fn log_bug_07() {
             Read(4),
         ],
         true,
+        0,
     );
 }
 
@@ -824,6 +826,7 @@ fn log_bug_09() {
     prop_log_works(
         vec![Truncate(99), Write(vec![234]), Truncate(8), Read(0)],
         true,
+        0,
     );
 }
 
@@ -851,6 +854,7 @@ fn log_bug_10() {
             Read(7),
         ],
         true,
+        0,
     );
 }
 
@@ -859,7 +863,7 @@ fn log_bug_11() {
     // postmortem: was miscalculating the initial disk offset
     // on startup
     use self::Op::*;
-    prop_log_works(vec![Write(vec![]), Restart], true);
+    prop_log_works(vec![Write(vec![]), Restart], true, 0);
 }
 
 #[test]
@@ -872,6 +876,7 @@ fn log_bug_12() {
     prop_log_works(
         vec![Write(vec![]), Truncate(20), AbortReservation(vec![]), Read(0)],
         true,
+        0,
     );
 }
 
@@ -882,6 +887,7 @@ fn log_bug_13() {
     prop_log_works(
         vec![Write(vec![35]), Restart, AbortReservation(vec![36]), Read(0)],
         true,
+        0,
     );
 }
 
@@ -894,6 +900,7 @@ fn log_bug_14a() {
     prop_log_works(
         vec![AbortReservation(vec![12]), Restart, Write(vec![]), Read(0)],
         true,
+        0,
     );
 }
 
@@ -906,7 +913,7 @@ fn log_bug_14b() {
     // reads not returning recent writes. Lesson: don't go around
     // FinalConfig!
     use self::Op::*;
-    prop_log_works(vec![Restart, Write(vec![]), Read(0)], true);
+    prop_log_works(vec![Restart, Write(vec![]), Read(0)], true, 0);
 }
 
 #[test]
@@ -917,6 +924,7 @@ fn log_bug_15() {
     prop_log_works(
         vec![Write(vec![]), Truncate(0), Write(vec![]), Read(0)],
         true,
+        0,
     );
 }
 
@@ -934,6 +942,7 @@ fn log_bug_16() {
             Read(0),
         ],
         true,
+        0,
     );
 }
 
@@ -956,6 +965,7 @@ fn log_bug_17() {
             Read(6),
         ],
         true,
+        0,
     );
 }
 
@@ -963,7 +973,7 @@ fn log_bug_17() {
 fn log_bug_18() {
     // postmortem: this was a recovery bug
     use self::Op::*;
-    prop_log_works(vec![Restart], true);
+    prop_log_works(vec![Restart], true, 0);
 }
 
 #[test]
@@ -983,6 +993,7 @@ fn log_bug_19() {
             Read(2),
         ],
         true,
+        0,
     );
 }
 
@@ -991,7 +1002,11 @@ fn log_bug_20() {
     // postmortem: message header length was not being included when
     // calculating the starting log offsets.
     use self::Op::*;
-    prop_log_works(vec![Write(vec![]), Restart, Write(vec![2]), Read(1)], true);
+    prop_log_works(
+        vec![Write(vec![]), Restart, Write(vec![2]), Read(1)],
+        true,
+        0,
+    );
 }
 
 #[test]
@@ -1002,6 +1017,7 @@ fn log_bug_21() {
     prop_log_works(
         vec![Write(vec![1]), Restart, Write(vec![2]), Read(1)],
         true,
+        0,
     );
 }
 
@@ -1012,6 +1028,7 @@ fn log_bug_22() {
     prop_log_works(
         vec![Read(10), Write(vec![75]), Write(vec![]), Write(vec![77])],
         true,
+        0,
     );
 }
 
@@ -1019,7 +1036,7 @@ fn log_bug_22() {
 fn log_bug_23() {
     // postmortem:
     use self::Op::*;
-    prop_log_works(vec![AbortReservation(vec![230]), Restart], false);
+    prop_log_works(vec![AbortReservation(vec![230]), Restart], false, 0);
 }
 
 #[test]
@@ -1040,6 +1057,7 @@ fn log_bug_24() {
             Read(1),
         ],
         false,
+        0,
     );
 }
 
@@ -1049,7 +1067,7 @@ fn log_bug_25() {
     // about invalid segments during our initial
     // segment scan
     use self::Op::*;
-    prop_log_works(vec![Restart], false);
+    prop_log_works(vec![Restart], false, 0);
 }
 
 #[test]
@@ -1075,11 +1093,12 @@ fn log_bug_26() {
             Op::Write(vec![51; 221]),
         ],
         false,
+        0,
     );
 }
 
 fn _log_bug_() {
     // postmortem: TEMPLATE
     // use self::Op::*;
-    prop_log_works(vec![], true);
+    prop_log_works(vec![], true, 0);
 }
