@@ -63,21 +63,6 @@ use super::PageState;
 use crate::pagecache::*;
 use crate::*;
 
-/// The log may be configured to write data
-/// in several different ways, depending on
-/// the constraints of the system using it.
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum SegmentMode {
-    /// Write to the end of the log, always.
-    Linear,
-    /// Keep track of segment utilization, and
-    /// reuse segments when their contents are
-    /// fully relocated elsewhere.
-    /// Will try to copy data out of segments
-    /// once they reach a configurable threshold.
-    Gc,
-}
-
 /// A operation that can be applied asynchronously.
 #[derive(Debug)]
 pub(crate) enum SegmentOp {
@@ -109,13 +94,10 @@ pub(crate) struct SegmentAccountant {
     segments: Vec<Segment>,
 
     // TODO put behind a single mutex
-    // NB MUST group pause_rewriting with ordering
-    // and free!
     free: BTreeSet<LogOffset>,
     tip: LogOffset,
     max_stabilized_lsn: Lsn,
     segment_cleaner: SegmentCleaner,
-    pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogOffset>,
     async_truncations: BTreeMap<LogOffset, OneShot<Result<()>>>,
 }
@@ -533,16 +515,9 @@ impl SegmentAccountant {
             tip: 0,
             max_stabilized_lsn: -1,
             segment_cleaner,
-            pause_rewriting: false,
             ordering: BTreeMap::default(),
             async_truncations: BTreeMap::default(),
         };
-
-        if let SegmentMode::Linear = ret.config.segment_mode {
-            // this is a hack to prevent segments from being overwritten
-            // when operating without a `PageCache`
-            ret.pause_rewriting();
-        }
 
         ret.initialize_from_snapshot(snapshot)?;
 
@@ -754,13 +729,6 @@ impl SegmentAccountant {
         }
 
         Ok(())
-    }
-
-    /// Causes all new allocations to occur at the end of the file, which
-    /// is necessary to preserve consistency while concurrently iterating
-    /// through the log during snapshot creation.
-    pub(super) fn pause_rewriting(&mut self) {
-        self.pause_rewriting = true;
     }
 
     /// Asynchronously apply a GC-related operation. Used in a flat-combining
@@ -1075,14 +1043,13 @@ impl SegmentAccountant {
         trace!("evaluating free list {:?} in SA::next", &self.free);
 
         // pop free or add to end
-        let safe = self.free.iter().next();
+        let safe = self.free.iter().next().copied();
 
-        let lid = match (self.pause_rewriting, safe) {
-            (true, _) | (_, None) => self.bump_tip(),
-            (_, Some(&next)) => {
-                self.free.remove(&next);
-                next
-            }
+        let lid = if let Some(next) = safe {
+            self.free.remove(&next);
+            next
+        } else {
+            self.bump_tip()
         };
 
         // pin lsn to this segment
@@ -1094,12 +1061,12 @@ impl SegmentAccountant {
 
         debug!(
             "segment accountant returning offset: {} \
-             paused: {} on deck: {:?}",
-            lid, self.pause_rewriting, self.free,
+             on deck: {:?}",
+            lid, self.free,
         );
 
         assert!(
-            lsn >= Lsn::try_from(lid).unwrap() || self.pause_rewriting,
+            lsn >= Lsn::try_from(lid).unwrap(),
             "lsn {} should always be greater than or equal to lid {}",
             lsn,
             lid
@@ -1117,12 +1084,6 @@ impl SegmentAccountant {
         assert!(
             !self.ordering.is_empty(),
             "expected ordering to have been initialized already"
-        );
-
-        assert!(
-            self.pause_rewriting,
-            "must pause rewriting before \
-             iterating over segments"
         );
 
         let segment_len = self.config.segment_size as Lsn;

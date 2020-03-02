@@ -2,10 +2,7 @@ mod common;
 
 use std::{
     fmt,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicUsize, Ordering},
     thread,
 };
 
@@ -16,7 +13,6 @@ use sled::*;
 
 use sled::{
     pin, BatchManifest, DiskPtr, Log, LogKind, LogRead, Lsn, PageId,
-    SegmentMode, Serialize, MAX_MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT,
     SEG_HEADER_LEN,
 };
 
@@ -26,9 +22,9 @@ const REPLACE: LogKind = LogKind::Replace;
 #[test]
 fn log_writebatch() -> crate::Result<()> {
     common::setup_logger();
-    let config =
-        Config::new().temporary(true).segment_mode(SegmentMode::Linear);
-    let log = config.open_raw_log().unwrap();
+    let config = Config::new().temporary(true);
+    let db = config.open()?;
+    let log = &db.context.pagecache.log;
 
     let guard = pin();
 
@@ -56,7 +52,10 @@ fn log_writebatch() -> crate::Result<()> {
     log.reserve(REPLACE, PID, &IVec::from(b"10"), &guard)?.complete()?;
 
     drop(log);
-    let log = config.open_raw_log().unwrap();
+    drop(db);
+
+    let db = config.open()?;
+    let log = &db.context.pagecache.log;
 
     let mut iter = log.iter_from(0);
 
@@ -72,12 +71,10 @@ fn log_writebatch() -> crate::Result<()> {
 
 #[test]
 fn more_log_reservations_than_buffers() -> Result<()> {
-    let config = Config::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .segment_size(128);
+    let config = Config::new().temporary(true).segment_size(128);
 
-    let log = config.open_raw_log().unwrap();
+    let db = config.open()?;
+    let log = &db.context.pagecache.log;
     let mut reservations = vec![];
 
     let total_seg_overhead = SEG_HEADER_LEN;
@@ -102,12 +99,10 @@ fn more_log_reservations_than_buffers() -> Result<()> {
 
 #[test]
 fn non_contiguous_log_flush() -> Result<()> {
-    let config = Config::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .segment_size(1024);
+    let config = Config::new().temporary(true).segment_size(1024);
 
-    let log = config.open_raw_log().unwrap();
+    let db = config.open()?;
+    let log = &db.context.pagecache.log;
 
     let seg_overhead = SEG_HEADER_LEN;
     let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
@@ -128,22 +123,22 @@ fn non_contiguous_log_flush() -> Result<()> {
 }
 
 #[test]
-fn concurrent_logging() {
+fn concurrent_logging() -> Result<()> {
     common::setup_logger();
     // TODO linearize res bufs, verify they are correct
     for _ in 0..10 {
         let config = Config::new()
             .temporary(true)
-            .segment_mode(SegmentMode::Linear)
             .flush_every_ms(Some(50))
             .segment_size(256);
 
-        let log = Arc::new(config.open_raw_log().unwrap());
-        let iobs2 = log.clone();
-        let iobs3 = log.clone();
-        let iobs4 = log.clone();
-        let iobs5 = log.clone();
-        let iobs6 = log.clone();
+        let db = config.open()?;
+
+        let db2 = db.clone();
+        let db3 = db.clone();
+        let db4 = db.clone();
+        let db5 = db.clone();
+        let db6 = db.clone();
 
         let seg_overhead = SEG_HEADER_LEN;
         let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
@@ -152,6 +147,7 @@ fn concurrent_logging() {
         let t1 = thread::Builder::new()
             .name("c1".to_string())
             .spawn(move || {
+                let log = &db.context.pagecache.log;
                 for i in 0..1_000 {
                     let buf = IVec::from(vec![1; i % buf_len]);
                     let guard = pin();
@@ -166,11 +162,11 @@ fn concurrent_logging() {
         let t2 = thread::Builder::new()
             .name("c2".to_string())
             .spawn(move || {
+                let log = &db2.context.pagecache.log;
                 for i in 0..1_000 {
                     let buf = IVec::from(vec![2; i % buf_len]);
                     let guard = pin();
-                    iobs2
-                        .reserve(REPLACE, PID, &buf, &guard)
+                    log.reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -181,11 +177,11 @@ fn concurrent_logging() {
         let t3 = thread::Builder::new()
             .name("c3".to_string())
             .spawn(move || {
+                let log = &db3.context.pagecache.log;
                 for i in 0..1_000 {
                     let buf = IVec::from(vec![3; i % buf_len]);
                     let guard = pin();
-                    iobs3
-                        .reserve(REPLACE, PID, &buf, &guard)
+                    log.reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -196,11 +192,11 @@ fn concurrent_logging() {
         let t4 = thread::Builder::new()
             .name("c4".to_string())
             .spawn(move || {
+                let log = &db4.context.pagecache.log;
                 for i in 0..1_000 {
                     let buf = IVec::from(vec![4; i % buf_len]);
                     let guard = pin();
-                    iobs4
-                        .reserve(REPLACE, PID, &buf, &guard)
+                    log.reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -210,11 +206,11 @@ fn concurrent_logging() {
         let t5 = thread::Builder::new()
             .name("c5".to_string())
             .spawn(move || {
+                let log = &db5.context.pagecache.log;
                 for i in 0..1_000 {
                     let guard = pin();
                     let buf = IVec::from(vec![5; i % buf_len]);
-                    iobs5
-                        .reserve(REPLACE, PID, &buf, &guard)
+                    log.reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
@@ -225,15 +221,16 @@ fn concurrent_logging() {
         let t6 = thread::Builder::new()
             .name("c6".to_string())
             .spawn(move || {
+                let log = &db6.context.pagecache.log;
                 for i in 0..1_000 {
                     let buf = IVec::from(vec![6; i % buf_len]);
                     let guard = pin();
-                    let (lsn, _lid) = iobs6
+                    let (lsn, _lid) = log
                         .reserve(REPLACE, PID, &buf, &guard)
                         .unwrap()
                         .complete()
                         .unwrap();
-                    iobs6.make_stable(lsn).unwrap();
+                    log.make_stable(lsn).unwrap();
                 }
             })
             .unwrap();
@@ -245,19 +242,20 @@ fn concurrent_logging() {
         t2.join().unwrap();
         t1.join().unwrap();
     }
+
+    Ok(())
 }
 
 #[test]
-fn concurrent_log_404() {
+fn concurrent_log_404() -> Result<()> {
     common::setup_logger();
 
     let config = Config::new()
         .temporary(true)
-        .segment_mode(SegmentMode::Linear)
         .flush_every_ms(Some(50))
         .segment_size(1024);
 
-    let log_arc = Arc::new(config.open_raw_log().unwrap());
+    let db = config.open()?;
 
     const ITERATIONS: i32 = 5000;
     const NUM_THREADS: i32 = 6;
@@ -265,10 +263,11 @@ fn concurrent_log_404() {
     static SHARED_COUNTER: AtomicUsize = AtomicUsize::new(0);
     let mut handles = Vec::new();
     for t in 0..NUM_THREADS {
-        let log = log_arc.clone();
+        let db = db.clone();
         let h = thread::Builder::new()
             .name(format!("t_{}", t))
             .spawn(move || {
+                let log = &db.context.pagecache.log;
                 for _ in 0..ITERATIONS {
                     let current = SHARED_COUNTER.load(Ordering::SeqCst);
                     let raw_value = current as u64;
@@ -301,9 +300,10 @@ fn concurrent_log_404() {
         h.join().unwrap();
     }
 
-    drop(log_arc);
+    drop(db);
 
-    let log = config.open_raw_log().unwrap();
+    let db = config.open()?;
+    let log = &db.context.pagecache.log;
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
     let successfuls = SHARED_COUNTER.load(Ordering::SeqCst);
     for i in 0..successfuls {
@@ -321,6 +321,8 @@ fn concurrent_log_404() {
     }
     // Assert that there is nothing left in the log.
     assert_eq!(iter.next(), None);
+
+    Ok(())
 }
 
 fn write(log: &Log) {
@@ -357,9 +359,9 @@ fn abort(log: &Log) {
 
 #[test]
 fn log_aborts() {
-    let config =
-        Config::new().temporary(true).segment_mode(SegmentMode::Linear);
-    let log = config.open_raw_log().unwrap();
+    let config = Config::new().temporary(true);
+    let db = config.open().unwrap();
+    let log = &db.context.pagecache.log;
     write(&log);
     abort(&log);
     write(&log);
@@ -370,12 +372,11 @@ fn log_aborts() {
 
 #[test]
 fn log_iterator() {
-    let config = Config::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .segment_size(1024);
+    let config = Config::new().temporary(true).segment_size(1024);
 
-    let log = config.open_raw_log().unwrap();
+    let db = config.open().unwrap();
+    let log = &db.context.pagecache.log;
+
     let guard = pin();
     let (first_lsn, _) = log
         .reserve(REPLACE, PID, &IVec::from(b""), &guard)
@@ -418,8 +419,10 @@ fn log_iterator() {
     log.make_stable(last_lsn).unwrap();
 
     drop(log);
+    drop(db);
 
-    let log = config.open_raw_log().unwrap();
+    let db = config.open().unwrap();
+    let log = &db.context.pagecache.log;
 
     let mut iter = log.iter_from(first_lsn);
     assert!(iter.next().is_some());
@@ -436,14 +439,12 @@ fn log_iterator() {
 fn log_chunky_iterator() {
     common::setup_logger();
     let mut threads = vec![];
-    for tn in 0..100 {
+    for tn in 0..1 {
         let thread = thread::spawn(move || {
-            let config = Config::new()
-                .temporary(true)
-                .segment_mode(SegmentMode::Linear)
-                .segment_size(128);
+            let config = Config::new().temporary(true).segment_size(128);
 
-            let log = config.open_raw_log().unwrap();
+            let db = config.open().unwrap();
+            let log = &db.context.pagecache.log;
 
             let mut reference = vec![];
 
@@ -482,7 +483,9 @@ fn log_chunky_iterator() {
 
             // recover and restart
             drop(log);
-            let log = config.open_raw_log().unwrap();
+            drop(db);
+            let db = config.open().unwrap();
+            let log = &db.context.pagecache.log;
 
             let mut log_iter = log.iter_from(SEG_HEADER_LEN as Lsn);
             for _ in reference.clone().into_iter() {
@@ -501,16 +504,14 @@ fn multi_segment_log_iteration() -> Result<()> {
     common::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
-    let config = Config::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .segment_size(512);
+    let config = Config::new().temporary(true).segment_size(512);
 
     let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MAX_MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = (config.segment_size - big_msg_overhead) / 64;
 
-    let log = config.open_raw_log().unwrap();
+    let db = config.open().unwrap();
+    let log = &db.context.pagecache.log;
 
     for i in 0..48 {
         let buf = IVec::from(vec![i as u8; big_msg_sz * i]);
@@ -523,8 +524,9 @@ fn multi_segment_log_iteration() -> Result<()> {
     log.flush()?;
 
     drop(log);
-
-    let log = config.open_raw_log().unwrap();
+    drop(db);
+    let db = config.open().unwrap();
+    let log = &db.context.pagecache.log;
 
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
@@ -627,11 +629,11 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool, segment_size_bits: u8) -> bool {
     let config = Config::new()
         .temporary(true)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .segment_mode(SegmentMode::Linear)
         .segment_size(256 * (1 << (segment_size_bits as usize % 16)));
 
     let mut tip = 0;
-    let mut log = config.open_raw_log().unwrap();
+    let mut db = config.open().unwrap();
+    let mut log = &db.context.pagecache.log;
     let mut reference: Vec<(Lsn, DiskPtr, Option<Vec<u8>>, usize)> = vec![];
 
     for op in ops.into_iter() {
@@ -691,6 +693,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool, segment_size_bits: u8) -> bool {
             }
             Restart => {
                 drop(log);
+                drop(db);
 
                 // on recovery, we will rewind over any aborted tip entries
                 while !reference.is_empty() {
@@ -701,7 +704,8 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool, segment_size_bits: u8) -> bool {
                         break;
                     }
                 }
-                log = config.open_raw_log().unwrap();
+                db = config.open().unwrap();
+                log = &db.context.pagecache.log;
             }
             #[allow(unused_variables)]
             Truncate(new_len) => {
@@ -715,6 +719,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool, segment_size_bits: u8) -> bool {
                     tip = new_len as usize;
 
                     drop(log);
+                    drop(db);
 
                     for &mut (_lsn, ptr, ref mut expected, sz) in &mut reference
                     {
@@ -735,7 +740,8 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool, segment_size_bits: u8) -> bool {
                     #[cfg(feature = "failpoints")]
                     config.truncate_corrupt(new_len);
 
-                    log = config.open_raw_log().unwrap();
+                    db = config.open().unwrap();
+                    log = &db.context.pagecache.log;
                 }
             }
         }
@@ -1072,7 +1078,8 @@ fn log_bug_25() {
 
 #[test]
 fn log_bug_26() {
-    // postmortem:
+    // postmortem: SA::next was failing because during
+    // log tests, we don't truncate.
     prop_log_works(
         vec![
             Op::Write(vec![28; 253]),
@@ -1094,6 +1101,51 @@ fn log_bug_26() {
         ],
         false,
         0,
+    );
+}
+
+#[test]
+fn log_bug_27() {
+    // postmortem:
+    prop_log_works(
+        vec![
+            Op::Write(vec![203; 118]),
+            Op::AbortReservation(vec![204; 22]),
+            Op::Write(vec![205; 85]),
+            Op::AbortReservation(vec![206; 134]),
+            Op::Write(vec![210; 81]),
+            Op::Write(vec![211; 71]),
+            Op::Write(vec![212; 241]),
+            Op::Write(vec![214; 88]),
+            Op::Write(vec![215; 195]),
+            Op::AbortReservation(vec![218; 241]),
+            Op::Write(vec![219; 225]),
+            Op::AbortReservation(vec![220; 106]),
+            Op::AbortReservation(vec![221; 187]),
+            Op::AbortReservation(vec![222; 115]),
+            Op::AbortReservation(vec![223; 89]),
+            Op::Write(vec![224; 143]),
+            Op::Write(vec![225; 197]),
+            Op::Write(vec![227; 88]),
+            Op::Write(vec![228; 121]),
+            Op::AbortReservation(vec![229; 168]),
+            Op::AbortReservation(vec![231; 114]),
+            Op::Write(vec![232; 71]),
+            Op::Write(vec![233; 52]),
+            Op::Write(vec![234; 158]),
+            Op::Write(vec![235; 248]),
+            Op::AbortReservation(vec![236; 205]),
+            Op::AbortReservation(vec![237; 196]),
+            Op::AbortReservation(vec![238; 118]),
+            Op::Restart,
+            Op::AbortReservation(vec![240; 224]),
+            Op::Write(vec![241; 74]),
+            Op::AbortReservation(vec![242; 70]),
+            Op::Write(vec![250; 96]),
+            Op::Restart,
+        ],
+        false,
+        4,
     );
 }
 

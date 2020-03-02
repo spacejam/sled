@@ -41,7 +41,6 @@ use self::{
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
     segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
-    snapshot::advance_snapshot,
 };
 
 pub(crate) use self::{
@@ -60,7 +59,6 @@ pub use self::{
     },
     disk_pointer::DiskPtr,
     logger::{Log, LogRead},
-    segment::SegmentMode,
 };
 
 /// The offset of a segment. This equals its `LogOffset` (or the offset of any
@@ -460,7 +458,8 @@ pub struct PageCache {
     inner: PageTable,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
-    log: Log,
+    #[doc(hidden)]
+    pub log: Log,
     lru: Lru,
     idgen: Arc<AtomicU64>,
     idgen_persists: Arc<AtomicU64>,
