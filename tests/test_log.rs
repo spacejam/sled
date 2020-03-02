@@ -282,57 +282,44 @@ fn log_aborts() {
 #[cfg(not(target_os = "fuchsia"))]
 fn log_chunky_iterator() {
     common::setup_logger();
-    let mut threads = vec![];
-    for tn in 0..1 {
-        let thread = thread::spawn(move || {
-            let config = Config::new().temporary(true).segment_size(128);
+    let config =
+        Config::new().flush_every_ms(None).temporary(true).segment_size(128);
 
-            let db = config.open().unwrap();
-            let log = &db.context.pagecache.log;
+    let db = config.open().unwrap();
+    let log = &db.context.pagecache.log;
 
-            let mut reference = vec![];
+    let mut reference = vec![];
 
-            let max_valid_size =
-                config.segment_size - (MAX_MSG_HEADER_LEN + SEG_HEADER_LEN);
+    let max_valid_size =
+        config.segment_size - (MAX_MSG_HEADER_LEN + SEG_HEADER_LEN);
 
-            for i in PID..1000 {
-                let len = thread_rng().gen_range(0, max_valid_size * 2);
-                let item = thread_rng().gen::<u8>();
-                let buf = IVec::from(vec![item; len]);
-                let abort = thread_rng().gen::<bool>();
+    for i in PID..1000 {
+        let len = thread_rng().gen_range(0, max_valid_size * 2);
+        let item = thread_rng().gen::<u8>();
+        let buf = IVec::from(vec![item; len]);
+        let abort = thread_rng().gen::<bool>();
 
-                let pid = (tn * 10000) + i;
+        let pid = 10000 + i;
 
-                let guard = pin();
+        let guard = pin();
 
-                if abort {
-                    let res = log
-                        .reserve(REPLACE, pid, &buf, &guard)
-                        .expect("should be able to reserve");
-                    res.abort().unwrap();
-                } else {
-                    let res = log
-                        .reserve(REPLACE, pid, &buf, &guard)
-                        .expect("should be able to write reservation");
-                    let ptr = res.pointer();
-                    let (lsn, _) = res.complete().unwrap();
-                    reference.push((REPLACE, pid, lsn, ptr));
-                }
-            }
-
-            let mut ref_iter = reference.clone().into_iter();
-            for _ in log.iter_from(SEG_HEADER_LEN as Lsn) {
-                assert!(ref_iter.next().is_some());
-            }
-
-            for (_, pid, lsn, ptr) in reference.clone().into_iter() {
-                assert!(log.read(pid, lsn, ptr).is_ok());
-            }
-        });
-        threads.push(thread);
+        if abort {
+            let res = log
+                .reserve(REPLACE, pid, &buf, &guard)
+                .expect("should be able to reserve");
+            res.abort().unwrap();
+        } else {
+            let res = log
+                .reserve(REPLACE, pid, &buf, &guard)
+                .expect("should be able to write reservation");
+            let ptr = res.pointer();
+            let (lsn, _) = res.complete().unwrap();
+            reference.push((REPLACE, pid, lsn, ptr));
+        }
     }
-    for thread in threads.into_iter() {
-        thread.join().unwrap();
+
+    for (_, pid, lsn, ptr) in reference.clone().into_iter() {
+        assert!(log.read(pid, lsn, ptr).is_ok());
     }
 }
 
