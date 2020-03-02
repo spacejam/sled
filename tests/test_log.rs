@@ -1,6 +1,7 @@
 mod common;
 
 use std::{
+    fmt,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -535,13 +536,35 @@ fn multi_segment_log_iteration() -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum Op {
     Write(Vec<u8>),
     AbortReservation(Vec<u8>),
     Read(u64),
     Restart,
     Truncate(u64),
+}
+
+impl fmt::Debug for Op {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Op::Write(v) => write!(
+                f,
+                "Op::Write(vec![{}; {}])",
+                v.get(0).copied().unwrap_or(0),
+                v.len()
+            ),
+            Op::AbortReservation(v) => write!(
+                f,
+                "Op::AbortReservation(vec![{}; {}])",
+                v.get(0).copied().unwrap_or(0),
+                v.len()
+            ),
+            Op::Read(at) => write!(f, "Op::Read({})", at),
+            Op::Restart => write!(f, "Op::Restart"),
+            Op::Truncate(at) => write!(f, "Op::Truncate({})", at),
+        }
+    }
 }
 
 impl Arbitrary for Op {
@@ -1027,6 +1050,32 @@ fn log_bug_25() {
     // segment scan
     use self::Op::*;
     prop_log_works(vec![Restart], false);
+}
+
+#[test]
+fn log_bug_26() {
+    // postmortem:
+    prop_log_works(
+        vec![
+            Op::Write(vec![28; 253]),
+            Op::Write(vec![29; 145]),
+            Op::Write(vec![30; 74]),
+            Op::AbortReservation(vec![31; 230]),
+            Op::AbortReservation(vec![33; 165]),
+            Op::Write(vec![34; 93]),
+            Op::Write(vec![37; 36]),
+            Op::Write(vec![38; 212]),
+            Op::Write(vec![39; 160]),
+            Op::Write(vec![40; 187]),
+            Op::Write(vec![41; 163]),
+            Op::Write(vec![42; 219]),
+            Op::Write(vec![43; 169]),
+            Op::AbortReservation(vec![44; 147]),
+            Op::Restart,
+            Op::Write(vec![51; 221]),
+        ],
+        false,
+    );
 }
 
 fn _log_bug_() {
