@@ -547,14 +547,10 @@ enum Op {
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        static LEN: AtomicUsize = AtomicUsize::new(0);
-
-        // ensure len never is loaded at 0, as it will crash
-        // the call to gen_range below if low >= high
-        LEN.compare_and_swap(0, 1, Ordering::SeqCst);
+        static LEN: AtomicUsize = AtomicUsize::new(1);
 
         let incr = || {
-            let len = thread_rng().gen_range(0, 2);
+            let len = thread_rng().gen_range(0, 256);
             LEN.fetch_add(len + MAX_MSG_HEADER_LEN, Ordering::Relaxed);
             vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; len]
         };
@@ -609,7 +605,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
         .temporary(true)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .segment_mode(SegmentMode::Linear)
-        .segment_size(8192);
+        .segment_size(256);
 
     let mut tip = 0;
     let mut log = config.open_raw_log().unwrap();
