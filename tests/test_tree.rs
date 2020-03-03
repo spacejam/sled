@@ -2181,3 +2181,16 @@ fn tree_bug_39() {
         );
     }
 }
+
+#[test]
+fn tree_bug_40() {
+    // postmortem: deletions of non-existant keys were
+    // being persisted despite being unneccessary.
+    prop_tree_matches_btreemap(
+        vec![Del(Key(vec![99; 111222333]))],
+        false,
+        false,
+        0,
+        0,
+    );
+}
