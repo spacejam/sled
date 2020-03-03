@@ -9,7 +9,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
 };
 
-use crate::pagecache::{arr_to_u32, u32_to_arr, Lsn, SegmentMode};
+use crate::pagecache::{arr_to_u32, u32_to_arr, Lsn};
 use crate::*;
 
 const DEFAULT_PATH: &str = "default.sled";
@@ -213,8 +213,6 @@ pub struct Inner {
     #[doc(hidden)]
     pub mode: Mode,
     #[doc(hidden)]
-    pub segment_mode: SegmentMode,
-    #[doc(hidden)]
     pub snapshot_after_ops: u64,
     #[doc(hidden)]
     pub snapshot_path: Option<PathBuf>,
@@ -254,7 +252,6 @@ impl Default for Inner {
 
             // useful in testing
             segment_size: 512 * 1024, // 512kb in bytes
-            segment_mode: SegmentMode::Gc,
             print_profile_on_drop: false,
             flush_every_ms: Some(500),
             idgen_persist_interval: 1_000_000,
@@ -389,22 +386,6 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn open_raw_log(&self) -> Result<Log> {
-        // only validate, setup directory, and open file once
-        self.validate()?;
-
-        let mut config = self.clone();
-        config.limit_cache_max_memory();
-
-        let file = config.open_file()?;
-
-        // seal config in a Config
-        let config = RunningConfig { inner: config, file: Arc::new(file) };
-
-        Log::start_raw_log(config)
-    }
-
-    #[doc(hidden)]
     #[deprecated(
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
@@ -437,20 +418,6 @@ impl Config {
         note = "this does nothing for now. maybe it will come back in the future."
     )]
     pub fn snapshot_path<P: AsRef<Path>>(self, _: P) -> Self {
-        self
-    }
-
-    #[doc(hidden)]
-    pub fn segment_mode(mut self, segment_mode: SegmentMode) -> Self {
-        if Arc::strong_count(&self.0) != 1 {
-            error!(
-                "config has already been used to start \
-                 the system and probably should not be \
-                 mutated",
-            );
-        }
-        let m = Arc::make_mut(&mut self.0);
-        m.segment_mode = segment_mode;
         self
     }
 

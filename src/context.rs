@@ -3,7 +3,8 @@ use std::sync::Arc;
 use super::*;
 
 #[derive(Debug, Clone)]
-pub(crate) struct Context {
+#[doc(hidden)]
+pub struct Context {
     // TODO file from config should be in here
     config: RunningConfig,
     /// Periodically flushes dirty data. We keep this in an
@@ -15,7 +16,8 @@ pub(crate) struct Context {
     /// up synchronously.
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub(crate) flusher: Arc<Mutex<Option<flusher::Flusher>>>,
-    pub(crate) pagecache: Arc<PageCache>,
+    #[doc(hidden)]
+    pub pagecache: Arc<PageCache>,
 }
 
 impl std::ops::Deref for Context {
