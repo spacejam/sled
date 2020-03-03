@@ -41,7 +41,6 @@ use self::{
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
     segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
-    snapshot::advance_snapshot,
 };
 
 pub(crate) use self::{
@@ -60,7 +59,6 @@ pub use self::{
     },
     disk_pointer::DiskPtr,
     logger::{Log, LogRead},
-    segment::SegmentMode,
 };
 
 /// The offset of a segment. This equals its `LogOffset` (or the offset of any
@@ -460,7 +458,8 @@ pub struct PageCache {
     inner: PageTable,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
-    log: Log,
+    #[doc(hidden)]
+    pub log: Log,
     lru: Lru,
     idgen: Arc<AtomicU64>,
     idgen_persists: Arc<AtomicU64>,
@@ -1817,22 +1816,28 @@ impl PageCache {
         // without taking ownership of them.
         let buf = &mut bytes.as_slice();
 
-        let deserialize_latency = Measure::new(&M.deserialize);
+        let update_res = {
+            let _deserialize_latency = Measure::new(&M.deserialize);
 
-        let update_res = match header.kind {
-            Counter => u64::deserialize(buf).map(Update::Counter),
-            BlobMeta | InlineMeta => Meta::deserialize(buf).map(Update::Meta),
-            BlobLink | InlineLink => Link::deserialize(buf).map(Update::Link),
-            BlobNode | InlineNode => Node::deserialize(buf).map(Update::Node),
-            Free => Ok(Update::Free),
-            Corrupted | Canceled | Cap | BatchManifest => {
-                panic!("unexpected pull: {:?}", header.kind)
+            match header.kind {
+                Counter => u64::deserialize(buf).map(Update::Counter),
+                BlobMeta | InlineMeta => {
+                    Meta::deserialize(buf).map(Update::Meta)
+                }
+                BlobLink | InlineLink => {
+                    Link::deserialize(buf).map(Update::Link)
+                }
+                BlobNode | InlineNode => {
+                    Node::deserialize(buf).map(Update::Node)
+                }
+                Free => Ok(Update::Free),
+                Corrupted | Canceled | Cap | BatchManifest => {
+                    panic!("unexpected pull: {:?}", header.kind)
+                }
             }
         };
-        drop(deserialize_latency);
 
-        let update =
-            update_res.map_err(|_| ()).expect("failed to deserialize data");
+        let update = update_res.expect("failed to deserialize data");
 
         // TODO this feels racy, test it better?
         if let Update::Free = update {
