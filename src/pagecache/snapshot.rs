@@ -96,7 +96,7 @@ impl Snapshot {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
-                if let Some(lids) =
+                if let Some(lids @ PageState::Present(_)) =
                     self.pt.get_mut(usize::try_from(pid).unwrap())
                 {
                     trace!(
