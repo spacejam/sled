@@ -1225,20 +1225,29 @@ impl PageCache {
     pub fn space_amplification(&self) -> Result<f64> {
         let on_disk_bytes = self.size_on_disk()? as f64;
         let logical_size = self.logical_size_of_all_pages()? as f64;
-        let discount = self.config.segment_size as f64 * 8.;
 
-        Ok(on_disk_bytes / (logical_size + discount))
+        Ok(on_disk_bytes / logical_size)
     }
 
     pub(crate) fn size_on_disk(&self) -> Result<u64> {
         let mut size = self.config.file.metadata()?.len();
 
         let stable = self.config.blob_path(0);
-        let blob_dir = stable.parent().unwrap();
+        let blob_dir = stable.parent().expect(
+            "should be able to determine the parent for the blob directory",
+        );
         let blob_files = std::fs::read_dir(blob_dir)?;
 
         for blob_file in blob_files {
-            size += blob_file?.metadata()?.len();
+            let blob_file = if let Ok(bf) = blob_file {
+                bf
+            } else {
+                continue;
+            };
+
+            // it's possible the blob file was removed lazily
+            // in the background and no longer exists
+            size += blob_file.metadata().map(|m| m.len()).unwrap_or(0);
         }
 
         Ok(size)
