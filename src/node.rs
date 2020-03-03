@@ -14,6 +14,13 @@ pub struct Node {
 }
 
 impl Node {
+    pub(crate) fn rss(&self) -> u64 {
+        std::mem::size_of::<Node>() as u64
+            + self.lo.len() as u64
+            + self.hi.len() as u64
+            + self.data.rss()
+    }
+
     fn prefix_decode(&self, key: &[u8]) -> IVec {
         prefix::decode(self.prefix(), key)
     }
@@ -588,6 +595,18 @@ impl Default for Data {
 }
 
 impl Data {
+    pub(crate) fn rss(&self) -> u64 {
+        match self {
+            Data::Index(ref pointers) => {
+                pointers.iter().map(|(k, _)| k.len() + 8).sum::<usize>() as u64
+            }
+            Data::Leaf(ref pointers) => {
+                pointers.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>()
+                    as u64
+            }
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
         match *self {
             Data::Index(ref pointers) => pointers.len(),

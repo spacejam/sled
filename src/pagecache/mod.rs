@@ -1224,7 +1224,9 @@ impl PageCache {
     #[doc(hidden)]
     pub fn space_amplification(&self) -> Result<f64> {
         let on_disk_bytes = self.size_on_disk()? as f64;
-        let logical_size = self.logical_size_of_all_pages()? as f64;
+        let logical_size = (self.logical_size_of_all_pages()?
+            + self.config.segment_size as u64)
+            as f64;
 
         Ok(on_disk_bytes / logical_size)
     }
@@ -1255,7 +1257,7 @@ impl PageCache {
 
     fn logical_size_of_all_pages(&self) -> Result<u64> {
         let guard = pin();
-        let meta_size = self.get_meta(&guard)?.size_in_bytes();
+        let meta_size = self.get_meta(&guard)?.rss();
         let idgen_size = std::mem::size_of::<u64>() as u64;
 
         let mut ret = meta_size + idgen_size;
@@ -1263,7 +1265,7 @@ impl PageCache {
         let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
         for pid in min_pid..next_pid_to_allocate {
             if let Some(node_cell) = self.get(pid, &guard)? {
-                ret += node_cell.0.log_size();
+                ret += node_cell.rss();
             }
         }
         Ok(ret)
