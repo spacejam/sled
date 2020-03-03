@@ -572,7 +572,7 @@ impl Serialize for PageState {
                     .map(|tuple| tuple.serialized_size())
                     .sum::<u64>()
             }
-            _ => panic!("tried to serialize a {:?}", self),
+            _ => panic!("tried to serialize {:?}", self),
         }
     }
 
@@ -590,7 +590,7 @@ impl Serialize for PageState {
                 items_len.serialize_into(buf);
                 serialize_3tuple_ref_sequence(items.iter(), buf);
             }
-            _ => panic!("tried to serialize a {:?}", self),
+            _ => panic!("tried to serialize {:?}", self),
         }
     }
 
