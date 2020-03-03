@@ -11,7 +11,16 @@ pub struct Key(pub Vec<u8>);
 
 impl fmt::Debug for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Key(vec!{:?})", self.0)
+        if self.0.len() > 0 {
+            write!(
+                f,
+                "Key(vec![{}; {}])",
+                self.0.get(0).copied().unwrap_or(0),
+                self.0.len()
+            )
+        } else {
+            write!(f, "Key(vec!{:?})", self.0)
+        }
     }
 }
 

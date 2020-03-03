@@ -435,6 +435,11 @@ impl Tree {
 
             let (encoded_key, existing_val) =
                 node_view.node_kv_pair(key.as_ref());
+
+            if existing_val.is_none() {
+                return Ok(None);
+            }
+
             let frag = Link::Del(encoded_key);
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, guard)?;

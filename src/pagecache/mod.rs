@@ -1224,21 +1224,32 @@ impl PageCache {
     #[doc(hidden)]
     pub fn space_amplification(&self) -> Result<f64> {
         let on_disk_bytes = self.size_on_disk()? as f64;
-        let logical_size = self.logical_size_of_all_pages()? as f64;
-        let discount = self.config.segment_size as f64 * 8.;
+        let logical_size = (self.logical_size_of_all_pages()?
+            + self.config.segment_size as u64)
+            as f64;
 
-        Ok(on_disk_bytes / (logical_size + discount))
+        Ok(on_disk_bytes / logical_size)
     }
 
     pub(crate) fn size_on_disk(&self) -> Result<u64> {
         let mut size = self.config.file.metadata()?.len();
 
         let stable = self.config.blob_path(0);
-        let blob_dir = stable.parent().unwrap();
+        let blob_dir = stable.parent().expect(
+            "should be able to determine the parent for the blob directory",
+        );
         let blob_files = std::fs::read_dir(blob_dir)?;
 
         for blob_file in blob_files {
-            size += blob_file?.metadata()?.len();
+            let blob_file = if let Ok(bf) = blob_file {
+                bf
+            } else {
+                continue;
+            };
+
+            // it's possible the blob file was removed lazily
+            // in the background and no longer exists
+            size += blob_file.metadata().map(|m| m.len()).unwrap_or(0);
         }
 
         Ok(size)
@@ -1246,7 +1257,7 @@ impl PageCache {
 
     fn logical_size_of_all_pages(&self) -> Result<u64> {
         let guard = pin();
-        let meta_size = self.get_meta(&guard)?.size_in_bytes();
+        let meta_size = self.get_meta(&guard)?.rss();
         let idgen_size = std::mem::size_of::<u64>() as u64;
 
         let mut ret = meta_size + idgen_size;
@@ -1254,7 +1265,7 @@ impl PageCache {
         let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
         for pid in min_pid..next_pid_to_allocate {
             if let Some(node_cell) = self.get(pid, &guard)? {
-                ret += node_cell.0.log_size();
+                ret += node_cell.rss();
             }
         }
         Ok(ret)
@@ -1851,17 +1862,15 @@ impl PageCache {
     }
 
     fn load_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
-        let next_pid_to_allocate = if snapshot.pt.is_empty() {
-            0
-        } else {
-            *snapshot.pt.keys().max().unwrap() + 1
-        };
+        let next_pid_to_allocate = snapshot.pt.len() as PageId;
 
         self.next_pid_to_allocate = AtomicU64::from(next_pid_to_allocate);
 
         debug!("load_snapshot loading pages from 0..{}", next_pid_to_allocate);
         for pid in 0..next_pid_to_allocate {
-            let state = if let Some(state) = snapshot.pt.get(&pid) {
+            let state = if let Some(state) =
+                snapshot.pt.get(usize::try_from(pid).unwrap())
+            {
                 state
             } else {
                 panic!(
@@ -1897,6 +1906,7 @@ impl PageCache {
                     cache_infos.push(cache_info);
                     self.free.lock().push(pid);
                 }
+                _ => panic!("tried to load a {:?}", state),
             }
 
             // Set up new page

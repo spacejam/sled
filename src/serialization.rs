@@ -443,9 +443,7 @@ impl Serialize for Snapshot {
             + self
                 .pt
                 .iter()
-                .map(|(pid, page_state)| {
-                    pid.serialized_size() + page_state.serialized_size()
-                })
+                .map(|page_state| page_state.serialized_size())
                 .sum::<u64>()
     }
 
@@ -453,7 +451,9 @@ impl Serialize for Snapshot {
         self.last_lsn.serialize_into(buf);
         self.last_lid.serialize_into(buf);
         self.max_header_stable_lsn.serialize_into(buf);
-        serialize_2tuple_sequence(self.pt.iter(), buf);
+        for page_state in &self.pt {
+            page_state.serialize_into(buf);
+        }
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
@@ -572,6 +572,7 @@ impl Serialize for PageState {
                     .map(|tuple| tuple.serialized_size())
                     .sum::<u64>()
             }
+            _ => panic!("tried to serialize {:?}", self),
         }
     }
 
@@ -589,6 +590,7 @@ impl Serialize for PageState {
                 items_len.serialize_into(buf);
                 serialize_3tuple_ref_sequence(items.iter(), buf);
             }
+            _ => panic!("tried to serialize {:?}", self),
         }
     }
 

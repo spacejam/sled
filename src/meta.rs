@@ -28,7 +28,7 @@ impl Meta {
         self.inner.clone()
     }
 
-    pub(crate) fn size_in_bytes(&self) -> u64 {
+    pub(crate) fn rss(&self) -> u64 {
         self.inner
             .iter()
             .map(|(k, _pid)| {

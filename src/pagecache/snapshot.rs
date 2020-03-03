@@ -21,22 +21,21 @@ pub struct Snapshot {
     /// into a segment header
     pub max_header_stable_lsn: Lsn,
     /// the mapping from pages to (lsn, lid)
-    pub pt: FastMap8<PageId, PageState>,
+    pub pt: Vec<PageState>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageState {
     Present(Vec<(Lsn, DiskPtr, u64)>),
     Free(Lsn, DiskPtr),
+    Uninitialized,
 }
 
 impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr, u64)) {
         match *self {
             PageState::Present(ref mut items) => items.push(item),
-            PageState::Free(_, _) => {
-                panic!("pushed items to a PageState::Free")
-            }
+            _ => panic!("pushed items to {:?}", self),
         }
     }
 
@@ -48,6 +47,7 @@ impl PageState {
                 vec![(lsn, ptr, u64::try_from(MAX_MSG_HEADER_LEN).unwrap())]
                     .into_iter()
             }
+            PageState::Uninitialized => panic!("canned iter on a {:?}", self),
         }
     }
 
@@ -73,6 +73,13 @@ impl Snapshot {
         trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
         let _measure = Measure::new(&M.snapshot_apply);
 
+        if self.pt.len() <= usize::try_from(pid).unwrap() {
+            self.pt.resize(
+                usize::try_from(pid + 1).unwrap(),
+                PageState::Uninitialized,
+            );
+        }
+
         match log_kind {
             LogKind::Replace => {
                 trace!(
@@ -82,15 +89,16 @@ impl Snapshot {
                     lsn,
                 );
 
-                let _old = self
-                    .pt
-                    .insert(pid, PageState::Present(vec![(lsn, disk_ptr, sz)]));
+                self.pt[usize::try_from(pid).unwrap()] =
+                    PageState::Present(vec![(lsn, disk_ptr, sz)]);
             }
             LogKind::Link => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
-                if let Some(lids) = self.pt.get_mut(&pid) {
+                if let Some(lids @ PageState::Present(_)) =
+                    self.pt.get_mut(usize::try_from(pid).unwrap())
+                {
                     trace!(
                         "append of pid {} at lid {} lsn {}",
                         pid,
@@ -122,7 +130,8 @@ impl Snapshot {
             }
             LogKind::Free => {
                 trace!("free of pid {} at ptr {} lsn {}", pid, disk_ptr, lsn);
-                let _old = self.pt.insert(pid, PageState::Free(lsn, disk_ptr));
+                self.pt[usize::try_from(pid).unwrap()] =
+                    PageState::Free(lsn, disk_ptr);
             }
             LogKind::Corrupted | LogKind::Skip => panic!(
                 "unexppected messagekind in snapshot application: {:?}",
