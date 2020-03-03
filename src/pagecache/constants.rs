@@ -18,7 +18,7 @@ pub const MINIMUM_ITEMS_PER_SEGMENT: usize = 4;
 
 /// During testing, this should never be exceeded.
 #[allow(unused)]
-pub const MAX_SPACE_AMPLIFICATION: f64 = 30.;
+pub const MAX_SPACE_AMPLIFICATION: f64 = 5.;
 
 pub(crate) const META_PID: PageId = 0;
 pub(crate) const COUNTER_PID: PageId = 1;
