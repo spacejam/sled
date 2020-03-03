@@ -1,8 +1,3 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
-
 trigger:
 - master
 
@@ -11,9 +6,6 @@ variables:
 
 strategy:
   matrix:
-    windows-stable:
-      imageName: 'windows-2019'
-      rustup_toolchain: stable
     mac-stable:
       imageName: 'macos-10.14'
       rustup_toolchain: stable
@@ -28,10 +20,6 @@ strategy:
       imageName: 'ubuntu-18.04'
       rustup_toolchain: stable
       testKind: 'examples'
-    sanitizers:
-      imageName: 'ubuntu-18.04'
-      rustup_toolchain: nightly
-      testKind: 'sanitizers'
     cross-compile:
       imageName: 'macos-10.14'
       rustup_toolchain: nightly
@@ -45,23 +33,15 @@ steps:
       curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
       echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
     displayName: Install rust
-    condition: ne( variables['Agent.OS'], 'Windows_NT' )
-  - script: |
-      curl -sSf -o rustup-init.exe https://win.rustup.rs
-      rustup-init.exe -y --default-toolchain none
-      echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
-    displayName: Windows install rust
-    condition: eq( variables['Agent.OS'], 'Windows_NT' )
   - task: CacheBeta@1
     inputs:
       path: target
       key: Cargo.toml | $(testKind) | $(Agent.OS)
     displayName: 'Cache Build'
-    condition: and(ne( variables['testKind'], 'sanitizers' ), ne( variables['testKind'], 'burn-in' ))
+    condition: ne( variables['testKind'], 'burn-in' )
   - script: |
       find target -exec chmod +x {} \; || true
     displayName: chmod cache workaround
-    condition: ne( variables['Agent.OS'], 'Windows_NT' )
   - script: cargo build --release --tests --features=testing
     displayName: Cargo build
     condition: eq( variables['testKind'], 'default' )
@@ -85,8 +65,3 @@ steps:
       cargo run --release -- --duration=60
       rm -rf default.sled
     condition: eq( variables['testKind'], 'burn-in' )
-  - script: |
-      set -eo pipefail
-      scripts/sanitizers.sh
-    displayName: sanitizers
-    condition: eq( variables['testKind'], 'sanitizers' )
