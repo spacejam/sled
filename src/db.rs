@@ -7,7 +7,8 @@ use crate::*;
 /// a default keyspace.
 #[derive(Clone)]
 pub struct Db {
-    context: Context,
+    #[doc(hidden)]
+    pub context: Context,
     pub(crate) default: Tree,
     tenants: Arc<RwLock<FastMap8<IVec, Tree>>>,
 }

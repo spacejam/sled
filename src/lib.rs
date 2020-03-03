@@ -241,7 +241,7 @@ pub use {
                 MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
             },
             BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
-            PageCache, PageId, SegmentMode,
+            PageCache, PageId,
         },
         serialization::Serialize,
     },
