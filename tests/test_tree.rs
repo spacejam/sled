@@ -927,7 +927,7 @@ fn tree_bug_03() {
 }
 
 #[test]
-fn tree_bug_4() {
+fn tree_bug_04() {
     // postmortem: pagecache was failing to replace the LogId list
     // when it encountered a new Update::Compact.
     // postmortem 2: after refactoring log storage, we were not properly
@@ -953,7 +953,7 @@ fn tree_bug_4() {
 }
 
 #[test]
-fn tree_bug_5() {
+fn tree_bug_05() {
     // postmortem: during recovery, the segment accountant was failing to
     // properly set the file's tip.
     prop_tree_matches_btreemap(
@@ -975,7 +975,7 @@ fn tree_bug_5() {
 }
 
 #[test]
-fn tree_bug_6() {
+fn tree_bug_06() {
     // postmortem: after reusing segments, we were failing to checksum reads
     // performed while iterating over rewritten segment buffers, and using
     // former garbage data. fix: use the crc that's there for catching torn
@@ -999,7 +999,7 @@ fn tree_bug_6() {
 }
 
 #[test]
-fn tree_bug_7() {
+fn tree_bug_07() {
     // postmortem: the segment accountant was not fully recovered, and thought
     // that it could reuse a particular segment that wasn't actually empty
     // yet.
@@ -1023,7 +1023,7 @@ fn tree_bug_7() {
 }
 
 #[test]
-fn tree_bug_8() {
+fn tree_bug_08() {
     // postmortem: failed to properly recover the state in the segment
     // accountant that tracked the previously issued segment.
     prop_tree_matches_btreemap(
@@ -1046,7 +1046,7 @@ fn tree_bug_8() {
 }
 
 #[test]
-fn tree_bug_9() {
+fn tree_bug_09() {
     // postmortem: was failing to load existing snapshots on initialization.
     // would encounter uninitialized segments at the log tip and overwrite
     // the first segment (indexed by LSN of 0) in the segment accountant
