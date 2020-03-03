@@ -25,3 +25,4 @@ pub(crate) const COUNTER_PID: PageId = 1;
 pub(crate) const BATCH_MANIFEST_PID: PageId = PageId::max_value() - 666;
 
 pub(crate) const PAGE_CONSOLIDATION_THRESHOLD: usize = 10;
+pub(crate) const SEGMENT_CLEANUP_THRESHOLD: usize = 50;
