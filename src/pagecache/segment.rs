@@ -863,8 +863,7 @@ impl SegmentAccountant {
         idx: usize,
         lsn: Lsn,
     ) -> Result<()> {
-        let cleanup_threshold =
-            usize::from(self.config.segment_cleanup_threshold);
+        let cleanup_threshold = SEGMENT_CLEANUP_THRESHOLD;
 
         let segment_start = (idx * self.config.segment_size) as LogOffset;
 
@@ -994,9 +993,7 @@ impl SegmentAccountant {
             self.segments.iter().filter(|s| s.is_inactive()).count();
         let free_ratio = (free_segs * 100) / (1 + free_segs + inactive_segs);
 
-        if free_ratio >= usize::from(self.config.segment_cleanup_threshold)
-            && inactive_segs > 5
-        {
+        if free_ratio >= SEGMENT_CLEANUP_THRESHOLD && inactive_segs > 5 {
             let last_index =
                 self.segments.iter().rposition(Segment::is_inactive).unwrap();
 

@@ -207,15 +207,7 @@ pub struct Inner {
     #[doc(hidden)]
     pub create_new: bool,
     #[doc(hidden)]
-    pub segment_cleanup_threshold: u8,
-    #[doc(hidden)]
-    pub segment_cleanup_skew: usize,
-    #[doc(hidden)]
     pub mode: Mode,
-    #[doc(hidden)]
-    pub snapshot_after_ops: u64,
-    #[doc(hidden)]
-    pub snapshot_path: Option<PathBuf>,
     #[doc(hidden)]
     pub temporary: bool,
     #[doc(hidden)]
@@ -258,12 +250,6 @@ impl Default for Inner {
             global_error: Arc::new(Atomic::default()),
             #[cfg(feature = "event_log")]
             event_log: Arc::new(crate::event_log::EventLog::default()),
-
-            // deprecated
-            snapshot_after_ops: 1_000_000,
-            snapshot_path: None,
-            segment_cleanup_threshold: 40,
-            segment_cleanup_skew: 10,
         }
     }
 }
@@ -537,18 +523,6 @@ impl Config {
         supported!(
             self.segment_size <= 1 << 24,
             "segment_size should be <= 16mb"
-        );
-        supported!(
-            self.segment_cleanup_threshold >= 1,
-            "segment_cleanup_threshold must be >= 1 (1%)"
-        );
-        supported!(
-            self.segment_cleanup_threshold < 100,
-            "segment_cleanup_threshold must be < 100 (100%)"
-        );
-        supported!(
-            self.segment_cleanup_skew < 99,
-            "segment_cleanup_skew cannot be greater than 99%"
         );
         if self.use_compression {
             supported!(

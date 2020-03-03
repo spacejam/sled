@@ -35,7 +35,8 @@ use parallel_io_windows::{pread_exact, pread_exact_or_eof, pwrite_all};
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
     constants::{
-        BATCH_MANIFEST_PID, COUNTER_PID, META_PID, PAGE_CONSOLIDATION_THRESHOLD,
+        BATCH_MANIFEST_PID, COUNTER_PID, META_PID,
+        PAGE_CONSOLIDATION_THRESHOLD, SEGMENT_CLEANUP_THRESHOLD,
     },
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
