@@ -124,7 +124,7 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     let merge_max = cas_max + args.flag_merge_prop;
     let scan_max = merge_max + args.flag_scan_prop;
 
-    let bytes = |len| -> Vec<u8> {
+    let bytes = |len| -> sled::IVec {
         let i = if args.flag_sequential {
             SEQ.fetch_add(1, Ordering::Relaxed)
         } else {
@@ -143,6 +143,8 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     };
     let mut rng = thread_rng();
 
+    let value = sled::IVec::from(vec![0; args.flag_val_len]);
+
     while !shutdown.load(Ordering::Relaxed) {
         let op = TOTAL.fetch_add(1, Ordering::Release);
         let key = bytes(args.flag_key_len);
@@ -153,32 +155,24 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                 tree.get(&key).unwrap();
             }
             v if v > get_max && v <= set_max => {
-                tree.insert(&key, bytes(args.flag_val_len)).unwrap();
+                tree.insert(&key, value.clone()).unwrap();
             }
             v if v > set_max && v <= del_max => {
                 tree.remove(&key).unwrap();
             }
             v if v > del_max && v <= cas_max => {
-                let old_k = bytes(args.flag_val_len);
+                let old =
+                    if rng.gen::<bool>() { Some(value.clone()) } else { None };
 
-                let old = if rng.gen::<bool>() {
-                    Some(old_k.as_slice())
-                } else {
-                    None
-                };
-
-                let new = if rng.gen::<bool>() {
-                    Some(bytes(args.flag_val_len))
-                } else {
-                    None
-                };
+                let new =
+                    if rng.gen::<bool>() { Some(value.clone()) } else { None };
 
                 if let Err(e) = tree.compare_and_swap(&key, old, new) {
                     panic!("operational error: {:?}", e);
                 }
             }
             v if v > cas_max && v <= merge_max => {
-                tree.merge(&key, bytes(args.flag_val_len)).unwrap();
+                tree.merge(&key, value.clone()).unwrap();
             }
             _ => {
                 let iter = tree.range(key..).map(|res| res.unwrap());
