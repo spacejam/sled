@@ -105,7 +105,11 @@ impl From<&[u8]> for IVec {
 
 impl From<Arc<[u8]>> for IVec {
     fn from(arc: Arc<[u8]>) -> Self {
-        Self::remote(arc)
+        if is_inline_candidate(arc.len()) {
+            Self::inline(&arc)
+        } else {
+            Self::remote(arc)
+        }
     }
 }
 
