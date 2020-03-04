@@ -7,6 +7,9 @@ edition = "2018"
 
 [profile.release]
 panic = 'abort'
+codegen-units = 1
+target-cpu = "native"
+lto = "fat"
 debug = true
 
 [features]
