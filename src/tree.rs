@@ -2191,7 +2191,7 @@ impl From<Error> for CompareAndSwapResult {
 }
 
 /// Compare and swap error.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CompareAndSwapError {
     /// The current value which caused your CAS to fail.
     pub current: Option<IVec>,
@@ -2204,3 +2204,5 @@ impl fmt::Display for CompareAndSwapError {
         write!(f, "Compare and swap conflict")
     }
 }
+
+impl std::error::Error for CompareAndSwapError {}
