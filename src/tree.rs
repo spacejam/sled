@@ -2205,9 +2205,4 @@ impl fmt::Display for CompareAndSwapError {
     }
 }
 
-impl std::error::Error for CompareAndSwapError {
-    #[allow(deprecated, deprecated_in_future)]
-    fn description(&self) -> &str {
-        "Compare and swap conflict"
-    }
-}
+impl std::error::Error for CompareAndSwapError {}
