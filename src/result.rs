@@ -116,21 +116,7 @@ impl From<io::Error> for Error {
     }
 }
 
-impl StdError for Error {
-    #[allow(deprecated, deprecated_in_future)]
-    fn description(&self) -> &str {
-        use self::Error::*;
-
-        match *self {
-            CollectionNotFound(_) => "Collection does not exist.",
-            Unsupported(ref e) | ReportableBug(ref e) => &*e,
-            #[cfg(feature = "failpoints")]
-            FailPoint => "Fail point has been triggered.",
-            Io(ref e) => e.description(),
-            Corruption { .. } => "Read corrupted data.",
-        }
-    }
-}
+impl StdError for Error {}
 
 impl Display for Error {
     fn fmt(
