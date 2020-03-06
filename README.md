@@ -145,14 +145,6 @@ Want to support development? Help us out via [GitHub Sponsors](https://github.co
 # special thanks
 
 <p align="center">
-  <a href="https://ferrous-systems.com/">
-    <img src="https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg" width="60%" height="auto" />
-  </a>
-</p>
-
-[Ferrous Systems](https://ferrous-systems.com) provided a huge amount of engineer time for sled in 2018 and 2019. They are the world's leading embedded Rust consulting company.
-
-<p align="center">
   <a href="https://www.meilisearch.com/">
     <img src="https://avatars3.githubusercontent.com/u/43250847?s=200&v=4" width="20%" height="auto" />
   </a>
