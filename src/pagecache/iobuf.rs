@@ -1047,6 +1047,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         let new_salt = bump_salt(last_salt);
 
         IoBuf {
+            // reuse the previous io buffer
             buf: iobuf.buf.clone(),
             header: CachePadded::new(AtomicU64::new(new_salt)),
             base: iobuf.base + res_len,
