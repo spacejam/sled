@@ -1,5 +1,5 @@
 use std::{
-    cell::UnsafeCell,
+    alloc::{alloc, dealloc, Layout},
     sync::atomic::{AtomicBool, AtomicPtr},
 };
 
@@ -30,9 +30,38 @@ macro_rules! io_fail {
     };
 }
 
+struct AlignedBuf(*mut u8, usize);
+
+#[allow(unsafe_code)]
+unsafe impl Send for AlignedBuf {}
+
+#[allow(unsafe_code)]
+unsafe impl Sync for AlignedBuf {}
+
+impl AlignedBuf {
+    fn new(len: usize) -> AlignedBuf {
+        let layout = Layout::from_size_align(len, 8192).unwrap();
+        let ptr = unsafe { alloc(layout) };
+
+        assert!(!ptr.is_null(), "failed to allocate critical IO buffer");
+
+        AlignedBuf(ptr, len)
+    }
+}
+
+impl Drop for AlignedBuf {
+    fn drop(&mut self) {
+        let layout = Layout::from_size_align(self.1, 8192).unwrap();
+        unsafe {
+            dealloc(self.0, layout);
+        }
+    }
+}
+
 pub(crate) struct IoBuf {
-    pub buf: UnsafeCell<Vec<u8>>,
+    buf: Arc<AlignedBuf>,
     header: CachePadded<AtomicU64>,
+    base: usize,
     pub offset: LogOffset,
     pub lsn: Lsn,
     pub capacity: usize,
@@ -43,6 +72,99 @@ pub(crate) struct IoBuf {
 
 #[allow(unsafe_code)]
 unsafe impl Sync for IoBuf {}
+
+impl IoBuf {
+    pub(crate) fn get_mut_range(
+        &self,
+        at: usize,
+        len: usize,
+    ) -> &'static mut [u8] {
+        assert!(self.buf.1 >= at + len);
+        unsafe {
+            std::slice::from_raw_parts_mut(self.buf.0.add(self.base + at), len)
+        }
+    }
+
+    // use this for operations on an `IoBuf` that must be
+    // linearized together, and can't fit in the header!
+    pub(crate) fn linearized<F, B>(&self, f: F) -> B
+    where
+        F: FnOnce() -> B,
+    {
+        let _l = self.linearizer.lock();
+        f()
+    }
+
+    // This is called upon the initialization of a fresh segment.
+    // We write a new segment header to the beginning of the buffer
+    // for assistance during recovery. The caller is responsible
+    // for ensuring that the IoBuf's capacity has been set properly.
+    fn store_segment_header(
+        &mut self,
+        last: Header,
+        lsn: Lsn,
+        max_stable_lsn: Lsn,
+    ) {
+        debug!("storing lsn {} in beginning of buffer", lsn);
+        assert!(self.capacity >= SEG_HEADER_LEN);
+
+        self.stored_max_stable_lsn = max_stable_lsn;
+
+        self.lsn = lsn;
+
+        let header = SegmentHeader { lsn, max_stable_lsn, ok: true };
+        let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
+
+        #[allow(unsafe_code)]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                header_bytes.as_ptr(),
+                self.buf.0,
+                SEG_HEADER_LEN,
+            );
+        }
+
+        // ensure writes to the buffer land after our header.
+        let last_salt = salt(last);
+        let new_salt = bump_salt(last_salt);
+        let bumped = bump_offset(new_salt, SEG_HEADER_LEN);
+        self.set_header(bumped);
+    }
+
+    pub(crate) fn set_maxed(&self, maxed: bool) {
+        debug_delay();
+        self.maxed.store(maxed, SeqCst);
+    }
+
+    pub(crate) fn get_maxed(&self) -> bool {
+        debug_delay();
+        self.maxed.load(SeqCst)
+    }
+
+    pub(crate) fn get_header(&self) -> Header {
+        debug_delay();
+        self.header.load(SeqCst)
+    }
+
+    pub(crate) fn set_header(&self, new: Header) {
+        debug_delay();
+        self.header.store(new, SeqCst);
+    }
+
+    pub(crate) fn cas_header(
+        &self,
+        old: Header,
+        new: Header,
+    ) -> std::result::Result<Header, Header> {
+        debug_delay();
+        let res = self.header.compare_and_swap(old, new, SeqCst);
+        if res == old {
+            Ok(new)
+        } else {
+            Err(res)
+        }
+    }
+}
 
 pub(crate) struct IoBufs {
     pub config: RunningConfig,
@@ -143,8 +265,6 @@ impl IoBufs {
                 )
             };
 
-        let mut iobuf = IoBuf::new(segment_size);
-
         trace!(
             "starting IoBufs with next_lsn: {} \
              next_lid: {}",
@@ -156,7 +276,7 @@ impl IoBufs {
         // of our file has not yet been written.
         let stable = next_lsn - 1;
 
-        if next_lsn % config.segment_size as Lsn == 0 {
+        let iobuf = if next_lsn % config.segment_size as Lsn == 0 {
             // allocate new segment for data
 
             if next_lsn == 0 {
@@ -167,26 +287,47 @@ impl IoBufs {
                 assert_eq!(0, lid);
             }
 
-            iobuf.offset = lid;
-            iobuf.capacity = segment_size;
-            iobuf.store_segment_header(0, next_lsn, stable);
-
             debug!(
                 "starting log at clean offset {}, recovered lsn {}",
                 next_lid, next_lsn
             );
+
+            let mut iobuf = IoBuf {
+                buf: Arc::new(AlignedBuf::new(segment_size)),
+                header: CachePadded::new(AtomicU64::new(0)),
+                base: 0,
+                offset: lid,
+                lsn: 0,
+                capacity: segment_size,
+                maxed: AtomicBool::new(false),
+                linearizer: Mutex::new(()),
+                stored_max_stable_lsn: -1,
+            };
+
+            iobuf.store_segment_header(0, next_lsn, stable);
+
+            iobuf
         } else {
             // the tip offset is not completely full yet, reuse it
-            let offset = assert_usize(next_lid % segment_size as LogOffset);
-            iobuf.offset = next_lid;
-            iobuf.capacity = segment_size - offset;
-            iobuf.lsn = next_lsn;
+            let base = assert_usize(next_lid % segment_size as LogOffset);
 
             debug!(
                 "starting log at split offset {}, recovered lsn {}",
                 next_lid, next_lsn
             );
-        }
+
+            IoBuf {
+                buf: Arc::new(AlignedBuf::new(segment_size)),
+                header: CachePadded::new(AtomicU64::new(0)),
+                base,
+                offset: next_lid,
+                lsn: next_lsn,
+                capacity: segment_size - base,
+                maxed: AtomicBool::new(false),
+                linearizer: Mutex::new(()),
+                stored_max_stable_lsn: -1,
+            }
+        };
 
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
@@ -411,9 +552,8 @@ impl IoBufs {
         // a pad is a null message written to the end of a buffer
         // to signify that nothing else will be written into it
         if should_pad {
-            #[allow(unsafe_code)]
-            let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
             let pad_len = capacity - bytes_to_write - MAX_MSG_HEADER_LEN;
+            let data = iobuf.get_mut_range(bytes_to_write, pad_len);
 
             // take the crc of the random bytes already after where we
             // would place our header.
@@ -438,12 +578,12 @@ impl IoBufs {
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     header_bytes.as_ptr(),
-                    data.as_mut_ptr().add(bytes_to_write),
+                    data.as_mut_ptr(),
                     header_bytes.len(),
                 );
                 std::ptr::copy_nonoverlapping(
                     padding_bytes.as_ptr(),
-                    data.as_mut_ptr().add(bytes_to_write + header_bytes.len()),
+                    data.as_mut_ptr().add(header_bytes.len()),
                     pad_len,
                 );
             }
@@ -458,10 +598,8 @@ impl IoBufs {
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     crc32_arr.as_ptr(),
-                    data.as_mut_ptr().add(
-                        // the crc32 is the first part of the buffer
-                        bytes_to_write,
-                    ),
+                    // the crc32 is the first part of the buffer
+                    data.as_mut_ptr(),
                     std::mem::size_of::<u32>(),
                 );
             }
@@ -469,17 +607,16 @@ impl IoBufs {
 
         let total_len = if maxed { capacity } else { bytes_to_write };
 
-        #[allow(unsafe_code)]
-        let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
+        let data = iobuf.get_mut_range(0, total_len);
         let stored_max_stable_lsn = iobuf.stored_max_stable_lsn;
 
         io_fail!(self, "buffer write");
         #[cfg(feature = "io_uring")]
         {
-            let mut remaining_len = total_len;
-            let mut to_write = &data[..remaining_len];
+            let mut wrote = 0;
+            let mut to_write = &data[wrote..];
             let mut offset = log_offset;
-            while remaining_len > 0 {
+            while wrote < total_len {
                 // we take out this mutex to guarantee
                 // that our `Link` write operation below
                 // is serialized with the following sync.
@@ -515,17 +652,13 @@ impl IoBufs {
                 // events while events from other threads are in play.
                 drop(link_mu);
 
-                let wrote = wrote_completion.wait()?;
-
-                remaining_len -= wrote;
-                to_write = &to_write[wrote..];
-                offset += wrote as u64;
+                wrote += wrote_completion.wait()?;
             }
         }
         #[cfg(not(feature = "io_uring"))]
         {
             let f = &self.config.file;
-            pwrite_all(f, &data[..total_len], log_offset)?;
+            pwrite_all(f, data, log_offset)?;
             if !self.config.temporary {
                 #[cfg(target_os = "linux")]
                 {
@@ -546,7 +679,7 @@ impl IoBufs {
                             f.sync_all()?;
                         } else {
                             return Err(err.into());
-                        }                        
+                        }
                     }
                 }
 
@@ -887,25 +1020,44 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         lid + res_len as LogOffset
     };
 
-    let mut next_iobuf = IoBuf::new(segment_size);
-    next_iobuf.offset = next_offset;
-
     // NB as soon as the "sealed" bit is 0, this allows new threads
     // to start writing into this buffer, so do that after it's all
     // set up. expect this thread to block until the buffer completes
     // its entire life cycle as soon as we do that.
-    if maxed {
-        next_iobuf.capacity = segment_size;
+    let next_iobuf = if maxed {
+        let mut next_iobuf = IoBuf {
+            buf: Arc::new(AlignedBuf::new(segment_size)),
+            header: CachePadded::new(AtomicU64::new(0)),
+            base: 0,
+            offset: next_offset,
+            lsn: next_lsn,
+            capacity: segment_size,
+            maxed: AtomicBool::new(false),
+            linearizer: Mutex::new(()),
+            stored_max_stable_lsn: -1,
+        };
+
         next_iobuf.store_segment_header(sealed, next_lsn, iobufs.stable());
+
+        next_iobuf
     } else {
         let new_cap = capacity - res_len;
         assert_ne!(new_cap, 0);
-        next_iobuf.capacity = new_cap;
-        next_iobuf.lsn = next_lsn;
         let last_salt = salt(sealed);
         let new_salt = bump_salt(last_salt);
-        next_iobuf.set_header(new_salt);
-    }
+
+        IoBuf {
+            buf: iobuf.buf.clone(),
+            header: CachePadded::new(AtomicU64::new(new_salt)),
+            base: iobuf.base + res_len,
+            offset: next_offset,
+            lsn: next_lsn,
+            capacity: new_cap,
+            maxed: AtomicBool::new(false),
+            linearizer: Mutex::new(()),
+            stored_max_stable_lsn: -1,
+        }
+    };
 
     // we acquire this mutex to guarantee that any threads that
     // are going to wait on the condition variable will observe
@@ -986,101 +1138,6 @@ impl Debug for IoBuf {
             offset(header),
             is_sealed(header)
         ))
-    }
-}
-
-impl IoBuf {
-    pub(crate) fn new(buf_size: usize) -> IoBuf {
-        IoBuf {
-            buf: UnsafeCell::new(vec![0; buf_size]),
-            header: CachePadded::new(AtomicU64::new(0)),
-            offset: LogOffset::max_value(),
-            lsn: 0,
-            capacity: 0,
-            maxed: AtomicBool::new(false),
-            linearizer: Mutex::new(()),
-            stored_max_stable_lsn: -1,
-        }
-    }
-
-    // use this for operations on an `IoBuf` that must be
-    // linearized together, and can't fit in the header!
-    pub(crate) fn linearized<F, B>(&self, f: F) -> B
-    where
-        F: FnOnce() -> B,
-    {
-        let _l = self.linearizer.lock();
-        f()
-    }
-
-    // This is called upon the initialization of a fresh segment.
-    // We write a new segment header to the beginning of the buffer
-    // for assistance during recovery. The caller is responsible
-    // for ensuring that the IoBuf's capacity has been set properly.
-    pub(crate) fn store_segment_header(
-        &mut self,
-        last: Header,
-        lsn: Lsn,
-        max_stable_lsn: Lsn,
-    ) {
-        debug!("storing lsn {} in beginning of buffer", lsn);
-        assert!(self.capacity >= SEG_HEADER_LEN);
-
-        self.stored_max_stable_lsn = max_stable_lsn;
-
-        self.lsn = lsn;
-
-        let header = SegmentHeader { lsn, max_stable_lsn, ok: true };
-        let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
-
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                header_bytes.as_ptr(),
-                (*self.buf.get()).as_mut_ptr(),
-                SEG_HEADER_LEN,
-            );
-        }
-
-        // ensure writes to the buffer land after our header.
-        let last_salt = salt(last);
-        let new_salt = bump_salt(last_salt);
-        let bumped = bump_offset(new_salt, SEG_HEADER_LEN);
-        self.set_header(bumped);
-    }
-
-    pub(crate) fn set_maxed(&self, maxed: bool) {
-        debug_delay();
-        self.maxed.store(maxed, SeqCst);
-    }
-
-    pub(crate) fn get_maxed(&self) -> bool {
-        debug_delay();
-        self.maxed.load(SeqCst)
-    }
-
-    pub(crate) fn get_header(&self) -> Header {
-        debug_delay();
-        self.header.load(SeqCst)
-    }
-
-    pub(crate) fn set_header(&self, new: Header) {
-        debug_delay();
-        self.header.store(new, SeqCst);
-    }
-
-    pub(crate) fn cas_header(
-        &self,
-        old: Header,
-        new: Header,
-    ) -> std::result::Result<Header, Header> {
-        debug_delay();
-        let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old {
-            Ok(new)
-        } else {
-            Err(res)
-        }
     }
 }
 

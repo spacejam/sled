@@ -337,20 +337,14 @@ impl Log {
                 self
             );
 
-            #[allow(unsafe_code)]
-            let out_buf = unsafe { (*iobuf.buf.get()).as_mut_slice() };
-
-            let res_start = buf_offset;
-            let res_end = res_start + inline_buf_len;
-
-            let destination = &mut (out_buf)[res_start..res_end];
-            let reservation_offset = log_offset + buf_offset as LogOffset;
+            let destination = iobuf.get_mut_range(buf_offset, inline_buf_len);
+            let reservation_lid = log_offset + buf_offset as LogOffset;
 
             trace!(
                 "reserved {} bytes at lsn {} lid {}",
                 inline_buf_len,
                 reservation_lsn,
-                reservation_offset,
+                reservation_lid,
             );
 
             bump_atomic_lsn(&self.iobufs.max_reserved_lsn, reservation_lsn);
@@ -368,11 +362,11 @@ impl Log {
             M.log_reservation_success();
 
             let pointer = if let Some(blob_id) = blob_id {
-                DiskPtr::new_blob(reservation_offset, blob_id)
+                DiskPtr::new_blob(reservation_lid, blob_id)
             } else if let Some(blob_rewrite) = blob_rewrite {
-                DiskPtr::new_blob(reservation_offset, blob_rewrite)
+                DiskPtr::new_blob(reservation_lid, blob_rewrite)
             } else {
-                DiskPtr::new_inline(reservation_offset)
+                DiskPtr::new_inline(reservation_lid)
             };
 
             return Ok(Reservation {
