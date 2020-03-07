@@ -133,7 +133,7 @@ fn variable_lengths(db: &sled::Db) -> sled::Result<()> {
     );
     dogs.insert("zed pup", zed_pup_value)?;
 
-    // IMPORTANT NOTE: the German word for "bark" is "barf"
+    // IMPORTANT NOTE: German dogs eat food called "barf"
     let mut klaus_value = vec![];
     klaus_value.extend_from_slice(b"barf shop");
     klaus_value.extend_from_slice(
