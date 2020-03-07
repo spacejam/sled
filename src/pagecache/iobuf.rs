@@ -614,9 +614,10 @@ impl IoBufs {
         #[cfg(feature = "io_uring")]
         {
             let mut wrote = 0;
-            let mut to_write = &data[wrote..];
-            let mut offset = log_offset;
             while wrote < total_len {
+                let to_write = &data[wrote..];
+                let offset = log_offset + wrote as u64;
+
                 // we take out this mutex to guarantee
                 // that our `Link` write operation below
                 // is serialized with the following sync.
@@ -641,7 +642,7 @@ impl IoBufs {
                 let sync_completion = self.io_uring.sync_file_range(
                     &*self.config.file,
                     offset,
-                    remaining_len,
+                    to_write.len(),
                 );
 
                 sync_completion.wait()?;
