@@ -447,21 +447,13 @@ impl Node {
                     Some(IVec::from(self.prefix_encode(&self.hi)))
                 }
             }
-            Bound::Included(b) => {
-                let min = if self.hi.is_empty() {
-                    b
-                } else {
-                    std::cmp::min(b, &self.hi)
-                };
-                Some(IVec::from(self.prefix_encode(min)))
-            }
+            Bound::Included(b) => Some(IVec::from(self.prefix_encode(b))),
             Bound::Excluded(b) => {
-                let min = if self.hi.is_empty() {
-                    b
-                } else {
-                    std::cmp::min(b, &self.hi)
-                };
-                let encoded = &min[self.prefix_len as usize..];
+                // we use manual prefix encoding here because
+                // there is an assertion in `prefix_encode`
+                // that asserts the key is within the node,
+                // and maybe `b` is above the node.
+                let encoded = &b[self.prefix_len as usize..];
                 Some(IVec::from(encoded))
             }
         };
