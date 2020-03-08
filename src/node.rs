@@ -434,13 +434,6 @@ impl Node {
         &self,
         bound: &Bound<IVec>,
     ) -> Option<(IVec, IVec)> {
-        static MAX_IVEC: Lazy<IVec, fn() -> IVec> = Lazy::new(init_max_ivec);
-
-        fn init_max_ivec() -> IVec {
-            let base = vec![255; 1024 * 1024];
-            IVec::from(base)
-        }
-
         assert!(!self.data.is_index());
 
         // This encoding happens this way because
@@ -449,33 +442,32 @@ impl Node {
         let successor_key = match bound {
             Bound::Unbounded => {
                 if self.hi.is_empty() {
-                    MAX_IVEC.clone()
+                    None
                 } else {
-                    IVec::from(self.prefix_encode(&self.hi))
+                    Some(IVec::from(self.prefix_encode(&self.hi)))
                 }
             }
-            Bound::Included(b) => {
-                let min = if self.hi.is_empty() {
-                    b
-                } else {
-                    std::cmp::min(b, &self.hi)
-                };
-                IVec::from(self.prefix_encode(min))
-            }
+            Bound::Included(b) => Some(IVec::from(self.prefix_encode(b))),
             Bound::Excluded(b) => {
-                let min = if self.hi.is_empty() {
-                    b
-                } else {
-                    std::cmp::min(b, &self.hi)
-                };
-                let encoded = &min[self.prefix_len as usize..];
-                IVec::from(encoded)
+                // we use manual prefix encoding here because
+                // there is an assertion in `prefix_encode`
+                // that asserts the key is within the node,
+                // and maybe `b` is above the node.
+                let encoded = &b[self.prefix_len as usize..];
+                Some(IVec::from(encoded))
             }
         };
 
         let records = self.data.leaf_ref().unwrap();
-        let search =
-            records.binary_search_by(|(k, _)| fastcmp(k, &successor_key));
+        let search = if let Some(successor_key) = successor_key {
+            records.binary_search_by(|(k, _)| fastcmp(k, &successor_key))
+        } else {
+            if records.is_empty() {
+                Err(0)
+            } else {
+                Ok(records.len() - 1)
+            }
+        };
 
         let idx = match search {
             Ok(idx) => idx,

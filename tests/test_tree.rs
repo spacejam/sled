@@ -29,6 +29,26 @@ fn kv(i: usize) -> Vec<u8> {
 }
 
 #[test]
+fn very_large_reverse_tree_iterator() {
+    let mut a = vec![255; 1024 * 1024];
+    a.push(0);
+    let mut b = vec![255; 1024 * 1024];
+    b.push(1);
+
+    let db = Config::new()
+        .temporary(true)
+        .flush_every_ms(None)
+        .segment_size(256)
+        .open()
+        .unwrap();
+
+    db.insert(a, "").unwrap();
+    db.insert(b, "").unwrap();
+
+    assert_eq!(db.iter().rev().count(), 2);
+}
+
+#[test]
 #[cfg(target_os = "linux")]
 fn test_varied_compression_ratios() {
     // tests for the compression issue reported in #938 by @Mrmaxmeier.
