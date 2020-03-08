@@ -144,6 +144,12 @@ Want to support development? Help us out via [GitHub Sponsors](https://github.co
 
 # special thanks
 
+<p align="center">
+  <a href="https://www.meilisearch.com/">
+    <img src="https://avatars3.githubusercontent.com/u/43250847?s=200&v=4" width="20%" height="auto" />
+  </a>
+</p>
+
 Special thanks to [Meili](https://www.meilisearch.com/) for providing engineering effort and other support to the sled project. They are building [an event store](https://blog.meilisearch.com/meilies-release/) backed by sled, and they offer [a full-text search system](https://github.com/meilisearch/MeiliDB) which has been a valuable case study helping to focus the sled roadmap for the future.
 
 <p align="center">
