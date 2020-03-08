@@ -29,7 +29,7 @@ fn kv(i: usize) -> Vec<u8> {
 }
 
 #[test]
-fn very_large_reverse_iterator() {
+fn very_large_reverse_tree_iterator() {
     let mut a = vec![255; 1024 * 1024];
     a.push(0);
     let mut b = vec![255; 1024 * 1024];
@@ -42,7 +42,10 @@ fn very_large_reverse_iterator() {
         .open()
         .unwrap();
 
-    assert_eq!(db.iter().rev().len(), 2);
+    db.insert(a, "").unwrap();
+    db.insert(b, "").unwrap();
+
+    assert_eq!(db.iter().rev().count(), 2);
 }
 
 #[test]
