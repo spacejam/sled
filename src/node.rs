@@ -434,25 +434,15 @@ impl Node {
         &self,
         bound: &Bound<IVec>,
     ) -> Option<(IVec, IVec)> {
-        static MAX_IVEC: Lazy<IVec, fn() -> IVec> = Lazy::new(init_max_ivec);
-
-        fn init_max_ivec() -> IVec {
-            let base = vec![255; 1024 * 1024];
-            IVec::from(base)
-        }
-
         assert!(!self.data.is_index());
 
         // This encoding happens this way because
         // the rightmost (unbounded) node has
         // a hi key represented by the empty slice
-        let successor_key = match bound {
+        let (successor_key, get_max) = match bound {
             Bound::Unbounded => {
-                if self.hi.is_empty() {
-                    MAX_IVEC.clone()
-                } else {
-                    IVec::from(self.prefix_encode(&self.hi))
-                }
+                let get_max = self.hi.is_empty();
+                (IVec::from(self.prefix_encode(&self.hi)), get_max)
             }
             Bound::Included(b) => {
                 let min = if self.hi.is_empty() {
@@ -460,7 +450,7 @@ impl Node {
                 } else {
                     std::cmp::min(b, &self.hi)
                 };
-                IVec::from(self.prefix_encode(min))
+                (IVec::from(self.prefix_encode(min)), false)
             }
             Bound::Excluded(b) => {
                 let min = if self.hi.is_empty() {
@@ -469,13 +459,20 @@ impl Node {
                     std::cmp::min(b, &self.hi)
                 };
                 let encoded = &min[self.prefix_len as usize..];
-                IVec::from(encoded)
+                (IVec::from(encoded), false)
             }
         };
 
         let records = self.data.leaf_ref().unwrap();
-        let search =
-            records.binary_search_by(|(k, _)| fastcmp(k, &successor_key));
+        let search = if get_max {
+            if records.is_empty() {
+                Err(0)
+            } else {
+                Ok(records.len() - 1)
+            }
+        } else {
+            records.binary_search_by(|(k, _)| fastcmp(k, &successor_key))
+        };
 
         let idx = match search {
             Ok(idx) => idx,
