@@ -379,7 +379,7 @@ impl IoBufs {
         &self,
         pid: PageId,
         lsn: Lsn,
-        old_cache_infos: &[CacheInfo],
+        old_cache_infos: &StackVec<CacheInfo>,
         new_cache_info: CacheInfo,
         guard: &Guard,
     ) -> Result<()> {
@@ -395,7 +395,7 @@ impl IoBufs {
             let op = SegmentOp::Replace {
                 pid,
                 lsn,
-                old_cache_infos: old_cache_infos.to_vec(),
+                old_cache_infos: *old_cache_infos,
                 new_cache_info,
             };
             self.deferred_segment_ops.push(op, guard);

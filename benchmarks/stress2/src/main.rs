@@ -41,7 +41,8 @@ Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
     [--merge-prop=<p>] \
     [--entries=<n>] \
     [--sequential] \
-    [--total-ops=<n>]
+    [--total-ops=<n>] \
+    [--flush-every=<ms>]
 
 Options:
     --threads=<#>      Number of threads [default: 4].
@@ -58,6 +59,7 @@ Options:
     --entries=<n>      The total keyspace [default: 100000].
     --sequential       Run the test in sequential mode instead of random.
     --total-ops=<n>    Stop test after executing a total number of operations.
+    --flush-every=<m>  Flush and sync the database every ms [default: 200].
 ";
 
 #[derive(Deserialize, Clone)]
@@ -76,6 +78,7 @@ struct Args {
     flag_entries: usize,
     flag_sequential: bool,
     flag_total_ops: Option<usize>,
+    flag_flush_every: u64,
 }
 
 // defaults will be applied later based on USAGE above
@@ -94,6 +97,7 @@ static mut ARGS: Args = Args {
     flag_entries: 0,
     flag_sequential: false,
     flag_total_ops: None,
+    flag_flush_every: 200,
 };
 
 fn report(shutdown: Arc<AtomicBool>) {
@@ -232,7 +236,7 @@ fn main() {
 
     let config = sled::Config::new()
         .cache_capacity(256 * 1024 * 1024)
-        .flush_every_ms(Some(200))
+        .flush_every_ms(Some(args.flag_flush_every))
         .print_profile_on_drop(true);
 
     let tree = Arc::new(config.open().unwrap());
