@@ -13,6 +13,7 @@
 
 ## Breaking Changes
 
+* Minimum supported Rust version is now 1.40.
 * Changed the default `segment_size` from 8m to 512k.
   This will result in far smaller database files.
 * deprecated several `Config` options that will be

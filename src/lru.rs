@@ -8,7 +8,6 @@ use crate::{
     debug_delay,
     dll::{DoublyLinkedList, Node},
     fastlock::FastLock,
-    pagecache::constants::MAX_PID_BITS,
     Guard, PageId,
 };
 
@@ -188,7 +187,7 @@ struct CacheAccess(u64);
 impl CacheAccess {
     fn new(pid: PageId, sz: u64) -> CacheAccess {
         let rounded_up_power_of_2 =
-            sz.next_power_of_two().trailing_zeros() as u64;
+            u64::from(sz.next_power_of_two().trailing_zeros());
 
         assert!(rounded_up_power_of_2 < 256);
 
@@ -300,7 +299,7 @@ impl Shard {
         }
     }
 
-    /// PageIds in the shard list are indexes of the entries.
+    /// `PageId`s in the shard list are indexes of the entries.
     fn accessed(&mut self, pos: usize, size: u64) -> Vec<PageId> {
         if pos >= self.entries.len() {
             self.entries.resize(pos + 1, Entry::default());
