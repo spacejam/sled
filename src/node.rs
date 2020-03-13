@@ -461,12 +461,10 @@ impl Node {
         let records = self.data.leaf_ref().unwrap();
         let search = if let Some(successor_key) = successor_key {
             records.binary_search_by(|(k, _)| fastcmp(k, &successor_key))
+        } else if records.is_empty() {
+            Err(0)
         } else {
-            if records.is_empty() {
-                Err(0)
-            } else {
-                Ok(records.len() - 1)
-            }
+            Ok(records.len() - 1)
         };
 
         let idx = match search {

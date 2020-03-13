@@ -2,12 +2,12 @@
 
 use std::ptr;
 
-pub type Item = u64;
+use crate::PageId;
 
 /// A simple doubly linked list for use in the `Lru`
 #[derive(Debug)]
 pub(crate) struct Node {
-    inner: Item,
+    inner: PageId,
     next: *mut Node,
     prev: *mut Node,
 }
@@ -69,7 +69,7 @@ impl DoublyLinkedList {
         self.len
     }
 
-    pub(crate) fn push_head(&mut self, item: Item) -> *mut Node {
+    pub(crate) fn push_head(&mut self, item: PageId) -> *mut Node {
         self.len += 1;
 
         let node = Node { inner: item, next: ptr::null_mut(), prev: self.head };
@@ -97,7 +97,7 @@ impl DoublyLinkedList {
     }
 
     #[cfg(test)]
-    pub(crate) fn push_tail(&mut self, item: Item) {
+    pub(crate) fn push_tail(&mut self, item: PageId) {
         self.len += 1;
 
         let node = Node { inner: item, next: self.tail, prev: ptr::null_mut() };
@@ -138,7 +138,7 @@ impl DoublyLinkedList {
     }
 
     #[cfg(test)]
-    pub(crate) fn pop_head(&mut self) -> Option<Item> {
+    pub(crate) fn pop_head(&mut self) -> Option<PageId> {
         if self.head.is_null() {
             return None;
         }
@@ -160,7 +160,7 @@ impl DoublyLinkedList {
         }
     }
 
-    pub(crate) fn pop_tail(&mut self) -> Option<Item> {
+    pub(crate) fn pop_tail(&mut self) -> Option<PageId> {
         if self.tail.is_null() {
             return None;
         }
@@ -183,7 +183,7 @@ impl DoublyLinkedList {
     }
 
     #[cfg(test)]
-    pub(crate) fn into_vec(mut self) -> Vec<Item> {
+    pub(crate) fn into_vec(mut self) -> Vec<PageId> {
         let mut res = vec![];
         while let Some(val) = self.pop_head() {
             res.push(val);

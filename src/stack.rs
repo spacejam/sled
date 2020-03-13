@@ -111,27 +111,6 @@ impl<T: Send + Sync + 'static> Stack<T> {
     }
 
     /// Clears the stack and returns all items
-    pub fn take(&self, guard: &Guard) -> Vec<T>
-    where
-        T: Copy,
-    {
-        debug_delay();
-        let node = self.head.swap(Shared::null(), Release, guard);
-
-        if node.is_null() {
-            vec![]
-        } else {
-            let iter = StackIter { inner: node, guard };
-
-            unsafe {
-                guard.defer_destroy(node);
-            }
-
-            iter.map(|shared| *shared.deref()).collect()
-        }
-    }
-
-    /// Clears the stack and returns all items
     pub fn take_iter<'a>(
         &self,
         guard: &'a Guard,
