@@ -26,3 +26,16 @@ pub(crate) const BATCH_MANIFEST_PID: PageId = PageId::max_value() - 666;
 
 pub(crate) const PAGE_CONSOLIDATION_THRESHOLD: usize = 10;
 pub(crate) const SEGMENT_CLEANUP_THRESHOLD: usize = 50;
+
+// Allows for around 1 trillion items to be stored
+// 2^37 * (assuming 50% node fill, 8 items per leaf)
+// and well below 1% of nodes being non-leaf nodes.
+#[cfg(target_pointer_width = "64")]
+pub(crate) const MAX_PID_BITS: usize = 37;
+
+// Allows for around 32 billion items to be stored
+// 2^32 * (assuming 50% node fill of 8 items per leaf)
+// and well below 1% of nodes being non-leaf nodes.
+// Assumed to be enough for a 32-bit system.
+#[cfg(target_pointer_width = "32")]
+pub(crate) const MAX_PID_BITS: usize = 32;
