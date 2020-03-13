@@ -20,6 +20,8 @@
 * rearranged some transaction-related imports, and
   moved them to the `transaction` module away from
   the library root to keep the top level docs clean.
+* #1015 `TransactionalTree::apply_batch` now accepts
+  its argument by reference instead of by value.
 
 # 0.31
 
