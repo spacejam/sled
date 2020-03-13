@@ -157,6 +157,13 @@
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
 
+macro_rules! testing_assert {
+    ($($e:expr),*) => {
+        #[cfg(feature = "lock_free_delays")]
+        assert!($($e),*)
+    };
+}
+
 macro_rules! maybe_fail {
     ($e:expr) => {
         #[cfg(feature = "failpoints")]
@@ -360,7 +367,3 @@ pub type MergeOperator = fn(
     last_value: Option<&[u8]>,
     new_merge: &[u8],
 ) -> Option<Vec<u8>>;
-
-fn is_sorted<T: PartialOrd>(xs: &[T]) -> bool {
-    xs.windows(2).all(|pair| pair[0] <= pair[1])
-}
