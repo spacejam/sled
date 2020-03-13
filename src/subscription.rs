@@ -1,4 +1,7 @@
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::{
+    atomic::{AtomicBool, Ordering::Relaxed},
+    mpsc::{sync_channel, Receiver, SyncSender},
+};
 
 use crate::*;
 
@@ -66,10 +69,12 @@ impl Iterator for Subscriber {
 #[derive(Debug, Default)]
 pub(crate) struct Subscriptions {
     watched: RwLock<BTreeMap<Vec<u8>, Arc<RwLock<Senders>>>>,
+    ever_used: AtomicBool,
 }
 
 impl Subscriptions {
     pub(crate) fn register(&self, prefix: &[u8]) -> Subscriber {
+        self.ever_used.store(true, Relaxed);
         let r_mu = {
             let r_mu = self.watched.read();
             if r_mu.contains_key(prefix) {
@@ -103,6 +108,10 @@ impl Subscriptions {
         &self,
         key: R,
     ) -> Option<ReservedBroadcast> {
+        if !self.ever_used.load(Relaxed) {
+            return None;
+        }
+
         let r_mu = self.watched.read();
         let prefixes = r_mu.iter().filter(|(k, _)| key.as_ref().starts_with(k));
 
