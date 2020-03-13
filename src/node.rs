@@ -88,7 +88,7 @@ impl Node {
                 Ok(idx) => records[idx] = (key, val),
                 Err(idx) => records.insert(idx, (key, val)),
             }
-            assert!(is_sorted(records));
+            testing_assert!(is_sorted(records));
         } else {
             panic!("tried to Set a value to an index");
         }
@@ -100,7 +100,7 @@ impl Node {
             if let Ok(idx) = search {
                 records.remove(idx);
             }
-            assert!(is_sorted(records));
+            testing_assert!(is_sorted(records));
         } else {
             panic!("tried to attach a Del to an Index chain");
         }
@@ -120,7 +120,7 @@ impl Node {
                 }
                 Err(idx) => pointers.insert(idx, (IVec::from(encoded_sep), to)),
             }
-            assert!(is_sorted(pointers));
+            testing_assert!(is_sorted(pointers));
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
         }
@@ -193,7 +193,7 @@ impl Node {
                 right_data.push((k, v.clone()));
             }
 
-            assert!(is_sorted(&right_data));
+            testing_assert!(is_sorted(&right_data));
 
             (split_point, u8::try_from(new_prefix_len).unwrap(), right_data)
         }
@@ -302,7 +302,7 @@ impl Node {
                 };
                 left_data.push((k, v.clone()));
             }
-            assert!(
+            testing_assert!(
                 is_sorted(left_data),
                 "should have been sorted: {:?}",
                 left_data
@@ -638,6 +638,11 @@ impl Data {
             false
         }
     }
+}
+
+#[cfg(feature = "lock_free_delays")]
+fn is_sorted<T: PartialOrd>(xs: &[T]) -> bool {
+    xs.windows(2).all(|pair| pair[0] <= pair[1])
 }
 
 #[test]
