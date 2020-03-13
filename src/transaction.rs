@@ -299,9 +299,9 @@ impl TransactionalTree {
     /// Atomically apply multiple inserts and removals.
     pub fn apply_batch(
         &self,
-        batch: Batch,
+        batch: &Batch,
     ) -> UnabortableTransactionResult<()> {
-        for (k, v_opt) in batch.writes {
+        for (k, v_opt) in &batch.writes {
             if let Some(v) = v_opt {
                 let _old = self.insert(k, v)?;
             } else {

@@ -480,6 +480,29 @@ fn many_tree_transactions() -> TransactionResult<()> {
 }
 
 #[test]
+fn batch_outside_of_transaction() -> TransactionResult<()> {
+    common::setup_logger();
+
+    let config = Config::new().temporary(true).flush_every_ms(None);
+    let db = config.open().unwrap();
+
+    let t1 = db.open_tree(b"1")?;
+
+    let mut b1 = Batch::default();
+    b1.insert(b"k1", b"v1");
+    b1.insert(b"k2", b"v2");
+
+    t1.transaction(|tree| {
+        tree.apply_batch(&b1)?;
+        Ok(())
+    })?;
+
+    assert_eq!(t1.get(b"k1")?, Some(b"v1".into()));
+    assert_eq!(t1.get(b"k2")?, Some(b"v2".into()));
+    Ok(())
+}
+
+#[test]
 fn tree_subdir() {
     let mut parent_path = std::env::temp_dir();
     parent_path.push("test_tree_subdir");
