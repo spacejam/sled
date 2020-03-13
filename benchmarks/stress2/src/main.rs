@@ -14,9 +14,16 @@ use serde::Deserialize;
     // only enable jemalloc on linux and macos by default
     all(
         any(target_os = "linux", target_os = "macos"),
-        not(feature = "no_jemalloc"),
+        feature = "jemalloc",
     ),
     global_allocator
+)]
+#[cfg(
+    // only enable jemalloc on linux and macos by default
+    all(
+        any(target_os = "linux", target_os = "macos"),
+        feature = "jemalloc",
+    ),
 )]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
