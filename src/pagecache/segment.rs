@@ -77,7 +77,7 @@ pub(crate) enum SegmentOp {
     Replace {
         pid: PageId,
         lsn: Lsn,
-        old_cache_infos: Vec<CacheInfo>,
+        old_cache_infos: StackVec<CacheInfo>,
         new_cache_info: CacheInfo,
     },
 }
