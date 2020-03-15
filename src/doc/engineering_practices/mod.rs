@@ -10,7 +10,7 @@
 //! * Don't do what can't be tested to be correct
 //! * For concurrent code, it must be delayable to induce strange histories when running under test
 //! * For IO code, it must have a failpoint so that IO errors can be injected during testing, as most bugs in cloud systems happen in the untested error-handling code
-//! * Lean heavily into model-based property testing. sled should act like a BTreeMap, even after crashes
+//! * Lean heavily into model-based property testing. sled should act like a `BTreeMap`, even after crashes
 //! 
 //! # when testing and performance collide
 //! 
@@ -21,7 +21,7 @@
 //! 
 //! * No silent truncation should ever occur when converting numbers
 //! * No silent wrapping should occur
-//! * Crash or return a ReportableBug error in these cases
+//! * Crash or return a `ReportableBug` error in these cases
 //! * `as` is forbidden for anything that could lose information
 //! * Clippy's cast lints help us here, and it has been added to all pull requests
 
