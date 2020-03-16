@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::{
+    node::{Index, Leaf},
     pagecache::{
         BatchManifest, MessageHeader, PageState, SegmentNumber, Snapshot,
     },
@@ -469,26 +470,34 @@ impl Serialize for Snapshot {
 impl Serialize for Data {
     fn serialized_size(&self) -> u64 {
         match self {
-            Data::Index(ref pointers) => {
+            Data::Leaf(ref leaf) => {
                 1_u64
-                    + pointers
+                    + (leaf.keys.len() as u64).serialized_size()
+                    + leaf
+                        .keys
                         .iter()
-                        .map(|(k, v)| {
-                            (k.len() as u64).serialized_size()
-                                + v.serialized_size()
-                                + k.len() as u64
-                        })
-                        .sum::<u64>()
-            }
-            Data::Leaf(ref items) => {
-                1_u64
-                    + items
-                        .iter()
-                        .map(|(k, v)| {
+                        .enumerate()
+                        .map(|(idx, k)| {
+                            let v = &leaf.values[idx];
                             (k.len() as u64).serialized_size()
                                 + (v.len() as u64).serialized_size()
                                 + k.len() as u64
                                 + v.len() as u64
+                        })
+                        .sum::<u64>()
+            }
+            Data::Index(ref index) => {
+                1_u64
+                    + (index.keys.len() as u64).serialized_size()
+                    + index
+                        .keys
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, k)| {
+                            let v = index.pointers[idx];
+                            (k.len() as u64).serialized_size()
+                                + v.serialized_size()
+                                + k.len() as u64
                         })
                         .sum::<u64>()
             }
@@ -497,13 +506,25 @@ impl Serialize for Data {
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
         match self {
-            Data::Leaf(items) => {
+            Data::Leaf(leaf) => {
                 0_u8.serialize_into(buf);
-                serialize_2tuple_ref_sequence(items.iter(), buf);
+                (leaf.keys.len() as u64).serialize_into(buf);
+                for key in &leaf.keys {
+                    key.serialize_into(buf);
+                }
+                for value in &leaf.values {
+                    value.serialize_into(buf);
+                }
             }
-            Data::Index(items) => {
+            Data::Index(index) => {
                 1_u8.serialize_into(buf);
-                serialize_2tuple_ref_sequence(items.iter(), buf);
+                (index.keys.len() as u64).serialize_into(buf);
+                for key in &index.keys {
+                    key.serialize_into(buf);
+                }
+                for value in &index.pointers {
+                    value.serialize_into(buf);
+                }
             }
         }
     }
@@ -514,9 +535,16 @@ impl Serialize for Data {
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
+        let len = usize::try_from(u64::deserialize(buf)?).unwrap();
         Ok(match discriminant {
-            0 => Data::Leaf(deserialize_sequence(buf)?),
-            1 => Data::Index(deserialize_sequence(buf)?),
+            0 => Data::Leaf(Leaf {
+                keys: deserialize_bounded_sequence(buf, len)?,
+                values: deserialize_bounded_sequence(buf, len)?,
+            }),
+            1 => Data::Index(Index {
+                keys: deserialize_bounded_sequence(buf, len)?,
+                pointers: deserialize_bounded_sequence(buf, len)?,
+            }),
             _ => return Err(Error::Corruption { at: DiskPtr::Inline(115) }),
         })
     }
@@ -652,18 +680,6 @@ impl<A: Serialize, B: Serialize, C: Serialize> Serialize for (A, B, C) {
     }
 }
 
-fn serialize_2tuple_ref_sequence<'a, XS, A, B>(xs: XS, buf: &mut &mut [u8])
-where
-    XS: Iterator<Item = &'a (A, B)>,
-    A: Serialize + 'a,
-    B: Serialize + 'a,
-{
-    for item in xs {
-        item.0.serialize_into(buf);
-        item.1.serialize_into(buf);
-    }
-}
-
 fn serialize_2tuple_sequence<'a, XS, A, B>(xs: XS, buf: &mut &mut [u8])
 where
     XS: Iterator<Item = (&'a A, &'a B)>,
@@ -762,16 +778,52 @@ mod qc {
     impl Arbitrary for Data {
         fn arbitrary<G: Gen>(g: &mut G) -> Data {
             if g.gen() {
-                Data::Index(Arbitrary::arbitrary(g))
+                let keys = Arbitrary::arbitrary(g);
+                let mut values = vec![];
+                for _ in &keys {
+                    values.push(Arbitrary::arbitrary(g))
+                }
+                Data::Index(Index { keys, pointers: values })
             } else {
-                Data::Leaf(Arbitrary::arbitrary(g))
+                let keys = Arbitrary::arbitrary(g);
+                let mut values = vec![];
+                for _ in &keys {
+                    values.push(Arbitrary::arbitrary(g))
+                }
+                Data::Leaf(Leaf { keys, values })
             }
         }
 
         fn shrink(&self) -> Box<dyn Iterator<Item = Data>> {
             match self {
-                Data::Index(items) => Box::new(items.shrink().map(Data::Index)),
-                Data::Leaf(items) => Box::new(items.shrink().map(Data::Leaf)),
+                Data::Index(ref index) => {
+                    let index = index.clone();
+                    Box::new(index.keys.shrink().map(move |keys| {
+                        Data::Index(Index {
+                            pointers: index
+                                .pointers
+                                .iter()
+                                .take(keys.len())
+                                .copied()
+                                .collect(),
+                            keys,
+                        })
+                    }))
+                }
+                Data::Leaf(ref leaf) => {
+                    let leaf = leaf.clone();
+                    Box::new(leaf.keys.shrink().map(move |keys| {
+                        Data::Leaf(Leaf {
+                            values: leaf
+                                .values
+                                .iter()
+                                .take(keys.len())
+                                .cloned()
+                                .collect(),
+                            keys,
+                        })
+                    }))
+                }
             }
         }
     }
@@ -996,7 +1048,7 @@ mod qc {
             merging_child: None,
             merging: true,
             prefix_len: 0,
-            data: Data::Index(vec![]),
+            data: Data::Index(Index::default()),
         };
 
         prop_serialize(node);

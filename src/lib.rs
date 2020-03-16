@@ -361,6 +361,7 @@ pub type MergeOperator = fn(
     new_merge: &[u8],
 ) -> Option<Vec<u8>>;
 
+#[inline]
 fn is_sorted<T: PartialOrd>(xs: &[T]) -> bool {
     xs.windows(2).all(|pair| pair[0] <= pair[1])
 }
