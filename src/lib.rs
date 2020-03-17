@@ -200,6 +200,9 @@ mod sys_limits;
 pub mod transaction;
 mod tree;
 
+#[cfg(feature = "docs")]
+pub mod doc;
+
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod threadpool {
     use super::OneShot;
