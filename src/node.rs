@@ -475,13 +475,13 @@ impl Node {
         let search =
             leaf.keys.binary_search_by(|k| fastcmp(k, &predecessor_key));
 
-        let idx = match search {
-            Ok(idx) => idx,
-            Err(idx) if idx < leaf.keys.len() => idx,
+        let start = match search {
+            Ok(start) => start,
+            Err(start) if start < leaf.keys.len() => start,
             _ => return None,
         };
 
-        for (idx, k) in leaf.keys[idx..].iter().enumerate() {
+        for (idx, k) in leaf.keys[start..].iter().enumerate() {
             match bound {
                 Bound::Excluded(b) if b[self.prefix_len as usize..] == **k => {
                     // keep going because we wanted to exclude
@@ -491,7 +491,7 @@ impl Node {
                 _ => {}
             }
             let decoded_key = self.prefix_decode(k);
-            return Some((decoded_key, leaf.values[idx].clone()));
+            return Some((decoded_key, leaf.values[start + idx].clone()));
         }
 
         None
