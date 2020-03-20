@@ -80,7 +80,7 @@ pub struct TreeInner {
     pub(crate) subscriptions: Subscriptions,
     pub(crate) root: AtomicU64,
     pub(crate) concurrency_control: ConcurrencyControl,
-    pub(crate) merge_operator: RwLock<Option<MergeOperator>>,
+    pub(crate) merge_operator: RwLock<Option<Box<dyn MergeOperator>>>,
 }
 
 impl Deref for Tree {
@@ -1022,7 +1022,7 @@ impl Tree {
             ));
         }
 
-        let merge_operator = merge_operator_opt.unwrap();
+        let merge_operator = merge_operator_opt.as_ref().unwrap();
 
         loop {
             let guard = pin();
@@ -1121,9 +1121,9 @@ impl Tree {
     /// tree.merge(k, vec![4]);
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
     /// ```
-    pub fn set_merge_operator(&self, merge_operator: MergeOperator) {
+    pub fn set_merge_operator(&self, merge_operator: impl MergeOperator + 'static) {
         let mut mo_write = self.merge_operator.write();
-        *mo_write = Some(merge_operator);
+        *mo_write = Some(Box::new(merge_operator));
     }
 
     /// Create a double-ended iterator over the tuples of keys and
