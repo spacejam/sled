@@ -96,7 +96,7 @@
     // clippy::unimplemented,
     // clippy::wildcard_enum_match_arm,
     // clippy::else_if_without_else,
-    // clippy::float_arithmetic,
+    clippy::float_arithmetic,
     // clippy::indexing_slicing,
     clippy::cast_lossless,
     clippy::cast_possible_truncation,

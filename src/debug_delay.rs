@@ -1,3 +1,5 @@
+#![allow(clippy::float_arithmetic)]
+
 use std::cell::UnsafeCell;
 
 use {

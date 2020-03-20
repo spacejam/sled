@@ -157,8 +157,7 @@ impl Log {
         let max_buf_len =
             u64::try_from(MAX_MSG_HEADER_LEN).unwrap() + serialized_len;
 
-        #[allow(clippy::cast_precision_loss)]
-        M.reserve_sz.measure(max_buf_len as f64);
+        M.reserve_sz.measure(max_buf_len);
 
         let max_buf_size = (self.config.segment_size
             / MINIMUM_ITEMS_PER_SEGMENT)

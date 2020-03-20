@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use crate::pagecache::DiskPtr;
 use crate::*;
 
-use crate::stack::{Stack, StackIter};
+use crate::stack::{Iter as StackIter, Stack};
 
 /// A thing that happens at a certain time.
 #[derive(Debug, Clone)]

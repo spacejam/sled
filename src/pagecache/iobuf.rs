@@ -711,8 +711,7 @@ impl IoBufs {
             self.mark_interval(base_lsn, complete_len);
         }
 
-        #[allow(clippy::cast_precision_loss)]
-        M.written_bytes.measure(total_len as f64);
+        M.written_bytes.measure(total_len as u64);
 
         // NB the below deferred logic is important to ensure
         // that we never actually free a segment until all threads

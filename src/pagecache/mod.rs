@@ -1222,6 +1222,7 @@ impl PageCache {
     /// total logical size, then divides the physical size
     /// by the logical size.
     #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::float_arithmetic)]
     #[doc(hidden)]
     pub fn space_amplification(&self) -> Result<f64> {
         let on_disk_bytes = self.size_on_disk()? as f64;

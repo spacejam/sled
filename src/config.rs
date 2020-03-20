@@ -795,6 +795,7 @@ impl Config {
 
 /// A Configuration that has an associated opened
 /// file.
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone)]
 pub struct RunningConfig {
     inner: Config,

@@ -143,8 +143,7 @@ impl Drop for SegmentAccountant {
                 Segment::Active(Active { rss, .. })
                 | Segment::Inactive(Inactive { rss, .. }) => *rss,
             };
-            #[allow(clippy::cast_precision_loss)]
-            M.segment_utilization_shutdown.measure(segment_utilization as f64);
+            M.segment_utilization_shutdown.measure(segment_utilization as u64);
         }
     }
 }
