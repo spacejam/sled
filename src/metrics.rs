@@ -35,7 +35,7 @@ pub(crate) fn clock() -> u64 {
         #[cfg(not(target_arch = "x86_64"))]
         {
             let u = uptime();
-            (u.as_secs() * 1_000_000_000) as u64 + u64::from(u.subsec_nanos())
+            (u.as_secs() * 1_000_000_000) + u64::from(u.subsec_nanos())
         }
     }
 }
