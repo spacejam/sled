@@ -376,7 +376,7 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
-    pub fn segment_cleanup_skew(self, _: usize) -> Self {
+    pub const fn segment_cleanup_skew(self, _: usize) -> Self {
         self
     }
 
@@ -385,7 +385,7 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
-    pub fn segment_cleanup_threshold(self, _: u8) -> Self {
+    pub const fn segment_cleanup_threshold(self, _: u8) -> Self {
         self
     }
 
@@ -394,7 +394,7 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
-    pub fn snapshot_after_ops(self, _: u64) -> Self {
+    pub const fn snapshot_after_ops(self, _: u64) -> Self {
         self
     }
 
@@ -403,7 +403,7 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
-    pub fn snapshot_path<P: AsRef<Path>>(self, _: P) -> Self {
+    pub fn snapshot_path<P>(self, _: P) -> Self {
         self
     }
 

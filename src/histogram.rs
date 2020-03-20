@@ -93,7 +93,7 @@ impl Histogram {
 
     /// Retrieve a percentile [0-100]. Returns NAN if no metrics have been
     /// collected yet.
-    pub fn percentile(&self, p: f64) -> f64 {
+    pub const fn percentile(&self, p: f64) -> f64 {
         #[cfg(not(feature = "no_metrics"))]
         {
             assert!(p <= 100., "percentiles must not exceed 100.0");

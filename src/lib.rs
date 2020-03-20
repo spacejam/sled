@@ -91,9 +91,7 @@
 )]
 #![deny(
     // over time, consider enabling the following commented-out lints:
-    // clippy::missing_const_for_fn,
     // clippy::missing_docs_in_private_items,
-    // clippy::module_name_repetitions,
     // clippy::multiple_crate_versions,
     // clippy::unimplemented,
     // clippy::wildcard_enum_match_arm,
@@ -119,12 +117,15 @@
     clippy::get_unwrap,
     clippy::if_not_else,
     clippy::inline_always,
+    //clippy::integer_arithmetic,
     clippy::invalid_upcast_comparisons,
     clippy::items_after_statements,
     clippy::map_flatten,
     clippy::match_same_arms,
     clippy::maybe_infinite_iter,
     clippy::mem_forget,
+    // clippy::missing_const_for_fn,
+    clippy::module_name_repetitions,
     clippy::multiple_inherent_impl,
     clippy::mut_mut,
     clippy::needless_borrow,

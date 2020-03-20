@@ -194,7 +194,7 @@ impl CacheAccess {
         CacheAccess(pid | (rounded_up_power_of_2 << 56))
     }
 
-    fn decompose(self) -> (PageId, u64) {
+    const fn decompose(self) -> (PageId, u64) {
         let sz = 1 << (self.0 >> 56);
         let pid = self.0 << 8 >> 8;
         (pid, sz)
