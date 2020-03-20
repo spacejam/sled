@@ -64,7 +64,7 @@ use crate::pagecache::*;
 use crate::*;
 
 /// A operation that can be applied asynchronously.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum SegmentOp {
     Peg {
         peg_start_lsn: Lsn,
