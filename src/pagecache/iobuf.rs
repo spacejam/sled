@@ -16,7 +16,7 @@ macro_rules! io_fail {
     ($self:expr, $e:expr) => {
         #[cfg(feature = "failpoints")]
         {
-            if crate::fail::fail_point($e) {
+            if crate::fail::is_active($e) {
                 $self.config.set_global_error(Error::FailPoint);
                 // wake up any waiting threads so they don't stall forever
                 let _mu = $self.intervals.lock();

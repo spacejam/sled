@@ -92,7 +92,7 @@
 #![deny(
     // over time, consider enabling the following commented-out lints:
     // clippy::missing_docs_in_private_items,
-    // clippy::multiple_crate_versions,
+    clippy::multiple_crate_versions,
     // clippy::unimplemented,
     // clippy::wildcard_enum_match_arm,
     // clippy::else_if_without_else,
@@ -159,7 +159,7 @@ macro_rules! io_fail {
     ($config:expr, $e:expr) => {
         #[cfg(feature = "failpoints")]
         {
-            if fail::fail_point($e) {
+            if fail::is_active($e) {
                 $config.set_global_error(Error::FailPoint);
                 return Err(Error::FailPoint).into();
             }
