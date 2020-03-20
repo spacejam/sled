@@ -24,7 +24,6 @@ jemalloc = ["jemallocator"]
 logging = ["env_logger", "log", "color-backtrace"]
 
 [dependencies]
-docopt = "1.1.0"
 rand = "0.7.3"
 env_logger = { version = "0.7.1", optional = true }
 log = { version = "0.4.8", optional = true }
@@ -34,7 +33,3 @@ jemallocator = { version = "0.3.2", optional = true }
 [dependencies.sled]
 default_features = false
 path = "../.."
-
-[dependencies.serde]
-version = "1.0.105"
-features = ["derive"]
