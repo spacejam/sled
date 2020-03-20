@@ -376,7 +376,7 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
-    pub fn segment_cleanup_skew(self, _: usize) -> Self {
+    pub const fn segment_cleanup_skew(self, _: usize) -> Self {
         self
     }
 
@@ -385,7 +385,7 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
-    pub fn segment_cleanup_threshold(self, _: u8) -> Self {
+    pub const fn segment_cleanup_threshold(self, _: u8) -> Self {
         self
     }
 
@@ -394,7 +394,7 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
-    pub fn snapshot_after_ops(self, _: u64) -> Self {
+    pub const fn snapshot_after_ops(self, _: u64) -> Self {
         self
     }
 
@@ -403,7 +403,7 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
-    pub fn snapshot_path<P: AsRef<Path>>(self, _: P) -> Self {
+    pub fn snapshot_path<P>(self, _: P) -> Self {
         self
     }
 
@@ -687,11 +687,11 @@ impl Config {
         let mut f =
             fs::OpenOptions::new().write(true).create(true).open(path)?;
 
-        maybe_fail!("write_config bytes");
+        io_fail!(self, "write_config bytes");
         f.write_all(&*bytes)?;
-        maybe_fail!("write_config crc");
+        io_fail!(self, "write_config crc");
         f.write_all(&crc_arr)?;
-        maybe_fail!("write_config post");
+        io_fail!(self, "write_config post");
         Ok(())
     }
 
@@ -795,6 +795,7 @@ impl Config {
 
 /// A Configuration that has an associated opened
 /// file.
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone)]
 pub struct RunningConfig {
     inner: Config,

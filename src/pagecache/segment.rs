@@ -64,7 +64,7 @@ use crate::pagecache::*;
 use crate::*;
 
 /// A operation that can be applied asynchronously.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum SegmentOp {
     Peg {
         peg_start_lsn: Lsn,
@@ -143,8 +143,7 @@ impl Drop for SegmentAccountant {
                 Segment::Active(Active { rss, .. })
                 | Segment::Inactive(Inactive { rss, .. }) => *rss,
             };
-            #[allow(clippy::cast_precision_loss)]
-            M.segment_utilization_shutdown.measure(segment_utilization as f64);
+            M.segment_utilization_shutdown.measure(segment_utilization as u64);
         }
     }
 }

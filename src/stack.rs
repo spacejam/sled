@@ -66,7 +66,7 @@ where
     ) -> Result<(), fmt::Error> {
         let guard = crossbeam_epoch::pin();
         let head = self.head(&guard);
-        let iter = StackIter::from_ptr(head, &guard);
+        let iter = Iter::from_ptr(head, &guard);
 
         formatter.write_str("Stack [")?;
         let mut written = false;
@@ -118,7 +118,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
         debug_delay();
         let node = self.head.swap(Shared::null(), Release, guard);
 
-        let iter = StackIter { inner: node, guard };
+        let iter = Iter { inner: node, guard };
 
         if !node.is_null() {
             unsafe {
@@ -165,7 +165,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
 }
 
 /// An iterator over nodes in a lock-free stack.
-pub struct StackIter<'a, T>
+pub struct Iter<'a, T>
 where
     T: Send + 'static + Sync,
 {
@@ -173,20 +173,20 @@ where
     guard: &'a Guard,
 }
 
-impl<'a, T> StackIter<'a, T>
+impl<'a, T> Iter<'a, T>
 where
     T: 'a + Send + 'static + Sync,
 {
-    /// Creates a `StackIter` from a pointer to one.
+    /// Creates a `Iter` from a pointer to one.
     pub fn from_ptr<'b>(
         ptr: Shared<'b, Node<T>>,
         guard: &'b Guard,
-    ) -> StackIter<'b, T> {
-        StackIter { inner: ptr, guard }
+    ) -> Iter<'b, T> {
+        Iter { inner: ptr, guard }
     }
 }
 
-impl<'a, T> Iterator for StackIter<'a, T>
+impl<'a, T> Iterator for Iter<'a, T>
 where
     T: Send + 'static + Sync,
 {

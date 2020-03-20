@@ -70,6 +70,7 @@
 //! assert_eq!(unprocessed.get(b"k3").unwrap(), None);
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
 //! ```
+#![allow(clippy::module_name_repetitions)]
 use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
 
 use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};

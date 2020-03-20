@@ -6,9 +6,7 @@ use std::{
     thread,
 };
 
-use docopt::Docopt;
 use rand::{thread_rng, Rng};
-use serde::Deserialize;
 
 #[cfg_attr(
     // only enable jemalloc on linux and macos by default
@@ -62,43 +60,83 @@ Options:
     --flush-every=<m>  Flush and sync the database every ms [default: 200].
 ";
 
-#[derive(Deserialize, Clone)]
+#[derive(Clone, Copy)]
 struct Args {
-    flag_threads: usize,
-    flag_burn_in: bool,
-    flag_duration: u64,
-    flag_key_len: usize,
-    flag_val_len: usize,
-    flag_get_prop: usize,
-    flag_set_prop: usize,
-    flag_del_prop: usize,
-    flag_cas_prop: usize,
-    flag_scan_prop: usize,
-    flag_merge_prop: usize,
-    flag_entries: usize,
-    flag_sequential: bool,
-    flag_total_ops: Option<usize>,
-    flag_flush_every: u64,
+    threads: usize,
+    burn_in: bool,
+    duration: u64,
+    key_len: usize,
+    val_len: usize,
+    get_prop: usize,
+    set_prop: usize,
+    del_prop: usize,
+    cas_prop: usize,
+    scan_prop: usize,
+    merge_prop: usize,
+    entries: usize,
+    sequential: bool,
+    total_ops: Option<usize>,
+    flush_every: u64,
 }
 
-// defaults will be applied later based on USAGE above
-static mut ARGS: Args = Args {
-    flag_threads: 0,
-    flag_burn_in: false,
-    flag_duration: 0,
-    flag_key_len: 0,
-    flag_val_len: 0,
-    flag_get_prop: 0,
-    flag_set_prop: 0,
-    flag_del_prop: 0,
-    flag_cas_prop: 0,
-    flag_scan_prop: 0,
-    flag_merge_prop: 0,
-    flag_entries: 0,
-    flag_sequential: false,
-    flag_total_ops: None,
-    flag_flush_every: 200,
-};
+impl Default for Args {
+    fn default() -> Args {
+        Args {
+            threads: 4,
+            burn_in: false,
+            duration: 10,
+            key_len: 10,
+            val_len: 100,
+            get_prop: 94,
+            set_prop: 2,
+            del_prop: 1,
+            cas_prop: 1,
+            scan_prop: 1,
+            merge_prop: 1,
+            entries: 100000,
+            sequential: false,
+            total_ops: None,
+            flush_every: 200,
+        }
+    }
+}
+
+fn parse<'a, I, T>(mut iter: I) -> T
+where
+    I: Iterator<Item = &'a str>,
+    T: std::str::FromStr,
+    <T as std::str::FromStr>::Err: std::fmt::Debug,
+{
+    iter.next().expect(USAGE).parse().expect(USAGE)
+}
+
+impl Args {
+    fn parse() -> Args {
+        let mut args = Args::default();
+        for raw_arg in std::env::args().skip(1) {
+            let mut splits = raw_arg[2..].split('=');
+            match splits.next().unwrap() {
+                "threads" => args.threads = parse(&mut splits),
+                "burn-in" => args.burn_in = true,
+                "duration" => args.duration = parse(&mut splits),
+                "key-len" => args.key_len = parse(&mut splits),
+                "val-len" => args.val_len = parse(&mut splits),
+                "get-prop" => args.get_prop = parse(&mut splits),
+                "set-prop" => args.set_prop = parse(&mut splits),
+                "del-prop" => args.del_prop = parse(&mut splits),
+                "cas-prop" => args.cas_prop = parse(&mut splits),
+                "scan-prop" => args.scan_prop = parse(&mut splits),
+                "merge-prop" => args.merge_prop = parse(&mut splits),
+                "entries" => args.entries = parse(&mut splits),
+                "sequential" => args.sequential = true,
+                "total-ops" => args.total_ops = Some(parse(&mut splits)),
+                "flush-every" => args.flush_every = parse(&mut splits),
+                other => panic!("unknown option: {}, {}", other, USAGE),
+            }
+        }
+        args
+    }
+}
 
 fn report(shutdown: Arc<AtomicBool>) {
     let mut last = 0;
@@ -125,22 +163,20 @@ fn concatenate_merge(
     Some(ret)
 }
 
-fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
-    let args = unsafe { ARGS.clone() };
-
-    let get_max = args.flag_get_prop;
-    let set_max = get_max + args.flag_set_prop;
-    let del_max = set_max + args.flag_del_prop;
-    let cas_max = del_max + args.flag_cas_prop;
-    let merge_max = cas_max + args.flag_merge_prop;
-    let scan_max = merge_max + args.flag_scan_prop;
+fn run(args: Args, tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
+    let get_max = args.get_prop;
+    let set_max = get_max + args.set_prop;
+    let del_max = set_max + args.del_prop;
+    let cas_max = del_max + args.cas_prop;
+    let merge_max = cas_max + args.merge_prop;
+    let scan_max = merge_max + args.scan_prop;
 
     let bytes = |len| -> sled::IVec {
-        let i = if args.flag_sequential {
+        let i = if args.sequential {
             SEQ.fetch_add(1, Ordering::Relaxed)
         } else {
             thread_rng().gen::<usize>()
-        } % args.flag_entries;
+        } % args.entries;
 
         let i_bytes = i.to_be_bytes();
 
@@ -154,11 +190,11 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     };
     let mut rng = thread_rng();
 
-    let value = sled::IVec::from(vec![0; args.flag_val_len]);
+    let value = sled::IVec::from(vec![0; args.val_len]);
 
     while !shutdown.load(Ordering::Relaxed) {
         let op = TOTAL.fetch_add(1, Ordering::Release);
-        let key = bytes(args.flag_key_len);
+        let key = bytes(args.key_len);
         let choice = rng.gen_range(0, scan_max + 1);
 
         match choice {
@@ -225,18 +261,13 @@ fn main() {
     #[cfg(feature = "logging")]
     setup_logger();
 
-    let args = unsafe {
-        ARGS = Docopt::new(USAGE)
-            .and_then(|d| d.argv(std::env::args()).deserialize())
-            .unwrap_or_else(|e| e.exit());
-        ARGS.clone()
-    };
+    let args = Args::parse();
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let config = sled::Config::new()
         .cache_capacity(256 * 1024 * 1024)
-        .flush_every_ms(Some(args.flag_flush_every))
+        .flush_every_ms(Some(args.flush_every))
         .print_profile_on_drop(true);
 
     let tree = Arc::new(config.open().unwrap());
@@ -246,7 +277,7 @@ fn main() {
 
     let now = std::time::Instant::now();
 
-    let n_threads = args.flag_threads;
+    let n_threads = args.threads;
 
     for i in 0..=n_threads {
         let tree = tree.clone();
@@ -258,22 +289,21 @@ fn main() {
                 .spawn(move || report(shutdown))
                 .unwrap()
         } else {
-            thread::spawn(move || run(tree, shutdown))
+            let args = args.clone();
+            thread::spawn(move || run(args, tree, shutdown))
         };
 
         threads.push(t);
     }
 
-    if let Some(ops) = args.flag_total_ops {
-        assert!(!args.flag_burn_in, "don't set both --burn-in and --total-ops");
+    if let Some(ops) = args.total_ops {
+        assert!(!args.burn_in, "don't set both --burn-in and --total-ops");
         while TOTAL.load(Ordering::Relaxed) < ops {
             thread::sleep(std::time::Duration::from_millis(50));
         }
         shutdown.store(true, Ordering::SeqCst);
-    } else if !args.flag_burn_in {
-        thread::sleep(std::time::Duration::from_secs(unsafe {
-            ARGS.flag_duration
-        }));
+    } else if !args.burn_in {
+        thread::sleep(std::time::Duration::from_secs(args.duration));
         shutdown.store(true, Ordering::SeqCst);
     }
 

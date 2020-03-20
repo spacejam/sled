@@ -21,21 +21,21 @@ use super::*;
 pub static M: Lazy<Metrics, fn() -> Metrics> = Lazy::new(Metrics::default);
 
 #[allow(clippy::cast_precision_loss)]
-pub(crate) fn clock() -> f64 {
+pub(crate) fn clock() -> u64 {
     if cfg!(feature = "no_metrics") {
-        0.
+        0
     } else {
         #[cfg(target_arch = "x86_64")]
         #[allow(unsafe_code)]
         unsafe {
             let mut aux = 0;
-            core::arch::x86_64::__rdtscp(&mut aux) as f64
+            core::arch::x86_64::__rdtscp(&mut aux)
         }
 
         #[cfg(not(target_arch = "x86_64"))]
         {
             let u = uptime();
-            (u.as_secs() * 1_000_000_000) as f64 + f64::from(u.subsec_nanos())
+            (u.as_secs() * 1_000_000_000) + u64::from(u.subsec_nanos())
         }
     }
 }
@@ -54,7 +54,7 @@ pub(crate) fn uptime() -> Duration {
 
 /// Measure the duration of an event, and call `Histogram::measure()`.
 pub struct Measure<'h> {
-    _start: f64,
+    _start: u64,
     #[cfg(not(feature = "no_metrics"))]
     histo: &'h Histogram,
     #[cfg(feature = "no_metrics")]
