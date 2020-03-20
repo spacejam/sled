@@ -1,16 +1,6 @@
 use crate::pagecache::*;
 use crate::*;
 
-macro_rules! io_fail {
-    ($config:expr, $e:expr) => {
-        #[cfg(feature = "failpoints")]
-        fail_point!($e, |_| {
-            $config.set_global_error(Error::FailPoint);
-            Err(Error::FailPoint)
-        });
-    };
-}
-
 pub(crate) fn read_blob(
     blob_ptr: Lsn,
     config: &Config,

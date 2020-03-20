@@ -82,9 +82,7 @@ fn v(b: &[u8]) -> u16 {
 }
 
 fn tear_down_failpoints() {
-    for (name, _) in fail::list() {
-        fail::remove(name);
-    }
+    sled::fail::reset();
 }
 
 #[derive(Debug)]
@@ -335,8 +333,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             }
             FailPoint(fp) => {
                 fail_points.insert(fp);
-                fail::cfg(&*fp, "return")
-                    .expect("should be able to configure failpoint");
+                sled::fail::set(&*fp);
             }
         }
     }

@@ -155,20 +155,22 @@
 )]
 #![recursion_limit = "128"]
 
-#[cfg(feature = "failpoints")]
-use fail::fail_point;
+macro_rules! io_fail {
+    ($config:expr, $e:expr) => {
+        #[cfg(feature = "failpoints")]
+        {
+            if fail::fail_point($e) {
+                $config.set_global_error(Error::FailPoint);
+                return Err(Error::FailPoint).into();
+            }
+        }
+    };
+}
 
 macro_rules! testing_assert {
     ($($e:expr),*) => {
         #[cfg(feature = "lock_free_delays")]
         assert!($($e),*)
-    };
-}
-
-macro_rules! maybe_fail {
-    ($e:expr) => {
-        #[cfg(feature = "failpoints")]
-        fail_point!($e, |_| Err(Error::FailPoint));
     };
 }
 
@@ -200,6 +202,10 @@ mod subscription;
 mod sys_limits;
 pub mod transaction;
 mod tree;
+
+/// Functionality for conditionally triggering failpoints under test.
+#[cfg(feature = "failpoints")]
+pub mod fail;
 
 #[cfg(feature = "docs")]
 pub mod doc;

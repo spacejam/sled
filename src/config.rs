@@ -687,11 +687,11 @@ impl Config {
         let mut f =
             fs::OpenOptions::new().write(true).create(true).open(path)?;
 
-        maybe_fail!("write_config bytes");
+        io_fail!(self, "write_config bytes");
         f.write_all(&*bytes)?;
-        maybe_fail!("write_config crc");
+        io_fail!(self, "write_config crc");
         f.write_all(&crc_arr)?;
-        maybe_fail!("write_config post");
+        io_fail!(self, "write_config post");
         Ok(())
     }
 
