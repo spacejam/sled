@@ -300,12 +300,12 @@ impl Node {
         if new_prefix_len != self.prefix_len as usize {
             match self.data {
                 Data::Index(ref mut index) => {
-                    for k in index.keys.iter_mut() {
+                    for k in &mut index.keys {
                         *k = prefix::reencode(prefixed_lo, k, new_prefix_len);
                     }
                 }
                 Data::Leaf(ref mut leaf) => {
-                    for k in leaf.keys.iter_mut() {
+                    for k in &mut leaf.keys {
                         *k = prefix::reencode(prefixed_lo, k, new_prefix_len);
                     }
                 }
@@ -387,12 +387,12 @@ impl Node {
         if new_prefix_len != merged.prefix_len as usize {
             match merged.data {
                 Data::Index(ref mut index) => {
-                    for k in index.keys.iter_mut() {
+                    for k in &mut index.keys {
                         *k = prefix::reencode(self.prefix(), k, new_prefix_len);
                     }
                 }
                 Data::Leaf(ref mut leaf) => {
-                    for k in leaf.keys.iter_mut() {
+                    for k in &mut leaf.keys {
                         *k = prefix::reencode(self.prefix(), k, new_prefix_len);
                     }
                 }
@@ -473,7 +473,7 @@ impl Node {
 
         let leaf = self.data.leaf_ref().unwrap();
         let search =
-            leaf.keys.binary_search_by(|k| fastcmp(k, &predecessor_key));
+            leaf.keys.binary_search_by(|k| fastcmp(k, predecessor_key));
 
         let start = match search {
             Ok(start) => start,
