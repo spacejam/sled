@@ -2214,3 +2214,44 @@ fn tree_bug_40() {
         0,
     );
 }
+
+#[test]
+fn tree_bug_41() {
+    // postmortem: indexing of values during
+    // iteration was incorrect.
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![]), 131),
+            Set(Key(vec![17; 1]), 214),
+            Set(Key(vec![4; 1]), 202),
+            Set(Key(vec![24; 1]), 79),
+            Set(Key(vec![26; 1]), 235),
+            Scan(Key(vec![]), 19),
+        ],
+        false,
+        false,
+        0,
+        0,
+    );
+}
+
+#[test]
+fn tree_bug_42() {
+    // postmortem: during refactoring, accidentally
+    // messed up the index selection for merge destinations.
+    for _ in 0..100 {
+        prop_tree_matches_btreemap(
+            vec![
+                Merge(Key(vec![]), 112),
+                Set(Key(vec![110; 1]), 153),
+                Set(Key(vec![15; 1]), 100),
+                Del(Key(vec![110; 1])),
+                GetLt(Key(vec![148; 1])),
+            ],
+            false,
+            false,
+            0,
+            0,
+        );
+    }
+}
