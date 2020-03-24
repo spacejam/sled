@@ -28,6 +28,7 @@
 #![allow(unused)]
 #![allow(unused_results)]
 #![allow(clippy::print_stdout)]
+#![allow(clippy::float_arithmetic)]
 
 use std::convert::TryFrom;
 use std::fmt::{self, Debug};
@@ -74,10 +75,10 @@ impl Debug for Histogram {
 impl Histogram {
     /// Record a value.
     #[inline]
-    pub fn measure<T: Copy + Into<f64>>(&self, raw_value: T) {
+    pub fn measure(&self, raw_value: u64) {
         #[cfg(not(feature = "no_metrics"))]
         {
-            let value_float: f64 = raw_value.into();
+            let value_float: f64 = raw_value as f64;
             self.sum.fetch_add(value_float.round() as usize, Ordering::Relaxed);
 
             self.count.fetch_add(1, Ordering::Relaxed);

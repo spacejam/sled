@@ -15,18 +15,20 @@ pub(in crate::pagecache) type Header = u64;
 macro_rules! io_fail {
     ($self:expr, $e:expr) => {
         #[cfg(feature = "failpoints")]
-        fail_point!($e, |_| {
-            $self.config.set_global_error(Error::FailPoint);
-            // wake up any waiting threads so they don't stall forever
-            let _mu = $self.intervals.lock();
+        {
+            if crate::fail::is_active($e) {
+                $self.config.set_global_error(Error::FailPoint);
+                // wake up any waiting threads so they don't stall forever
+                let _mu = $self.intervals.lock();
 
-            // having held the mutex makes this linearized
-            // with the notify below.
-            drop(_mu);
+                // having held the mutex makes this linearized
+                // with the notify below.
+                drop(_mu);
 
-            let _notified = $self.interval_updated.notify_all();
-            Err(Error::FailPoint)
-        });
+                let _notified = $self.interval_updated.notify_all();
+                return Err(Error::FailPoint);
+            }
+        };
     };
 }
 
@@ -379,7 +381,7 @@ impl IoBufs {
         &self,
         pid: PageId,
         lsn: Lsn,
-        old_cache_infos: &[CacheInfo],
+        old_cache_infos: &StackVec<CacheInfo>,
         new_cache_info: CacheInfo,
         guard: &Guard,
     ) -> Result<()> {
@@ -395,7 +397,7 @@ impl IoBufs {
             let op = SegmentOp::Replace {
                 pid,
                 lsn,
-                old_cache_infos: old_cache_infos.to_vec(),
+                old_cache_infos: *old_cache_infos,
                 new_cache_info,
             };
             self.deferred_segment_ops.push(op, guard);
@@ -711,8 +713,7 @@ impl IoBufs {
             self.mark_interval(base_lsn, complete_len);
         }
 
-        #[allow(clippy::cast_precision_loss)]
-        M.written_bytes.measure(total_len as f64);
+        M.written_bytes.measure(total_len as u64);
 
         // NB the below deferred logic is important to ensure
         // that we never actually free a segment until all threads

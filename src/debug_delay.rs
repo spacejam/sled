@@ -1,15 +1,6 @@
-use std::cell::UnsafeCell;
+#![allow(clippy::float_arithmetic)]
 
-use {
-    log::warn,
-    rand::{
-        rngs::{adapter::ReseedingRng, OsRng},
-        CryptoRng, Rng, RngCore, SeedableRng,
-    },
-    rand_chacha::ChaCha20Core as Core,
-    rand_distr::{Distribution, Gamma},
-    std::sync::atomic::{AtomicUsize, Ordering::Relaxed},
-};
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use crate::Lazy;
 
@@ -22,9 +13,9 @@ pub fn debug_delay() {
 
     static GLOBAL_DELAYS: AtomicUsize = AtomicUsize::new(0);
 
-    static INTENSITY: Lazy<f64, fn() -> f64> = Lazy::new(|| {
+    static INTENSITY: Lazy<u32, fn() -> u32> = Lazy::new(|| {
         std::env::var("SLED_LOCK_FREE_DELAY_INTENSITY")
-            .unwrap_or_else(|_| "100.0".into())
+            .unwrap_or_else(|_| "100".into())
             .parse()
             .expect(
                 "SLED_LOCK_FREE_DELAY_INTENSITY must be set to a \
@@ -51,73 +42,44 @@ pub fn debug_delay() {
         return;
     }
 
-    let mut rng = if let Some(rng) = try_thread_rng() {
-        rng
-    } else {
-        warn!("already destroyed TLS when this debug delay was called");
-        return;
-    };
-
-    if rng.gen_bool(1. / 1000.) {
-        let gamma = Gamma::new(0.3, 1_000.0 * *INTENSITY).unwrap();
-        let duration = gamma.sample(&mut try_thread_rng().unwrap());
+    if random(1000) == 1 {
+        let duration = random(*INTENSITY);
 
         #[allow(clippy::cast_possible_truncation)]
         #[allow(clippy::cast_sign_loss)]
-        thread::sleep(Duration::from_micros(duration as u64));
+        thread::sleep(Duration::from_micros(u64::from(duration)));
     }
 
-    if rng.gen::<bool>() {
+    if random(2) == 0 {
         thread::yield_now();
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct ThreadRng {
-    // use of raw pointer implies type is neither Send nor Sync
-    rng: *mut ReseedingRng<Core, OsRng>,
+/// Generates a random number in `0..n`.
+fn random(n: u32) -> u32 {
+    use std::cell::Cell;
+    use std::num::Wrapping;
+
+    thread_local! {
+        static RNG: Cell<Wrapping<u32>> = Cell::new(Wrapping(1_406_868_647));
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    RNG.try_with(|rng| {
+        // This is the 32-bit variant of Xorshift.
+        //
+        // Source: https://en.wikipedia.org/wiki/Xorshift
+        let mut x = rng.get();
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        rng.set(x);
+
+        // This is a fast alternative to `x % n`.
+        //
+        // Author: Daniel Lemire
+        // Source: https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
+        (u64::from(x.0).wrapping_mul(u64::from(n)) >> 32) as u32
+    })
+    .unwrap_or(0)
 }
-
-const THREAD_RNG_RESEED_THRESHOLD: u64 = 1024 * 64;
-
-thread_local!(
-    static THREAD_RNG_KEY: UnsafeCell<ReseedingRng<Core, OsRng>> = {
-        let r = Core::from_rng(OsRng).unwrap_or_else(|err|
-                panic!("could not initialize thread_rng: {}", err));
-        let rng = ReseedingRng::new(r,
-                                    THREAD_RNG_RESEED_THRESHOLD,
-                                    OsRng);
-        UnsafeCell::new(rng)
-    }
-);
-
-/// Access a thread-rng that may have been destroyed.
-fn try_thread_rng() -> Option<ThreadRng> {
-    THREAD_RNG_KEY.try_with(|t| ThreadRng { rng: t.get() }).ok()
-}
-
-impl RngCore for ThreadRng {
-    #[inline]
-    #[allow(unsafe_code)]
-    fn next_u32(&mut self) -> u32 {
-        unsafe { (*self.rng).next_u32() }
-    }
-
-    #[inline]
-    #[allow(unsafe_code)]
-    fn next_u64(&mut self) -> u64 {
-        unsafe { (*self.rng).next_u64() }
-    }
-
-    #[allow(unsafe_code)]
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        unsafe { (*self.rng).fill_bytes(dest) }
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
-}
-
-impl CryptoRng for ThreadRng {}

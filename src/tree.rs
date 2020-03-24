@@ -74,6 +74,7 @@ impl IntoIterator for &'_ Tree {
 #[derive(Clone)]
 pub struct Tree(pub(crate) Arc<TreeInner>);
 
+#[allow(clippy::module_name_repetitions)]
 pub struct TreeInner {
     pub(crate) tree_id: IVec,
     pub(crate) context: Context,

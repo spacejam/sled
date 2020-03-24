@@ -115,7 +115,7 @@ impl Node {
                     leaf.values.insert(idx, val);
                 }
             }
-            assert!(is_sorted(&leaf.keys));
+            testing_assert!(is_sorted(&leaf.keys));
         } else {
             panic!("tried to Set a value to an index");
         }
@@ -128,7 +128,7 @@ impl Node {
                 leaf.keys.remove(idx);
                 leaf.values.remove(idx);
             }
-            assert!(is_sorted(&leaf.keys));
+            testing_assert!(is_sorted(&leaf.keys));
         } else {
             panic!("tried to attach a Del to an Index chain");
         }
@@ -151,7 +151,7 @@ impl Node {
                     index.pointers.insert(idx, to)
                 }
             }
-            assert!(is_sorted(&index.keys));
+            testing_assert!(is_sorted(&index.keys));
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
         }
@@ -227,7 +227,7 @@ impl Node {
                 right_keys_data.push(k);
             }
 
-            assert!(is_sorted(&right_keys_data));
+            testing_assert!(is_sorted(&right_keys_data));
 
             (
                 split_point,
@@ -367,7 +367,7 @@ impl Node {
                 left_keys.push(k);
                 left_values.push(v.clone());
             }
-            assert!(
+            testing_assert!(
                 is_sorted(left_keys),
                 "should have been sorted: {:?}",
                 left_keys
@@ -528,12 +528,10 @@ impl Node {
         let leaf = self.data.leaf_ref().unwrap();
         let search = if let Some(successor_key) = successor_key {
             leaf.keys.binary_search_by(|k| fastcmp(k, &successor_key))
+        } else if leaf.keys.is_empty() {
+            Err(0)
         } else {
-            if leaf.keys.is_empty() {
-                Err(0)
-            } else {
-                Ok(leaf.keys.len() - 1)
-            }
+            Ok(leaf.keys.len() - 1)
         };
 
         let end = match search {
@@ -724,6 +722,11 @@ pub(crate) struct Leaf {
 pub(crate) struct Index {
     pub(crate) keys: Vec<IVec>,
     pub(crate) pointers: Vec<PageId>,
+}
+
+#[cfg(feature = "lock_free_delays")]
+fn is_sorted<T: PartialOrd>(xs: &[T]) -> bool {
+    xs.windows(2).all(|pair| pair[0] <= pair[1])
 }
 
 #[test]

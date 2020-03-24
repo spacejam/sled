@@ -12,7 +12,7 @@ use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 
 use crate::{
     debug_delay,
-    pagecache::{Page, PageView},
+    pagecache::{constants::MAX_PID_BITS, Page, PageView},
     Measure, M,
 };
 
@@ -20,21 +20,8 @@ use crate::{
 #[doc(hidden)]
 pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1>();
 
-// Allows for around 1 trillion items to be stored
-// 2^37 * (assuming 50% node fill, 8 items per leaf)
-// and well below 1% of nodes being non-leaf nodes.
-#[cfg(target_pointer_width = "64")]
-const DESIRED_BITS: usize = 37;
-
-// Allows for around 32 billion items to be stored
-// 2^32 * (assuming 50% node fill of 8 items per leaf)
-// and well below 1% of nodes being non-leaf nodes.
-// Assumed to be enough for a 32-bit system.
-#[cfg(target_pointer_width = "32")]
-const DESIRED_BITS: usize = 32;
-
 const NODE2_FAN_FACTOR: usize = 18;
-const NODE1_FAN_OUT: usize = 1 << (DESIRED_BITS - NODE2_FAN_FACTOR);
+const NODE1_FAN_OUT: usize = 1 << (MAX_PID_BITS - NODE2_FAN_FACTOR);
 const NODE2_FAN_OUT: usize = 1 << NODE2_FAN_FACTOR;
 const FAN_MASK: u64 = (NODE2_FAN_OUT - 1) as u64;
 
@@ -207,11 +194,11 @@ fn split_fanout(id: PageId) -> (usize, usize) {
     // right shift 32 on 32-bit pointer systems panics
     #[cfg(target_pointer_width = "64")]
     assert!(
-        id <= 1 << DESIRED_BITS,
+        id <= 1 << MAX_PID_BITS,
         "trying to access key of {}, which is \
          higher than 2 ^ {}",
         id,
-        DESIRED_BITS,
+        MAX_PID_BITS,
     );
 
     let left = id >> NODE2_FAN_FACTOR;

@@ -209,7 +209,7 @@ pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
         // NB we intentionally corrupt this header to prevent any segment
         // from being allocated which would duplicate its LSN, messing
         // up recovery in the future.
-        maybe_fail!("segment initial free zero");
+        io_fail!(config, "segment initial free zero");
         pwrite_all(
             &config.file,
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
@@ -320,19 +320,19 @@ fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
         std::fs::OpenOptions::new().write(true).create(true).open(&path_1)?;
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
-    maybe_fail!("snap write");
+    io_fail!(config, "snap write");
     f.write_all(&*bytes)?;
-    maybe_fail!("snap write len");
+    io_fail!(config, "snap write len");
     f.write_all(&len_bytes)?;
-    maybe_fail!("snap write crc");
+    io_fail!(config, "snap write crc");
     f.write_all(&crc32)?;
-    maybe_fail!("snap write post");
+    io_fail!(config, "snap write post");
 
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
 
-    maybe_fail!("snap write mv");
+    io_fail!(config, "snap write mv");
     std::fs::rename(&path_1, &path_2)?;
-    maybe_fail!("snap write mv post");
+    io_fail!(config, "snap write mv post");
 
     trace!("renamed snapshot to {}", path_2.to_string_lossy());
 
@@ -343,7 +343,7 @@ fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
         if !path_2.to_string_lossy().ends_with(&*path_str) {
             debug!("removing old snapshot file {:?}", path);
 
-            maybe_fail!("snap write rm old");
+            io_fail!(config, "snap write rm old");
 
             if let Err(e) = std::fs::remove_file(&path) {
                 // TODO should this just be a try return?

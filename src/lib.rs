@@ -90,16 +90,7 @@
     unused_qualifications
 )]
 #![deny(
-    // over time, consider enabling the following commented-out lints:
-    // clippy::missing_const_for_fn,
-    // clippy::missing_docs_in_private_items,
-    // clippy::module_name_repetitions,
-    // clippy::multiple_crate_versions,
-    // clippy::unimplemented,
-    // clippy::wildcard_enum_match_arm,
-    // clippy::else_if_without_else,
-    // clippy::float_arithmetic,
-    // clippy::indexing_slicing,
+    // over time, consider enabling the commented-out lints below
     clippy::cast_lossless,
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -108,23 +99,31 @@
     clippy::checked_conversions,
     clippy::decimal_literal_representation,
     clippy::doc_markdown,
+    // clippy::else_if_without_else,
     clippy::empty_enum,
-    clippy::expl_impl_clone_on_copy,
     clippy::explicit_into_iter_loop,
     clippy::explicit_iter_loop,
+    clippy::expl_impl_clone_on_copy,
     clippy::fallible_impl_from,
     clippy::filter_map,
     clippy::filter_map_next,
     clippy::find_map,
+    clippy::float_arithmetic,
     clippy::get_unwrap,
     clippy::if_not_else,
+    // clippy::indexing_slicing,
     clippy::inline_always,
+    //clippy::integer_arithmetic,
     clippy::invalid_upcast_comparisons,
     clippy::items_after_statements,
     clippy::map_flatten,
     clippy::match_same_arms,
     clippy::maybe_infinite_iter,
     clippy::mem_forget,
+    // clippy::missing_const_for_fn,
+    // clippy::missing_docs_in_private_items,
+    clippy::module_name_repetitions,
+    clippy::multiple_crate_versions,
     clippy::multiple_inherent_impl,
     clippy::mut_mut,
     clippy::needless_borrow,
@@ -147,20 +146,31 @@
     clippy::string_add_assign,
     clippy::type_repetition_in_bounds,
     clippy::unicode_not_nfc,
+    // clippy::unimplemented,
     clippy::unseparated_literal_suffix,
     clippy::used_underscore_binding,
     clippy::wildcard_dependencies,
+    // clippy::wildcard_enum_match_arm,
     clippy::wrong_pub_self_convention,
 )]
 #![recursion_limit = "128"]
 
-#[cfg(feature = "failpoints")]
-use fail::fail_point;
-
-macro_rules! maybe_fail {
-    ($e:expr) => {
+macro_rules! io_fail {
+    ($config:expr, $e:expr) => {
         #[cfg(feature = "failpoints")]
-        fail_point!($e, |_| Err(Error::FailPoint));
+        {
+            if fail::is_active($e) {
+                $config.set_global_error(Error::FailPoint);
+                return Err(Error::FailPoint).into();
+            }
+        }
+    };
+}
+
+macro_rules! testing_assert {
+    ($($e:expr),*) => {
+        #[cfg(feature = "lock_free_delays")]
+        assert!($($e),*)
     };
 }
 
@@ -192,6 +202,13 @@ mod subscription;
 mod sys_limits;
 pub mod transaction;
 mod tree;
+
+/// Functionality for conditionally triggering failpoints under test.
+#[cfg(feature = "failpoints")]
+pub mod fail;
+
+#[cfg(feature = "docs")]
+pub mod doc;
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod threadpool {
@@ -360,8 +377,3 @@ pub type MergeOperator = fn(
     last_value: Option<&[u8]>,
     new_merge: &[u8],
 ) -> Option<Vec<u8>>;
-
-#[inline]
-fn is_sorted<T: PartialOrd>(xs: &[T]) -> bool {
-    xs.windows(2).all(|pair| pair[0] <= pair[1])
-}

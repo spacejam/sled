@@ -70,6 +70,7 @@
 //! assert_eq!(unprocessed.get(b"k3").unwrap(), None);
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
 //! ```
+#![allow(clippy::module_name_repetitions)]
 use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
 
 use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};
@@ -299,9 +300,9 @@ impl TransactionalTree {
     /// Atomically apply multiple inserts and removals.
     pub fn apply_batch(
         &self,
-        batch: Batch,
+        batch: &Batch,
     ) -> UnabortableTransactionResult<()> {
-        for (k, v_opt) in batch.writes {
+        for (k, v_opt) in &batch.writes {
             if let Some(v) = v_opt {
                 let _old = self.insert(k, v)?;
             } else {

@@ -64,7 +64,7 @@ use crate::pagecache::*;
 use crate::*;
 
 /// A operation that can be applied asynchronously.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum SegmentOp {
     Peg {
         peg_start_lsn: Lsn,
@@ -77,7 +77,7 @@ pub(crate) enum SegmentOp {
     Replace {
         pid: PageId,
         lsn: Lsn,
-        old_cache_infos: Vec<CacheInfo>,
+        old_cache_infos: StackVec<CacheInfo>,
         new_cache_info: CacheInfo,
     },
 }
@@ -143,8 +143,7 @@ impl Drop for SegmentAccountant {
                 Segment::Active(Active { rss, .. })
                 | Segment::Inactive(Inactive { rss, .. }) => *rss,
             };
-            #[allow(clippy::cast_precision_loss)]
-            M.segment_utilization_shutdown.measure(segment_utilization as f64);
+            M.segment_utilization_shutdown.measure(segment_utilization as u64);
         }
     }
 }
@@ -291,10 +290,7 @@ impl Segment {
                 latest_replacement_lsn: active.latest_replacement_lsn,
             });
 
-            let can_free = mem::replace(
-                &mut active.can_free_upon_deactivation,
-                FastSet8::default(),
-            );
+            let can_free = mem::take(&mut active.can_free_upon_deactivation);
 
             (inactive, can_free)
         } else {
@@ -310,7 +306,7 @@ impl Segment {
 
         if let Segment::Inactive(inactive) = self {
             assert!(lsn >= inactive.lsn);
-            let ret = mem::replace(&mut inactive.pids, BTreeSet::default());
+            let ret = mem::take(&mut inactive.pids);
             *self = Segment::Draining(Draining {
                 lsn: inactive.lsn,
                 max_pids: inactive.max_pids,

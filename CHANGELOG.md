@@ -13,6 +13,7 @@
 
 ## Breaking Changes
 
+* Minimum supported Rust version is now 1.40.
 * Changed the default `segment_size` from 8m to 512k.
   This will result in far smaller database files.
 * deprecated several `Config` options that will be
@@ -20,6 +21,8 @@
 * rearranged some transaction-related imports, and
   moved them to the `transaction` module away from
   the library root to keep the top level docs clean.
+* #1015 `TransactionalTree::apply_batch` now accepts
+  its argument by reference instead of by value.
 
 # 0.31
 
