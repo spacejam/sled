@@ -536,13 +536,13 @@ impl Node {
             }
         };
 
-        let idx = match search {
-            Ok(idx) => idx,
-            Err(idx) if idx > 0 => idx - 1,
+        let end = match search {
+            Ok(end) => end,
+            Err(end) if end > 0 => end - 1,
             _ => return None,
         };
 
-        for (idx, k) in leaf.keys[0..=idx].iter().enumerate().rev() {
+        for (idx, k) in leaf.keys[0..=end].iter().enumerate().rev() {
             match bound {
                 Bound::Excluded(b)
                     if b.len() >= self.prefix_len as usize
@@ -555,6 +555,7 @@ impl Node {
                 _ => {}
             }
             let decoded_key = self.prefix_decode(k);
+
             return Some((decoded_key, leaf.values[idx].clone()));
         }
         None

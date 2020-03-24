@@ -1896,7 +1896,7 @@ impl Tree {
         // we assume caller only merges when
         // the node to be merged is not the
         // leftmost child.
-        let mut cursor_pid = index.pointers[child_index];
+        let mut cursor_pid = index.pointers[merge_index];
 
         // searching for the left sibling to merge the target page into
         loop {
