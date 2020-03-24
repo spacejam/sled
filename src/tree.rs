@@ -1499,13 +1499,8 @@ impl Tree {
     ) -> Result<bool> {
         M.tree_root_split_attempt();
         // hoist new root, pointing to lhs & rhs
-        let mut new_root_vec = vec![];
-        new_root_vec.push((prefix::empty().into(), from));
 
-        new_root_vec.push((at, to));
-
-        let new_root =
-            Node { data: Data::Index(new_root_vec), ..Node::default() };
+        let new_root = Node::new_hoisted_root(from, at, to);
 
         let (new_root_pid, new_root_ptr) =
             self.context.pagecache.allocate(new_root, guard)?;
@@ -1889,7 +1884,7 @@ impl Tree {
 
         let index = parent_view.data.index_ref().unwrap();
         let child_index =
-            index.iter().position(|(_, pid)| pid == &child_pid).unwrap();
+            index.pointers.iter().position(|pid| pid == &child_pid).unwrap();
 
         assert_ne!(
             child_index, 0,
@@ -1902,7 +1897,7 @@ impl Tree {
         // we assume caller only merges when
         // the node to be merged is not the
         // leftmost child.
-        let mut cursor_pid = index[merge_index].1;
+        let mut cursor_pid = index.pointers[merge_index];
 
         // searching for the left sibling to merge the target page into
         loop {
@@ -1936,7 +1931,7 @@ impl Tree {
                 }
 
                 merge_index -= 1;
-                cursor_pid = index[merge_index].1;
+                cursor_pid = index.pointers[merge_index];
 
                 continue;
             };
@@ -2151,8 +2146,8 @@ impl Debug for Tree {
                 };
 
                 match &left_node.data {
-                    Data::Index(ptrs) => {
-                        if let Some(&(ref _sep, ref next_pid)) = ptrs.first() {
+                    Data::Index(index) => {
+                        if let Some(next_pid) = index.pointers.first() {
                             pid = *next_pid;
                             left_most = *next_pid;
                             level += 1;

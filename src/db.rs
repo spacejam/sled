@@ -182,7 +182,7 @@ impl Db {
         let mut cursor = root_id.unwrap();
         while let Some(view) = self.view_for_pid(cursor, &guard)? {
             if let Some(index) = view.data.index_ref() {
-                let leftmost_child = index[0].1;
+                let leftmost_child = index.pointers[0];
                 leftmost_chain.push(leftmost_child);
                 cursor = leftmost_child;
             } else {
