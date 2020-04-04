@@ -14,7 +14,7 @@ fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
         *vallen = v.len();
     }
     let mut bsv = v.into_boxed_slice();
-    let val = bsv.as_mut_ptr() as *mut i8;
+    let val = bsv.as_mut_ptr() as *mut _;
     mem::forget(bsv);
     val
 }
@@ -38,7 +38,7 @@ pub unsafe extern "C" fn sled_config_set_path(
     config: *mut Config,
     path: *const c_char,
 ) -> *mut Config {
-    let c_str = CString::from_raw(path as *mut i8);
+    let c_str = CString::from_raw(path as *mut _);
     let value = c_str.into_string().unwrap();
 
     let config = Box::from_raw(config);
