@@ -8,6 +8,7 @@ homepage = "https://github.com/spacejam/sled"
 repository = "https://github.com/spacejam/sled/sled-native"
 keywords = ["database", "embedded", "concurrent", "persistent", "c"]
 documentation = "https://docs.rs/sled-native/"
+edition = "2018"
 
 [lib]
 name = "sled"
