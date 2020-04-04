@@ -7,7 +7,7 @@ use std::slice;
 
 use libc::*;
 
-use sled::{Config, Db, Iter, Tree};
+use sled::{Config, Db, Iter};
 
 fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
     unsafe {
@@ -105,12 +105,6 @@ pub unsafe extern "C" fn sled_free_buf(buf: *mut c_char, sz: size_t) {
     drop(Vec::from_raw_parts(buf, sz, sz));
 }
 
-/// Free a Tree created by sled.
-#[no_mangle]
-pub unsafe extern "C" fn sled_free_tree(tree: *mut Tree) {
-    drop(Box::from_raw(tree));
-}
-
 /// Free an iterator.
 #[no_mangle]
 pub unsafe extern "C" fn sled_free_iter(iter: *mut Iter) {
@@ -120,7 +114,7 @@ pub unsafe extern "C" fn sled_free_iter(iter: *mut Iter) {
 /// Set a key to a value.
 #[no_mangle]
 pub unsafe extern "C" fn sled_set(
-    db: *mut Tree,
+    db: *mut Db,
     key: *const c_uchar,
     keylen: size_t,
     val: *const c_uchar,
@@ -136,7 +130,7 @@ pub unsafe extern "C" fn sled_set(
 /// it's non-null.
 #[no_mangle]
 pub unsafe extern "C" fn sled_get(
-    db: *mut Tree,
+    db: *mut Db,
     key: *const c_char,
     keylen: size_t,
     vallen: *mut size_t,
@@ -154,7 +148,7 @@ pub unsafe extern "C" fn sled_get(
 /// Delete the value of a key.
 #[no_mangle]
 pub unsafe extern "C" fn sled_del(
-    db: *mut Tree,
+    db: *mut Db,
     key: *const c_char,
     keylen: size_t,
 ) {
@@ -170,7 +164,7 @@ pub unsafe extern "C" fn sled_del(
 /// set.
 #[no_mangle]
 pub unsafe extern "C" fn sled_compare_and_swap(
-    db: *mut Tree,
+    db: *mut Db,
     key: *const c_char,
     keylen: size_t,
     old_val: *const c_uchar,
@@ -220,7 +214,7 @@ pub unsafe extern "C" fn sled_compare_and_swap(
 /// `sled_free_iter`.
 #[no_mangle]
 pub unsafe extern "C" fn sled_scan_prefix(
-    db: *mut Tree,
+    db: *mut Db,
     key: *const c_char,
     keylen: size_t,
 ) -> *mut Iter {
