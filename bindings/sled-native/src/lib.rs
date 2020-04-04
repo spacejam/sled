@@ -23,8 +23,7 @@ fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
 /// Create a new configuration.
 #[no_mangle]
 pub unsafe extern "C" fn sled_create_config() -> *mut Config {
-    let ptr = Box::into_raw(Box::new(Config::new()));
-    ptr
+    Box::into_raw(Box::new(Config::new()))
 }
 
 /// Destroy a configuration.
@@ -127,7 +126,7 @@ pub unsafe extern "C" fn sled_set(
 ) {
     let k = slice::from_raw_parts(key, keylen).to_vec();
     let v = slice::from_raw_parts(val, vallen).to_vec();
-    (*db).insert(k.clone(), v.clone()).unwrap();
+    (*db).insert(k, v).unwrap();
 }
 
 /// Get the value of a key.
@@ -197,18 +196,15 @@ pub unsafe extern "C" fn sled_compare_and_swap(
         Some(copy)
     };
 
-    let res = (*db).compare_and_swap(k.clone(), old, new);
+    let res = (*db).compare_and_swap(k, old, new);
 
     match res {
         Ok(Ok(())) => 1,
-        Ok(Err(sled::CompareAndSwapError { current: None, proposed: _ })) => {
+        Ok(Err(sled::CompareAndSwapError { current: None, .. })) => {
             *actual_vallen = 0;
             0
         }
-        Ok(Err(sled::CompareAndSwapError {
-            current: Some(v),
-            proposed: _,
-        })) => {
+        Ok(Err(sled::CompareAndSwapError { current: Some(v), .. })) => {
             *actual_val = leak_buf(v.to_vec(), actual_vallen) as *const u8;
             0
         }
