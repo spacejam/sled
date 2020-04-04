@@ -38,11 +38,12 @@ pub unsafe extern "C" fn sled_free_config(config: *mut Config) {
 pub unsafe extern "C" fn sled_config_set_path(
     config: *mut Config,
     path: *const c_char,
-) {
+) -> *mut Config {
     let c_str = CString::from_raw(path as *mut i8);
     let value = c_str.into_string().unwrap();
 
-    *config = (*config).clone().path(value);
+    let config = Box::from_raw(config);
+    Box::into_raw(Box::from(config.path(value)))
 }
 
 /// Configure read-only mode.
@@ -50,8 +51,9 @@ pub unsafe extern "C" fn sled_config_set_path(
 pub unsafe extern "C" fn sled_config_read_only(
     config: *mut Config,
     read_only: c_uchar,
-) {
-    *config = (*config).clone().read_only(read_only == 1);
+) -> *mut Config {
+    let config = Box::from_raw(config);
+    Box::into_raw(Box::from(config.read_only(read_only == 1)))
 }
 
 /// Set the configured cache capacity in bytes.
@@ -59,8 +61,9 @@ pub unsafe extern "C" fn sled_config_read_only(
 pub unsafe extern "C" fn sled_config_set_cache_capacity(
     config: *mut Config,
     capacity: size_t,
-) {
-    *config = (*config).clone().cache_capacity(capacity as u64);
+) -> *mut Config {
+    let config = Box::from_raw(config);
+    Box::into_raw(Box::from(config.cache_capacity(capacity as u64)))
 }
 
 /// Configure the use of the zstd compression library.
@@ -68,8 +71,9 @@ pub unsafe extern "C" fn sled_config_set_cache_capacity(
 pub unsafe extern "C" fn sled_config_use_compression(
     config: *mut Config,
     use_compression: c_uchar,
-) {
-    *config = (*config).clone().use_compression(use_compression == 1);
+) -> *mut Config {
+    let config = Box::from_raw(config);
+    Box::into_raw(Box::from(config.use_compression(use_compression == 1)))
 }
 
 /// Set the configured IO buffer flush interval in milliseconds.
@@ -77,18 +81,17 @@ pub unsafe extern "C" fn sled_config_use_compression(
 pub unsafe extern "C" fn sled_config_flush_every_ms(
     config: *mut Config,
     flush_every: c_int,
-) {
+) -> *mut Config {
     let val = if flush_every < 0 { None } else { Some(flush_every as u64) };
-    *config = (*config).clone().flush_every_ms(val);
+    let config = Box::from_raw(config);
+    Box::into_raw(Box::from(config.flush_every_ms(val)))
 }
 
 /// Open a sled lock-free log-structured tree. Consumes the passed-in config.
 #[no_mangle]
 pub unsafe extern "C" fn sled_open_db(config: *mut Config) -> *mut Db {
-    let conf_2 = (*config).clone();
-    let conf_3 = conf_2;
-    sled_free_config(config);
-    Box::into_raw(Box::new(conf_3.open().unwrap()))
+    let config = Box::from_raw(config);
+    Box::into_raw(Box::new(config.open().unwrap()))
 }
 
 /// Close a sled lock-free log-structured tree.
