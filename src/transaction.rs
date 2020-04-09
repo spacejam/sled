@@ -243,19 +243,17 @@ impl<T> From<Error> for TransactionError<T> {
 
 impl TransactionalTree {
     /// Set a key to a new value
-    pub fn insert<K, V>(
+    pub fn insert<K>(
         &self,
         key: K,
-        value: V,
+        value: impl Into<IVec>,
     ) -> UnabortableTransactionResult<Option<IVec>>
     where
-        IVec: From<K> + From<V>,
-        K: AsRef<[u8]>,
+        K: AsRef<[u8]> + Into<IVec>,
     {
         let old = self.get(key.as_ref())?;
         let mut writes = self.writes.borrow_mut();
-        let _last_write =
-            writes.insert(IVec::from(key), Some(IVec::from(value)));
+        let _last_write = writes.insert(key.into(), Some(value.into()));
         Ok(old)
     }
 
@@ -265,12 +263,11 @@ impl TransactionalTree {
         key: K,
     ) -> UnabortableTransactionResult<Option<IVec>>
     where
-        IVec: From<K>,
-        K: AsRef<[u8]>,
+        K: AsRef<[u8]> + Into<IVec>,
     {
         let old = self.get(key.as_ref());
         let mut writes = self.writes.borrow_mut();
-        let _last_write = writes.insert(IVec::from(key), None);
+        let _last_write = writes.insert(key.into(), None);
         old
     }
 

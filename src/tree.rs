@@ -104,7 +104,7 @@ impl Tree {
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         self.insert(key, value)
     }
@@ -125,7 +125,7 @@ impl Tree {
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         let guard = pin();
         let _ = self.concurrency_control.read(&guard);
@@ -140,7 +140,7 @@ impl Tree {
     ) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         trace!("setting key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_set);
@@ -151,7 +151,7 @@ impl Tree {
             ));
         }
 
-        let value = IVec::from(value);
+        let value = value.into();
 
         loop {
             let View { node_view, pid, .. } =
@@ -518,7 +518,7 @@ impl Tree {
     where
         K: AsRef<[u8]>,
         OV: AsRef<[u8]>,
-        IVec: From<NV>,
+        NV: Into<IVec>,
     {
         trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
@@ -532,7 +532,7 @@ impl Tree {
             ));
         }
 
-        let new = new.map(IVec::from);
+        let new = new.map(|n| n.into());
 
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -557,20 +557,23 @@ impl Tree {
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
-            let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key, new.clone())
-            } else {
-                Link::Del(encoded_key)
+            let frag = match new {
+                Some(ref new) => Link::Set(encoded_key, new.clone()),
+                None => Link::Del(encoded_key),
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
 
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
-                    let event = if let Some(new) = new {
-                        subscription::Event::Insert(key.as_ref().into(), new)
-                    } else {
-                        subscription::Event::Remove(key.as_ref().into())
+                    let event = match new {
+                        Some(new) => subscription::Event::Insert(
+                            key.as_ref().into(),
+                            new,
+                        ),
+                        None => {
+                            subscription::Event::Remove(key.as_ref().into())
+                        }
                     };
 
                     res.complete(event);
@@ -593,7 +596,7 @@ impl Tree {
     where
         K: AsRef<[u8]>,
         OV: AsRef<[u8]>,
-        IVec: From<NV>,
+        NV: Into<IVec>,
     {
         match self.compare_and_swap(key, old, new) {
             Ok(Ok(())) => Ok(Ok(())),
@@ -653,14 +656,14 @@ impl Tree {
     where
         K: AsRef<[u8]>,
         F: FnMut(Option<&[u8]>) -> Option<V>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         let key_ref = key.as_ref();
         let mut current = self.get(key_ref)?;
 
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
-            let next = f(tmp).map(IVec::from);
+            let next = f(tmp).map(|v| v.into());
             match self.compare_and_swap::<_, _, IVec>(
                 key_ref,
                 tmp,
@@ -724,7 +727,7 @@ impl Tree {
     where
         K: AsRef<[u8]>,
         F: FnMut(Option<&[u8]>) -> Option<V>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         let key_ref = key.as_ref();
         let mut current = self.get(key_ref)?;

@@ -35,18 +35,12 @@ pub struct Batch {
 
 impl Batch {
     /// Set a key to a new value
-    pub fn insert<K, V>(&mut self, key: K, value: V)
-    where
-        IVec: From<K> + From<V>,
-    {
-        self.writes.insert(IVec::from(key), Some(IVec::from(value)));
+    pub fn insert<K: Into<IVec>, V: Into<IVec>>(&mut self, key: K, value: V) {
+        self.writes.insert(key.into(), Some(value.into()));
     }
 
     /// Remove a key
-    pub fn remove<K>(&mut self, key: K)
-    where
-        IVec: From<K>,
-    {
-        self.writes.insert(IVec::from(key), None);
+    pub fn remove<K: Into<IVec>>(&mut self, key: K) {
+        self.writes.insert(key.into(), None);
     }
 }

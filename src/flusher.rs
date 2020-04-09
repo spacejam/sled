@@ -6,7 +6,7 @@ use parking_lot::{Condvar, Mutex};
 
 use super::*;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShutdownState {
     Running,
     ShuttingDown,
@@ -15,19 +15,11 @@ pub(crate) enum ShutdownState {
 
 impl ShutdownState {
     fn is_running(self) -> bool {
-        if let ShutdownState::Running = self {
-            true
-        } else {
-            false
-        }
+        self == ShutdownState::Running
     }
 
     fn is_shutdown(self) -> bool {
-        if let ShutdownState::ShutDown = self {
-            true
-        } else {
-            false
-        }
+        self == ShutdownState::ShutDown
     }
 }
 

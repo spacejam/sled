@@ -40,14 +40,11 @@ impl Meta {
 
 /// Open or create a new disk-backed Tree with its own keyspace,
 /// accessible from the `Db` via the provided identifier.
-pub(crate) fn open_tree<V>(
+pub(crate) fn open_tree<V: Into<IVec>>(
     context: &Context,
     raw_name: V,
     guard: &Guard,
-) -> Result<Tree>
-where
-    V: Into<IVec>,
-{
+) -> Result<Tree> {
     let name = raw_name.into();
 
     // we loop because creating this Tree may race with

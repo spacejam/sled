@@ -215,27 +215,15 @@ impl Default for Segment {
 
 impl Segment {
     fn is_free(&self) -> bool {
-        if let Segment::Free(_) = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Free(_) = self { true } else { false }
     }
 
     fn is_active(&self) -> bool {
-        if let Segment::Active { .. } = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Active { .. } = self { true } else { false }
     }
 
     fn is_inactive(&self) -> bool {
-        if let Segment::Inactive { .. } = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Inactive { .. } = self { true } else { false }
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
@@ -780,7 +768,7 @@ impl SegmentAccountant {
             old_cache_infos,
             new_cache_info,
             self.config.normalize(lsn)
-            );
+        );
 
         let new_idx = self.segment_id(new_cache_info.pointer.lid());
 

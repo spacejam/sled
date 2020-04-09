@@ -167,19 +167,14 @@ fn verify_batches(tree: &sled::Tree) -> u32 {
             Some(v) => v,
             None => panic!(
                 "expected key {} to have a value, instead it was missing in db: {:?}",
-                key,
-                tree
+                key, tree
             ),
         };
         let value = slice_to_u32(&*v);
         assert_eq!(
-            first_value,
-            value,
+            first_value, value,
             "expected key {} to have value {}, instead it had value {} in db: {:?}",
-            key,
-            first_value,
-            value,
-            tree
+            key, first_value, value, tree
         );
     }
 

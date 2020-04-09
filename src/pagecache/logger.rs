@@ -272,9 +272,10 @@ impl Log {
 
             // try to claim space
             let prospective_size = buf_offset + inline_buf_len;
-            // we don't reserve anything if we're within the last MAX_MSG_HEADER_LEN
-            // bytes of the buffer. during recovery, we assume that nothing
-            // can begin here, because headers are dynamically sized.
+            // we don't reserve anything if we're within the last
+            // MAX_MSG_HEADER_LEN bytes of the buffer. during
+            // recovery, we assume that nothing can begin here,
+            // because headers are dynamically sized.
             let red_zone = iobuf.capacity - buf_offset < MAX_MSG_HEADER_LEN;
             let would_overflow = prospective_size > iobuf.capacity || red_zone;
             if would_overflow {
@@ -800,8 +801,7 @@ pub(crate) fn read_message<R: ReadAt>(
                 {
                     debug!(
                         "underlying blob file not found for blob {} in segment number {:?}",
-                        id,
-                        header.segment_number,
+                        id, header.segment_number,
                     );
                     Ok(LogRead::DanglingBlob(header, id, inline_len))
                 }
