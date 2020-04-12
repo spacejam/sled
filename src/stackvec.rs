@@ -120,13 +120,13 @@ mod qc {
     use quickcheck::{Arbitrary, Gen};
     use rand::Rng;
 
-    use super::{StackVec, PAGE_CONSOLIDATION_THRESHOLD};
+    use super::{CacheInfo, StackVec, PAGE_CONSOLIDATION_THRESHOLD};
 
     #[derive(Clone, Debug)]
     enum Op {
-        Extend(Vec<u8>),
-        Insert(usize, u8),
-        Push(u8),
+        Extend(Vec<CacheInfo>),
+        Insert(usize, CacheInfo),
+        Push(CacheInfo),
         Pop,
     }
 
@@ -135,14 +135,14 @@ mod qc {
             match g.gen_range(0, 4) {
                 0 => {
                     let len = g.gen_range(0, PAGE_CONSOLIDATION_THRESHOLD);
-                    let items = vec![g.gen(); len];
+                    let items = vec![CacheInfo::arbitrary(g); len];
                     Op::Extend(items)
                 }
                 1 => Op::Insert(
                     g.gen_range(0, PAGE_CONSOLIDATION_THRESHOLD),
-                    g.gen(),
+                    CacheInfo::arbitrary(g),
                 ),
-                2 => Op::Push(g.gen()),
+                2 => Op::Push(CacheInfo::arbitrary(g)),
                 3 => Op::Pop,
                 _ => unreachable!(),
             }
@@ -158,7 +158,7 @@ mod qc {
                 match op {
                     Op::Extend(items) => {
                         if items.len() + v.len() < PAGE_CONSOLIDATION_THRESHOLD {
-                            sv.extend_from_slice(&items);
+                            sv.extend_from_slice(&*items);
                             v.extend_from_slice(&items);
                         }
                     }
