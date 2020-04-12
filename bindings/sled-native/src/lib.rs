@@ -7,7 +7,7 @@ use std::slice;
 
 use libc::*;
 
-use sled::{Config, Db, Iter};
+use sled::{Config, Db, IVec, Iter};
 
 fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
     unsafe {
@@ -120,8 +120,8 @@ pub unsafe extern "C" fn sled_set(
     val: *const c_uchar,
     vallen: size_t,
 ) {
-    let k = slice::from_raw_parts(key, keylen).to_vec();
-    let v = slice::from_raw_parts(val, vallen).to_vec();
+    let k = IVec::from(slice::from_raw_parts(key, keylen));
+    let v = IVec::from(slice::from_raw_parts(val, vallen));
     (*db).insert(k, v).unwrap();
 }
 
@@ -174,21 +174,21 @@ pub unsafe extern "C" fn sled_compare_and_swap(
     actual_val: *mut *const c_uchar,
     actual_vallen: *mut size_t,
 ) -> c_uchar {
-    let k = slice::from_raw_parts(key as *const u8, keylen).to_vec();
+    let k = IVec::from(slice::from_raw_parts(key as *const u8, keylen));
 
     let old = if old_vallen == 0 {
         None
     } else {
-        let old_slice = slice::from_raw_parts(old_val as *const u8, old_vallen);
-        let copy = old_slice.to_vec();
+        let copy =
+            IVec::from(slice::from_raw_parts(old_val as *const u8, old_vallen));
         Some(copy)
     };
 
     let new = if new_vallen == 0 {
         None
     } else {
-        let new_slice = slice::from_raw_parts(new_val as *const u8, new_vallen);
-        let copy = new_slice.to_vec();
+        let copy =
+            IVec::from(slice::from_raw_parts(new_val as *const u8, new_vallen));
         Some(copy)
     };
 
