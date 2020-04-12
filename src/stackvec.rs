@@ -1,15 +1,15 @@
 use std::{convert::TryFrom, mem::MaybeUninit};
 
-use crate::pagecache::constants::PAGE_CONSOLIDATION_THRESHOLD;
+use crate::pagecache::{constants::PAGE_CONSOLIDATION_THRESHOLD, CacheInfo};
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct StackVec<T: Copy + Sized> {
-    items: [MaybeUninit<T>; PAGE_CONSOLIDATION_THRESHOLD],
+pub(crate) struct StackVec {
+    items: [MaybeUninit<CacheInfo>; PAGE_CONSOLIDATION_THRESHOLD],
     len: u8,
 }
 
-impl<T: Copy> Default for StackVec<T> {
-    fn default() -> StackVec<T> {
+impl Default for StackVec {
+    fn default() -> StackVec {
         StackVec {
             items: [MaybeUninit::uninit(); PAGE_CONSOLIDATION_THRESHOLD],
             len: 0,
@@ -17,36 +17,40 @@ impl<T: Copy> Default for StackVec<T> {
     }
 }
 
-impl<T: Copy + Sized> std::ops::Deref for StackVec<T> {
-    type Target = [T];
+impl std::ops::Deref for StackVec {
+    type Target = [CacheInfo];
 
-    fn deref(&self) -> &[T] {
+    fn deref(&self) -> &[CacheInfo] {
         #[allow(unsafe_code)]
         unsafe {
-            let ptr: *const T = self.items.as_ptr() as *const T;
+            let ptr: *const CacheInfo = self.items.as_ptr() as *const CacheInfo;
             std::slice::from_raw_parts(ptr, self.len as usize)
         }
     }
 }
 
-impl<T: Copy + Sized> std::ops::DerefMut for StackVec<T> {
-    fn deref_mut(&mut self) -> &mut [T] {
+impl std::ops::DerefMut for StackVec {
+    fn deref_mut(&mut self) -> &mut [CacheInfo] {
         #[allow(unsafe_code)]
         unsafe {
-            let ptr: *mut T = self.items.as_mut_ptr() as *mut T;
+            let ptr: *mut CacheInfo = self.items.as_mut_ptr() as *mut CacheInfo;
             std::slice::from_raw_parts_mut(ptr, self.len as usize)
         }
     }
 }
 
-impl<T: Copy + Sized> StackVec<T> {
-    pub(crate) fn single(item: T) -> StackVec<T> {
+impl StackVec {
+    pub(crate) const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(crate) fn single(item: CacheInfo) -> StackVec {
         let mut sv = Self::default();
         sv.push(item);
         sv
     }
 
-    pub(crate) fn extend_from_slice(&mut self, other: &[T]) {
+    pub(crate) fn extend_from_slice(&mut self, other: &[CacheInfo]) {
         assert!(
             self.len as usize + other.len() <= PAGE_CONSOLIDATION_THRESHOLD,
             "tried to extend_from_slice into StackVec past max capacity"
@@ -55,14 +59,15 @@ impl<T: Copy + Sized> StackVec<T> {
         #[allow(unsafe_code)]
         unsafe {
             let src = other.as_ptr();
-            let dst = self.items.as_mut_ptr().add(self.len as usize) as *mut T;
+            let dst = self.items.as_mut_ptr().add(self.len as usize)
+                as *mut CacheInfo;
             std::ptr::copy(src, dst, other.len());
         }
 
         self.len += u8::try_from(other.len()).unwrap();
     }
 
-    pub(crate) fn _insert(&mut self, idx: usize, item: T) {
+    pub(crate) fn _insert(&mut self, idx: usize, item: CacheInfo) {
         assert_ne!(
             self.len as usize, PAGE_CONSOLIDATION_THRESHOLD,
             "tried to insert into StackVec already at max capacity"
@@ -85,7 +90,7 @@ impl<T: Copy + Sized> StackVec<T> {
         self.items[idx] = MaybeUninit::new(item);
     }
 
-    pub(crate) fn push(&mut self, item: T) {
+    pub(crate) fn push(&mut self, item: CacheInfo) {
         assert_ne!(
             self.len as usize, PAGE_CONSOLIDATION_THRESHOLD,
             "tried to push into StackVec already at max capacity"
@@ -94,7 +99,7 @@ impl<T: Copy + Sized> StackVec<T> {
         self.len += 1;
     }
 
-    pub(crate) fn _pop(&mut self) -> Option<T> {
+    pub(crate) fn _pop(&mut self) -> Option<CacheInfo> {
         if self.len > 0 {
             self.len -= 1;
 
@@ -113,13 +118,13 @@ mod qc {
     use quickcheck::{Arbitrary, Gen};
     use rand::Rng;
 
-    use super::{StackVec, PAGE_CONSOLIDATION_THRESHOLD};
+    use super::{CacheInfo, StackVec, PAGE_CONSOLIDATION_THRESHOLD};
 
     #[derive(Clone, Debug)]
     enum Op {
-        Extend(Vec<u8>),
-        Insert(usize, u8),
-        Push(u8),
+        Extend(Vec<CacheInfo>),
+        Insert(usize, CacheInfo),
+        Push(CacheInfo),
         Pop,
     }
 
@@ -128,14 +133,14 @@ mod qc {
             match g.gen_range(0, 4) {
                 0 => {
                     let len = g.gen_range(0, PAGE_CONSOLIDATION_THRESHOLD);
-                    let items = vec![g.gen(); len];
+                    let items = vec![CacheInfo::arbitrary(g); len];
                     Op::Extend(items)
                 }
                 1 => Op::Insert(
                     g.gen_range(0, PAGE_CONSOLIDATION_THRESHOLD),
-                    g.gen(),
+                    CacheInfo::arbitrary(g),
                 ),
-                2 => Op::Push(g.gen()),
+                2 => Op::Push(CacheInfo::arbitrary(g)),
                 3 => Op::Pop,
                 _ => unreachable!(),
             }
@@ -151,7 +156,7 @@ mod qc {
                 match op {
                     Op::Extend(items) => {
                         if items.len() + v.len() < PAGE_CONSOLIDATION_THRESHOLD {
-                            sv.extend_from_slice(&items);
+                            sv.extend_from_slice(&*items);
                             v.extend_from_slice(&items);
                         }
                     }
