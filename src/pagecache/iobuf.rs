@@ -381,7 +381,7 @@ impl IoBufs {
         &self,
         pid: PageId,
         lsn: Lsn,
-        old_cache_infos: &StackVec<CacheInfo>,
+        old_cache_infos: &StackVec,
         new_cache_info: CacheInfo,
         guard: &Guard,
     ) -> Result<()> {

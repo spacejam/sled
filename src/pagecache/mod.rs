@@ -410,7 +410,7 @@ impl<'a> RecoveryGuard<'a> {
 #[derive(Debug, Clone)]
 pub struct Page {
     pub(crate) update: Option<Update>,
-    pub(crate) cache_infos: StackVec<CacheInfo>,
+    pub(crate) cache_infos: StackVec,
 }
 
 impl Page {
