@@ -43,9 +43,7 @@ impl StackVec {
     pub(crate) const fn is_empty(&self) -> bool {
         self.len == 0
     }
-}
 
-impl StackVec {
     pub(crate) fn single(item: CacheInfo) -> StackVec {
         let mut sv = Self::default();
         sv.push(item);
