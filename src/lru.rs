@@ -156,11 +156,12 @@ impl<'a> Iterator for CacheAccessIter<'a> {
 
             debug_delay();
             if self.current_offset >= MAX_QUEUE_ITEMS {
-                let to_drop = unsafe { Box::from_raw(self.current_block) };
+                let to_drop_ptr = self.current_block;
                 debug_delay();
                 self.current_block = current_block.next.load(Ordering::Acquire);
                 self.current_offset = 0;
                 debug_delay();
+                let to_drop = unsafe { Box::from_raw(to_drop_ptr) };
                 self.guard.defer(|| to_drop);
                 continue;
             }
