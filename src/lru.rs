@@ -346,3 +346,14 @@ impl Shard {
 fn safe_usize(value: PageId) -> usize {
     usize::try_from(value).unwrap()
 }
+
+#[test]
+fn lru_smoke_test() {
+    use crate::pin;
+
+    let lru = Lru::new(256);
+    for i in 0..1000 {
+        let guard = pin();
+        lru.accessed(i, 16, &guard);
+    }
+}
