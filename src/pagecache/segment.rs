@@ -1074,7 +1074,7 @@ impl SegmentAccountant {
     pub(super) fn segment_snapshot_iter_from(
         &mut self,
         lsn: Lsn,
-    ) -> Box<dyn Iterator<Item = (Lsn, LogOffset)>> {
+    ) -> BTreeMap<Lsn, LogOffset> {
         assert!(
             !self.ordering.is_empty(),
             "expected ordering to have been initialized already"
@@ -1089,12 +1089,16 @@ impl SegmentAccountant {
             normalized_lsn
         );
 
-        Box::new(
-            self.ordering
-                .clone()
-                .into_iter()
-                .filter(move |&(l, _)| l >= normalized_lsn),
-        )
+        self.ordering
+            .iter()
+            .filter_map(move |(l, r)| {
+                if *l >= normalized_lsn {
+                    Some((*l, *r))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     // truncate the file to the desired length

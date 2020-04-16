@@ -453,7 +453,7 @@ impl IoBufs {
         // corrected_lsn accounts for the segment header length
         let corrected_lsn = std::cmp::max(lsn, min_lsn);
 
-        let segment_iter =
+        let segments =
             self.with_sa(|sa| sa.segment_snapshot_iter_from(corrected_lsn));
 
         LogIter {
@@ -461,7 +461,7 @@ impl IoBufs {
             max_lsn: self.stable(),
             cur_lsn: corrected_lsn,
             segment_base: None,
-            segment_iter,
+            segments,
         }
     }
 

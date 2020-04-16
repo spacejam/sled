@@ -7,9 +7,10 @@ use super::{
 };
 use crate::*;
 
+#[derive(Debug)]
 pub struct LogIter {
     pub config: RunningConfig,
-    pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogOffset)>>,
+    pub segments: BTreeMap<Lsn, LogOffset>,
     pub segment_base: Option<BasedBuf>,
     pub max_lsn: Lsn,
     pub cur_lsn: Lsn,
@@ -29,7 +30,7 @@ impl Iterator for LogIter {
             );
 
             if self.segment_base.is_none() || remaining_seg_too_small_for_msg {
-                if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
+                if let Some((next_lsn, next_lid)) = self.next_segment() {
                     assert!(
                         next_lsn + (self.config.segment_size as Lsn)
                             >= self.cur_lsn,
@@ -159,6 +160,13 @@ impl Iterator for LogIter {
 }
 
 impl LogIter {
+    fn next_segment(&mut self) -> Option<(Lsn, LogOffset)> {
+        let first = self.segments.iter().next()?;
+        let first = (*first.0, *first.1);
+        self.segments.remove(&first.0);
+        Some(first)
+    }
+
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
     fn read_segment(&mut self, lsn: Lsn, offset: LogOffset) -> Result<()> {
@@ -383,7 +391,7 @@ fn clean_tail_tears(
             expected_present += segment_size;
             matches
         })
-        .collect::<Vec<_>>();
+        .collect();
 
     debug!(
         "in clean_tail_tears, found missing item in tail: {:?} \
@@ -393,7 +401,7 @@ fn clean_tail_tears(
 
     let iter = LogIter {
         config: config.clone(),
-        segment_iter: Box::new(logical_tail.into_iter()),
+        segments: logical_tail,
         segment_base: None,
         max_lsn: missing_item_in_tail.unwrap_or(Lsn::max_value()),
         cur_lsn: 0,
@@ -450,8 +458,12 @@ pub fn raw_segment_iter_from(
         scan_segment_lsns(normalized_lsn, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
-    let tip_segment_iter =
-        Box::new(ordering.iter().map(|(a, b)| (*a, *b)).last().into_iter());
+    let tip_segment_iter = ordering
+        .iter()
+        .next_back()
+        .map(|(a, b)| (*a, *b))
+        .into_iter()
+        .collect();
     trace!(
         "trying to find the max stable tip for \
          bounding batch manifests with segment iter {:?} \
@@ -465,7 +477,7 @@ pub fn raw_segment_iter_from(
         max_lsn: Lsn::max_value(),
         cur_lsn: 0,
         segment_base: None,
-        segment_iter: tip_segment_iter,
+        segments: tip_segment_iter,
     };
 
     // run the iterator to the end so
@@ -485,9 +497,10 @@ pub fn raw_segment_iter_from(
         normalized_lsn,
     );
 
-    let segment_iter = Box::new(
-        ordering.into_iter().filter(move |&(l, _)| l >= normalized_lsn),
-    );
+    let segments = ordering
+        .into_iter()
+        .filter(move |&(l, _)| l >= normalized_lsn)
+        .collect();
 
     Ok((
         LogIter {
@@ -495,7 +508,7 @@ pub fn raw_segment_iter_from(
             max_lsn: tip,
             cur_lsn: 0,
             segment_base: None,
-            segment_iter,
+            segments,
         },
         max_header_stable_lsn,
         to_zero_after_snap_write,

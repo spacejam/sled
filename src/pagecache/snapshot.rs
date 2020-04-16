@@ -34,7 +34,17 @@ pub enum PageState {
 impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr, u64)) {
         match *self {
-            PageState::Present(ref mut items) => items.push(item),
+            PageState::Present(ref mut items) => {
+                if items.last().unwrap().0 < item.0 {
+                    items.push(item)
+                } else {
+                    debug!(
+                        "skipping merging item {:?} into \
+                        existing PageState::Present({:?})",
+                        item, items
+                    );
+                }
+            }
             _ => panic!("pushed items to {:?}", self),
         }
     }

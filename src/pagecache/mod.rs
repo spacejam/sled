@@ -85,6 +85,7 @@ pub struct BatchManifest(pub Lsn);
 
 /// A buffer with an associated offset. Useful for
 /// batching many reads over a file segment.
+#[derive(Debug)]
 pub struct BasedBuf(pub Vec<u8>, pub u64);
 
 /// A byte used to disambiguate log message types
