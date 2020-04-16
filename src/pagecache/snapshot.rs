@@ -160,7 +160,7 @@ pub(crate) fn advance_snapshot(
 
     trace!("building on top of old snapshot: {:?}", snapshot);
 
-    let old_lsn = snapshot.last_lsn;
+    let old_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
     for (log_kind, pid, lsn, ptr, sz) in iter {
         trace!(
@@ -188,7 +188,7 @@ pub(crate) fn advance_snapshot(
         snapshot.apply(log_kind, pid, lsn, ptr, sz);
     }
 
-    if snapshot.last_lsn != old_lsn {
+    if snapshot.max_header_stable_lsn != old_max_header_stable_lsn {
         write_snapshot(config, &snapshot)?;
     }
 
@@ -206,10 +206,10 @@ pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
     let mut last_snap =
         read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
-    let (log_iter, max_header_stable_lsn, to_zero) =
-        raw_segment_iter_from(last_snap.last_lsn, config)?;
+    let (log_iter, to_zero, tip) =
+        raw_segment_iter_from(last_snap.max_header_stable_lsn, config)?;
 
-    last_snap.max_header_stable_lsn = max_header_stable_lsn;
+    last_snap.max_header_stable_lsn = tip;
 
     let res = advance_snapshot(log_iter, last_snap, config)?;
 

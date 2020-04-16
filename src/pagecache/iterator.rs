@@ -260,7 +260,7 @@ fn valid_entry_offset(lid: LogOffset, segment_len: usize) -> bool {
 fn scan_segment_lsns(
     min: Lsn,
     config: &RunningConfig,
-) -> Result<(BTreeMap<Lsn, LogOffset>, Lsn, Vec<LogOffset>)> {
+) -> Result<(BTreeMap<Lsn, LogOffset>, Vec<LogOffset>, Lsn)> {
     fn fetch(
         idx: u64,
         min: Lsn,
@@ -349,10 +349,7 @@ fn scan_segment_lsns(
 
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
-    let (ordering, to_zero_after_snap_write) =
-        clean_tail_tears(max_header_stable_lsn, ordering, config)?;
-
-    Ok((ordering, max_header_stable_lsn, to_zero_after_snap_write))
+    clean_tail_tears(max_header_stable_lsn, ordering, config)
 }
 
 // This ensures that the last <# io buffers> segments on
@@ -364,7 +361,7 @@ fn clean_tail_tears(
     max_header_stable_lsn: Lsn,
     mut ordering: BTreeMap<Lsn, LogOffset>,
     config: &RunningConfig,
-) -> Result<(BTreeMap<Lsn, LogOffset>, Vec<LogOffset>)> {
+) -> Result<(BTreeMap<Lsn, LogOffset>, Vec<LogOffset>, Lsn)> {
     let segment_size = config.segment_size as Lsn;
 
     // -1..(2 *  segment_size) - 1 => 0
@@ -440,7 +437,7 @@ fn clean_tail_tears(
     ordering =
         ordering.into_iter().filter(|&(lsn, _lid)| lsn <= tip.0).collect();
 
-    Ok((ordering, to_zero_after_snap_write))
+    Ok((ordering, to_zero_after_snap_write, tip.0))
 }
 
 /// Returns a log iterator, the max stable lsn,
@@ -450,11 +447,11 @@ fn clean_tail_tears(
 pub fn raw_segment_iter_from(
     lsn: Lsn,
     config: &RunningConfig,
-) -> Result<(LogIter, Lsn, Vec<LogOffset>)> {
+) -> Result<(LogIter, Vec<LogOffset>, Lsn)> {
     let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let (ordering, max_header_stable_lsn, to_zero_after_snap_write) =
+    let (ordering, to_zero_after_snap_write, tip) =
         scan_segment_lsns(normalized_lsn, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
@@ -467,14 +464,14 @@ pub fn raw_segment_iter_from(
     trace!(
         "trying to find the max stable tip for \
          bounding batch manifests with segment iter {:?} \
-         of segments >= max_header_stable_lsn {}",
+         of segments >= tip {}",
         tip_segment_iter,
-        max_header_stable_lsn
+        tip
     );
 
     let mut tip_iter = LogIter {
         config: config.clone(),
-        max_lsn: Lsn::max_value(),
+        max_lsn: tip,
         cur_lsn: 0,
         segment_base: None,
         segments: tip_segment_iter,
@@ -510,7 +507,7 @@ pub fn raw_segment_iter_from(
             segment_base: None,
             segments,
         },
-        max_header_stable_lsn,
         to_zero_after_snap_write,
+        tip,
     ))
 }
