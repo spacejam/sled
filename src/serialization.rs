@@ -594,11 +594,12 @@ impl Serialize for PageState {
             PageState::Free(a, disk_ptr) => {
                 1 + a.serialized_size() + disk_ptr.serialized_size()
             }
-            PageState::Present(items) => {
-                1 + items
-                    .iter()
-                    .map(|tuple| tuple.serialized_size())
-                    .sum::<u64>()
+            PageState::Present { base, frags } => {
+                1 + base.serialized_size()
+                    + frags
+                        .iter()
+                        .map(|tuple| tuple.serialized_size())
+                        .sum::<u64>()
             }
             _ => panic!("tried to serialize {:?}", self),
         }
@@ -611,12 +612,12 @@ impl Serialize for PageState {
                 lsn.serialize_into(buf);
                 disk_ptr.serialize_into(buf);
             }
-            PageState::Present(items) => {
-                assert!(!items.is_empty());
-                let items_len: u8 = u8::try_from(items.len())
+            PageState::Present { base, frags } => {
+                let items_len: u8 = u8::try_from(1 + frags.len())
                     .expect("should never have more than 255 frags");
                 items_len.serialize_into(buf);
-                serialize_3tuple_ref_sequence(items.iter(), buf);
+                base.serialize_into(buf);
+                serialize_3tuple_ref_sequence(frags.iter(), buf);
             }
             _ => panic!("tried to serialize {:?}", self),
         }
@@ -633,11 +634,10 @@ impl Serialize for PageState {
                 i64::deserialize(buf)?,
                 DiskPtr::deserialize(buf)?,
             ),
-            len => {
-                let items =
-                    deserialize_bounded_sequence(buf, usize::from(len))?;
-                PageState::Present(items)
-            }
+            len => PageState::Present {
+                base: Serialize::deserialize(buf)?,
+                frags: deserialize_bounded_sequence(buf, usize::from(len))?,
+            },
         })
     }
 }
@@ -919,10 +919,11 @@ mod qc {
                 // PageState must always have at least 1 if it present
                 let n = std::cmp::max(1, g.gen::<u8>());
 
-                let items = (0..n)
+                let base = (g.gen(), DiskPtr::arbitrary(g), g.gen());
+                let frags = (0..n)
                     .map(|_| (g.gen(), DiskPtr::arbitrary(g), g.gen()))
                     .collect();
-                PageState::Present(items)
+                PageState::Present { base, frags }
             } else {
                 PageState::Free(g.gen(), DiskPtr::arbitrary(g))
             }

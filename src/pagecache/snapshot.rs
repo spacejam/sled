@@ -5,7 +5,7 @@ use crate::*;
 
 use super::{
     arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
-    DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind, MAX_MSG_HEADER_LEN,
+    DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -26,7 +26,7 @@ pub struct Snapshot {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageState {
-    Present(Vec<(Lsn, DiskPtr, u64)>),
+    Present { base: (Lsn, DiskPtr, u64), frags: Vec<(Lsn, DiskPtr, u64)> },
     Free(Lsn, DiskPtr),
     Uninitialized,
 }
@@ -34,30 +34,18 @@ pub enum PageState {
 impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr, u64)) {
         match *self {
-            PageState::Present(ref mut items) => {
-                if items.last().unwrap().0 < item.0 {
-                    items.push(item)
+            PageState::Present { base, ref mut frags } => {
+                if frags.last().map(|f| f.0).unwrap_or(base.0) < item.0 {
+                    frags.push(item)
                 } else {
                     debug!(
                         "skipping merging item {:?} into \
                         existing PageState::Present({:?})",
-                        item, items
+                        item, frags
                     );
                 }
             }
-            _ => panic!("pushed items to {:?}", self),
-        }
-    }
-
-    /// Iterate over the (lsn, lid) pairs that hold this page's state.
-    pub fn iter(&self) -> impl Iterator<Item = (Lsn, DiskPtr, u64)> {
-        match *self {
-            PageState::Present(ref items) => items.clone().into_iter(),
-            PageState::Free(lsn, ptr) => {
-                vec![(lsn, ptr, u64::try_from(MAX_MSG_HEADER_LEN).unwrap())]
-                    .into_iter()
-            }
-            PageState::Uninitialized => panic!("canned iter on a {:?}", self),
+            _ => panic!("pushed frags to {:?}", self),
         }
     }
 
@@ -99,14 +87,16 @@ impl Snapshot {
                     lsn,
                 );
 
-                self.pt[usize::try_from(pid).unwrap()] =
-                    PageState::Present(vec![(lsn, disk_ptr, sz)]);
+                self.pt[usize::try_from(pid).unwrap()] = PageState::Present {
+                    base: (lsn, disk_ptr, sz),
+                    frags: vec![],
+                };
             }
             LogKind::Link => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
-                if let Some(lids @ PageState::Present(_)) =
+                if let Some(lids @ PageState::Present { .. }) =
                     self.pt.get_mut(usize::try_from(pid).unwrap())
                 {
                     trace!(

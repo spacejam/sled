@@ -1889,10 +1889,20 @@ impl PageCache {
             let guard = pin();
 
             match *state {
-                PageState::Present(ref pointers) => {
-                    for &(lsn, pointer, sz) in pointers {
-                        let cache_info =
-                            CacheInfo { lsn, pointer, log_size: sz, ts: 0 };
+                PageState::Present { base, ref frags } => {
+                    cache_infos.push(CacheInfo {
+                        lsn: base.0,
+                        pointer: base.1,
+                        log_size: base.2,
+                        ts: 0,
+                    });
+                    for (lsn, pointer, sz) in frags {
+                        let cache_info = CacheInfo {
+                            lsn: *lsn,
+                            pointer: *pointer,
+                            log_size: *sz,
+                            ts: 0,
+                        };
 
                         cache_infos.push(cache_info);
                     }

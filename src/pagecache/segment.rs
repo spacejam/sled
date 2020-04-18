@@ -565,8 +565,15 @@ impl SegmentAccountant {
 
         for (pid, state) in snapshot.pt.iter().enumerate() {
             match state {
-                PageState::Present(coords) => {
-                    for (lsn, ptr, sz) in coords {
+                PageState::Present { base, frags } => {
+                    add(
+                        pid as PageId,
+                        base.0,
+                        base.2,
+                        base.1.lid(),
+                        &mut segments,
+                    );
+                    for (lsn, ptr, sz) in frags {
                         add(pid as PageId, *lsn, *sz, ptr.lid(), &mut segments);
                     }
                 }
