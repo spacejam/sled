@@ -16,6 +16,7 @@ const TEST_ENV_VAR: &str = "SLED_CRASH_TEST";
 const N_TESTS: usize = 100;
 const CYCLE: usize = 256;
 const BATCH_SIZE: u32 = 8;
+const SEGMENT_SIZE: usize = 1024;
 
 // test names, also used as dir names
 const RECOVERY_NO_SNAPSHOT: &str = "crash_recovery_no_runtime_snapshot";
@@ -28,10 +29,10 @@ fn main() {
 
             // TODO this is currently being ignored until it is fixed
             // with a refactor of recovery logic.
-            // test_crash_batches();
+            test_crash_batches();
         }
 
-        Ok(ref s) if s == RECOVERY_NO_SNAPSHOT => run_without_snapshot(s),
+        Ok(ref s) if s == RECOVERY_NO_SNAPSHOT => run(s),
         Ok(ref s) if s == BATCHES_NO_SNAPSHOT => run_batches(s),
 
         Ok(_) | Err(_) => panic!("invalid crash test case"),
@@ -144,7 +145,7 @@ fn run_inner(config: Config) {
         let key = u32_to_vec((hu % CYCLE) as u32);
 
         let mut value = u32_to_vec((hu / CYCLE) as u32);
-        let additional_len = rand::thread_rng().gen_range(0, 1000);
+        let additional_len = rand::thread_rng().gen_range(0, SEGMENT_SIZE / 3);
         value.append(&mut vec![0u8; additional_len]);
 
         tree.insert(&key, value).unwrap();
@@ -186,8 +187,8 @@ fn verify_batches(tree: &sled::Tree) -> u32 {
     first_value
 }
 
-fn run_batches_inner(config: Config) {
-    fn do_batch(i: u32, tree: &sled::Tree) {
+fn run_batches_inner(db: sled::Db) {
+    fn do_batch(i: u32, db: &sled::Db) {
         let mut rng = rand::thread_rng();
         let base_value = u32_to_vec(i);
 
@@ -199,13 +200,13 @@ fn run_batches_inner(config: Config) {
         } else {
             for key in 0..BATCH_SIZE {
                 let mut value = base_value.clone();
-                let additional_len = rng.gen_range(0, 1000);
+                let additional_len = rng.gen_range(0, SEGMENT_SIZE / 3);
                 value.append(&mut vec![0u8; additional_len]);
 
                 batch.insert(u32_to_vec(key), value);
             }
         }
-        tree.apply_batch(batch).unwrap();
+        db.apply_batch(batch).unwrap();
     }
 
     common::setup_logger();
@@ -216,11 +217,9 @@ fn run_batches_inner(config: Config) {
         spawn_killah();
     }
 
-    let tree = config.open().unwrap();
-
-    let mut i = verify_batches(&tree);
+    let mut i = verify_batches(&db);
     i += 1;
-    do_batch(i, &tree);
+    do_batch(i, &db);
 
     if !crash_during_initialization {
         spawn_killah();
@@ -228,16 +227,16 @@ fn run_batches_inner(config: Config) {
 
     loop {
         i += 1;
-        do_batch(i, &tree);
+        do_batch(i, &db);
     }
 }
 
-fn run_without_snapshot(dir: &str) {
+fn run(dir: &str) {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
+        .flush_every_ms(Some(1))
         .path(dir.to_string())
-        .segment_size(1024);
+        .segment_size(SEGMENT_SIZE);
 
     match thread::spawn(|| run_inner(config)).join() {
         Err(e) => {
@@ -251,11 +250,16 @@ fn run_without_snapshot(dir: &str) {
 fn run_batches(dir: &str) {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
+        .flush_every_ms(None)
         .path(dir.to_string())
-        .segment_size(1024);
+        .segment_size(SEGMENT_SIZE);
 
-    match thread::spawn(|| run_batches_inner(config)).join() {
+    let db = config.open().unwrap();
+    // let db2 = db.clone();
+
+    let t1 = thread::spawn(|| run_batches_inner(db));
+    let t2 = thread::spawn(|| {}); // run_batches_inner(db2));
+    match t1.join().and_then(|_| t2.join()) {
         Err(e) => {
             println!("worker thread failed: {:?}", e);
             std::process::exit(15);
