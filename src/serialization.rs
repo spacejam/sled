@@ -613,9 +613,9 @@ impl Serialize for PageState {
                 disk_ptr.serialize_into(buf);
             }
             PageState::Present { base, frags } => {
-                let items_len: u8 = u8::try_from(1 + frags.len())
+                let frags_len: u8 = u8::try_from(frags.len())
                     .expect("should never have more than 255 frags");
-                items_len.serialize_into(buf);
+                frags_len.serialize_into(buf);
                 base.serialize_into(buf);
                 serialize_3tuple_ref_sequence(frags.iter(), buf);
             }
