@@ -250,7 +250,7 @@ fn run(dir: &str) {
 fn run_batches(dir: &str) {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(None)
+        .flush_every_ms(Some(1))
         .path(dir.to_string())
         .segment_size(SEGMENT_SIZE);
 
