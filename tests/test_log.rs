@@ -280,7 +280,7 @@ fn log_aborts() {
 }
 
 #[test]
-#[cfg(not(target_os = "fuchsia"))]
+#[cfg_attr(any(target_os = "fuchsia", miri), ignore)]
 fn log_chunky_iterator() {
     common::setup_logger();
     let config =

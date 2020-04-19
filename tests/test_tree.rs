@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 #[allow(unused_imports)]
 use log::{debug, warn};
+
 use quickcheck::{QuickCheck, StdGen};
 
 use sled::Transactional;
@@ -30,6 +31,7 @@ fn kv(i: usize) -> Vec<u8> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn very_large_reverse_tree_iterator() {
     let mut a = vec![255; 1024 * 1024];
     a.push(0);
@@ -769,6 +771,7 @@ fn tree_range() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn recover_tree() {
     common::setup_logger();
 
@@ -898,12 +901,14 @@ fn quickcheck_tree_matches_btreemap() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_00() {
     // postmortem:
     prop_tree_matches_btreemap(vec![Restart], false, false, 0, 0);
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_01() {
     // postmortem:
     // this was a bug in the snapshot recovery, where
@@ -929,6 +934,7 @@ fn tree_bug_01() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_02() {
     // postmortem:
     // this was a bug in the way that the `Materializer`
@@ -957,6 +963,7 @@ fn tree_bug_02() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_03() {
     // postmortem: the tree was not persisting and recovering root hoists
     // postmortem 2: when refactoring the log storage, we failed to restart
@@ -981,6 +988,7 @@ fn tree_bug_03() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_04() {
     // postmortem: pagecache was failing to replace the LogId list
     // when it encountered a new Update::Compact.
@@ -1007,6 +1015,7 @@ fn tree_bug_04() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_05() {
     // postmortem: during recovery, the segment accountant was failing to
     // properly set the file's tip.
@@ -1029,6 +1038,7 @@ fn tree_bug_05() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_06() {
     // postmortem: after reusing segments, we were failing to checksum reads
     // performed while iterating over rewritten segment buffers, and using
@@ -1053,6 +1063,7 @@ fn tree_bug_06() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_07() {
     // postmortem: the segment accountant was not fully recovered, and thought
     // that it could reuse a particular segment that wasn't actually empty
@@ -1077,6 +1088,7 @@ fn tree_bug_07() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_08() {
     // postmortem: failed to properly recover the state in the segment
     // accountant that tracked the previously issued segment.
@@ -1100,6 +1112,7 @@ fn tree_bug_08() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_09() {
     // postmortem: was failing to load existing snapshots on initialization.
     // would encounter uninitialized segments at the log tip and overwrite
@@ -1126,6 +1139,7 @@ fn tree_bug_09() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_10() {
     // postmortem: after reusing a segment, but not completely writing a
     // segment, we were hitting an old LSN and violating an assert, rather
@@ -1165,6 +1179,7 @@ fn tree_bug_10() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_11() {
     // postmortem: a stall was happening because LSNs and LogIds were being
     // conflated in calls to make_stable. A higher LogId than any LSN was
@@ -1191,6 +1206,7 @@ fn tree_bug_11() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_12() {
     // postmortem: was not checking that a log entry's LSN matches its position
     // as part of detecting tears / partial rewrites.
@@ -1242,6 +1258,7 @@ fn tree_bug_12() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_13() {
     // postmortem: failed root hoists were being improperly recovered before the
     // following free was done on their page, but we treated the written node as
@@ -1273,6 +1290,7 @@ fn tree_bug_13() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_14() {
     // postmortem: after adding prefix compression, we were not
     // handling re-inserts and deletions properly
@@ -1294,6 +1312,7 @@ fn tree_bug_14() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_15() {
     // postmortem: was not sorting keys properly when binary searching for them
     prop_tree_matches_btreemap(
@@ -1313,6 +1332,7 @@ fn tree_bug_15() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_16() {
     // postmortem: the test merge function was not properly adding numbers.
     prop_tree_matches_btreemap(
@@ -1325,6 +1345,7 @@ fn tree_bug_16() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_17() {
     // postmortem: we were creating a copy of a node leaf during iteration
     // before accidentally putting it into a PinnedValue, despite the
@@ -1342,6 +1363,7 @@ fn tree_bug_17() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_18() {
     // postmortem: when implementing get_gt and get_lt, there were some
     // issues with getting order comparisons correct.
@@ -1362,6 +1384,7 @@ fn tree_bug_18() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_19() {
     // postmortem: we were not seeking properly to the next node
     // when we hit a half-split child and were using get_lt
@@ -1382,6 +1405,7 @@ fn tree_bug_19() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_20() {
     // postmortem: we were not seeking forward during get_gt
     // if path_for_key reached a leaf that didn't include
@@ -1403,6 +1427,7 @@ fn tree_bug_20() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_21() {
     // postmortem: more split woes while implementing get_lt
     // postmortem 2: failed to properly account for node hi key
@@ -1425,6 +1450,7 @@ fn tree_bug_21() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_22() {
     // postmortem: inclusivity wasn't being properly flipped off after
     // the first result during iteration
@@ -1443,6 +1469,7 @@ fn tree_bug_22() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_23() {
     // postmortem: when rewriting CRC handling code, mis-sized the blob crc
     prop_tree_matches_btreemap(
@@ -1455,6 +1482,7 @@ fn tree_bug_23() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_24() {
     // postmortem: get_gt diverged with the Iter impl
     prop_tree_matches_btreemap(
@@ -1480,6 +1508,7 @@ fn tree_bug_24() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_25() {
     // postmortem: was not accounting for merges when traversing
     // the frag chain and a Del was encountered
@@ -1493,6 +1522,7 @@ fn tree_bug_25() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_26() {
     // postmortem:
     prop_tree_matches_btreemap(
@@ -1518,6 +1548,7 @@ fn tree_bug_26() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_27() {
     // postmortem: was not accounting for the fact that deletions reduce the
     // chances of being able to split successfully.
@@ -1589,6 +1620,7 @@ fn tree_bug_27() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_28() {
     // postmortem:
     prop_tree_matches_btreemap(
@@ -1613,6 +1645,7 @@ fn tree_bug_28() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_29() {
     // postmortem: tree merge and split thresholds caused an infinite
     // loop while performing updates
@@ -1755,6 +1788,7 @@ fn tree_bug_29() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_30() {
     // postmortem:
     prop_tree_matches_btreemap(
@@ -1795,6 +1829,7 @@ fn tree_bug_30() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_31() {
     // postmortem:
     prop_tree_matches_btreemap(
@@ -1819,6 +1854,7 @@ fn tree_bug_31() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_32() {
     // postmortem: the MAX_IVEC that predecessor used in reverse
     // iteration was setting the first byte to 0 even though we
@@ -1833,6 +1869,7 @@ fn tree_bug_32() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_33() {
     // postmortem: the split point was being incorrectly
     // calculated when using the simplified prefix technique.
@@ -1852,6 +1889,7 @@ fn tree_bug_33() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_34() {
     // postmortem: a safety check was too aggressive when
     // finding predecessors using the new simplified prefix
@@ -1873,6 +1911,7 @@ fn tree_bug_34() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_35() {
     // postmortem: prefix lengths were being incorrectly
     // handled on splits.
@@ -1909,6 +1948,7 @@ fn tree_bug_35() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_36() {
     // postmortem: suffix truncation caused
     // regions to be permanently inaccessible
@@ -1931,6 +1971,7 @@ fn tree_bug_36() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_37() {
     // postmortem: suffix truncation was so
     // aggressive that it would cut into
@@ -1951,6 +1992,7 @@ fn tree_bug_37() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_38() {
     // postmortem: Free pages were not being initialized in the
     // pagecache properly.
@@ -1972,6 +2014,7 @@ fn tree_bug_38() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_39() {
     // postmortem:
     for _ in 0..100 {
@@ -2237,6 +2280,7 @@ fn tree_bug_39() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_40() {
     // postmortem: deletions of non-existant keys were
     // being persisted despite being unneccessary.
@@ -2250,6 +2294,7 @@ fn tree_bug_40() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_41() {
     // postmortem: indexing of values during
     // iteration was incorrect.
@@ -2270,6 +2315,7 @@ fn tree_bug_41() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_42() {
     // postmortem: during refactoring, accidentally
     // messed up the index selection for merge destinations.
@@ -2291,6 +2337,7 @@ fn tree_bug_42() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_43() {
     // postmortem: when changing the PageState to always
     // include a base node, we did not account for this
@@ -2316,6 +2363,7 @@ fn tree_bug_43() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_44() {
     // postmortem: off-by-one bug related to LSN recovery
     // where 1 was added to the index when the recovered
@@ -2340,7 +2388,9 @@ fn tree_bug_44() {
         0,
     ))
 }
+
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_bug_45() {
     // postmortem: recovery was not properly accounting for
     // the possibility of a segment to be maxed out, similar

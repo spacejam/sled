@@ -1,6 +1,7 @@
 mod common;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn size_leak() -> sled::Result<()> {
     common::setup_logger();
 
