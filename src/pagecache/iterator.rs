@@ -257,10 +257,10 @@ fn valid_entry_offset(lid: LogOffset, segment_len: usize) -> bool {
 
 // Scan the log file if we don't know of any Lsn offsets yet,
 // and recover the order of segments, and the highest Lsn.
-fn scan_segment_lsns(
+fn scan_segment_headers_and_tail(
     min: Lsn,
     config: &RunningConfig,
-) -> Result<(BTreeMap<Lsn, LogOffset>, Vec<LogOffset>, Lsn)> {
+) -> Result<(BTreeMap<Lsn, LogOffset>, Lsn)> {
     fn fetch(
         idx: u64,
         min: Lsn,
@@ -301,6 +301,7 @@ fn scan_segment_lsns(
         } else {
             1
         };
+
     trace!(
         "file len: {} segment len {} segments: {}",
         file_len,
@@ -349,7 +350,13 @@ fn scan_segment_lsns(
 
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
-    clean_tail_tears(max_header_stable_lsn, ordering, config)
+    let contiguous_tip_in_unstable_tail = check_contiguity_in_unstable_tail(
+        max_header_stable_lsn,
+        &ordering,
+        config,
+    )?;
+
+    Ok((ordering, contiguous_tip_in_unstable_tail))
 }
 
 // This ensures that the last <# io buffers> segments on
@@ -357,11 +364,11 @@ fn scan_segment_lsns(
 // the header. This is important because we expect that
 // the last <# io buffers> segments will join up, and we
 // never reuse buffers within this safety range.
-fn clean_tail_tears(
+fn check_contiguity_in_unstable_tail(
     max_header_stable_lsn: Lsn,
-    mut ordering: BTreeMap<Lsn, LogOffset>,
+    ordering: &BTreeMap<Lsn, LogOffset>,
     config: &RunningConfig,
-) -> Result<(BTreeMap<Lsn, LogOffset>, Vec<LogOffset>, Lsn)> {
+) -> Result<Lsn> {
     let segment_size = config.segment_size as Lsn;
 
     // -1..(2 *  segment_size) - 1 => 0
@@ -421,23 +428,7 @@ fn clean_tail_tears(
         tip.0, tip.1
     );
 
-    let mut to_zero_after_snap_write = vec![];
-
-    for (lsn, lid) in ordering
-        .range((std::ops::Bound::Excluded(tip.0), std::ops::Bound::Unbounded))
-    {
-        debug!(
-            "marking torn segment with lsn {} at lid {} \
-             as zeroable after snapshot is written",
-            lsn, lid
-        );
-        to_zero_after_snap_write.push(*lid);
-    }
-
-    ordering =
-        ordering.into_iter().filter(|&(lsn, _lid)| lsn <= tip.0).collect();
-
-    Ok((ordering, to_zero_after_snap_write, tip.0))
+    Ok(tip.0)
 }
 
 /// Returns a log iterator, the max stable lsn,
@@ -447,12 +438,12 @@ fn clean_tail_tears(
 pub fn raw_segment_iter_from(
     lsn: Lsn,
     config: &RunningConfig,
-) -> Result<(LogIter, Vec<LogOffset>, Lsn)> {
+) -> Result<(LogIter, Lsn)> {
     let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let (ordering, to_zero_after_snap_write, tip) =
-        scan_segment_lsns(normalized_lsn, config)?;
+    let (ordering, contiguous_tip) =
+        scan_segment_headers_and_tail(normalized_lsn, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
     let tip_segment_iter = ordering
@@ -461,17 +452,18 @@ pub fn raw_segment_iter_from(
         .map(|(a, b)| (*a, *b))
         .into_iter()
         .collect();
+
     trace!(
         "trying to find the max stable tip for \
          bounding batch manifests with segment iter {:?} \
-         of segments >= tip {}",
+         of segments >= first_tip {}",
         tip_segment_iter,
-        tip
+        contiguous_tip
     );
 
     let mut tip_iter = LogIter {
         config: config.clone(),
-        max_lsn: tip,
+        max_lsn: contiguous_tip,
         cur_lsn: 0,
         segment_base: None,
         segments: tip_segment_iter,
@@ -484,15 +476,18 @@ pub fn raw_segment_iter_from(
     // in the actual iterator.
     while let Some(_) = tip_iter.next() {}
 
-    let tip = tip_iter.cur_lsn;
+    let batch_aware_tip = tip_iter.cur_lsn;
 
-    trace!("found max stable tip: {}", tip);
+    trace!("found max stable tip: {}", batch_aware_tip);
+    println!("found max stable tip: {}", batch_aware_tip);
 
     trace!(
         "generated iterator over segments {:?} with lsn >= {}",
         ordering,
         normalized_lsn,
     );
+
+    let mut ordering = ordering;
 
     let segments = ordering
         .into_iter()
@@ -502,12 +497,11 @@ pub fn raw_segment_iter_from(
     Ok((
         LogIter {
             config: config.clone(),
-            max_lsn: tip,
+            max_lsn: batch_aware_tip,
             cur_lsn: 0,
             segment_base: None,
             segments,
         },
-        to_zero_after_snap_write,
-        tip,
+        batch_aware_tip,
     ))
 }

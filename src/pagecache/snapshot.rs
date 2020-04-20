@@ -141,8 +141,8 @@ impl Snapshot {
     }
 }
 
-pub(crate) fn advance_snapshot(
-    iter: LogIter,
+fn advance_snapshot(
+    mut iter: LogIter,
     mut snapshot: Snapshot,
     config: &RunningConfig,
 ) -> Result<Snapshot> {
@@ -152,7 +152,7 @@ pub(crate) fn advance_snapshot(
 
     let old_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
-    for (log_kind, pid, lsn, ptr, sz) in iter {
+    while let Some((log_kind, pid, lsn, ptr, sz)) = iter.next() {
         trace!(
             "in advance_snapshot looking at item with lsn {} ptr {}",
             lsn,
@@ -182,28 +182,8 @@ pub(crate) fn advance_snapshot(
         write_snapshot(config, &snapshot)?;
     }
 
-    trace!("generated new snapshot: {:?}", snapshot);
-
-    #[cfg(feature = "event_log")]
-    config.event_log.recovered_lsn(snapshot.last_lsn);
-
-    Ok(snapshot)
-}
-
-/// Read a `Snapshot` or generate a default, then advance it to
-/// the tip of the data file, if present.
-pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
-    let mut last_snap =
-        read_snapshot(config)?.unwrap_or_else(Snapshot::default);
-
-    let (log_iter, to_zero, tip) =
-        raw_segment_iter_from(last_snap.max_header_stable_lsn, config)?;
-
-    last_snap.max_header_stable_lsn = tip;
-
-    let res = advance_snapshot(log_iter, last_snap, config)?;
-
-    for lid in to_zero {
+    let to_zero = iter.segments;
+    for (_lsn, lid) in to_zero {
         debug!("zeroing torn segment at lid {}", lid);
 
         // NB we intentionally corrupt this header to prevent any segment
@@ -219,6 +199,27 @@ pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
             config.file.sync_all()?;
         }
     }
+
+    trace!("generated new snapshot: {:?}", snapshot);
+
+    #[cfg(feature = "event_log")]
+    config.event_log.recovered_lsn(snapshot.last_lsn);
+
+    Ok(snapshot)
+}
+
+/// Read a `Snapshot` or generate a default, then advance it to
+/// the tip of the data file, if present.
+pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
+    let mut last_snap =
+        read_snapshot(config)?.unwrap_or_else(Snapshot::default);
+
+    let (log_iter, tip) =
+        raw_segment_iter_from(last_snap.max_header_stable_lsn, config)?;
+
+    last_snap.max_header_stable_lsn = tip;
+
+    let res = advance_snapshot(log_iter, last_snap, config)?;
 
     Ok(res)
 }
