@@ -168,6 +168,75 @@ impl IoBuf {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct StabilityIntervals {
+    fsynced_ranges: Vec<(Lsn, Lsn)>,
+    batches: Vec<(Lsn, Lsn)>,
+    stable_lsn: Lsn,
+}
+
+impl StabilityIntervals {
+    fn new(lsn: Lsn) -> StabilityIntervals {
+        StabilityIntervals {
+            stable_lsn: lsn,
+            fsynced_ranges: vec![],
+            batches: vec![],
+        }
+    }
+
+    fn mark_batch(&mut self, interval: (Lsn, Lsn)) {
+        self.batches.push(interval);
+        // reverse sort
+        self.batches.sort_unstable_by(|a, b| b.cmp(a));
+    }
+
+    fn mark_fsync(&mut self, interval: (Lsn, Lsn)) -> Option<Lsn> {
+        self.fsynced_ranges.push(interval);
+
+        #[cfg(any(test, feature = "event_log", feature = "lock_free_delays"))]
+        assert!(
+            self.fsynced_ranges.len() < 10000,
+            "intervals is getting strangely long... {:?}",
+            self
+        );
+
+        // reverse sort
+        self.fsynced_ranges.sort_unstable_by(|a, b| b.cmp(a));
+
+        while let Some(&(low, high)) = self.fsynced_ranges.last() {
+            assert!(low <= high);
+            let cur_stable = self.stable_lsn;
+            assert!(
+                low > cur_stable,
+                "somehow, we marked offset {} stable while \
+                 interval {}-{} had not yet been applied!",
+                cur_stable,
+                low,
+                high
+            );
+            if cur_stable + 1 == low {
+                debug!("new highest interval: {} - {}", low, high);
+                self.fsynced_ranges.pop().unwrap();
+                self.stable_lsn = high;
+            } else {
+                break;
+            }
+        }
+
+        let mut stable_lsn =
+            if self.batches.is_empty() { Some(self.stable_lsn) } else { None };
+
+        while let Some(&(_low, high)) = self.batches.last() {
+            if high < self.stable_lsn {
+                stable_lsn = Some(high);
+                self.batches.pop().unwrap();
+            }
+        }
+
+        stable_lsn
+    }
+}
+
 pub(crate) struct IoBufs {
     pub config: RunningConfig,
 
@@ -182,7 +251,7 @@ pub(crate) struct IoBufs {
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
-    pub intervals: Mutex<Vec<(Lsn, Lsn)>>,
+    pub intervals: Mutex<StabilityIntervals>,
     pub interval_updated: Condvar,
 
     // The highest CONTIGUOUS log sequence number that has been written to
@@ -339,7 +408,7 @@ impl IoBufs {
 
             iobuf: AtomicPtr::new(Arc::into_raw(Arc::new(iobuf)) as *mut IoBuf),
 
-            intervals: Mutex::new(vec![]),
+            intervals: Mutex::new(StabilityIntervals::new(stable)),
             interval_updated: Condvar::new(),
 
             stable_lsn: AtomicLsn::new(stable),
@@ -363,6 +432,10 @@ impl IoBufs {
         peg_end_lsn: Lsn,
         guard: &Guard,
     ) {
+        let mut intervals = self.intervals.lock();
+        intervals.mark_batch((peg_start_lsn, peg_end_lsn));
+        drop(intervals);
+
         let op = SegmentOp::Peg { peg_start_lsn, peg_end_lsn };
         self.deferred_segment_ops.push(op, guard);
     }
@@ -752,52 +825,11 @@ impl IoBufs {
 
         let interval = (whence, whence + len as Lsn - 1);
 
-        intervals.push(interval);
+        let updated = intervals.mark_fsync(interval);
 
-        #[cfg(any(test, feature = "event_log", feature = "lock_free_delays"))]
-        assert!(
-            intervals.len() < 10000,
-            "intervals is getting strangely long... {:?}",
-            *intervals
-        );
+        if let Some(new_stable_lsn) = updated {
+            self.stable_lsn.store(new_stable_lsn, SeqCst);
 
-        // reverse sort
-        intervals.sort_unstable_by(|a, b| b.cmp(a));
-
-        let mut updated = false;
-
-        let len_before = intervals.len();
-
-        while let Some(&(low, high)) = intervals.last() {
-            assert!(low <= high);
-            let cur_stable = self.stable_lsn.load(SeqCst);
-            assert!(
-                low > cur_stable,
-                "somehow, we marked offset {} stable while \
-                 interval {}-{} had not yet been applied!",
-                cur_stable,
-                low,
-                high
-            );
-            if cur_stable + 1 == low {
-                let old = self.stable_lsn.swap(high, SeqCst);
-                assert_eq!(
-                    old, cur_stable,
-                    "concurrent stable offset modification detected"
-                );
-                debug!("new highest interval: {} - {}", low, high);
-                let (_low, _high) = intervals.pop().unwrap();
-                updated = true;
-            } else {
-                break;
-            }
-        }
-
-        if len_before - intervals.len() > 100 {
-            debug!("large merge of {} intervals", len_before - intervals.len());
-        }
-
-        if updated {
             // having held the mutex makes this linearized
             // with the notify below.
             drop(intervals);
