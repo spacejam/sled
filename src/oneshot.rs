@@ -7,8 +7,6 @@ use std::{
 
 use parking_lot::{Condvar, Mutex};
 
-use super::Result;
-
 #[derive(Debug)]
 struct OneShotState<T> {
     filled: bool,
@@ -50,27 +48,17 @@ impl<T> OneShot<T> {
 
     /// Block on the `OneShot`'s completion
     /// or dropping of the `OneShotFiller`
-    pub fn wait(self) -> Option<T> {
+    pub fn wait(self) -> T {
         let mut inner = self.mu.lock();
         while !inner.filled {
             self.cv.wait(&mut inner);
         }
-        inner.item.take()
-    }
-
-    /// Block on the `OneShot`'s completion
-    /// or dropping of the `OneShotFiller`.
-    ///
-    /// # Panics
-    /// panics if the `OneShotFiller` is dropped
-    /// without completing the promise.
-    pub fn unwrap(self) -> T {
-        self.wait().unwrap()
+        inner.item.take().unwrap()
     }
 }
 
-impl<T> Future for OneShot<Result<T>> {
-    type Output = Result<T>;
+impl<T> Future for OneShot<T> {
+    type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.mu.lock();

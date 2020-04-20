@@ -314,7 +314,7 @@ fn scan_segment_lsns(
         .collect();
 
     let headers: Vec<(LogOffset, SegmentHeader)> =
-        header_promises.into_iter().filter_map(OneShot::unwrap).collect();
+        header_promises.into_iter().filter_map(OneShot::wait).collect();
 
     let mut ordering = BTreeMap::new();
     let mut max_header_stable_lsn = min;
