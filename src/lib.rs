@@ -372,5 +372,11 @@ pub(crate) type FastSet8<V> = std::collections::HashSet<
 
 /// Allows arbitrary logic to be injected into mere operations of the
 /// `PageCache`.
-pub trait MergeOperator: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>> {}
-impl<F> MergeOperator for F where F: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>> {}
+pub trait MergeOperator:
+    Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
+{
+}
+impl<F> MergeOperator for F where
+    F: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
+{
+}
