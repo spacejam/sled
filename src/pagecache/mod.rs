@@ -1383,7 +1383,16 @@ impl PageCache {
 
             // it's possible the blob file was removed lazily
             // in the background and no longer exists
-            size += blob_file.metadata().map(|m| m.len()).unwrap_or(0);
+            #[cfg(not(miri))]
+            {
+                size += blob_file.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+
+            // workaround to avoid missing `dirfd` shim
+            #[cfg(miri)]
+            {
+                size += std::fs::metadata(blob_file.path()).map(|m| m.len()).unwrap_or(0);
+            }
         }
 
         Ok(size)
