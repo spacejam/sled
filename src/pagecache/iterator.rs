@@ -487,7 +487,7 @@ pub fn raw_segment_iter_from(
         normalized_lsn,
     );
 
-    let mut ordering = ordering;
+    let ordering = ordering;
 
     let segments = ordering
         .into_iter()
