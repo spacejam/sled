@@ -703,6 +703,10 @@ pub(crate) fn read_message<R: ReadAt>(
     let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;
     trace!("reading message from segment: {} at lid: {}", seg_start, lid);
     assert!(seg_start + SEG_HEADER_LEN as LogOffset <= lid);
+    assert!(
+        (seg_start + segment_len as LogOffset) - lid >= MAX_MSG_HEADER_LEN as LogOffset,
+        "tried to read a message from the red zone"
+    );
 
     let msg_header_buf = &mut [0; 128];
     let _read_bytes = file.pread_exact_or_eof(msg_header_buf, lid)?;

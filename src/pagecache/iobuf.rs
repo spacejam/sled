@@ -554,12 +554,8 @@ impl IoBufs {
         // a pad is a null message written to the end of a buffer
         // to signify that nothing else will be written into it
         if should_pad {
-            let pad_len = capacity - bytes_to_write - MAX_MSG_HEADER_LEN;
-            let data = iobuf.get_mut_range(bytes_to_write, pad_len);
-
-            // take the crc of the random bytes already after where we
-            // would place our header.
-            let padding_bytes = vec![MessageKind::Corrupted.into(); pad_len];
+            let pad_len = unused_space - MAX_MSG_HEADER_LEN;
+            let data = iobuf.get_mut_range(bytes_to_write, unused_space);
 
             let segment_number = SegmentNumber(
                 u64::try_from(base_lsn).unwrap()
@@ -576,6 +572,9 @@ impl IoBufs {
 
             let header_bytes = header.serialize();
 
+            // initialize the remainder of this buffer (only pad_len of this will be part of the Cap message)
+            let padding_bytes = vec![MessageKind::Corrupted.into(); unused_space - header_bytes.len()];
+
             #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
@@ -586,14 +585,14 @@ impl IoBufs {
                 std::ptr::copy_nonoverlapping(
                     padding_bytes.as_ptr(),
                     data.as_mut_ptr().add(header_bytes.len()),
-                    pad_len,
+                    padding_bytes.len(),
                 );
             }
 
             // this as to stay aligned with the hashing
             let crc32_arr = u32_to_arr(calculate_message_crc32(
                 &header_bytes,
-                &padding_bytes,
+                &padding_bytes[..pad_len],
             ));
 
             #[allow(unsafe_code)]
@@ -603,6 +602,19 @@ impl IoBufs {
                     // the crc32 is the first part of the buffer
                     data.as_mut_ptr(),
                     std::mem::size_of::<u32>(),
+                );
+            }
+        } else if maxed {
+            // initialize the remainder of this buffer's red zone
+            let data = iobuf.get_mut_range(bytes_to_write, unused_space);
+
+            #[allow(unsafe_code)]
+            unsafe {
+                // note: this could use slice::fill() if it stabilizes
+                std::ptr::write_bytes(
+                    data.as_mut_ptr(),
+                    MessageKind::Corrupted.into(),
+                    unused_space,
                 );
             }
         }
