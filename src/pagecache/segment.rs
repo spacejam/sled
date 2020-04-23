@@ -517,6 +517,11 @@ impl SegmentAccountant {
 
         ret.initialize_from_snapshot(snapshot)?;
 
+        debug!(
+            "SA starting with tip {} stable {} free {:?}",
+            ret.tip, ret.max_stabilized_lsn, ret.free
+        );
+
         Ok(ret)
     }
 
@@ -689,7 +694,7 @@ impl SegmentAccountant {
 
     fn free_segment(&mut self, lid: LogOffset) -> Result<()> {
         debug!("freeing segment {}", lid);
-        debug!("free list before free {:?}", self.free);
+        trace!("free list before free {:?}", self.free);
         self.segment_cleaner.remove_pids(lid);
 
         let idx = self.segment_id(lid);

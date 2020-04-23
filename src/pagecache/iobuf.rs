@@ -336,11 +336,10 @@ impl IoBufs {
                 )
             };
 
-        trace!(
+        debug!(
             "starting IoBufs with next_lsn: {} \
              next_lid: {}",
-            next_lsn,
-            next_lid
+            next_lsn, next_lid
         );
 
         // we want stable to begin at -1 if the 0th byte
@@ -926,7 +925,7 @@ pub(in crate::pagecache) fn make_stable(
                 iobufs.interval_updated.wait(&mut waiter);
             }
         } else {
-            trace!("make_stable({}) returning", lsn);
+            debug!("make_stable({}) returning", lsn);
             break;
         }
     }
