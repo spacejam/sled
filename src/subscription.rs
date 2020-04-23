@@ -173,7 +173,7 @@ pub(crate) struct ReservedBroadcast {
 
 impl ReservedBroadcast {
     pub fn complete(self, event: &Event) {
-        let mut iter = self.subscribers.into_iter();
+        let iter = self.subscribers.into_iter();
 
         for (waker, tx) in iter {
             tx.fill(Some(event.clone()));
