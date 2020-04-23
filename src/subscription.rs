@@ -76,7 +76,7 @@ impl Future for Subscriber {
         let mut home = self.home.write();
         let entry = home.get_mut(&self.id).unwrap();
         entry.0 = Some(cx.waker().clone());
-        return Poll::Pending;
+        Poll::Pending
     }
 }
 
@@ -172,10 +172,10 @@ pub(crate) struct ReservedBroadcast {
 }
 
 impl ReservedBroadcast {
-    pub fn complete(self, event: Event) {
+    pub fn complete(self, event: &Event) {
         let mut iter = self.subscribers.into_iter();
 
-        while let Some((waker, tx)) = iter.next() {
+        for (waker, tx) in iter {
             tx.fill(Some(event.clone()));
             if let Some(waker) = waker {
                 waker.wake();

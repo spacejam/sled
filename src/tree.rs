@@ -176,7 +176,7 @@ impl Tree {
                         value,
                     };
 
-                    res.complete(event);
+                    res.complete(&event);
                 }
 
                 return Ok(last_value);
@@ -454,7 +454,7 @@ impl Tree {
                         key: key.as_ref().into(),
                     };
 
-                    res.complete(event);
+                    res.complete(&event);
                 }
 
                 return Ok(existing_val);
@@ -579,7 +579,7 @@ impl Tree {
                         subscription::Event::Remove { key: key.as_ref().into() }
                     };
 
-                    res.complete(event);
+                    res.complete(&event);
                 }
 
                 return Ok(Ok(()));
@@ -1063,7 +1063,7 @@ impl Tree {
                         subscription::Event::Remove { key: key.as_ref().into() }
                     };
 
-                    res.complete(event);
+                    res.complete(&event);
                 }
 
                 return Ok(new);
