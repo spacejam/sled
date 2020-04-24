@@ -101,6 +101,26 @@ high durability guarantees and you are willing to pay the latency costs of fsync
 Note that sled automatically tries to sync all data to disk several times per second
 in the background without blocking user threads.
 
+We support async subscription to events that happen on key prefixes, because the
+`Subscription` struct implements `Future<Output=Option<Event>>`:
+
+```rust
+let sled = sled::open("my_db").unwrap();
+let sub = sled.watch_prefix("");
+
+sled.insert(b"a", b"a").unwrap();
+sled.insert(b"a", b"a").unwrap();
+
+drop(sled);
+
+extreme::run(async move {
+    let mut sub = sub;
+    while let Some(event) = (&mut sub).await {
+        println!("got event {:?}", event);
+    }
+});
+```
+
 # architecture
 
 lock-free tree on a lock-free pagecache on a lock-free log. the pagecache scatters
