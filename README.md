@@ -71,7 +71,7 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 * fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.compare_and_swap)
 * zero-copy reads
 * [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.apply_batch)
-* [subscription/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
+* [subscriber/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
 * [multiple keyspace/Tree support](https://docs.rs/sled/latest/sled/struct.Db.html#method.open_tree)
 * [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)
 * forward and reverse iterators
@@ -102,7 +102,7 @@ Note that sled automatically tries to sync all data to disk several times per se
 in the background without blocking user threads.
 
 We support async subscription to events that happen on key prefixes, because the
-`Subscription` struct implements `Future<Output=Option<Event>>`:
+`Subscriber` struct implements `Future<Output=Option<Event>>`:
 
 ```rust
 let sled = sled::open("my_db").unwrap();

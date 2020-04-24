@@ -199,7 +199,7 @@ mod result;
 mod serialization;
 mod stack;
 mod stackvec;
-mod subscription;
+mod subscriber;
 mod sys_limits;
 pub mod transaction;
 mod tree;
@@ -273,7 +273,7 @@ pub use self::{
     iter::Iter,
     ivec::IVec,
     result::{Error, Result},
-    subscription::{Event, Subscriber},
+    subscriber::{Event, Subscriber},
     transaction::Transactional,
     tree::{CompareAndSwapError, Tree},
 };
@@ -292,7 +292,7 @@ use {
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
         stackvec::StackVec,
-        subscription::Subscriptions,
+        subscriber::Subscribers,
         tree::TreeInner,
     },
     crossbeam_utils::{Backoff, CachePadded},

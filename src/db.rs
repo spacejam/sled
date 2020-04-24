@@ -112,7 +112,7 @@ impl Db {
         for (id, root) in context.pagecache.get_meta(&guard)?.tenants() {
             let tree = Tree(Arc::new(TreeInner {
                 tree_id: id.clone(),
-                subscriptions: Subscriptions::default(),
+                subscribers: Subscribers::default(),
                 context: context.clone(),
                 root: AtomicU64::new(root),
                 concurrency_control: ConcurrencyControl::default(),

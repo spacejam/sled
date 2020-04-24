@@ -621,7 +621,7 @@ fn tree_big_keys_iterator() {
 }
 
 #[test]
-fn tree_subscriptions_and_keyspaces() -> Result<()> {
+fn tree_subscribers_and_keyspaces() -> Result<()> {
     let config = Config::new().temporary(true).flush_every_ms(None);
 
     let db = config.open().unwrap();
