@@ -58,9 +58,13 @@ impl Iterator for LogIter {
             // self.segment_base is `Some` now.
             let _measure = Measure::new(&M.read_segment_message);
 
+            // NB this inequality must be greater than, not greater
+            // than or equal, because it is set to the beginning
+            // of the last message in the unstable tail during
+            // one phase of recovery.
             if self.cur_lsn > self.max_lsn {
                 // all done
-                trace!("hit max_lsn {} in iterator, stopping", self.max_lsn);
+                debug!("hit max_lsn {} in iterator, stopping", self.max_lsn);
                 return None;
             }
 
@@ -350,13 +354,14 @@ fn scan_segment_headers_and_tail(
 
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
-    let contiguous_tip_in_unstable_tail = check_contiguity_in_unstable_tail(
-        max_header_stable_lsn,
-        &ordering,
-        config,
-    )?;
+    let beginning_of_last_contiguous_message_in_unstable_tail =
+        check_contiguity_in_unstable_tail(
+            max_header_stable_lsn,
+            &ordering,
+            config,
+        )?;
 
-    Ok((ordering, contiguous_tip_in_unstable_tail))
+    Ok((ordering, beginning_of_last_contiguous_message_in_unstable_tail))
 }
 
 // This ensures that the last <# io buffers> segments on
@@ -411,7 +416,7 @@ fn check_contiguity_in_unstable_tail(
         cur_lsn: 0,
     };
 
-    let tip: (Lsn, LogOffset) =
+    let beginning_of_last_message: (Lsn, LogOffset) =
         iter.max_by_key(|(_kind, _pid, lsn, _ptr, _sz)| *lsn).map_or_else(
             || {
                 if max_header_stable_lsn > 0 {
@@ -424,11 +429,11 @@ fn check_contiguity_in_unstable_tail(
         );
 
     debug!(
-        "filtering out segments after detected tear at lsn {} lid {}",
-        tip.0, tip.1
+        "filtering out segments after detected tear at (lsn, lid) {:?}",
+        beginning_of_last_message,
     );
 
-    Ok(tip.0)
+    Ok(beginning_of_last_message.0)
 }
 
 /// Returns a log iterator, the max stable lsn,
@@ -438,15 +443,15 @@ fn check_contiguity_in_unstable_tail(
 pub fn raw_segment_iter_from(
     lsn: Lsn,
     config: &RunningConfig,
-) -> Result<(LogIter, Lsn)> {
+) -> Result<LogIter> {
     let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let (ordering, contiguous_tip) =
+    let (ordering, beginning_of_last_contiguous_msg) =
         scan_segment_headers_and_tail(normalized_lsn, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
-    let tip_segment_iter = ordering
+    let tip_segment_iter: BTreeMap<_, _> = ordering
         .iter()
         .next_back()
         .map(|(a, b)| (*a, *b))
@@ -458,28 +463,8 @@ pub fn raw_segment_iter_from(
          bounding batch manifests with segment iter {:?} \
          of segments >= first_tip {}",
         tip_segment_iter,
-        contiguous_tip
+        beginning_of_last_contiguous_msg,
     );
-
-    let mut tip_iter = LogIter {
-        config: config.clone(),
-        max_lsn: contiguous_tip,
-        cur_lsn: 0,
-        segment_base: None,
-        segments: tip_segment_iter,
-    };
-
-    // run the iterator to the end so
-    // we can grab its current lsn, inclusive
-    // of any zeroed messages and other
-    // legit items it may not have returned
-    // in the actual iterator.
-    while let Some(_) = tip_iter.next() {}
-
-    let batch_aware_tip = tip_iter.cur_lsn;
-
-    trace!("found max stable tip: {}", batch_aware_tip);
-    println!("found max stable tip: {}", batch_aware_tip);
 
     trace!(
         "generated iterator over segments {:?} with lsn >= {}",
@@ -494,14 +479,11 @@ pub fn raw_segment_iter_from(
         .filter(move |&(l, _)| l >= normalized_lsn)
         .collect();
 
-    Ok((
-        LogIter {
-            config: config.clone(),
-            max_lsn: batch_aware_tip,
-            cur_lsn: 0,
-            segment_base: None,
-            segments,
-        },
-        batch_aware_tip,
-    ))
+    Ok(LogIter {
+        config: config.clone(),
+        max_lsn: beginning_of_last_contiguous_msg,
+        cur_lsn: 0,
+        segment_base: None,
+        segments,
+    })
 }

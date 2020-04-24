@@ -150,7 +150,7 @@ fn advance_snapshot(
 
     trace!("building on top of old snapshot: {:?}", snapshot);
 
-    let old_max_header_stable_lsn = snapshot.max_header_stable_lsn;
+    let old_last_lsn = snapshot.last_lsn;
 
     while let Some((log_kind, pid, lsn, ptr, sz)) = iter.next() {
         trace!(
@@ -178,7 +178,7 @@ fn advance_snapshot(
         snapshot.apply(log_kind, pid, lsn, ptr, sz);
     }
 
-    if snapshot.max_header_stable_lsn != old_max_header_stable_lsn {
+    if snapshot.last_lsn != old_last_lsn {
         write_snapshot(config, &snapshot)?;
     }
 
@@ -211,13 +211,9 @@ fn advance_snapshot(
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
 pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
-    let mut last_snap =
-        read_snapshot(config)?.unwrap_or_else(Snapshot::default);
+    let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
-    let (log_iter, tip) =
-        raw_segment_iter_from(last_snap.max_header_stable_lsn, config)?;
-
-    last_snap.max_header_stable_lsn = tip;
+    let log_iter = raw_segment_iter_from(last_snap.last_lsn, config)?;
 
     let res = advance_snapshot(log_iter, last_snap, config)?;
 
