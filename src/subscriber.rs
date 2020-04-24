@@ -49,7 +49,7 @@ type Senders =
 ///
 /// # Examples
 ///
-/// Synchronous, blocking subscription:
+/// Synchronous, blocking subscriber:
 /// ```
 /// use sled::{Config, Event};
 /// let config = Config::new().temporary(true);
@@ -57,7 +57,7 @@ type Senders =
 /// let tree = config.open().unwrap();
 ///
 /// // watch all events by subscribing to the empty prefix
-/// let mut subscription = tree.watch_prefix(vec![]);
+/// let mut subscriber = tree.watch_prefix(vec![]);
 ///
 /// let tree_2 = tree.clone();
 /// let thread = std::thread::spawn(move || {
@@ -65,7 +65,7 @@ type Senders =
 /// });
 ///
 /// // `Subscription` implements `Iterator<Item=Event>`
-/// for event in subscription.take(1) {
+/// for event in subscriber.take(1) {
 ///     match event {
 ///         Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
 ///         Event::Remove {key } => {}
@@ -74,11 +74,11 @@ type Senders =
 ///
 /// thread.join().unwrap();
 /// ```
-/// Aynchronous, non-blocking subscription:
+/// Aynchronous, non-blocking subscriber:
 ///
 /// `Subscription` implements `Future<Output=Option<Event>>`.
 ///
-/// `while let Some(event) = (&mut subscription).await { /* use it */ }`
+/// `while let Some(event) = (&mut subscriber).await { /* use it */ }`
 pub struct Subscriber {
     id: usize,
     rx: Receiver<OneShot<Option<Event>>>,
@@ -142,12 +142,12 @@ impl Iterator for Subscriber {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Subscriptions {
+pub(crate) struct Subscribers {
     watched: RwLock<BTreeMap<Vec<u8>, Arc<RwLock<Senders>>>>,
     ever_used: AtomicBool,
 }
 
-impl Drop for Subscriptions {
+impl Drop for Subscribers {
     fn drop(&mut self) {
         let watched = self.watched.read();
 
@@ -163,7 +163,7 @@ impl Drop for Subscriptions {
     }
 }
 
-impl Subscriptions {
+impl Subscribers {
     pub(crate) fn register(&self, prefix: &[u8]) -> Subscriber {
         self.ever_used.store(true, Relaxed);
         let r_mu = {
@@ -248,8 +248,8 @@ impl ReservedBroadcast {
 }
 
 #[test]
-fn basic_subscription() {
-    let subs = Subscriptions::default();
+fn basic_subscriber() {
+    let subs = Subscribers::default();
 
     let mut s2 = subs.register(&[0]);
     let mut s3 = subs.register(&[0, 1]);

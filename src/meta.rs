@@ -58,7 +58,7 @@ where
                 return Ok(Tree(Arc::new(TreeInner {
                     tree_id: name,
                     context: context.clone(),
-                    subscriptions: Subscriptions::default(),
+                    subscribers: Subscribers::default(),
                     root: AtomicU64::new(root_id),
                     concurrency_control: ConcurrencyControl::default(),
                     merge_operator: RwLock::new(None),
@@ -109,7 +109,7 @@ where
 
         return Ok(Tree(Arc::new(TreeInner {
             tree_id: name,
-            subscriptions: Subscriptions::default(),
+            subscribers: Subscribers::default(),
             context: context.clone(),
             root: AtomicU64::new(root_id),
             concurrency_control: ConcurrencyControl::default(),
