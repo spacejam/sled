@@ -102,7 +102,7 @@ Note that sled automatically tries to sync all data to disk several times per se
 in the background without blocking user threads.
 
 We support async subscription to events that happen on key prefixes, because the
-`Subscription` struct implements `Future<Output=Option<Event>>`:
+`Subscriber` struct implements `Future<Output=Option<Event>>`:
 
 ```rust
 let sled = sled::open("my_db").unwrap();
