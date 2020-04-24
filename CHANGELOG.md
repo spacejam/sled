@@ -2,6 +2,7 @@
 
 ## New Features
 
+* The minimum supported Rust version (MSRV) is now 1.37.0.
 * `Subscription` now implements `Future` (non-fused)
   so prefix watching may now be iterated over via
   `while let Some(event) = (&mut subscription).await {}`

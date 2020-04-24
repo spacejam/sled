@@ -120,6 +120,10 @@ extreme::run(async move {
 });
 ```
 
+# minimum supported Rust version (MSRV)
+
+We support Rust 1.37.0 and up.
+
 # architecture
 
 lock-free tree on a lock-free pagecache on a lock-free log. the pagecache scatters
@@ -142,7 +146,6 @@ for a more detailed overview of where we're at and where we see things going!
 * if storage price performance is your primary constraint, use RocksDB. sled uses too much space sometimes.
 * quite young, should be considered unstable for the time being.
 * the on-disk format is going to change in ways that require [manual migrations](https://docs.rs/sled/latest/sled/struct.Db.html#method.export) before the `1.0.0` release!
-* until `1.0.0`, sled targets the *current* stable version of rust. after `1.0.0`, we will aim to trail current by at least one version. If this is an issue for your business, please consider helping us reach `1.0.0` sooner by financially supporting our efforts to get there.
 
 # plans
 

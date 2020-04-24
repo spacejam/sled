@@ -1,11 +1,28 @@
-use std::{convert::TryFrom, mem::MaybeUninit};
+use std::{convert::TryFrom, fmt, mem::MaybeUninit};
 
 use crate::pagecache::{constants::PAGE_CONSOLIDATION_THRESHOLD, CacheInfo};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct StackVec {
     items: [MaybeUninit<CacheInfo>; PAGE_CONSOLIDATION_THRESHOLD],
     len: u8,
+}
+
+impl fmt::Debug for StackVec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        f.debug_map()
+            .entry(
+                &"items",
+                #[allow(unsafe_code)]
+                unsafe {
+                    &std::mem::transmute::<
+                        _,
+                        [CacheInfo; PAGE_CONSOLIDATION_THRESHOLD],
+                    >(self.items)
+                },
+            )
+            .finish()
+    }
 }
 
 impl Default for StackVec {
