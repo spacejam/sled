@@ -30,6 +30,15 @@ pub enum Event {
     },
 }
 
+impl Event {
+    /// Return the key associated with the `Event`
+    pub fn key(&self) -> &IVec {
+        match self {
+            Event::Insert { key, .. } | Event::Remove { key } => key,
+        }
+    }
+}
+
 type Senders = HashMap<usize, (Option<Waker>, Sender<OneShot<Option<Event>>>)>;
 
 /// A subscriber listening on a specified prefix
@@ -197,33 +206,45 @@ fn basic_subscription() {
 
     let mut s1 = subs.register(&[]);
 
-    let k2: Arc<[u8]> = vec![].into();
+    let k2: IVec = vec![].into();
     let r2 = subs.reserve(&k2).unwrap();
-    r2.complete(Event::Insert(k2.clone(), IVec::from(k2.clone())));
+    r2.complete(&Event::Insert {
+        key: k2.clone(),
+        value: IVec::from(k2.clone()),
+    });
 
-    let k3: Arc<[u8]> = vec![0].into();
+    let k3: IVec = vec![0].into();
     let r3 = subs.reserve(&k3).unwrap();
-    r3.complete(Event::Insert(k3.clone(), IVec::from(k3.clone())));
+    r3.complete(&Event::Insert {
+        key: k3.clone(),
+        value: IVec::from(k3.clone()),
+    });
 
-    let k4: Arc<[u8]> = vec![0, 1].into();
+    let k4: IVec = vec![0, 1].into();
     let r4 = subs.reserve(&k4).unwrap();
-    r4.complete(Event::Remove(k4.clone()));
+    r4.complete(&Event::Remove { key: k4.clone() });
 
-    let k5: Arc<[u8]> = vec![0, 1, 2].into();
+    let k5: IVec = vec![0, 1, 2].into();
     let r5 = subs.reserve(&k5).unwrap();
-    r5.complete(Event::Insert(k5.clone(), IVec::from(k5.clone())));
+    r5.complete(&Event::Insert {
+        key: k5.clone(),
+        value: IVec::from(k5.clone()),
+    });
 
-    let k6: Arc<[u8]> = vec![1, 1, 2].into();
+    let k6: IVec = vec![1, 1, 2].into();
     let r6 = subs.reserve(&k6).unwrap();
-    r6.complete(Event::Remove(k6.clone()));
+    r6.complete(&Event::Remove { key: k6.clone() });
 
-    let k7: Arc<[u8]> = vec![1, 1, 2].into();
+    let k7: IVec = vec![1, 1, 2].into();
     let r7 = subs.reserve(&k7).unwrap();
     drop(r7);
 
-    let k8: Arc<[u8]> = vec![1, 2, 2].into();
+    let k8: IVec = vec![1, 2, 2].into();
     let r8 = subs.reserve(&k8).unwrap();
-    r8.complete(Event::Insert(k8.clone(), IVec::from(k8.clone())));
+    r8.complete(&Event::Insert {
+        key: k8.clone(),
+        value: IVec::from(k8.clone()),
+    });
 
     assert_eq!(s1.next().unwrap().key(), &*k2);
     assert_eq!(s1.next().unwrap().key(), &*k3);

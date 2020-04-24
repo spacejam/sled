@@ -436,7 +436,7 @@ impl Log {
             });
 
             #[cfg(test)]
-            _result.unwrap();
+            _result.wait();
 
             Ok(())
         } else {

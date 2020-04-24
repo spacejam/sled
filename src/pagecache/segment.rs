@@ -1127,7 +1127,7 @@ impl SegmentAccountant {
         });
 
         #[cfg(test)]
-        _result.unwrap();
+        _result.wait();
 
         if self.async_truncations.insert(at, promise).is_some() {
             panic!(
