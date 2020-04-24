@@ -153,6 +153,7 @@
     // clippy::wildcard_enum_match_arm,
     clippy::wrong_pub_self_convention,
 )]
+#![allow(clippy::mem_replace_with_default)]
 #![recursion_limit = "128"]
 
 macro_rules! io_fail {
@@ -372,5 +373,11 @@ pub(crate) type FastSet8<V> = std::collections::HashSet<
 
 /// Allows arbitrary logic to be injected into mere operations of the
 /// `PageCache`.
-pub trait MergeOperator: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>> {}
-impl<F> MergeOperator for F where F: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>> {}
+pub trait MergeOperator:
+    Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
+{
+}
+impl<F> MergeOperator for F where
+    F: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
+{
+}

@@ -290,7 +290,10 @@ impl Segment {
                 latest_replacement_lsn: active.latest_replacement_lsn,
             });
 
-            let can_free = mem::take(&mut active.can_free_upon_deactivation);
+            let can_free = mem::replace(
+                &mut active.can_free_upon_deactivation,
+                Default::default(),
+            );
 
             (inactive, can_free)
         } else {
@@ -306,7 +309,7 @@ impl Segment {
 
         if let Segment::Inactive(inactive) = self {
             assert!(lsn >= inactive.lsn);
-            let ret = mem::take(&mut inactive.pids);
+            let ret = mem::replace(&mut inactive.pids, Default::default());
             *self = Segment::Draining(Draining {
                 lsn: inactive.lsn,
                 max_pids: inactive.max_pids,

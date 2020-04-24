@@ -151,7 +151,7 @@ impl Drop for Subscriptions {
     fn drop(&mut self) {
         let watched = self.watched.read();
 
-        for (_, senders) in &*watched {
+        for senders in watched.values() {
             let mut senders = senders.write();
             for (_, (waker, sender)) in senders.drain() {
                 drop(sender);

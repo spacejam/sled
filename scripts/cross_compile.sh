@@ -16,3 +16,8 @@ for target in $targets; do
   echo "checking $target..."
   cargo check --target $target
 done
+
+rustup toolchain install 1.37.0
+cargo clean
+rm Cargo.lock
+cargo +1.37.0 check
