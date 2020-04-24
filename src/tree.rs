@@ -344,16 +344,16 @@ impl Tree {
         let peg = self.context.pin_log(guard)?;
         for (k, v_opt) in batch.writes {
             if let Some(v) = v_opt {
-                let _old = self.insert_inner(k, v, guard)?;
+                self.insert_inner(k, v, guard)?;
             } else {
-                let _old = self.remove_inner(k, guard)?;
+                self.remove_inner(k, guard)?;
             }
         }
 
         // when the peg drops, it ensures all updates
         // written to the log since its creation are
         // recovered atomically
-        peg.seal_batch(guard)
+        peg.seal_batch()
     }
 
     /// Retrieve a value from the `Tree` if it exists.
@@ -1122,7 +1122,10 @@ impl Tree {
     /// tree.merge(k, vec![4]);
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
     /// ```
-    pub fn set_merge_operator(&self, merge_operator: impl MergeOperator + 'static) {
+    pub fn set_merge_operator(
+        &self,
+        merge_operator: impl MergeOperator + 'static,
+    ) {
         let mut mo_write = self.merge_operator.write();
         *mo_write = Some(Box::new(merge_operator));
     }

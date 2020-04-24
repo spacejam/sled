@@ -180,7 +180,7 @@ impl StabilityIntervals {
         }
     }
 
-    fn mark_batch(&mut self, interval: (Lsn, Lsn)) {
+    pub(crate) fn mark_batch(&mut self, interval: (Lsn, Lsn)) {
         self.batches.push(interval);
         // reverse sort
         self.batches.sort_unstable_by(|a, b| b.cmp(a));
@@ -222,7 +222,13 @@ impl StabilityIntervals {
         let mut stable_lsn =
             if self.batches.is_empty() { Some(self.stable_lsn) } else { None };
 
-        while let Some(&(_low, high)) = self.batches.last() {
+        while let Some(&(low, high)) = self.batches.last() {
+            assert!(
+                low < high,
+                "expected batch low mark {} to be below high mark {}",
+                low,
+                high
+            );
             if high < self.stable_lsn {
                 stable_lsn = Some(high);
                 self.batches.pop().unwrap();
@@ -419,20 +425,6 @@ impl IoBufs {
             #[cfg(feature = "io_uring")]
             io_uring: rio::new()?,
         })
-    }
-
-    pub(in crate::pagecache) fn sa_mark_peg(
-        &self,
-        peg_start_lsn: Lsn,
-        peg_end_lsn: Lsn,
-        guard: &Guard,
-    ) {
-        let mut intervals = self.intervals.lock();
-        intervals.mark_batch((peg_start_lsn, peg_end_lsn));
-        drop(intervals);
-
-        let op = SegmentOp::Peg { peg_start_lsn, peg_end_lsn };
-        self.deferred_segment_ops.push(op, guard);
     }
 
     pub(in crate::pagecache) fn sa_mark_link(

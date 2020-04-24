@@ -66,10 +66,6 @@ use crate::*;
 /// A operation that can be applied asynchronously.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum SegmentOp {
-    Peg {
-        peg_start_lsn: Lsn,
-        peg_end_lsn: Lsn,
-    },
     Link {
         pid: PageId,
         cache_info: CacheInfo,
@@ -215,27 +211,15 @@ impl Default for Segment {
 
 impl Segment {
     fn is_free(&self) -> bool {
-        if let Segment::Free(_) = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Free(_) = self { true } else { false }
     }
 
     fn is_active(&self) -> bool {
-        if let Segment::Active { .. } = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Active { .. } = self { true } else { false }
     }
 
     fn is_inactive(&self) -> bool {
-        if let Segment::Inactive { .. } = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Inactive { .. } = self { true } else { false }
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
@@ -271,7 +255,7 @@ impl Segment {
             for ptr in &active.deferred_rm_blob {
                 trace!(
                     "removing blob {} while transitioning \
-                 segment lsn {:?} to Inactive",
+                     segment lsn {:?} to Inactive",
                     ptr,
                     active.lsn,
                 );
@@ -338,26 +322,6 @@ impl Segment {
             replacement_lsn
         } else {
             panic!("called draining_to_free on {:?}", self);
-        }
-    }
-
-    fn mark_peg(&mut self, peg_lsn: Lsn) {
-        match self {
-            Segment::Active(Active { lsn, latest_replacement_lsn, .. })
-            | Segment::Inactive(Inactive {
-                lsn, latest_replacement_lsn, ..
-            })
-            | Segment::Draining(Draining {
-                lsn, latest_replacement_lsn, ..
-            }) => {
-                assert!(*lsn <= peg_lsn);
-                if peg_lsn > *latest_replacement_lsn {
-                    *latest_replacement_lsn = peg_lsn;
-                }
-            }
-            Segment::Free(_) => {
-                panic!("called mark_peg {} on Segment::Free", peg_lsn)
-            }
         }
     }
 
@@ -517,9 +481,20 @@ impl SegmentAccountant {
 
         ret.initialize_from_snapshot(snapshot)?;
 
+        if let Some(max_free) = ret.free.iter().max() {
+            assert!(
+                ret.tip > *max_free,
+                "expected recovered tip {} to \
+                be above max item in recovered \
+                free list {:?}",
+                ret.tip,
+                ret.free
+            );
+        }
+
         debug!(
             "SA starting with tip {} stable {} free {:?}",
-            ret.tip, ret.max_stabilized_lsn, ret.free
+            ret.tip, ret.max_stabilized_lsn, ret.free,
         );
 
         Ok(ret)
@@ -552,7 +527,7 @@ impl SegmentAccountant {
                 let idx = assert_usize(lid / segment_size as LogOffset);
                 trace!(
                     "adding lsn: {} lid: {} sz: {} for \
-                    pid {} to segment {} during SA recovery",
+                     pid {} to segment {} during SA recovery",
                     lsn,
                     lid,
                     sz,
@@ -746,29 +721,12 @@ impl SegmentAccountant {
     pub(super) fn apply_op(&mut self, op: &SegmentOp) -> Result<()> {
         use SegmentOp::*;
         match op {
-            Peg { peg_start_lsn, peg_end_lsn } => {
-                self.mark_peg(*peg_start_lsn, *peg_end_lsn)
-            }
             Link { pid, cache_info } => self.mark_link(*pid, *cache_info),
             Replace { pid, lsn, old_cache_infos, new_cache_info } => {
                 self.mark_replace(*pid, *lsn, old_cache_infos, *new_cache_info)?
             }
         }
         Ok(())
-    }
-
-    fn mark_peg(&mut self, peg_start_lsn: Lsn, peg_end_lsn: Lsn) {
-        let mut lsn_start = self.config.normalize(peg_start_lsn);
-        let lsn_end = self.config.normalize(peg_end_lsn);
-
-        while lsn_start < lsn_end {
-            let lid = self.ordering[&lsn_start];
-            let idx = self.segment_id(lid);
-            let segment = &mut self.segments[idx];
-            segment.mark_peg(lsn_end);
-
-            lsn_start += self.config.segment_size as Lsn;
-        }
     }
 
     /// Called by the `PageCache` when a page has been rewritten completely.
@@ -792,7 +750,7 @@ impl SegmentAccountant {
             old_cache_infos,
             new_cache_info,
             self.config.normalize(lsn)
-            );
+        );
 
         let new_idx = self.segment_id(new_cache_info.pointer.lid());
 
@@ -1104,11 +1062,7 @@ impl SegmentAccountant {
         self.ordering
             .iter()
             .filter_map(move |(l, r)| {
-                if *l >= normalized_lsn {
-                    Some((*l, *r))
-                } else {
-                    None
-                }
+                if *l >= normalized_lsn { Some((*l, *r)) } else { None }
             })
             .collect()
     }
