@@ -625,10 +625,7 @@ impl SegmentAccountant {
 
             let segment_lsn = segment.lsn();
 
-            if idx != currently_active_segment
-                && segment_lsn + segment_size as Lsn
-                    <= snapshot.max_header_stable_lsn
-            {
+            if idx != currently_active_segment {
                 maybe_clean.push((idx, segment_lsn));
             }
         }

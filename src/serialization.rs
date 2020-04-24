@@ -440,7 +440,6 @@ impl Serialize for Snapshot {
     fn serialized_size(&self) -> u64 {
         self.last_lsn.serialized_size()
             + self.last_lid.serialized_size()
-            + self.max_header_stable_lsn.serialized_size()
             + self
                 .pt
                 .iter()
@@ -451,7 +450,6 @@ impl Serialize for Snapshot {
     fn serialize_into(&self, buf: &mut &mut [u8]) {
         self.last_lsn.serialize_into(buf);
         self.last_lid.serialize_into(buf);
-        self.max_header_stable_lsn.serialize_into(buf);
         for page_state in &self.pt {
             page_state.serialize_into(buf);
         }
@@ -461,7 +459,6 @@ impl Serialize for Snapshot {
         Ok(Snapshot {
             last_lsn: { i64::deserialize(buf)? },
             last_lid: { u64::deserialize(buf)? },
-            max_header_stable_lsn: { i64::deserialize(buf)? },
             pt: deserialize_sequence(buf)?,
         })
     }
@@ -935,7 +932,6 @@ mod qc {
             Snapshot {
                 last_lsn: g.gen(),
                 last_lid: g.gen(),
-                max_header_stable_lsn: g.gen(),
                 pt: Arbitrary::arbitrary(g),
             }
         }

@@ -17,9 +17,6 @@ pub struct Snapshot {
     pub last_lsn: Lsn,
     /// The last read message lid
     pub last_lid: LogOffset,
-    /// The highest stable offset persisted
-    /// into a segment header
-    pub max_header_stable_lsn: Lsn,
     /// the mapping from pages to (lsn, lid)
     pub pt: Vec<PageState>,
 }

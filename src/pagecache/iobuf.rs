@@ -293,7 +293,6 @@ impl IoBufs {
 
         let snapshot_last_lsn = snapshot.last_lsn;
         let snapshot_last_lid = snapshot.last_lid;
-        let snapshot_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
         let segment_cleaner = SegmentCleaner::default();
 
@@ -414,9 +413,7 @@ impl IoBufs {
 
             stable_lsn: AtomicLsn::new(stable),
             max_reserved_lsn: AtomicLsn::new(stable),
-            max_header_stable_lsn: Arc::new(AtomicLsn::new(
-                snapshot_max_header_stable_lsn,
-            )),
+            max_header_stable_lsn: Arc::new(AtomicLsn::new(snapshot_last_lsn)),
             segment_accountant: Mutex::new(segment_accountant),
             segment_cleaner,
             deferred_segment_ops: stack::Stack::default(),
