@@ -4,8 +4,8 @@ use zstd::block::{compress, decompress};
 use crate::*;
 
 use super::{
-    arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
-    DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind,
+    arr_to_u32, gc_blobs, pwrite_all, raw_segment_iter_from, u32_to_arr,
+    u64_to_arr, DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -175,12 +175,14 @@ fn advance_snapshot(
         snapshot.apply(log_kind, pid, lsn, ptr, sz);
     }
 
+    trace!("generated snapshot: {:?}", snapshot);
+
     if snapshot.last_lsn != old_last_lsn {
         write_snapshot(config, &snapshot)?;
     }
 
     let to_zero = iter.segments;
-    for (_lsn, lid) in to_zero {
+    for lid in to_zero.values() {
         debug!("zeroing torn segment at lid {}", lid);
 
         // NB we intentionally corrupt this header to prevent any segment
@@ -190,14 +192,15 @@ fn advance_snapshot(
         pwrite_all(
             &config.file,
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
-            lid,
+            *lid,
         )?;
         if !config.temporary {
             config.file.sync_all()?;
         }
     }
 
-    trace!("generated new snapshot: {:?}", snapshot);
+    // remove all blob files larger than our stable offset
+    gc_blobs(&config, snapshot.last_lsn)?;
 
     #[cfg(feature = "event_log")]
     config.event_log.recovered_lsn(snapshot.last_lsn);
@@ -282,6 +285,8 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
 }
 
 fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
+    trace!("writing snapshot {:?}", snapshot);
+
     let raw_bytes = snapshot.serialize();
     let decompressed_len = raw_bytes.len();
 

@@ -23,6 +23,8 @@ const RECOVERY_NO_SNAPSHOT: &str = "crash_recovery_no_runtime_snapshot";
 const BATCHES_NO_SNAPSHOT: &str = "crash_batches_no_runtime_snapshot";
 
 fn main() {
+    common::setup_logger();
+
     match env::var(TEST_ENV_VAR) {
         Err(VarError::NotPresent) => {
             test_crash_recovery();
@@ -110,13 +112,12 @@ fn spawn_killah() {
     thread::spawn(|| {
         let runtime = rand::thread_rng().gen_range(0, 200);
         thread::sleep(Duration::from_millis(runtime));
+        println!("~");
         exit(9);
     });
 }
 
 fn run_inner(config: Config) {
-    common::setup_logger();
-
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     if crash_during_initialization {
@@ -203,8 +204,6 @@ fn run_batches_inner(db: sled::Db) {
         }
         db.apply_batch(batch).unwrap();
     }
-
-    common::setup_logger();
 
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 

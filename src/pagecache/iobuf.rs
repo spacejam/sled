@@ -400,9 +400,6 @@ impl IoBufs {
             }
         };
 
-        // remove all blob files larger than our stable offset
-        gc_blobs(&config, stable)?;
-
         Ok(IoBufs {
             config,
 
