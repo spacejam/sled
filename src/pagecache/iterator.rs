@@ -313,11 +313,15 @@ fn scan_segment_lsns(
         })
         .collect();
 
-    let headers: Vec<(LogOffset, SegmentHeader)> = header_promises
-        .into_iter()
-        .filter_map(OneShot::wait)
-        .map(|opt| opt.expect("thread pool should not crash"))
-        .collect();
+    let mut headers: Vec<(LogOffset, SegmentHeader)> = vec![];
+    for promise in header_promises {
+        let read_attempt =
+            promise.wait().expect("thread pool should not crash");
+
+        if let Some(completed_result) = read_attempt {
+            headers.push(completed_result);
+        }
+    }
 
     let mut ordering = BTreeMap::new();
     let mut max_header_stable_lsn = min;
