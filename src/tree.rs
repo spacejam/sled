@@ -161,6 +161,19 @@ impl Tree {
 
             let (encoded_key, last_value) =
                 node_view.node_kv_pair(key.as_ref());
+
+            if let Some(ref last_value) = last_value {
+                if *last_value == value {
+                    // short-circuit due to identical value
+
+                    // we clone last_value rather than
+                    // returning the passed-in value
+                    // because we may be able to save
+                    // memory.
+                    return Ok(Some(last_value.clone()));
+                }
+            }
+
             let frag = Link::Set(encoded_key, value.clone());
             let link = self.context.pagecache.link(
                 pid,
