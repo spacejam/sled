@@ -48,12 +48,12 @@ impl<T> OneShot<T> {
 
     /// Block on the `OneShot`'s completion
     /// or dropping of the `OneShotFiller`
-    pub fn wait(self) -> T {
+    pub fn wait(self) -> Option<T> {
         let mut inner = self.mu.lock();
         while !inner.filled {
             self.cv.wait(&mut inner);
         }
-        inner.item.take().unwrap()
+        inner.item.take()
     }
 }
 

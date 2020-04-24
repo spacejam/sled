@@ -96,7 +96,8 @@ impl Iterator for Subscriber {
         loop {
             let future_rx = self.rx.recv().ok()?;
             match future_rx.wait() {
-                Some(event) => return Some(event),
+                Some(Some(event)) => return Some(event),
+                Some(None) => return None,
                 None => continue,
             }
         }

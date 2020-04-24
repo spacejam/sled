@@ -653,7 +653,7 @@ impl SegmentAccountant {
         // we want to complete all truncations because
         // they could cause calls to `next` to block.
         for (_, promise) in self.async_truncations.split_off(&0) {
-            promise.wait()?;
+            promise.wait().expect("threadpool should not crash")?;
         }
 
         for (idx, segment_lsn) in maybe_clean {
@@ -1010,7 +1010,7 @@ impl SegmentAccountant {
 
         for (_at, truncation) in truncations {
             match truncation.wait() {
-                Ok(()) => {}
+                Some(Ok(())) => {}
                 error => {
                     // TODO propagate!
                     error!("failed to shrink file: {:?}", error);
