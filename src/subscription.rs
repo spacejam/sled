@@ -1,6 +1,12 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering::Relaxed},
-    mpsc::{sync_channel, Receiver, SyncSender},
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        mpsc::{sync_channel, Receiver, SyncSender, TryRecvError},
+    },
+    task::{Context, Poll, Waker},
 };
 
 use crate::*;
@@ -8,47 +14,115 @@ use crate::*;
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 
 /// An event that happened to a key that a subscriber is interested in.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Event {
     /// A new complete (key, value) pair
-    Insert(Arc<[u8]>, IVec),
+    Insert {
+        /// The key that has been set
+        key: IVec,
+        /// The value that has been set
+        value: IVec,
+    },
     /// A deleted key
-    Remove(Arc<[u8]>),
+    Remove {
+        /// The key that has been removed
+        key: IVec,
+    },
 }
 
 impl Event {
-    /// Return a reference to the key that this `Event` refers to
-    pub fn key(&self) -> &[u8] {
+    /// Return the key associated with the `Event`
+    pub fn key(&self) -> &IVec {
         match self {
-            Event::Insert(k, ..) | Event::Remove(k) => &*k,
+            Event::Insert { key, .. } | Event::Remove { key } => key,
         }
     }
 }
 
-impl Clone for Event {
-    fn clone(&self) -> Self {
-        use self::Event::*;
-
-        match self {
-            Insert(k, v) => Insert(k.clone(), v.clone()),
-            Remove(k) => Remove(k.clone()),
-        }
-    }
-}
-
-type Senders = Vec<(usize, SyncSender<OneShot<Event>>)>;
+type Senders =
+    HashMap<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 
 /// A subscriber listening on a specified prefix
+///
+/// `Subscriber` implements both `Iterator<Item = Event>`
+/// and `Future<Output=Option<Event>>`
+///
+/// # Examples
+///
+/// Synchronous, blocking subscription:
+/// ```
+/// use sled::{Config, Event};
+/// let config = Config::new().temporary(true);
+///
+/// let tree = config.open().unwrap();
+///
+/// // watch all events by subscribing to the empty prefix
+/// let mut subscription = tree.watch_prefix(vec![]);
+///
+/// let tree_2 = tree.clone();
+/// let thread = std::thread::spawn(move || {
+///     tree.insert(vec![0], vec![1]).unwrap();
+/// });
+///
+/// // `Subscription` implements `Iterator<Item=Event>`
+/// for event in subscription.take(1) {
+///     match event {
+///         Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
+///         Event::Remove {key } => {}
+///     }
+/// }
+///
+/// thread.join().unwrap();
+/// ```
+/// Aynchronous, non-blocking subscription:
+///
+/// `Subscription` implements `Future<Output=Option<Event>>`.
+///
+/// `while let Some(event) = (&mut subscription).await { /* use it */ }`
 pub struct Subscriber {
     id: usize,
-    rx: Receiver<OneShot<Event>>,
+    rx: Receiver<OneShot<Option<Event>>>,
     home: Arc<RwLock<Senders>>,
 }
 
 impl Drop for Subscriber {
     fn drop(&mut self) {
         let mut w_senders = self.home.write();
-        w_senders.retain(|(id, _)| *id != self.id);
+        w_senders.remove(&self.id);
+    }
+}
+
+impl Future for Subscriber {
+    type Output = Option<Event>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            match self.rx.try_recv() {
+                Ok(mut future_rx) => {
+                    #[allow(unsafe_code)]
+                    let future_rx =
+                        unsafe { std::pin::Pin::new_unchecked(&mut future_rx) };
+
+                    match Future::poll(future_rx, cx) {
+                        Poll::Ready(Some(event)) => {
+                            return Poll::Ready(Some(event));
+                        }
+                        Poll::Ready(None) => {
+                            continue;
+                        }
+                        Poll::Pending => {
+                            return Poll::Pending;
+                        }
+                    }
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return Poll::Ready(None),
+            }
+        }
+        let mut home = self.home.write();
+        let entry = home.get_mut(&self.id).unwrap();
+        entry.0 = Some(cx.waker().clone());
+        Poll::Pending
     }
 }
 
@@ -59,7 +133,8 @@ impl Iterator for Subscriber {
         loop {
             let future_rx = self.rx.recv().ok()?;
             match future_rx.wait() {
-                Some(event) => return Some(event),
+                Some(Some(event)) => return Some(event),
+                Some(None) => return None,
                 None => continue,
             }
         }
@@ -70,6 +145,22 @@ impl Iterator for Subscriber {
 pub(crate) struct Subscriptions {
     watched: RwLock<BTreeMap<Vec<u8>, Arc<RwLock<Senders>>>>,
     ever_used: AtomicBool,
+}
+
+impl Drop for Subscriptions {
+    fn drop(&mut self) {
+        let watched = self.watched.read();
+
+        for (_, senders) in &*watched {
+            let mut senders = senders.write();
+            for (_, (waker, sender)) in senders.drain() {
+                drop(sender);
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
+            }
+        }
+    }
 }
 
 impl Subscriptions {
@@ -83,8 +174,10 @@ impl Subscriptions {
                 drop(r_mu);
                 let mut w_mu = self.watched.write();
                 if !w_mu.contains_key(prefix) {
-                    let old = w_mu
-                        .insert(prefix.to_vec(), Arc::new(RwLock::new(vec![])));
+                    let old = w_mu.insert(
+                        prefix.to_vec(),
+                        Arc::new(RwLock::new(HashMap::default())),
+                    );
                     assert!(old.is_none());
                 }
                 drop(w_mu);
@@ -99,7 +192,7 @@ impl Subscriptions {
 
         let id = ID_GEN.fetch_add(1, Relaxed);
 
-        w_senders.push((id, tx));
+        w_senders.insert(id, (None, tx));
 
         Subscriber { id, rx, home: arc_senders.clone() }
     }
@@ -120,12 +213,12 @@ impl Subscriptions {
         for (_, subs_rwl) in prefixes {
             let subs = subs_rwl.read();
 
-            for (_id, sender) in subs.iter() {
+            for (_id, (waker, sender)) in subs.iter() {
                 let (tx, rx) = OneShot::pair();
                 if sender.send(rx).is_err() {
                     continue;
                 }
-                subscribers.push(tx);
+                subscribers.push((waker.clone(), tx));
             }
         }
 
@@ -138,25 +231,18 @@ impl Subscriptions {
 }
 
 pub(crate) struct ReservedBroadcast {
-    subscribers: Vec<OneShotFiller<Event>>,
+    subscribers: Vec<(Option<Waker>, OneShotFiller<Option<Event>>)>,
 }
 
 impl ReservedBroadcast {
-    pub fn complete(self, event: Event) {
-        let len = self.subscribers.len();
-        let mut iter = self.subscribers.into_iter();
+    pub fn complete(self, event: &Event) {
+        let iter = self.subscribers.into_iter();
 
-        let mut sent = 0;
-
-        while sent + 1 < len {
-            sent += 1;
-            let tx = iter.next().unwrap();
-            tx.fill(event.clone());
-        }
-
-        if len != 0 {
-            let tx = iter.next().unwrap();
-            tx.fill(event);
+        for (waker, tx) in iter {
+            tx.fill(Some(event.clone()));
+            if let Some(waker) = waker {
+                waker.wake();
+            }
         }
     }
 }
@@ -174,33 +260,45 @@ fn basic_subscription() {
 
     let mut s1 = subs.register(&[]);
 
-    let k2: Arc<[u8]> = vec![].into();
+    let k2: IVec = vec![].into();
     let r2 = subs.reserve(&k2).unwrap();
-    r2.complete(Event::Insert(k2.clone(), IVec::from(k2.clone())));
+    r2.complete(&Event::Insert {
+        key: k2.clone(),
+        value: IVec::from(k2.clone()),
+    });
 
-    let k3: Arc<[u8]> = vec![0].into();
+    let k3: IVec = vec![0].into();
     let r3 = subs.reserve(&k3).unwrap();
-    r3.complete(Event::Insert(k3.clone(), IVec::from(k3.clone())));
+    r3.complete(&Event::Insert {
+        key: k3.clone(),
+        value: IVec::from(k3.clone()),
+    });
 
-    let k4: Arc<[u8]> = vec![0, 1].into();
+    let k4: IVec = vec![0, 1].into();
     let r4 = subs.reserve(&k4).unwrap();
-    r4.complete(Event::Remove(k4.clone()));
+    r4.complete(&Event::Remove { key: k4.clone() });
 
-    let k5: Arc<[u8]> = vec![0, 1, 2].into();
+    let k5: IVec = vec![0, 1, 2].into();
     let r5 = subs.reserve(&k5).unwrap();
-    r5.complete(Event::Insert(k5.clone(), IVec::from(k5.clone())));
+    r5.complete(&Event::Insert {
+        key: k5.clone(),
+        value: IVec::from(k5.clone()),
+    });
 
-    let k6: Arc<[u8]> = vec![1, 1, 2].into();
+    let k6: IVec = vec![1, 1, 2].into();
     let r6 = subs.reserve(&k6).unwrap();
-    r6.complete(Event::Remove(k6.clone()));
+    r6.complete(&Event::Remove { key: k6.clone() });
 
-    let k7: Arc<[u8]> = vec![1, 1, 2].into();
+    let k7: IVec = vec![1, 1, 2].into();
     let r7 = subs.reserve(&k7).unwrap();
     drop(r7);
 
-    let k8: Arc<[u8]> = vec![1, 2, 2].into();
+    let k8: IVec = vec![1, 2, 2].into();
     let r8 = subs.reserve(&k8).unwrap();
-    r8.complete(Event::Insert(k8.clone(), IVec::from(k8.clone())));
+    r8.complete(&Event::Insert {
+        key: k8.clone(),
+        value: IVec::from(k8.clone()),
+    });
 
     assert_eq!(s1.next().unwrap().key(), &*k2);
     assert_eq!(s1.next().unwrap().key(), &*k3);

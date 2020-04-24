@@ -1,5 +1,11 @@
 # Unreleased
 
+## New Features
+
+* `Subscription` now implements `Future` (non-fused)
+  so prefix watching may now be iterated over via
+  `while let Some(event) = (&mut subscription).await {}`
+
 ## Improvements
 
 * Added a config `Mode` which over time will be
@@ -23,6 +29,8 @@
   the library root to keep the top level docs clean.
 * #1015 `TransactionalTree::apply_batch` now accepts
   its argument by reference instead of by value.
+* `Event` has been changed to make the inner fields
+  named instead of anonymous.
 
 # 0.31
 

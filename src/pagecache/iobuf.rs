@@ -1122,7 +1122,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         });
 
         #[cfg(feature = "event_log")]
-        _result.unwrap();
+        _result.wait();
 
         Ok(())
     } else {

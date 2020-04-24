@@ -171,10 +171,12 @@ impl Tree {
             if let Ok(_new_cas_key) = link {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
-                    let event =
-                        subscription::Event::Insert(key.as_ref().into(), value);
+                    let event = subscription::Event::Insert {
+                        key: key.as_ref().into(),
+                        value,
+                    };
 
-                    res.complete(event);
+                    res.complete(&event);
                 }
 
                 return Ok(last_value);
@@ -448,10 +450,11 @@ impl Tree {
             if link.is_ok() {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
-                    let event =
-                        subscription::Event::Remove(key.as_ref().into());
+                    let event = subscription::Event::Remove {
+                        key: key.as_ref().into(),
+                    };
 
-                    res.complete(event);
+                    res.complete(&event);
                 }
 
                 return Ok(existing_val);
@@ -568,12 +571,15 @@ impl Tree {
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
                     let event = if let Some(new) = new {
-                        subscription::Event::Insert(key.as_ref().into(), new)
+                        subscription::Event::Insert {
+                            key: key.as_ref().into(),
+                            value: new,
+                        }
                     } else {
-                        subscription::Event::Remove(key.as_ref().into())
+                        subscription::Event::Remove { key: key.as_ref().into() }
                     };
 
-                    res.complete(event);
+                    res.complete(&event);
                 }
 
                 return Ok(Ok(()));
@@ -751,7 +757,12 @@ impl Tree {
     /// `Subscriber`. This can be used to build reactive
     /// and replicated systems.
     ///
+    /// `Subscriber` implements both `Iterator<Item = Event>`
+    /// and `Future<Output=Option<Event>>`
+    ///
     /// # Examples
+    ///
+    /// Synchronous, blocking subscription:
     /// ```
     /// use sled::{Config, Event};
     /// let config = Config::new().temporary(true);
@@ -759,23 +770,28 @@ impl Tree {
     /// let tree = config.open().unwrap();
     ///
     /// // watch all events by subscribing to the empty prefix
-    /// let mut events = tree.watch_prefix(vec![]);
+    /// let mut subscription = tree.watch_prefix(vec![]);
     ///
     /// let tree_2 = tree.clone();
     /// let thread = std::thread::spawn(move || {
     ///     tree.insert(vec![0], vec![1]).unwrap();
     /// });
     ///
-    /// // events is a blocking `Iterator` over `Event`s
-    /// for event in events.take(1) {
+    /// // `Subscription` implements `Iterator<Item=Event>`
+    /// for event in subscription.take(1) {
     ///     match event {
-    ///         Event::Insert(key, value) => assert_eq!(key.as_ref(), &[0]),
-    ///         Event::Remove(key) => {}
+    ///         Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
+    ///         Event::Remove {key } => {}
     ///     }
     /// }
     ///
     /// thread.join().unwrap();
     /// ```
+    /// Aynchronous, non-blocking subscription:
+    ///
+    /// `Subscription` implements `Future<Output=Option<Event>>`.
+    ///
+    /// `while let Some(event) = (&mut subscription).await { /* use it */ }`
     pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
         self.subscriptions.register(prefix.as_ref())
     }
@@ -1049,15 +1065,15 @@ impl Tree {
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
                     let event = if let Some(new) = &new {
-                        subscription::Event::Insert(
-                            key.as_ref().into(),
-                            new.clone(),
-                        )
+                        subscription::Event::Insert {
+                            key: key.as_ref().into(),
+                            value: new.clone(),
+                        }
                     } else {
-                        subscription::Event::Remove(key.as_ref().into())
+                        subscription::Event::Remove { key: key.as_ref().into() }
                     };
 
-                    res.complete(event);
+                    res.complete(&event);
                 }
 
                 return Ok(new);
@@ -1122,7 +1138,10 @@ impl Tree {
     /// tree.merge(k, vec![4]);
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
     /// ```
-    pub fn set_merge_operator(&self, merge_operator: impl MergeOperator + 'static) {
+    pub fn set_merge_operator(
+        &self,
+        merge_operator: impl MergeOperator + 'static,
+    ) {
         let mut mo_write = self.merge_operator.write();
         *mo_write = Some(Box::new(merge_operator));
     }
