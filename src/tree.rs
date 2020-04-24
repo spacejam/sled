@@ -758,6 +758,8 @@ impl Tree {
     /// and replicated systems.
     ///
     /// # Examples
+    ///
+    /// Synchronous, blocking subscription:
     /// ```
     /// use sled::{Config, Event};
     /// let config = Config::new().temporary(true);
@@ -765,18 +767,42 @@ impl Tree {
     /// let tree = config.open().unwrap();
     ///
     /// // watch all events by subscribing to the empty prefix
-    /// let mut events = tree.watch_prefix(vec![]);
+    /// let mut subscription = tree.watch_prefix(vec![]);
     ///
     /// let tree_2 = tree.clone();
     /// let thread = std::thread::spawn(move || {
     ///     tree.insert(vec![0], vec![1]).unwrap();
     /// });
     ///
-    /// // events is a blocking `Iterator` over `Event`s
-    /// for event in events.take(1) {
+    /// // `Subscription` implements `Iterator<Item=Event>`
+    /// for event in subscription.take(1) {
     ///     match event {
-    ///         Event::Insert(key, value) => assert_eq!(key.as_ref(), &[0]),
-    ///         Event::Remove(key) => {}
+    ///         Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
+    ///         Event::Remove {key } => {}
+    ///     }
+    /// }
+    ///
+    /// thread.join().unwrap();
+    /// ```
+    /// Aynchronous, non-blocking subscription:
+    /// ```
+    /// use sled::{Config, Event};
+    /// let config = Config::new().temporary(true);
+    ///
+    /// let tree = config.open().unwrap();
+    ///
+    /// let mut subscription = tree.watch_prefix(vec![]);
+    ///
+    /// let tree_2 = tree.clone();
+    /// let thread = std::thread::spawn(move || {
+    ///     tree.insert(vec![0], vec![1]).unwrap();
+    /// });
+    ///
+    /// // `Subscription` implements `Future<Item=Option<Event>>`
+    /// while let Some(event) = subscription.await {
+    ///     match event {
+    ///         Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
+    ///         Event::Remove {key } => {}
     ///     }
     /// }
     ///
