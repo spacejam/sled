@@ -342,6 +342,7 @@ impl IoBufs {
                 let shred_len = (next_segment_base - next_lid) as usize;
                 let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
                 pwrite_all(&config.file, &shred_zone, next_lid)?;
+                config.file.sync_all()?;
 
                 (next_lsn, next_lid)
             };
