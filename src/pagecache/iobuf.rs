@@ -232,6 +232,8 @@ impl StabilityIntervals {
             if high < self.stable_lsn {
                 stable_lsn = Some(high);
                 self.batches.pop().unwrap();
+            } else {
+                break;
             }
         }
 
