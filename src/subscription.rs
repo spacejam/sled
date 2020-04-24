@@ -4,7 +4,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        mpsc::{channel, Receiver, Sender, TryRecvError},
+        mpsc::{sync_channel, Receiver, SyncSender, TryRecvError},
     },
     task::{Context, Poll, Waker},
 };
@@ -39,7 +39,8 @@ impl Event {
     }
 }
 
-type Senders = HashMap<usize, (Option<Waker>, Sender<OneShot<Option<Event>>>)>;
+type Senders =
+    HashMap<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 
 /// A subscriber listening on a specified prefix
 pub struct Subscriber {
@@ -110,6 +111,22 @@ pub(crate) struct Subscriptions {
     ever_used: AtomicBool,
 }
 
+impl Drop for Subscriptions {
+    fn drop(&mut self) {
+        let watched = self.watched.read();
+
+        for (_, senders) in &*watched {
+            let mut senders = senders.write();
+            for (_, (waker, sender)) in senders.drain() {
+                drop(sender);
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
+            }
+        }
+    }
+}
+
 impl Subscriptions {
     pub(crate) fn register(&self, prefix: &[u8]) -> Subscriber {
         self.ever_used.store(true, Relaxed);
@@ -132,7 +149,7 @@ impl Subscriptions {
             }
         };
 
-        let (tx, rx) = channel();
+        let (tx, rx) = sync_channel(1024);
 
         let arc_senders = &r_mu[prefix];
         let mut w_senders = arc_senders.write();

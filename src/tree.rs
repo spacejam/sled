@@ -757,6 +757,9 @@ impl Tree {
     /// `Subscriber`. This can be used to build reactive
     /// and replicated systems.
     ///
+    /// `Subscriber` implements both `Iterator<Item = Event>`
+    /// and `Future<Output=Option<Event>>`
+    ///
     /// # Examples
     ///
     /// Synchronous, blocking subscription:
@@ -785,29 +788,10 @@ impl Tree {
     /// thread.join().unwrap();
     /// ```
     /// Aynchronous, non-blocking subscription:
-    /// ```
-    /// use sled::{Config, Event};
-    /// let config = Config::new().temporary(true);
     ///
-    /// let tree = config.open().unwrap();
+    /// `Subscription` implements `Future<Output=Option<Event>>`.
     ///
-    /// let mut subscription = tree.watch_prefix(vec![]);
-    ///
-    /// let tree_2 = tree.clone();
-    /// let thread = std::thread::spawn(move || {
-    ///     tree.insert(vec![0], vec![1]).unwrap();
-    /// });
-    ///
-    /// // `Subscription` implements `Future<Item=Option<Event>>`
-    /// while let Some(event) = subscription.await {
-    ///     match event {
-    ///         Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
-    ///         Event::Remove {key } => {}
-    ///     }
-    /// }
-    ///
-    /// thread.join().unwrap();
-    /// ```
+    /// `while let Some(event) = subscription.await { /* use it */ }`
     pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
         self.subscriptions.register(prefix.as_ref())
     }
