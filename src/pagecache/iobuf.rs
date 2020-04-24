@@ -331,10 +331,19 @@ impl IoBufs {
                     }
                 };
 
-                (
-                    snapshot_last_lsn + Lsn::from(width),
-                    snapshot_last_lid + LogOffset::from(width),
-                )
+                let next_lsn = snapshot_last_lsn + Lsn::from(width);
+                let next_lid = snapshot_last_lid + LogOffset::from(width);
+
+                // zero the tail of the segment after the recovered tip
+                let segment_size = config.segment_size;
+                let last_segment_base = config.normalize(next_lid);
+                let next_segment_base =
+                    last_segment_base + segment_size as LogOffset;
+                let shred_len = (next_segment_base - next_lid) as usize;
+                let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
+                pwrite_all(&config.file, &shred_zone, next_lid)?;
+
+                (next_lsn, next_lid)
             };
 
         debug!(
