@@ -791,7 +791,7 @@ impl Tree {
     ///
     /// `Subscription` implements `Future<Output=Option<Event>>`.
     ///
-    /// `while let Some(event) = subscription.await { /* use it */ }`
+    /// `while let Some(event) = (&mut subscription).await { /* use it */ }`
     pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
         self.subscriptions.register(prefix.as_ref())
     }

@@ -78,7 +78,7 @@ type Senders =
 ///
 /// `Subscription` implements `Future<Output=Option<Event>>`.
 ///
-/// `while let Some(event) = subscription.await { /* use it */ }`
+/// `while let Some(event) = (&mut subscription).await { /* use it */ }`
 pub struct Subscriber {
     id: usize,
     rx: Receiver<OneShot<Option<Event>>>,

@@ -4,7 +4,7 @@
 
 * `Subscription` now implements `Future` (non-fused)
   so prefix watching may now be iterated over via
-  `while let Some(event) = subscription.await {}`
+  `while let Some(event) = (&mut subscription).await {}`
 
 ## Improvements
 
