@@ -1,5 +1,6 @@
 use std::{
     alloc::{alloc, dealloc, Layout},
+    cell::UnsafeCell,
     sync::atomic::{AtomicBool, AtomicPtr},
 };
 
@@ -61,7 +62,7 @@ impl Drop for AlignedBuf {
 }
 
 pub(crate) struct IoBuf {
-    buf: Arc<AlignedBuf>,
+    buf: Arc<UnsafeCell<AlignedBuf>>,
     header: CachePadded<AtomicU64>,
     base: usize,
     pub offset: LogOffset,
@@ -75,15 +76,23 @@ pub(crate) struct IoBuf {
 #[allow(unsafe_code)]
 unsafe impl Sync for IoBuf {}
 
+#[allow(unsafe_code)]
+unsafe impl Send for IoBuf {}
+
 impl IoBuf {
     pub(crate) fn get_mut_range(
         &self,
         at: usize,
         len: usize,
     ) -> &'static mut [u8] {
-        assert!(self.buf.1 >= at + len);
+        let buf_ptr = self.buf.get();
+
         unsafe {
-            std::slice::from_raw_parts_mut(self.buf.0.add(self.base + at), len)
+            assert!((*buf_ptr).1 >= at + len);
+            std::slice::from_raw_parts_mut(
+                (*buf_ptr).0.add(self.base + at),
+                len,
+            )
         }
     }
 
@@ -121,7 +130,7 @@ impl IoBuf {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 header_bytes.as_ptr(),
-                self.buf.0,
+                (*self.buf.get()).0,
                 SEG_HEADER_LEN,
             );
         }
@@ -295,7 +304,7 @@ impl IoBufs {
             );
 
             let mut iobuf = IoBuf {
-                buf: Arc::new(AlignedBuf::new(segment_size)),
+                buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
                 header: CachePadded::new(AtomicU64::new(0)),
                 base: 0,
                 offset: lid,
@@ -319,7 +328,7 @@ impl IoBufs {
             );
 
             IoBuf {
-                buf: Arc::new(AlignedBuf::new(segment_size)),
+                buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
                 header: CachePadded::new(AtomicU64::new(0)),
                 base,
                 offset: next_lid,
@@ -573,7 +582,10 @@ impl IoBufs {
             let header_bytes = header.serialize();
 
             // initialize the remainder of this buffer (only pad_len of this will be part of the Cap message)
-            let padding_bytes = vec![MessageKind::Corrupted.into(); unused_space - header_bytes.len()];
+            let padding_bytes = vec![
+                MessageKind::Corrupted.into();
+                unused_space - header_bytes.len()
+            ];
 
             #[allow(unsafe_code)]
             unsafe {
@@ -1040,7 +1052,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     // its entire life cycle as soon as we do that.
     let next_iobuf = if maxed {
         let mut next_iobuf = IoBuf {
-            buf: Arc::new(AlignedBuf::new(segment_size)),
+            buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
             header: CachePadded::new(AtomicU64::new(0)),
             base: 0,
             offset: next_offset,
