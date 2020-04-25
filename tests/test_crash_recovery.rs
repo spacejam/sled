@@ -110,7 +110,7 @@ fn slice_to_u32(b: &[u8]) -> u32 {
 
 fn spawn_killah() {
     thread::spawn(|| {
-        let runtime = rand::thread_rng().gen_range(0, 200);
+        let runtime = rand::thread_rng().gen_range(0, 20);
         thread::sleep(Duration::from_millis(runtime));
         println!("~");
         exit(9);
