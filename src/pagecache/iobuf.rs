@@ -80,6 +80,28 @@ unsafe impl Sync for IoBuf {}
 unsafe impl Send for IoBuf {}
 
 impl IoBuf {
+    /// # Safety
+    ///
+    /// This operation provides access to a mutable buffer of
+    /// uninitialized memory. For this to be correct, we must
+    /// ensure that:
+    /// 1. overlapping mutable slices are never created.
+    /// 2. a read to any subslice of this slice only happens
+    ///    after a write has initialized that memory
+    ///
+    /// It is intended that the log reservation code guarantees
+    /// that no two `Reservation` objects will hold overlapping
+    /// mutable slices to our io buffer.
+    ///
+    /// It is intended that the `write_to_log` function only
+    /// tries to write initialized bytes to the underlying storage.
+    ///
+    /// It is intended that the `write_to_log` function will
+    /// initialize any yet-to-be-initialized bytes before writing
+    /// the buffer to storage. #1040 added logic that was intended
+    /// to meet this requirement.
+    ///
+    /// The safety of this method was discussed in #1044.
     pub(crate) fn get_mut_range(
         &self,
         at: usize,
