@@ -266,7 +266,7 @@ impl Metrics {
             + self.tree_cas.count()
             + self.tree_scan.count()
             + self.tree_reverse_scan.count();
-        let loop_pct = total_loops * 100 / total_ops;
+        let loop_pct = total_loops * 100 / (total_ops + 1);
         println!(
             "tree contention loops: {} ({}% retry rate)",
             total_loops, loop_pct
@@ -293,7 +293,7 @@ impl Metrics {
             lat("page_out", &self.page_out),
         ]);
         let hit_ratio = (self.get_page.count() - self.pull.count()) * 100
-            / std::cmp::max(1, self.get_page.count());
+            / (self.get_page.count() + 1);
         println!("hit ratio: {}%", hit_ratio);
 
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
@@ -324,7 +324,7 @@ impl Metrics {
             self.log_reservation_attempts.load(Acquire);
         let log_reservation_retry_rate =
             (log_reservation_attempts - log_reservations) * 100
-                / log_reservations;
+                / (log_reservations + 1);
         println!("log reservations: {}", log_reservations);
         println!(
             "log res attempts: {}, ({}% retry rate)",
