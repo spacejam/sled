@@ -153,7 +153,7 @@
     // clippy::wildcard_enum_match_arm,
     clippy::wrong_pub_self_convention,
 )]
-#![allow(clippy::mem_replace_with_default)]
+#![allow(clippy::mem_replace_with_default)] // Not using std::mem::take() due to MSRV of 1.37
 #![recursion_limit = "128"]
 
 macro_rules! io_fail {
