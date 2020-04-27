@@ -68,7 +68,7 @@ impl Serialize for BatchManifest {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         if buf.len() < 8 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(103) });
+            return Err(Error::Corruption { at: DiskPtr::Inline(104) });
         }
 
         let array = buf[..8].try_into().unwrap();
@@ -610,7 +610,7 @@ impl Serialize for PageState {
                 disk_ptr.serialize_into(buf);
             }
             PageState::Present { base, frags } => {
-                let frags_len: u8 = u8::try_from(frags.len())
+                let frags_len: u8 = 1 + u8::try_from(frags.len())
                     .expect("should never have more than 255 frags");
                 frags_len.serialize_into(buf);
                 base.serialize_into(buf);
@@ -633,7 +633,7 @@ impl Serialize for PageState {
             ),
             len => PageState::Present {
                 base: Serialize::deserialize(buf)?,
-                frags: deserialize_bounded_sequence(buf, usize::from(len))?,
+                frags: deserialize_bounded_sequence(buf, usize::from(len - 1))?,
             },
         })
     }
@@ -913,8 +913,10 @@ mod qc {
     impl Arbitrary for PageState {
         fn arbitrary<G: Gen>(g: &mut G) -> PageState {
             if g.gen() {
-                // PageState must always have at least 1 if it present
-                let n = std::cmp::max(1, g.gen::<u8>());
+                // don't generate 255 because we add 1 to this
+                // number in PageState::serialize_into to account
+                // for the base fragment
+                let n = g.gen_range(0, 255);
 
                 let base = (g.gen(), DiskPtr::arbitrary(g), g.gen());
                 let frags = (0..n)
@@ -971,6 +973,7 @@ mod qc {
             0,
             "round-trip failed to consume produced bytes"
         );
+        assert_eq!(buf.len(), item.serialized_size() as usize,);
         let deserialized = T::deserialize(&mut buf.as_slice()).unwrap();
         if item != deserialized {
             eprintln!(
