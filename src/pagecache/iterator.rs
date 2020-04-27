@@ -332,7 +332,7 @@ fn scan_segment_headers_and_tail(
         .collect();
 
     // gather
-    let headers: Vec<(LogOffset, SegmentHeader)> = vec![];
+    let mut headers: Vec<(LogOffset, SegmentHeader)> = vec![];
     for promise in header_promises {
         let read_attempt =
             promise.wait().expect("thread pool should not crash");
