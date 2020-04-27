@@ -58,11 +58,10 @@ impl Iterator for LogIter {
             // self.segment_base is `Some` now.
             let _measure = Measure::new(&M.read_segment_message);
 
-            // NB this inequality must be greater than, not greater
-            // than or equal, because it is set to the beginning
-            // of the last message in the unstable tail during
-            // one phase of recovery.
-            if self.cur_lsn > self.max_lsn {
+            // NB this inequality must be greater than or equal to the
+            // max_lsn. max_lsn may be set to the beginning of the first
+            // corrupt message encountered in the previous sweep of recovery.
+            if self.cur_lsn >= self.max_lsn {
                 // all done
                 debug!("hit max_lsn {} in iterator, stopping", self.max_lsn);
                 return None;
@@ -117,7 +116,12 @@ impl Iterator for LogIter {
                     ));
                 }
                 Ok(LogRead::BatchManifest(last_lsn_in_batch, inline_len)) => {
-                    if last_lsn_in_batch > self.max_lsn {
+                    if last_lsn_in_batch >= self.max_lsn {
+                        debug!(
+                            "cutting recovery short due to torn batch. \
+                            required stable lsn: {} actual max possible lsn: {}",
+                            last_lsn_in_batch, self.max_lsn
+                        );
                         return None;
                     } else {
                         self.cur_lsn += Lsn::from(inline_len);
@@ -313,6 +317,7 @@ fn scan_segment_headers_and_tail(
         segments
     );
 
+    // scatter
     let header_promises: Vec<OneShot<Option<(LogOffset, SegmentHeader)>>> = (0
         ..segments)
         .map({
@@ -326,9 +331,11 @@ fn scan_segment_headers_and_tail(
         })
         .collect();
 
+    // gather
     let headers: Vec<(LogOffset, SegmentHeader)> =
         header_promises.into_iter().filter_map(OneShot::unwrap).collect();
 
+    // find max stable LSN recorded in segment headers
     let mut ordering = BTreeMap::new();
     let mut max_header_stable_lsn = min;
 
@@ -354,14 +361,14 @@ fn scan_segment_headers_and_tail(
 
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
-    let beginning_of_last_contiguous_message_in_unstable_tail =
+    let end_of_last_contiguous_message_in_unstable_tail =
         check_contiguity_in_unstable_tail(
             max_header_stable_lsn,
             &ordering,
             config,
         )?;
 
-    Ok((ordering, beginning_of_last_contiguous_message_in_unstable_tail))
+    Ok((ordering, end_of_last_contiguous_message_in_unstable_tail))
 }
 
 // This ensures that the last <# io buffers> segments on
@@ -408,7 +415,7 @@ fn check_contiguity_in_unstable_tail(
         missing_item_in_tail, logical_tail, lowest_lsn_in_tail
     );
 
-    let iter = LogIter {
+    let mut iter = LogIter {
         config: config.clone(),
         segments: logical_tail,
         segment_base: None,
@@ -416,24 +423,17 @@ fn check_contiguity_in_unstable_tail(
         cur_lsn: 0,
     };
 
-    let beginning_of_last_message: (Lsn, LogOffset) =
-        iter.max_by_key(|(_kind, _pid, lsn, _ptr, _sz)| *lsn).map_or_else(
-            || {
-                if max_header_stable_lsn > 0 {
-                    (lowest_lsn_in_tail, ordering[&lowest_lsn_in_tail])
-                } else {
-                    (0, 0)
-                }
-            },
-            |(_, _, lsn, ptr, _)| (lsn, ptr.lid()),
-        );
+    // run the iterator to completion
+    while let Some(_) = iter.next() {}
+
+    let end_of_last_message = iter.cur_lsn;
 
     debug!(
         "filtering out segments after detected tear at (lsn, lid) {:?}",
-        beginning_of_last_message,
+        end_of_last_message,
     );
 
-    Ok(beginning_of_last_message.0)
+    Ok(end_of_last_message)
 }
 
 /// Returns a log iterator, the max stable lsn,
@@ -447,7 +447,7 @@ pub fn raw_segment_iter_from(
     let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let (ordering, beginning_of_last_contiguous_msg) =
+    let (ordering, end_of_last_contiguous_msg) =
         scan_segment_headers_and_tail(normalized_lsn, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
@@ -463,7 +463,7 @@ pub fn raw_segment_iter_from(
          bounding batch manifests with segment iter {:?} \
          of segments >= first_tip {}",
         tip_segment_iter,
-        beginning_of_last_contiguous_msg,
+        end_of_last_contiguous_msg,
     );
 
     trace!(
@@ -481,7 +481,7 @@ pub fn raw_segment_iter_from(
 
     Ok(LogIter {
         config: config.clone(),
-        max_lsn: beginning_of_last_contiguous_msg,
+        max_lsn: end_of_last_contiguous_msg,
         cur_lsn: 0,
         segment_base: None,
         segments,

@@ -151,12 +151,13 @@ fn advance_snapshot(
 
     while let Some((log_kind, pid, lsn, ptr, sz)) = iter.next() {
         trace!(
-            "in advance_snapshot looking at item with lsn {} ptr {}",
+            "in advance_snapshot looking at item with pid {} lsn {} ptr {}",
+            pid,
             lsn,
             ptr
         );
 
-        if lsn <= snapshot.last_lsn {
+        if lsn < snapshot.last_lsn {
             // don't process already-processed Lsn's. last_lsn is for the last
             // item ALREADY INCLUDED lsn in the snapshot.
             trace!(
@@ -168,14 +169,14 @@ fn advance_snapshot(
             continue;
         }
 
-        assert!(lsn > snapshot.last_lsn);
-        snapshot.last_lsn = lsn;
-        snapshot.last_lid = ptr.lid();
+        assert!(lsn >= snapshot.last_lsn);
+        snapshot.last_lsn = lsn + Lsn::try_from(sz).unwrap();
+        snapshot.last_lid = ptr.lid() + sz;
 
         snapshot.apply(log_kind, pid, lsn, ptr, sz);
     }
 
-    trace!("generated snapshot: {:?}", snapshot);
+    trace!("generated snapshot: {:#?}", snapshot);
 
     if snapshot.last_lsn != old_last_lsn {
         write_snapshot(config, &snapshot)?;
@@ -200,7 +201,17 @@ fn advance_snapshot(
     }
 
     // remove all blob files larger than our stable offset
-    gc_blobs(&config, snapshot.last_lsn)?;
+    gc_blobs(config, snapshot.last_lsn)?;
+
+    // zero the tail of the segment after the recovered tip
+    let segment_size = config.segment_size;
+    let last_segment_base = config.normalize(snapshot.last_lid);
+    let next_segment_base = last_segment_base + segment_size as LogOffset;
+    let shred_len =
+        usize::try_from(next_segment_base - snapshot.last_lid).unwrap();
+    let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
+    pwrite_all(&config.file, &shred_zone, snapshot.last_lid)?;
+    config.file.sync_all()?;
 
     #[cfg(feature = "event_log")]
     config.event_log.recovered_lsn(snapshot.last_lsn);
@@ -326,6 +337,7 @@ fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
     io_fail!(config, "snap write crc");
     f.write_all(&crc32)?;
     io_fail!(config, "snap write post");
+    f.sync_all()?;
 
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
 

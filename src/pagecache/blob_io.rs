@@ -121,7 +121,7 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
 
         let lsn = lsn_res.unwrap();
 
-        if lsn > stable_lsn {
+        if lsn >= stable_lsn {
             to_remove.push(path);
         }
     }
