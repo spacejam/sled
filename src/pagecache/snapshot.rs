@@ -32,7 +32,7 @@ impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr, u64)) {
         match *self {
             PageState::Present { base, ref mut frags } => {
-                if frags.last().map(|f| f.0).unwrap_or(base.0) < item.0 {
+                if frags.last().map_or(base.0, |f| f.0) < item.0 {
                     frags.push(item)
                 } else {
                     debug!(

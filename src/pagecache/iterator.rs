@@ -165,8 +165,8 @@ impl Iterator for LogIter {
 
 impl LogIter {
     fn next_segment(&mut self) -> Option<(Lsn, LogOffset)> {
-        let first = self.segments.iter().next()?;
-        let first = (*first.0, *first.1);
+        let first_ref = self.segments.iter().next()?;
+        let first = (*first_ref.0, *first_ref.1);
         self.segments.remove(&first.0);
         Some(first)
     }

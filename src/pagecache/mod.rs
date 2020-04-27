@@ -1629,13 +1629,7 @@ impl PageCache {
                 assert_eq!(old, persisted);
 
                 if self
-                    .cas_page(
-                        COUNTER_PID,
-                        key.clone(),
-                        counter_update,
-                        false,
-                        &guard,
-                    )?
+                    .cas_page(COUNTER_PID, key, counter_update, false, &guard)?
                     .is_err()
                 {
                     // CAS failed
