@@ -10,17 +10,8 @@ pub(crate) struct StackVec {
 
 impl fmt::Debug for StackVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        f.debug_map()
-            .entry(
-                &"items",
-                #[allow(unsafe_code)]
-                unsafe {
-                    &std::mem::transmute::<
-                        _,
-                        [CacheInfo; PAGE_CONSOLIDATION_THRESHOLD],
-                    >(self.items)
-                },
-            )
+        f.debug_list()
+            .entries(std::ops::Deref::deref(self))
             .finish()
     }
 }
