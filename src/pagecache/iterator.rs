@@ -14,6 +14,7 @@ pub struct LogIter {
     pub segment_base: Option<BasedBuf>,
     pub max_lsn: Lsn,
     pub cur_lsn: Lsn,
+    pub segment_lid: Option<LogOffset>,
 }
 
 impl Iterator for LogIter {
@@ -218,6 +219,7 @@ impl LogIter {
         trace!("read segment header {:?}", segment_header);
 
         self.cur_lsn = segment_header.lsn + SEG_HEADER_LEN as Lsn;
+        self.segment_lid = Some(offset);
 
         let mut buf = vec![0; self.config.segment_size];
         let size = pread_exact_or_eof(f, &mut buf, offset)?;
@@ -426,6 +428,7 @@ fn check_contiguity_in_unstable_tail(
         config: config.clone(),
         segments: logical_tail,
         segment_base: None,
+        segment_lid: None,
         max_lsn: missing_item_in_tail.unwrap_or(Lsn::max_value()),
         cur_lsn: 0,
     };
@@ -490,6 +493,7 @@ pub fn raw_segment_iter_from(
         config: config.clone(),
         max_lsn: end_of_last_contiguous_msg,
         cur_lsn: 0,
+        segment_lid: None,
         segment_base: None,
         segments,
     })

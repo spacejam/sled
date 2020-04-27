@@ -182,8 +182,17 @@ fn advance_snapshot(
         write_snapshot(config, &snapshot)?;
     }
 
-    let to_zero = iter.segments;
-    for lid in to_zero.values() {
+    let mut to_zero: Vec<_> = iter.segments.values().copied().collect();
+
+    if let Some(segment_lid) = iter.segment_lid {
+        if snapshot.last_lid < segment_lid {
+            // the snapshot never made it into
+            // this segment, so we can free it
+            to_zero.push(segment_lid);
+        }
+    }
+
+    for lid in to_zero {
         debug!("zeroing torn segment at lid {}", lid);
 
         // NB we intentionally corrupt this header to prevent any segment
@@ -193,7 +202,7 @@ fn advance_snapshot(
         pwrite_all(
             &config.file,
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
-            *lid,
+            lid,
         )?;
         if !config.temporary {
             config.file.sync_all()?;

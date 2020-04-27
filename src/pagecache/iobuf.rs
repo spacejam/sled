@@ -509,6 +509,7 @@ impl IoBufs {
             config: self.config.clone(),
             max_lsn: self.stable(),
             cur_lsn: corrected_lsn,
+            segment_lid: None,
             segment_base: None,
             segments,
         }
@@ -621,7 +622,8 @@ impl IoBufs {
 
             let header_bytes = header.serialize();
 
-            // initialize the remainder of this buffer (only pad_len of this will be part of the Cap message)
+            // initialize the remainder of this buffer (only pad_len of this
+            // will be part of the Cap message)
             let padding_bytes = vec![
                 MessageKind::Corrupted.into();
                 unused_space - header_bytes.len()
