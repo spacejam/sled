@@ -2278,3 +2278,28 @@ fn tree_bug_42() {
         );
     }
 }
+
+#[test]
+fn tree_bug_43() {
+    // postmortem: when changing the PageState to always
+    // include a base node, we did not account for this
+    // in the tag + size compressed value. This was not
+    // caught by the quickcheck tests because PageState's
+    // Arbitrary implementation would ensure that at least
+    // one frag was present, which was the invariant before
+    // the base was extracted away from the vec of frags.
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![241; 1]), 199),
+            Set(Key(vec![]), 198),
+            Set(Key(vec![72; 108]), 175),
+            GetLt(Key(vec![])),
+            Restart,
+            Restart,
+        ],
+        false,
+        false,
+        0,
+        52,
+    );
+}
