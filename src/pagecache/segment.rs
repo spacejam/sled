@@ -506,21 +506,8 @@ impl SegmentAccountant {
     fn initial_segments(&self, snapshot: &Snapshot) -> Result<Vec<Segment>> {
         let segment_size = self.config.segment_size;
         let file_len = self.config.file.metadata()?.len();
-        let empty_snapshot = snapshot.pt.is_empty();
         let number_of_segments =
-            usize::try_from(file_len / segment_size as u64).unwrap()
-                + if empty_snapshot
-                    || file_len % u64::try_from(segment_size).unwrap()
-                        < u64::try_from(SEG_HEADER_LEN).unwrap()
-                {
-                    0
-                } else {
-                    1
-                };
-
-        if empty_snapshot {
-            assert_eq!(number_of_segments, 0);
-        }
+            usize::try_from(file_len / segment_size as u64).unwrap();
 
         // generate segments from snapshot lids
         let mut segments = vec![Segment::default(); number_of_segments];
