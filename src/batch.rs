@@ -11,11 +11,12 @@ use super::*;
 /// # Examples
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use sled::{Batch, open};
 ///
 /// # let _ = std::fs::remove_dir_all("batch_db_2");
-/// let db = open("batch_db_2").unwrap();
-/// db.insert("key_0", "val_0").unwrap();
+/// let db = open("batch_db_2")?;
+/// db.insert("key_0", "val_0")?;
 ///
 /// let mut batch = Batch::default();
 /// batch.insert("key_a", "val_a");
@@ -23,10 +24,11 @@ use super::*;
 /// batch.insert("key_c", "val_c");
 /// batch.remove("key_0");
 ///
-/// db.apply_batch(batch).unwrap();
+/// db.apply_batch(batch)?;
 /// // key_0 no longer exists, and key_a, key_b, and key_c
 /// // now do exist.
 /// # let _ = std::fs::remove_dir_all("batch_db_2");
+/// # Ok(()) }
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct Batch {

@@ -43,10 +43,11 @@ impl IntoIterator for &'_ Tree {
 /// # Examples
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use sled::{open, IVec};
 ///
 /// # let _ = std::fs::remove_dir_all("db");
-/// let t = open("db").unwrap();
+/// let t = open("db")?;
 /// t.insert(b"yo!", b"v1".to_vec());
 /// assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 ///
@@ -55,8 +56,7 @@ impl IntoIterator for &'_ Tree {
 ///     b"yo!",      // key
 ///     Some(b"v1"), // old value, None for not present
 ///     Some(b"v2"), // new value, None for delete
-/// )
-/// .unwrap();
+/// )?;
 ///
 /// // Iterates over key-value pairs, starting at the given key.
 /// let scan_key: &[u8] = b"a non-present key before yo!";
@@ -70,6 +70,7 @@ impl IntoIterator for &'_ Tree {
 /// t.remove(b"yo!");
 /// assert_eq!(t.get(b"yo!"), Ok(None));
 /// # let _ = std::fs::remove_dir_all("db");
+/// # Ok(()) }
 /// ```
 #[derive(Clone)]
 pub struct Tree(pub(crate) Arc<TreeInner>);
@@ -115,12 +116,14 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     /// let config = Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     ///
     /// assert_eq!(t.insert(&[1, 2, 3], vec![0]), Ok(None));
     /// assert_eq!(t.insert(&[1, 2, 3], vec![1]), Ok(Some(IVec::from(&[0]))));
+    /// # Ok(()) }
     /// ```
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
@@ -195,7 +198,7 @@ impl Tree {
     /// # fn main() -> TransactionResult<()> {
     ///
     /// let config = Config::new().temporary(true);
-    /// let db = config.open().unwrap();
+    /// let db = config.open()?;
     ///
     /// // Use write-only transactions as a writebatch:
     /// db.transaction(|db| {
@@ -236,7 +239,7 @@ impl Tree {
     ///
     /// fn main() -> TransactionResult<(), MyBullshitError> {
     ///     let config = Config::new().temporary(true);
-    ///     let db = config.open().unwrap();
+    ///     let db = config.open()?;
     ///
     ///     // Use write-only transactions as a writebatch:
     ///     let res = db.transaction(|db| {
@@ -266,17 +269,19 @@ impl Tree {
     /// to the processed `Tree`.
     ///
     /// ```
+    /// # use sled::transaction::TransactionResult;
+    /// # fn main() -> TransactionResult<()> {
     /// use sled::{Config, Transactional};
     ///
     /// let config = Config::new().temporary(true);
-    /// let db = config.open().unwrap();
+    /// let db = config.open()?;
     ///
-    /// let unprocessed = db.open_tree(b"unprocessed items").unwrap();
-    /// let processed = db.open_tree(b"processed items").unwrap();
+    /// let unprocessed = db.open_tree(b"unprocessed items")?;
+    /// let processed = db.open_tree(b"processed items")?;
     ///
     /// // An update somehow gets into the tree, which we
     /// // later trigger the atomic processing of.
-    /// unprocessed.insert(b"k3", b"ligers").unwrap();
+    /// unprocessed.insert(b"k3", b"ligers")?;
     ///
     /// // Atomically process the new item and move it
     /// // between `Tree`s.
@@ -287,11 +292,11 @@ impl Tree {
     ///         processed_item.extend_from_slice(&unprocessed_item);
     ///         processed.insert(b"k3", processed_item)?;
     ///         Ok(())
-    ///     })
-    ///     .unwrap();
+    ///     })?;
     ///
     /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
+    /// # Ok(()) }
     /// ```
     pub fn transaction<F, A, E>(
         &self,
@@ -317,9 +322,10 @@ impl Tree {
     /// ```
     /// use sled::{Batch, open};
     ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let _ = std::fs::remove_dir_all("batch_db");
-    /// let db = open("batch_db").unwrap();
-    /// db.insert("key_0", "val_0").unwrap();
+    /// let db = open("batch_db")?;
+    /// db.insert("key_0", "val_0")?;
     ///
     /// let mut batch = Batch::default();
     /// batch.insert("key_a", "val_a");
@@ -327,10 +333,11 @@ impl Tree {
     /// batch.insert("key_c", "val_c");
     /// batch.remove("key_0");
     ///
-    /// db.apply_batch(batch).unwrap();
+    /// db.apply_batch(batch)?;
     /// // key_0 no longer exists, and key_a, key_b, and key_c
     /// // now do exist.
     /// # let _ = std::fs::remove_dir_all("batch_db");
+    /// # Ok(()) }
     /// ```
     pub fn apply_batch(&self, batch: Batch) -> Result<()> {
         let _ = self.concurrency_control.write();
@@ -363,13 +370,15 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     /// let config = Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     ///
-    /// t.insert(&[0], vec![0]).unwrap();
+    /// t.insert(&[0], vec![0])?;
     /// assert_eq!(t.get(&[0]), Ok(Some(IVec::from(vec![0]))));
     /// assert_eq!(t.get(&[1]), Ok(None));
+    /// # Ok(()) }
     /// ```
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         let guard = pin();
@@ -405,11 +414,13 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = sled::Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     /// t.insert(&[1], vec![1]);
     /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
     /// assert_eq!(t.remove(&[1]), Ok(None));
+    /// # Ok(()) }
     /// ```
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         let guard = pin();
@@ -479,8 +490,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = sled::Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     ///
     /// // unique creation
     /// assert_eq!(
@@ -509,6 +521,7 @@ impl Tree {
     ///     Ok(Ok(()))
     /// );
     /// assert_eq!(t.get(&[1]), Ok(None));
+    /// # Ok(()) }
     /// ```
     #[allow(clippy::needless_pass_by_value)]
     pub fn compare_and_swap<K, OV, NV>(
@@ -617,11 +630,12 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, Error, IVec};
     /// use std::convert::TryInto;
     ///
     /// let config = Config::new().temporary(true);
-    /// let tree = config.open().unwrap();
+    /// let tree = config.open()?;
     ///
     /// fn u64_to_ivec(number: u64) -> IVec {
     ///     IVec::from(number.to_be_bytes().to_vec())
@@ -649,6 +663,7 @@ impl Tree {
     /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(one)));
     /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(two)));
     /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(three)));
+    /// # Ok(()) }
     /// ```
     pub fn update_and_fetch<K, V, F>(
         &self,
@@ -689,11 +704,12 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, Error, IVec};
     /// use std::convert::TryInto;
     ///
     /// let config = Config::new().temporary(true);
-    /// let tree = config.open().unwrap();
+    /// let tree = config.open()?;
     ///
     /// fn u64_to_ivec(number: u64) -> IVec {
     ///     IVec::from(number.to_be_bytes().to_vec())
@@ -720,6 +736,7 @@ impl Tree {
     /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(Some(zero)));
     /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(Some(one)));
     /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(Some(two)));
+    /// # Ok(()) }
     /// ```
     pub fn fetch_and_update<K, V, F>(
         &self,
@@ -763,17 +780,18 @@ impl Tree {
     ///
     /// Synchronous, blocking subscriber:
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, Event};
     /// let config = Config::new().temporary(true);
     ///
-    /// let tree = config.open().unwrap();
+    /// let tree = config.open()?;
     ///
     /// // watch all events by subscribing to the empty prefix
     /// let mut subscriber = tree.watch_prefix(vec![]);
     ///
     /// let tree_2 = tree.clone();
     /// let thread = std::thread::spawn(move || {
-    ///     tree.insert(vec![0], vec![1]).unwrap();
+    ///     tree.insert(vec![0], vec![1])
     /// });
     ///
     /// // `Subscription` implements `Iterator<Item=Event>`
@@ -784,7 +802,8 @@ impl Tree {
     ///     }
     /// }
     ///
-    /// thread.join().unwrap();
+    /// # thread.join().unwrap();
+    /// # Ok(()) }
     /// ```
     /// Aynchronous, non-blocking subscriber:
     ///
@@ -832,12 +851,14 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = sled::Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     ///
-    /// t.insert(&[0], vec![0]).unwrap();
-    /// assert!(t.contains_key(&[0]).unwrap());
-    /// assert!(!t.contains_key(&[1]).unwrap());
+    /// t.insert(&[0], vec![0])?;
+    /// assert!(t.contains_key(&[0])?);
+    /// assert!(!t.contains_key(&[1])?);
+    /// # Ok(()) }
     /// ```
     pub fn contains_key<K: AsRef<[u8]>>(&self, key: K) -> Result<bool> {
         self.get(key).map(|v| v.is_some())
@@ -849,9 +870,10 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     /// let config = Config::new().temporary(true);
-    /// let tree = config.open().unwrap();
+    /// let tree = config.open()?;
     ///
     /// for i in 0..10 {
     ///     tree.insert(&[i], vec![i])
@@ -876,6 +898,7 @@ impl Tree {
     ///     tree.get_lt(&[255]),
     ///     Ok(Some((IVec::from(&[9]), IVec::from(&[9]))))
     /// );
+    /// # Ok(()) }
     /// ```
     pub fn get_lt<K>(&self, key: K) -> Result<Option<(IVec, IVec)>>
     where
@@ -900,13 +923,13 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     /// let config = Config::new().temporary(true);
-    /// let tree = config.open().unwrap();
+    /// let tree = config.open()?;
     ///
     /// for i in 0..10 {
-    ///     tree.insert(&[i], vec![i])
-    ///         .expect("should write successfully");
+    ///     tree.insert(&[i], vec![i])?;
     /// }
     ///
     /// assert_eq!(
@@ -932,6 +955,7 @@ impl Tree {
     ///     tree.get_gt(&499u16.to_be_bytes()),
     ///     Ok(Some((IVec::from(&500u16.to_be_bytes()), IVec::from(&[10]))))
     /// );
+    /// # Ok(()) }
     /// ```
     pub fn get_gt<K>(&self, key: K) -> Result<Option<(IVec, IVec)>>
     where
@@ -959,6 +983,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     ///
     /// fn concatenate_merge(
@@ -978,7 +1003,7 @@ impl Tree {
     /// let config = Config::new()
     ///   .temporary(true);
     ///
-    /// let tree = config.open().unwrap();
+    /// let tree = config.open()?;
     /// tree.set_merge_operator(concatenate_merge);
     ///
     /// let k = b"k1";
@@ -998,6 +1023,7 @@ impl Tree {
     /// tree.remove(k);
     /// tree.merge(k, vec![4]);
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
+    /// # Ok(()) }
     /// ```
     pub fn merge<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
@@ -1097,6 +1123,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     ///
     /// fn concatenate_merge(
@@ -1116,7 +1143,7 @@ impl Tree {
     /// let config = Config::new()
     ///   .temporary(true);
     ///
-    /// let tree = config.open().unwrap();
+    /// let tree = config.open()?;
     /// tree.set_merge_operator(concatenate_merge);
     ///
     /// let k = b"k1";
@@ -1136,6 +1163,7 @@ impl Tree {
     /// tree.remove(k);
     /// tree.merge(k, vec![4]);
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
+    /// # Ok(()) }
     /// ```
     pub fn set_merge_operator(
         &self,
@@ -1151,9 +1179,10 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     /// let config = Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     /// t.insert(&[1], vec![10]);
     /// t.insert(&[2], vec![20]);
     /// t.insert(&[3], vec![30]);
@@ -1171,6 +1200,7 @@ impl Tree {
     ///     Ok((IVec::from(&[3]), IVec::from(&[30])))
     /// );
     /// assert_eq!(iter.next(), None);
+    /// # Ok(()) }
     /// ```
     pub fn iter(&self) -> Iter {
         self.range::<Vec<u8>, _>(..)
@@ -1182,16 +1212,17 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     /// let config = Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     ///
-    /// t.insert(&[0], vec![0]).unwrap();
-    /// t.insert(&[1], vec![10]).unwrap();
-    /// t.insert(&[2], vec![20]).unwrap();
-    /// t.insert(&[3], vec![30]).unwrap();
-    /// t.insert(&[4], vec![40]).unwrap();
-    /// t.insert(&[5], vec![50]).unwrap();
+    /// t.insert(&[0], vec![0])?;
+    /// t.insert(&[1], vec![10])?;
+    /// t.insert(&[2], vec![20])?;
+    /// t.insert(&[3], vec![30])?;
+    /// t.insert(&[4], vec![40])?;
+    /// t.insert(&[5], vec![50])?;
     ///
     /// let start: &[u8] = &[2];
     /// let end: &[u8] = &[4];
@@ -1204,6 +1235,7 @@ impl Tree {
     /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
     /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
     /// assert_eq!(r.next(), None);
+    /// # Ok(()) }
     /// ```
     pub fn range<K, R>(&self, range: R) -> Iter
     where
@@ -1245,16 +1277,17 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     /// let config = Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     ///
-    /// t.insert(&[0, 0, 0], vec![0, 0, 0]).unwrap();
-    /// t.insert(&[0, 0, 1], vec![0, 0, 1]).unwrap();
-    /// t.insert(&[0, 0, 2], vec![0, 0, 2]).unwrap();
-    /// t.insert(&[0, 0, 3], vec![0, 0, 3]).unwrap();
-    /// t.insert(&[0, 1, 0], vec![0, 1, 0]).unwrap();
-    /// t.insert(&[0, 1, 1], vec![0, 1, 1]).unwrap();
+    /// t.insert(&[0, 0, 0], vec![0, 0, 0])?;
+    /// t.insert(&[0, 0, 1], vec![0, 0, 1])?;
+    /// t.insert(&[0, 0, 2], vec![0, 0, 2])?;
+    /// t.insert(&[0, 0, 3], vec![0, 0, 3])?;
+    /// t.insert(&[0, 1, 0], vec![0, 1, 0])?;
+    /// t.insert(&[0, 1, 1], vec![0, 1, 1])?;
     ///
     /// let prefix: &[u8] = &[0, 0];
     /// let mut r = t.scan_prefix(prefix);
@@ -1275,6 +1308,7 @@ impl Tree {
     ///     Some(Ok((IVec::from(&[0, 0, 3]), IVec::from(&[0, 0, 3]))))
     /// );
     /// assert_eq!(r.next(), None);
+    /// # Ok(()) }
     /// ```
     pub fn scan_prefix<P>(&self, prefix: P) -> Iter
     where
@@ -1298,24 +1332,26 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     /// let config = Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     ///
-    /// t.insert(&[0], vec![0]).unwrap();
-    /// t.insert(&[1], vec![10]).unwrap();
-    /// t.insert(&[2], vec![20]).unwrap();
-    /// t.insert(&[3], vec![30]).unwrap();
-    /// t.insert(&[4], vec![40]).unwrap();
-    /// t.insert(&[5], vec![50]).unwrap();
+    /// t.insert(&[0], vec![0])?;
+    /// t.insert(&[1], vec![10])?;
+    /// t.insert(&[2], vec![20])?;
+    /// t.insert(&[3], vec![30])?;
+    /// t.insert(&[4], vec![40])?;
+    /// t.insert(&[5], vec![50])?;
     ///
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[5]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[4]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[3]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[2]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[1]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[0]);
-    /// assert_eq!(t.pop_max().unwrap(), None);
+    /// assert_eq!(&t.pop_max()?.unwrap().0, &[5]);
+    /// assert_eq!(&t.pop_max()?.unwrap().0, &[4]);
+    /// assert_eq!(&t.pop_max()?.unwrap().0, &[3]);
+    /// assert_eq!(&t.pop_max()?.unwrap().0, &[2]);
+    /// assert_eq!(&t.pop_max()?.unwrap().0, &[1]);
+    /// assert_eq!(&t.pop_max()?.unwrap().0, &[0]);
+    /// assert_eq!(t.pop_max()?, None);
+    /// # Ok(()) }
     /// ```
     pub fn pop_max(&self) -> Result<Option<(IVec, IVec)>> {
         loop {
@@ -1343,24 +1379,26 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, IVec};
     /// let config = Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     ///
-    /// t.insert(&[0], vec![0]).unwrap();
-    /// t.insert(&[1], vec![10]).unwrap();
-    /// t.insert(&[2], vec![20]).unwrap();
-    /// t.insert(&[3], vec![30]).unwrap();
-    /// t.insert(&[4], vec![40]).unwrap();
-    /// t.insert(&[5], vec![50]).unwrap();
+    /// t.insert(&[0], vec![0])?;
+    /// t.insert(&[1], vec![10])?;
+    /// t.insert(&[2], vec![20])?;
+    /// t.insert(&[3], vec![30])?;
+    /// t.insert(&[4], vec![40])?;
+    /// t.insert(&[5], vec![50])?;
     ///
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[0]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[1]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[2]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[3]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[4]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[5]);
-    /// assert_eq!(t.pop_min().unwrap(), None);
+    /// assert_eq!(&t.pop_min()?.unwrap().0, &[0]);
+    /// assert_eq!(&t.pop_min()?.unwrap().0, &[1]);
+    /// assert_eq!(&t.pop_min()?.unwrap().0, &[2]);
+    /// assert_eq!(&t.pop_min()?.unwrap().0, &[3]);
+    /// assert_eq!(&t.pop_min()?.unwrap().0, &[4]);
+    /// assert_eq!(&t.pop_min()?.unwrap().0, &[5]);
+    /// assert_eq!(t.pop_min()?, None);
+    /// # Ok(()) }
     /// ```
     pub fn pop_min(&self) -> Result<Option<(IVec, IVec)>> {
         loop {
@@ -1390,11 +1428,13 @@ impl Tree {
     /// # Examples
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = sled::Config::new().temporary(true);
-    /// let t = config.open().unwrap();
+    /// let t = config.open()?;
     /// t.insert(b"a", vec![0]);
     /// t.insert(b"b", vec![1]);
     /// assert_eq!(t.len(), 2);
+    /// # Ok(()) }
     /// ```
     pub fn len(&self) -> usize {
         self.iter().count()

@@ -51,17 +51,18 @@ type Senders =
 ///
 /// Synchronous, blocking subscriber:
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use sled::{Config, Event};
 /// let config = Config::new().temporary(true);
 ///
-/// let tree = config.open().unwrap();
+/// let tree = config.open()?;
 ///
 /// // watch all events by subscribing to the empty prefix
 /// let mut subscriber = tree.watch_prefix(vec![]);
 ///
 /// let tree_2 = tree.clone();
 /// let thread = std::thread::spawn(move || {
-///     tree.insert(vec![0], vec![1]).unwrap();
+///     tree.insert(vec![0], vec![1])
 /// });
 ///
 /// // `Subscription` implements `Iterator<Item=Event>`
@@ -72,7 +73,9 @@ type Senders =
 ///     }
 /// }
 ///
-/// thread.join().unwrap();
+/// # thread.join().unwrap();
+/// # Ok(())
+/// # }
 /// ```
 /// Aynchronous, non-blocking subscriber:
 ///
