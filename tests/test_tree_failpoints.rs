@@ -89,11 +89,7 @@ enum BatchOp {
 
 impl Arbitrary for BatchOp {
     fn arbitrary<G: Gen>(g: &mut G) -> BatchOp {
-        if g.gen_bool(0.5) {
-            BatchOp::Set
-        } else {
-            BatchOp::Del(g.gen::<u8>())
-        }
+        if g.gen_bool(0.5) { BatchOp::Set } else { BatchOp::Del(g.gen::<u8>()) }
     }
 
     fn shrink(&self) -> Box<dyn Iterator<Item = BatchOp>> {
@@ -194,13 +190,14 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     let mut crash_counter = 0;
     let mut batch_counter: u32 = 1;
 
-    // For each Set operation, one entry is inserted to the tree with a two-byte key, and a
-    // variable-length value. The key is set to the encoded value of the `set_counter`, which
-    // increments by one with each Set operation. The value starts with the same two bytes as the
+    // For each Set operation, one entry is inserted to the tree with a two-byte
+    // key, and a variable-length value. The key is set to the encoded value
+    // of the `set_counter`, which increments by one with each Set
+    // operation. The value starts with the same two bytes as the
     // key does, but some values are extended to be many segments long.
     //
-    // Del operations delete one entry from the tree. Only keys from 0 to 255 are eligible for
-    // deletion.
+    // Del operations delete one entry from the tree. Only keys from 0 to 255
+    // are eligible for deletion.
 
     macro_rules! restart {
         () => {
@@ -242,7 +239,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     None => false,
                 });
                 if let Some((discarded_index, _)) = discarded_find_result {
-                    ref_entry.versions.split_off(discarded_index);
+                    let _ = ref_entry.versions.split_off(discarded_index);
                 }
             }
 
@@ -1508,9 +1505,10 @@ fn failpoints_bug_30() {
 
 #[test]
 fn failpoints_bug_31() {
-    // postmortem 1: apply_batch_inner drops a RecoveryGuard, which in turn drops a Reservation,
-    // and Reservation's drop implementation flushes itself and unwraps the Result returned, which
-    // has the FailPoint error in it
+    // postmortem 1: apply_batch_inner drops a RecoveryGuard, which in turn
+    // drops a Reservation, and Reservation's drop implementation flushes
+    // itself and unwraps the Result returned, which has the FailPoint error
+    // in it
     for _ in 0..1000 {
         assert!(prop_tree_crashes_nicely(
             vec![Del(0), FailPoint("snap write"), Batched(vec![])],
