@@ -254,14 +254,14 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
         }
     };
 
-    if f.metadata()?.len() <= 12 {
+    let mut buf = vec![];
+    let _read = f.read_to_end(&mut buf)?;
+    let len = buf.len();
+    if len <= 12 {
         warn!("empty/corrupt snapshot file found");
         return Ok(None);
     }
 
-    let mut buf = vec![];
-    let _read = f.read_to_end(&mut buf)?;
-    let len = buf.len();
     let mut len_expected_bytes = [0; 8];
     len_expected_bytes.copy_from_slice(&buf[len - 12..len - 4]);
 
