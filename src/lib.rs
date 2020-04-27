@@ -152,6 +152,7 @@
     // clippy::wildcard_enum_match_arm,
     clippy::wrong_pub_self_convention,
 )]
+#![allow(clippy::mem_replace_with_default)] // Not using std::mem::take() due to MSRV of 1.37
 #![recursion_limit = "128"]
 
 macro_rules! io_fail {
@@ -197,7 +198,7 @@ mod result;
 mod serialization;
 mod stack;
 mod stackvec;
-mod subscription;
+mod subscriber;
 mod sys_limits;
 pub mod transaction;
 mod tree;
@@ -271,7 +272,7 @@ pub use self::{
     iter::Iter,
     ivec::IVec,
     result::{Error, Result},
-    subscription::{Event, Subscriber},
+    subscriber::{Event, Subscriber},
     transaction::Transactional,
     tree::{CompareAndSwapError, Tree},
 };
@@ -290,7 +291,7 @@ use {
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
         stackvec::StackVec,
-        subscription::Subscriptions,
+        subscriber::Subscribers,
         tree::TreeInner,
     },
     crossbeam_utils::{Backoff, CachePadded},

@@ -73,7 +73,7 @@ pub(crate) enum SegmentOp {
     Replace {
         pid: PageId,
         lsn: Lsn,
-        old_cache_infos: StackVec<CacheInfo>,
+        old_cache_infos: StackVec,
         new_cache_info: CacheInfo,
     },
 }
@@ -274,7 +274,10 @@ impl Segment {
                 latest_replacement_lsn: active.latest_replacement_lsn,
             });
 
-            let can_free = mem::take(&mut active.can_free_upon_deactivation);
+            let can_free = mem::replace(
+                &mut active.can_free_upon_deactivation,
+                Default::default(),
+            );
 
             (inactive, can_free)
         } else {
@@ -290,7 +293,7 @@ impl Segment {
 
         if let Segment::Inactive(inactive) = self {
             assert!(lsn >= inactive.lsn);
-            let ret = mem::take(&mut inactive.pids);
+            let ret = mem::replace(&mut inactive.pids, Default::default());
             *self = Segment::Draining(Draining {
                 lsn: inactive.lsn,
                 max_pids: inactive.max_pids,
@@ -637,7 +640,7 @@ impl SegmentAccountant {
         // we want to complete all truncations because
         // they could cause calls to `next` to block.
         for (_, promise) in self.async_truncations.split_off(&0) {
-            promise.wait().unwrap()?;
+            promise.wait().expect("threadpool should not crash")?;
         }
 
         for (idx, segment_lsn) in maybe_clean {
@@ -979,6 +982,7 @@ impl SegmentAccountant {
             match truncation.wait() {
                 Some(Ok(())) => {}
                 error => {
+                    // TODO propagate!
                     error!("failed to shrink file: {:?}", error);
                 }
             }
@@ -1093,7 +1097,7 @@ impl SegmentAccountant {
         });
 
         #[cfg(test)]
-        _result.unwrap();
+        _result.wait();
 
         if self.async_truncations.insert(at, promise).is_some() {
             panic!(

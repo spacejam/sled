@@ -1,5 +1,6 @@
 use std::{
     alloc::{alloc, dealloc, Layout},
+    cell::UnsafeCell,
     sync::atomic::{AtomicBool, AtomicPtr},
 };
 
@@ -61,7 +62,7 @@ impl Drop for AlignedBuf {
 }
 
 pub(crate) struct IoBuf {
-    buf: Arc<AlignedBuf>,
+    buf: Arc<UnsafeCell<AlignedBuf>>,
     header: CachePadded<AtomicU64>,
     base: usize,
     pub offset: LogOffset,
@@ -75,15 +76,45 @@ pub(crate) struct IoBuf {
 #[allow(unsafe_code)]
 unsafe impl Sync for IoBuf {}
 
+#[allow(unsafe_code)]
+unsafe impl Send for IoBuf {}
+
 impl IoBuf {
+    /// # Safety
+    ///
+    /// This operation provides access to a mutable buffer of
+    /// uninitialized memory. For this to be correct, we must
+    /// ensure that:
+    /// 1. overlapping mutable slices are never created.
+    /// 2. a read to any subslice of this slice only happens
+    ///    after a write has initialized that memory
+    ///
+    /// It is intended that the log reservation code guarantees
+    /// that no two `Reservation` objects will hold overlapping
+    /// mutable slices to our io buffer.
+    ///
+    /// It is intended that the `write_to_log` function only
+    /// tries to write initialized bytes to the underlying storage.
+    ///
+    /// It is intended that the `write_to_log` function will
+    /// initialize any yet-to-be-initialized bytes before writing
+    /// the buffer to storage. #1040 added logic that was intended
+    /// to meet this requirement.
+    ///
+    /// The safety of this method was discussed in #1044.
     pub(crate) fn get_mut_range(
         &self,
         at: usize,
         len: usize,
     ) -> &'static mut [u8] {
-        assert!(self.buf.1 >= at + len);
+        let buf_ptr = self.buf.get();
+
         unsafe {
-            std::slice::from_raw_parts_mut(self.buf.0.add(self.base + at), len)
+            assert!((*buf_ptr).1 >= at + len);
+            std::slice::from_raw_parts_mut(
+                (*buf_ptr).0.add(self.base + at),
+                len,
+            )
         }
     }
 
@@ -121,7 +152,7 @@ impl IoBuf {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 header_bytes.as_ptr(),
-                self.buf.0,
+                (*self.buf.get()).0,
                 SEG_HEADER_LEN,
             );
         }
@@ -328,7 +359,7 @@ impl IoBufs {
             );
 
             let mut iobuf = IoBuf {
-                buf: Arc::new(AlignedBuf::new(segment_size)),
+                buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
                 header: CachePadded::new(AtomicU64::new(0)),
                 base: 0,
                 offset: lid,
@@ -352,7 +383,7 @@ impl IoBufs {
             );
 
             IoBuf {
-                buf: Arc::new(AlignedBuf::new(segment_size)),
+                buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
                 header: CachePadded::new(AtomicU64::new(0)),
                 base,
                 offset: next_lid,
@@ -399,7 +430,7 @@ impl IoBufs {
         &self,
         pid: PageId,
         lsn: Lsn,
-        old_cache_infos: &StackVec<CacheInfo>,
+        old_cache_infos: &StackVec,
         new_cache_info: CacheInfo,
         guard: &Guard,
     ) -> Result<()> {
@@ -572,12 +603,8 @@ impl IoBufs {
         // a pad is a null message written to the end of a buffer
         // to signify that nothing else will be written into it
         if should_pad {
-            let pad_len = capacity - bytes_to_write - MAX_MSG_HEADER_LEN;
-            let data = iobuf.get_mut_range(bytes_to_write, pad_len);
-
-            // take the crc of the random bytes already after where we
-            // would place our header.
-            let padding_bytes = vec![MessageKind::Corrupted.into(); pad_len];
+            let pad_len = unused_space - MAX_MSG_HEADER_LEN;
+            let data = iobuf.get_mut_range(bytes_to_write, unused_space);
 
             let segment_number = SegmentNumber(
                 u64::try_from(base_lsn).unwrap()
@@ -594,6 +621,12 @@ impl IoBufs {
 
             let header_bytes = header.serialize();
 
+            // initialize the remainder of this buffer (only pad_len of this will be part of the Cap message)
+            let padding_bytes = vec![
+                MessageKind::Corrupted.into();
+                unused_space - header_bytes.len()
+            ];
+
             #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
@@ -604,14 +637,14 @@ impl IoBufs {
                 std::ptr::copy_nonoverlapping(
                     padding_bytes.as_ptr(),
                     data.as_mut_ptr().add(header_bytes.len()),
-                    pad_len,
+                    padding_bytes.len(),
                 );
             }
 
             // this as to stay aligned with the hashing
             let crc32_arr = u32_to_arr(calculate_message_crc32(
                 &header_bytes,
-                &padding_bytes,
+                &padding_bytes[..pad_len],
             ));
 
             #[allow(unsafe_code)]
@@ -621,6 +654,19 @@ impl IoBufs {
                     // the crc32 is the first part of the buffer
                     data.as_mut_ptr(),
                     std::mem::size_of::<u32>(),
+                );
+            }
+        } else if maxed {
+            // initialize the remainder of this buffer's red zone
+            let data = iobuf.get_mut_range(bytes_to_write, unused_space);
+
+            #[allow(unsafe_code)]
+            unsafe {
+                // note: this could use slice::fill() if it stabilizes
+                std::ptr::write_bytes(
+                    data.as_mut_ptr(),
+                    MessageKind::Corrupted.into(),
+                    unused_space,
                 );
             }
         }
@@ -1005,7 +1051,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     // its entire life cycle as soon as we do that.
     let next_iobuf = if maxed {
         let mut next_iobuf = IoBuf {
-            buf: Arc::new(AlignedBuf::new(segment_size)),
+            buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
             header: CachePadded::new(AtomicU64::new(0)),
             base: 0,
             offset: next_offset,
@@ -1087,7 +1133,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         });
 
         #[cfg(feature = "event_log")]
-        _result.unwrap();
+        _result.wait();
 
         Ok(())
     } else {

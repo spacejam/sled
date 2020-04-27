@@ -332,8 +332,15 @@ fn scan_segment_headers_and_tail(
         .collect();
 
     // gather
-    let headers: Vec<(LogOffset, SegmentHeader)> =
-        header_promises.into_iter().filter_map(OneShot::unwrap).collect();
+    let headers: Vec<(LogOffset, SegmentHeader)> = vec![];
+    for promise in header_promises {
+        let read_attempt =
+            promise.wait().expect("thread pool should not crash");
+
+        if let Some(completed_result) = read_attempt {
+            headers.push(completed_result);
+        }
+    }
 
     // find max stable LSN recorded in segment headers
     let mut ordering = BTreeMap::new();

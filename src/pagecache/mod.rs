@@ -328,6 +328,20 @@ pub struct CacheInfo {
     pub log_size: u64,
 }
 
+#[cfg(test)]
+impl quickcheck::Arbitrary for CacheInfo {
+    fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> CacheInfo {
+        use rand::Rng;
+
+        CacheInfo {
+            ts: g.gen(),
+            lsn: g.gen(),
+            pointer: DiskPtr::arbitrary(g),
+            log_size: g.gen(),
+        }
+    }
+}
+
 /// Update<PageLinkment> denotes a state or a change in a sequence of updates
 /// of which a page consists.
 #[derive(Clone, Debug, PartialEq)]
@@ -410,7 +424,7 @@ impl<'a> RecoveryGuard<'a> {
 #[derive(Debug, Clone)]
 pub struct Page {
     pub(crate) update: Option<Update>,
-    pub(crate) cache_infos: StackVec<CacheInfo>,
+    pub(crate) cache_infos: StackVec,
 }
 
 impl Page {
