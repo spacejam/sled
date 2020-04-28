@@ -75,7 +75,9 @@ impl EventLog {
                     if let Some(later_lsn) = minimum_lsn {
                         assert!(
                             later_lsn >= lsn,
-                            "lsn must never go down between recoveries or stabilizations"
+                            "lsn must never go down between recoveries \
+                            or stabilizations. It was {} but later became {}"
+                            lsn, later_lsn,
                         );
                     }
                     minimum_lsn = Some(lsn);
