@@ -188,6 +188,11 @@ fn advance_snapshot(
         if snapshot.last_lid < segment_lid {
             // the snapshot never made it into
             // this segment, so we can free it
+            debug!(
+                "adding segment with 0 recovered messages \
+                to the to_zero list: {}",
+                segment_lid
+            );
             to_zero.push(segment_lid);
         }
     }
@@ -219,6 +224,11 @@ fn advance_snapshot(
     let shred_len =
         usize::try_from(next_segment_base - snapshot.last_lid).unwrap();
     let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
+    debug!(
+        "zeroing the end of the recovered segment between {} and {}",
+        snapshot.last_lid,
+        snapshot.last_lid + shred_len as LogOffset
+    );
     pwrite_all(&config.file, &shred_zone, snapshot.last_lid)?;
     config.file.sync_all()?;
 

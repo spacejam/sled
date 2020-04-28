@@ -828,6 +828,11 @@ impl IoBufs {
             drop(intervals);
 
             let _notified = self.interval_updated.notify_all();
+
+            #[cfg(feature = "event_log")]
+            {
+                self.config.event_log.stabilized_lsn(new_stable_lsn);
+            }
         }
     }
 
