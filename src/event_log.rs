@@ -76,8 +76,9 @@ impl EventLog {
                         assert!(
                             later_lsn >= lsn,
                             "lsn must never go down between recoveries \
-                            or stabilizations. It was {} but later became {}"
-                            lsn, later_lsn,
+                            or stabilizations. It was {} but later became {}",
+                            lsn,
+                            later_lsn,
                         );
                     }
                     minimum_lsn = Some(lsn);
@@ -159,11 +160,5 @@ impl EventLog {
     pub fn meta_after_restart(&self, meta: Meta) {
         let guard = pin();
         self.inner.push(Event::MetaOnRecovery { meta }, &guard);
-    }
-}
-
-impl Drop for EventLog {
-    fn drop(&mut self) {
-        self.verify();
     }
 }

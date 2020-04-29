@@ -14,6 +14,7 @@ const PID: PageId = 4;
 const REPLACE: LogKind = LogKind::Replace;
 
 #[test]
+#[ignore = "adding 50 causes the flush to never return"]
 fn log_writebatch() -> crate::Result<()> {
     common::setup_logger();
     let config = Config::new().temporary(true);

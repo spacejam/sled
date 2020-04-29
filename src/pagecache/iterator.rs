@@ -52,6 +52,7 @@ impl Iterator for LogIter {
                     }
                 } else {
                     trace!("no segments remaining to iterate over");
+
                     return None;
                 }
             }

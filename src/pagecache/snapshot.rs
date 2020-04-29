@@ -6,6 +6,7 @@ use crate::*;
 use super::{
     arr_to_u32, gc_blobs, pwrite_all, raw_segment_iter_from, u32_to_arr,
     u64_to_arr, DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind,
+    MAX_MSG_HEADER_LEN,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -174,6 +175,23 @@ fn advance_snapshot(
         snapshot.last_lid = ptr.lid() + sz;
 
         snapshot.apply(log_kind, pid, lsn, ptr, sz);
+    }
+
+    if (config.segment_size as Lsn)
+        - snapshot.last_lsn % (config.segment_size as Lsn)
+        < (MAX_MSG_HEADER_LEN as Lsn)
+    {
+        let current_segment_idx =
+            snapshot.last_lsn / (config.segment_size as Lsn);
+        let end_of_segment =
+            (current_segment_idx + 1) * (config.segment_size as Lsn);
+
+        debug!(
+            "remaining segment is too small for another message. setting last_lsn to {}",
+            end_of_segment
+        );
+
+        snapshot.last_lsn = end_of_segment;
     }
 
     trace!("generated snapshot: {:#?}", snapshot);
