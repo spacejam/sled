@@ -68,7 +68,7 @@ impl Serialize for BatchManifest {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         if buf.len() < 8 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(104) });
+            return Err(Error::corruption(None));
         }
 
         let array = buf[..8].try_into().unwrap();
@@ -211,7 +211,7 @@ impl Serialize for u64 {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(150) });
+            return Err(Error::corruption(None));
         }
         let (res, scoot) = match buf[0] {
             0..=240 => (u64::from(buf[0]), 1),
@@ -243,7 +243,7 @@ impl Serialize for i64 {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         if buf.len() < 8 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(103) });
+            return Err(Error::corruption(None));
         }
 
         let array = buf[..8].try_into().unwrap();
@@ -264,7 +264,7 @@ impl Serialize for u32 {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         if buf.len() < 4 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(250) });
+            return Err(Error::corruption(None));
         }
 
         let array = buf[..4].try_into().unwrap();
@@ -286,7 +286,7 @@ impl Serialize for bool {
 
     fn deserialize(buf: &mut &[u8]) -> Result<bool> {
         if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(77) });
+            return Err(Error::corruption(None));
         }
         let value = buf[0] != 0;
         *buf = &buf[1..];
@@ -306,7 +306,7 @@ impl Serialize for u8 {
 
     fn deserialize(buf: &mut &[u8]) -> Result<u8> {
         if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(93) });
+            return Err(Error::corruption(None));
         }
         let value = buf[0];
         *buf = &buf[1..];
@@ -379,7 +379,7 @@ impl Serialize for Link {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(210) });
+            return Err(Error::corruption(None));
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
@@ -389,7 +389,7 @@ impl Serialize for Link {
             2 => Link::ParentMergeIntention(u64::deserialize(buf)?),
             3 => Link::ParentMergeConfirm,
             4 => Link::ChildMergeCap,
-            _ => return Err(Error::Corruption { at: DiskPtr::Inline(220) }),
+            _ => return Err(Error::corruption(None)),
         })
     }
 }
@@ -528,7 +528,7 @@ impl Serialize for Data {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Data> {
         if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(108) });
+            return Err(Error::corruption(None));
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
@@ -542,7 +542,7 @@ impl Serialize for Data {
                 keys: deserialize_bounded_sequence(buf, len)?,
                 pointers: deserialize_bounded_sequence(buf, len)?,
             }),
-            _ => return Err(Error::Corruption { at: DiskPtr::Inline(115) }),
+            _ => return Err(Error::corruption(None)),
         })
     }
 }
@@ -573,14 +573,14 @@ impl Serialize for DiskPtr {
 
     fn deserialize(buf: &mut &[u8]) -> Result<DiskPtr> {
         if buf.len() < 2 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(136) });
+            return Err(Error::corruption(None));
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
         Ok(match discriminant {
             0 => DiskPtr::Inline(u64::deserialize(buf)?),
             1 => DiskPtr::Blob(u64::deserialize(buf)?, i64::deserialize(buf)?),
-            _ => return Err(Error::Corruption { at: DiskPtr::Inline(666) }),
+            _ => return Err(Error::corruption(None)),
         })
     }
 }
@@ -622,7 +622,7 @@ impl Serialize for PageState {
 
     fn deserialize(buf: &mut &[u8]) -> Result<PageState> {
         if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(402) });
+            return Err(Error::corruption(None));
         }
         let discriminant = buf[0];
         *buf = &buf[1..];

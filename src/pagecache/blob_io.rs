@@ -58,7 +58,7 @@ pub(crate) fn read_blob(
     } else {
         warn!("blob {} failed crc check!", blob_ptr);
 
-        Err(Error::Corruption { at: DiskPtr::Blob(0, blob_ptr) })
+        Err(Error::corruption(Some(DiskPtr::Blob(0, blob_ptr))))
     }
 }
 

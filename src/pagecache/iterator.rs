@@ -193,7 +193,7 @@ impl LogIter {
         let segment_header = read_segment_header(f, offset)?;
         if offset % self.config.segment_size as LogOffset != 0 {
             debug!("segment offset not divisible by segment length");
-            return Err(Error::Corruption { at: DiskPtr::Inline(offset) });
+            return Err(Error::corruption(None));
         }
         if segment_header.lsn % self.config.segment_size as Lsn != 0 {
             debug!(
@@ -201,7 +201,7 @@ impl LogIter {
                  by the segment_size ({}) instead it was {}",
                 self.config.segment_size, segment_header.lsn
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(offset) });
+            return Err(Error::corruption(None));
         }
 
         if segment_header.lsn != lsn {

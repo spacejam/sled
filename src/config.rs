@@ -78,13 +78,13 @@ impl StorageParameters {
                 k
             } else {
                 error!("failed to parse persisted config line: {}", line);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
             let v = if let Some(v) = split.next() {
                 v
             } else {
                 error!("failed to parse persisted config line: {}", line);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
             lines.insert(k, v);
         }
@@ -94,13 +94,13 @@ impl StorageParameters {
                 parsed
             } else {
                 error!("failed to parse segment_size value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             }
         } else {
             error!(
                 "failed to retrieve required configuration parameter: segment_size"
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::corruption(None));
         };
 
         let use_compression: bool = if let Some(raw) =
@@ -110,13 +110,13 @@ impl StorageParameters {
                 parsed
             } else {
                 error!("failed to parse use_compression value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             }
         } else {
             error!(
                 "failed to retrieve required configuration parameter: use_compression"
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::corruption(None));
         };
 
         let version: (usize, usize) = if let Some(raw) = lines.get("version") {
@@ -129,11 +129,11 @@ impl StorageParameters {
                         "failed to parse major version value from line: {}",
                         raw
                     );
-                    return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                    return Err(Error::corruption(None));
                 }
             } else {
                 error!("failed to parse major version value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
 
             let minor = if let Some(raw_minor) = split.next() {
@@ -144,11 +144,11 @@ impl StorageParameters {
                         "failed to parse minor version value from line: {}",
                         raw
                     );
-                    return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                    return Err(Error::corruption(None));
                 }
             } else {
                 error!("failed to parse minor version value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
 
             (major, minor)
@@ -156,7 +156,7 @@ impl StorageParameters {
             error!(
                 "failed to retrieve required configuration parameter: version"
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::corruption(None));
         };
 
         Ok(StorageParameters { segment_size, use_compression, version })

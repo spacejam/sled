@@ -5,6 +5,8 @@ use std::{
     io,
 };
 
+use backtrace::Backtrace;
+
 use crate::{
     pagecache::{DiskPtr, PageView},
     IVec,
@@ -37,12 +39,20 @@ pub enum Error {
     /// Corruption has been detected in the storage file.
     Corruption {
         /// The file location that corrupted data was found at.
-        at: DiskPtr,
+        at: Option<DiskPtr>,
+        /// A backtrace for where the corruption was encountered.
+        bt: Backtrace,
     },
     // a failpoint has been triggered for testing purposes
     #[doc(hidden)]
     #[cfg(feature = "failpoints")]
     FailPoint,
+}
+
+impl Error {
+    pub(crate) fn corruption(at: Option<DiskPtr>) -> Error {
+        Error::Corruption { at, bt: Backtrace::new() }
+    }
 }
 
 impl Clone for Error {
@@ -54,7 +64,7 @@ impl Clone for Error {
             CollectionNotFound(name) => CollectionNotFound(name.clone()),
             Unsupported(why) => Unsupported(why.clone()),
             ReportableBug(what) => ReportableBug(what.clone()),
-            Corruption { at } => Corruption { at: *at },
+            Corruption { at, bt } => Corruption { at: *at, bt: bt.clone() },
             #[cfg(feature = "failpoints")]
             FailPoint => FailPoint,
         }
@@ -97,8 +107,8 @@ impl PartialEq for Error {
                     false
                 }
             }
-            Corruption { at: l } => {
-                if let Corruption { at: r } = *other {
+            Corruption { at: l, .. } => {
+                if let Corruption { at: r, .. } = *other {
                     l == r
                 } else {
                     false
@@ -139,9 +149,11 @@ impl Display for Error {
             #[cfg(feature = "failpoints")]
             FailPoint => write!(f, "Fail point has been triggered."),
             Io(ref e) => write!(f, "IO error: {}", e),
-            Corruption { at } => {
-                write!(f, "Read corrupted data at file offset {}", at)
-            }
+            Corruption { at, ref bt } => write!(
+                f,
+                "Read corrupted data at file offset {:?} backtrace {:?}",
+                at, bt
+            ),
         }
     }
 }

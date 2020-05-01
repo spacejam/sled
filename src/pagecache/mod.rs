@@ -20,8 +20,9 @@ mod reservation;
 mod segment;
 mod snapshot;
 
-use crate::*;
 use std::{collections::BinaryHeap, ops::Deref};
+
+use crate::*;
 
 #[cfg(all(not(unix), not(windows)))]
 use parallel_io_polyfill::{pread_exact, pread_exact_or_eof, pwrite_all};
@@ -1824,7 +1825,7 @@ impl PageCache {
             }
             Ok(other) => {
                 debug!("read unexpected page: {:?}", other);
-                Err(Error::Corruption { at: pointer })
+                Err(Error::corruption(Some(pointer)))
             }
             Err(e) => {
                 debug!("failed to read page: {:?}", e);

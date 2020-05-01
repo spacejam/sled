@@ -46,6 +46,7 @@ log = "0.4.8"
 parking_lot = "0.10.0"
 color-backtrace = { version = "0.3.0", optional = true }
 rio = { version = "0.9.2", optional = true }
+backtrace = "0.3.46"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os="windows"))'.dependencies]
 fs2 = "0.4.3"
