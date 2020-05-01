@@ -90,7 +90,8 @@ impl AccessQueue {
                     continue;
                 }
 
-                // push the now-full item to the full list for future consumption
+                // push the now-full item to the full list for future
+                // consumption
                 let mut ret;
                 let mut full_list_ptr = self.full_list.load(Ordering::Acquire);
                 while {
