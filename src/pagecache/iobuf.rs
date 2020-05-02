@@ -829,16 +829,21 @@ impl IoBufs {
         if let Some(new_stable_lsn) = updated {
             self.stable_lsn.store(new_stable_lsn, SeqCst);
 
+            #[cfg(feature = "event_log")]
+            {
+                // We add 1 because we want it to stay monotonic with recovery
+                // LSN, which deals with the next LSN after the last stable one.
+                // We need to do this while intervals is held otherwise it
+                // may race with another thread that stabilizes something
+                // lower.
+                self.config.event_log.stabilized_lsn(new_stable_lsn + 1);
+            }
+
             // having held the mutex makes this linearized
             // with the notify below.
             drop(intervals);
 
             let _notified = self.interval_updated.notify_all();
-
-            #[cfg(feature = "event_log")]
-            {
-                self.config.event_log.stabilized_lsn(new_stable_lsn);
-            }
         }
     }
 
