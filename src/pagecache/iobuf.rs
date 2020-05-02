@@ -250,8 +250,7 @@ impl StabilityIntervals {
             }
         }
 
-        let mut stable_lsn =
-            if self.batches.is_empty() { Some(self.stable_lsn) } else { None };
+        let mut batch_stable_lsn = None;
 
         while let Some(&(low, high)) = self.batches.last() {
             assert!(
@@ -261,14 +260,21 @@ impl StabilityIntervals {
                 high
             );
             if high < self.stable_lsn {
-                stable_lsn = Some(high);
+                if let Some(bsl) = batch_stable_lsn {
+                    assert!(bsl < high);
+                }
+                batch_stable_lsn = Some(high);
                 self.batches.pop().unwrap();
             } else {
                 break;
             }
         }
 
-        stable_lsn
+        if self.batches.is_empty() {
+            Some(self.stable_lsn)
+        } else {
+            batch_stable_lsn
+        }
     }
 }
 
