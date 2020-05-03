@@ -1,7 +1,7 @@
 #![cfg(feature = "failpoints")]
 mod common;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
@@ -16,7 +16,7 @@ enum Op {
     Id,
     Restart,
     Flush,
-    FailPoint(&'static str),
+    FailPoint(&'static str, u64),
 }
 
 use self::Op::*;
@@ -46,7 +46,7 @@ impl Arbitrary for Op {
         ];
 
         if g.gen_bool(1. / 30.) {
-            return FailPoint(fail_points.choose(g).unwrap());
+            return FailPoint(fail_points.choose(g).unwrap(), g.gen::<u64>());
         }
 
         if g.gen_bool(1. / 10.) {
@@ -68,6 +68,22 @@ impl Arbitrary for Op {
         match *self {
             Op::Del(ref lid) if *lid > 0 => {
                 Box::new(vec![Op::Del(*lid / 2), Op::Del(*lid - 1)].into_iter())
+            }
+            Op::FailPoint(name, bitset) => {
+                if bitset.count_ones() > 1 {
+                    Box::new(vec![
+                        // clear last failure bit
+                        FailPoint(name, bitset ^ (1 << (63 - bitset.leading_zeros()))),
+                        // clear first failure bit
+                        FailPoint(name, bitset ^ (1 << bitset.trailing_zeros())),
+                        // rewind all failure bits by one call
+                        FailPoint(name, bitset >> 1),
+                    ].into_iter())
+                } else if bitset > 1 {
+                    Box::new(vec![FailPoint(name, bitset >> 1)].into_iter())
+                } else {
+                    Box::new(vec![].into_iter())
+                }
             }
             _ => Box::new(vec![].into_iter()),
         }
@@ -137,7 +153,6 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
     let mut tree = config.open().expect("tree should start");
     let mut reference = BTreeMap::new();
-    let mut fail_points = HashSet::new();
     let mut max_id: isize = -1;
     let mut crash_counter = 0;
 
@@ -331,9 +346,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             Restart => {
                 restart!();
             }
-            FailPoint(fp) => {
-                fail_points.insert(fp);
-                sled::fail::set(&*fp);
+            FailPoint(fp, bitset) => {
+                sled::fail::set(&*fp, bitset);
             }
         }
     }
@@ -345,14 +359,16 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 #[cfg(not(target_os = "fuchsia"))]
 fn quickcheck_tree_with_failpoints() {
     // use fewer tests for travis OSX builds that stall out all the time
-    let n_tests = 50;
+    let mut n_tests = 50;
+    if let Ok(Ok(value)) = std::env::var("QUICKCHECK_TESTS").map(|s| s.parse()) {
+        n_tests = value;
+    }
 
     let generator_sz = 100;
 
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), generator_sz))
         .tests(n_tests)
-        .max_tests(10000)
         .quickcheck(prop_tree_crashes_nicely as fn(Vec<Op>, bool) -> bool);
 }
 
@@ -360,7 +376,7 @@ fn quickcheck_tree_with_failpoints() {
 fn failpoints_bug_01() {
     // postmortem 1: model did not account for proper reasons to fail to start
     assert!(prop_tree_crashes_nicely(
-        vec![FailPoint("snap write"), Restart],
+        vec![FailPoint("snap write", 0xFFFFFFFFFFFFFFFF), Restart],
         false,
     ));
 }
@@ -369,7 +385,7 @@ fn failpoints_bug_01() {
 fn failpoints_bug_2() {
     // postmortem 1: the system was assuming the happy path across failpoints
     assert!(prop_tree_crashes_nicely(
-        vec![FailPoint("buffer write post"), Set, Set, Restart],
+        vec![FailPoint("buffer write post", 0xFFFFFFFFFFFFFFFF), Set, Set, Restart],
         false,
     ))
 }
@@ -392,7 +408,7 @@ fn failpoints_bug_4() {
     // postmortem 1: the test model was not properly accounting for
     // writes that may-or-may-not be present due to an error.
     assert!(prop_tree_crashes_nicely(
-        vec![Set, FailPoint("snap write"), Del(0), Set, Restart],
+        vec![Set, FailPoint("snap write", 0xFFFFFFFFFFFFFFFF), Del(0), Set, Restart],
         false,
     ))
 }
@@ -403,14 +419,14 @@ fn failpoints_bug_5() {
     assert!(prop_tree_crashes_nicely(
         vec![
             Set,
-            FailPoint("snap write mv post"),
+            FailPoint("snap write mv post", 0xFFFFFFFFFFFFFFFF),
             Set,
-            FailPoint("snap write"),
+            FailPoint("snap write", 0xFFFFFFFFFFFFFFFF),
             Set,
             Set,
             Set,
             Restart,
-            FailPoint("zero segment"),
+            FailPoint("zero segment", 0xFFFFFFFFFFFFFFFF),
             Set,
             Set,
             Set,
@@ -431,7 +447,7 @@ fn failpoints_bug_6() {
             Set,
             Set,
             Restart,
-            FailPoint("zero segment post"),
+            FailPoint("zero segment post", 0xFFFFFFFFFFFFFFFF),
             Set,
             Set,
             Set,
@@ -501,7 +517,7 @@ fn failpoints_bug_8() {
             Set,
             Set,
             Del(0),
-            FailPoint("buffer write post"),
+            FailPoint("buffer write post", 0xFFFFFFFFFFFFFFFF),
             Del(179),
         ],
         false,
@@ -804,7 +820,7 @@ fn failpoints_bug_11() {
             Del(21),
             Set,
             Set,
-            FailPoint("buffer write post"),
+            FailPoint("buffer write post", 0xFFFFFFFFFFFFFFFF),
             Set,
             Set,
             Restart,
@@ -873,7 +889,7 @@ fn failpoints_bug_13() {
             Set,
             Set,
             Set,
-            FailPoint("snap write"),
+            FailPoint("snap write", 0xFFFFFFFFFFFFFFFF),
             Del(4),
         ],
         false,
@@ -885,7 +901,7 @@ fn failpoints_bug_14() {
     // postmortem 1: improper bounds on splits caused a loop to happen
     assert!(prop_tree_crashes_nicely(
         vec![
-            FailPoint("blob blob write"),
+            FailPoint("blob blob write", 0xFFFFFFFFFFFFFFFF),
             Set,
             Set,
             Set,
@@ -915,7 +931,7 @@ fn failpoints_bug_14() {
 fn failpoints_bug_15() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
-        vec![FailPoint("buffer write"), Id, Restart, Id],
+        vec![FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF), Id, Restart, Id],
         false,
     ))
 }
@@ -924,7 +940,7 @@ fn failpoints_bug_15() {
 fn failpoints_bug_16() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
-        vec![FailPoint("zero garbage segment"), Id, Id],
+        vec![FailPoint("zero garbage segment", 0xFFFFFFFFFFFFFFFF), Id, Id],
         false,
     ))
 }
@@ -952,7 +968,7 @@ fn failpoints_bug_17() {
             Del(3),
             Restart,
             Id,
-            FailPoint("blob blob write"),
+            FailPoint("blob blob write", 0xFFFFFFFFFFFFFFFF),
             Id,
             Restart,
             Id,
@@ -1106,7 +1122,7 @@ fn failpoints_bug_21() {
 fn failpoints_bug_22() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
-        vec![Id, FailPoint("buffer write"), Set, Id],
+        vec![Id, FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF), Set, Id],
         false,
     ))
 }
@@ -1115,7 +1131,7 @@ fn failpoints_bug_22() {
 fn failpoints_bug_23() {
     // postmortem 1: failed to handle allocation failures
     assert!(prop_tree_crashes_nicely(
-        vec![Set, FailPoint("blob blob write"), Set, Set, Set],
+        vec![Set, FailPoint("blob blob write", 0xFFFFFFFFFFFFFFFF), Set, Set, Set],
         false,
     ))
 }
@@ -1125,7 +1141,7 @@ fn failpoints_bug_24() {
     // postmortem 1: was incorrectly setting global
     // errors, and they were being used-after-free
     assert!(prop_tree_crashes_nicely(
-        vec![FailPoint("buffer write"), Id,],
+        vec![FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF), Id,],
         false,
     ))
 }
@@ -1147,7 +1163,7 @@ fn failpoints_bug_25() {
             Id,
             Del(183),
             Id,
-            FailPoint("snap write crc"),
+            FailPoint("snap write crc", 0xFFFFFFFFFFFFFFFF),
             Del(141),
             Del(8),
             Del(188),
@@ -1166,7 +1182,7 @@ fn failpoints_bug_25() {
             Del(198),
             Del(57),
             Id,
-            FailPoint("snap write mv"),
+            FailPoint("snap write mv", 0xFFFFFFFFFFFFFFFF),
             Set,
             Del(164),
             Del(43),
@@ -1346,11 +1362,11 @@ fn failpoints_bug_29() {
     // into certain entries even when there was an intervening crash
     // between the Set and the Flush
     assert!(prop_tree_crashes_nicely(
-        vec![FailPoint("buffer write"), Set, Flush, Restart],
+        vec![FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF), Set, Flush, Restart],
         false,
     ));
     assert!(prop_tree_crashes_nicely(
-        vec![Set, Set, Set, FailPoint("snap write mv"), Set, Flush, Restart],
+        vec![Set, Set, Set, FailPoint("snap write mv", 0xFFFFFFFFFFFFFFFF), Set, Flush, Restart],
         false,
     ));
 }
@@ -1359,7 +1375,7 @@ fn failpoints_bug_29() {
 fn failpoints_bug_30() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
-        vec![Set, FailPoint("buffer write"), Restart, Flush, Id],
+        vec![Set, FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF), Restart, Flush, Id],
         false,
     ));
 }
