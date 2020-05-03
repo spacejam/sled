@@ -1144,6 +1144,10 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
                     "hit error while writing iobuf with lsn {}: {:?}",
                     lsn, e
                 );
+
+                // store error before notifying so that waiting threads will see it
+                iobufs.config.set_global_error(e);
+
                 let intervals = iobufs.intervals.lock();
 
                 // having held the mutex makes this linearized
@@ -1151,7 +1155,6 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
                 drop(intervals);
 
                 let _notified = iobufs.interval_updated.notify_all();
-                iobufs.config.set_global_error(e);
             }
         });
 
