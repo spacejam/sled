@@ -14,7 +14,6 @@ pub struct LogIter {
     pub segment_base: Option<BasedBuf>,
     pub max_lsn: Lsn,
     pub cur_lsn: Lsn,
-    pub segment_lid: Option<LogOffset>,
 }
 
 impl Iterator for LogIter {
@@ -30,29 +29,21 @@ impl Iterator for LogIter {
                 self.config.segment_size,
             );
 
-            if self.segment_base.is_none() || remaining_seg_too_small_for_msg {
-                if let Some((next_lsn, next_lid)) = self.next_segment() {
-                    assert!(
-                        next_lsn + (self.config.segment_size as Lsn)
-                            >= self.cur_lsn,
-                        "caller is responsible for providing segments \
-                         that contain the initial cur_lsn value or higher"
+            if remaining_seg_too_small_for_msg {
+                // clearing this also communicates to code in
+                // the snapshot generation logic that there was
+                // no more available space for a message in the
+                // last read segment
+                self.segment_base = None;
+            }
+
+            if self.segment_base.is_none() {
+                if let Err(e) = self.read_segment() {
+                    debug!(
+                        "hit snap while reading segments in \
+                         iterator: {:?}",
+                        e
                     );
-
-                    #[cfg(target_os = "linux")]
-                    self.fadvise_willneed(next_lid);
-
-                    if let Err(e) = self.read_segment(next_lsn, next_lid) {
-                        debug!(
-                            "hit snap while reading segments in \
-                             iterator: {:?}",
-                            e
-                        );
-                        return None;
-                    }
-                } else {
-                    trace!("no segments remaining to iterate over");
-
                     return None;
                 }
             }
@@ -71,7 +62,7 @@ impl Iterator for LogIter {
 
             let segment_base = &self.segment_base.as_ref().unwrap();
 
-            let lid = segment_base.1
+            let lid = segment_base.offset
                 + LogOffset::try_from(
                     self.cur_lsn % self.config.segment_size as Lsn,
                 )
@@ -170,17 +161,28 @@ impl Iterator for LogIter {
 }
 
 impl LogIter {
-    fn next_segment(&mut self) -> Option<(Lsn, LogOffset)> {
-        let first_ref = self.segments.iter().next()?;
-        let first = (*first_ref.0, *first_ref.1);
-        self.segments.remove(&first.0);
-        Some(first)
-    }
-
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
-    fn read_segment(&mut self, lsn: Lsn, offset: LogOffset) -> Result<()> {
+    fn read_segment(&mut self) -> Result<()> {
         let _measure = Measure::new(&M.segment_read);
+        if self.segments.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "no segments remaining to iterate over",
+            )
+            .into());
+        }
+
+        let first_ref = self.segments.iter().next().unwrap();
+        let (lsn, offset) = (*first_ref.0, *first_ref.1);
+        //Some(first)
+
+        assert!(
+            lsn + (self.config.segment_size as Lsn) >= self.cur_lsn,
+            "caller is responsible for providing segments \
+             that contain the initial cur_lsn value or higher"
+        );
+
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,
@@ -220,38 +222,21 @@ impl LogIter {
         trace!("read segment header {:?}", segment_header);
 
         self.cur_lsn = segment_header.lsn + SEG_HEADER_LEN as Lsn;
-        self.segment_lid = Some(offset);
 
         let mut buf = vec![0; self.config.segment_size];
         let size = pread_exact_or_eof(f, &mut buf, offset)?;
 
         trace!("setting stored segment buffer length to {} after read", size);
         buf.truncate(size);
-        self.segment_base = Some(BasedBuf(buf, offset));
+        self.segment_base = Some(BasedBuf { buf, offset });
+
+        // NB this should only happen after we've successfully read
+        // the header, because we want to zero the segment if we
+        // fail to read that, and we use the remaining segment
+        // list to perform zeroing off of.
+        self.segments.remove(&lsn);
 
         Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    fn fadvise_willneed(&self, lid: LogOffset) {
-        use std::os::unix::io::AsRawFd;
-
-        let f = &self.config.file;
-        #[allow(unsafe_code)]
-        let ret = unsafe {
-            libc::posix_fadvise(
-                f.as_raw_fd(),
-                libc::off_t::try_from(lid).unwrap(),
-                libc::off_t::try_from(self.config.segment_size).unwrap(),
-                libc::POSIX_FADV_WILLNEED,
-            )
-        };
-        if ret != 0 {
-            panic!(
-                "failed to call fadvise: {}",
-                std::io::Error::from_raw_os_error(ret)
-            );
-        }
     }
 }
 
@@ -429,7 +414,6 @@ fn check_contiguity_in_unstable_tail(
         config: config.clone(),
         segments: logical_tail,
         segment_base: None,
-        segment_lid: None,
         max_lsn: missing_item_in_tail.unwrap_or(Lsn::max_value()),
         cur_lsn: 0,
     };
@@ -494,7 +478,6 @@ pub fn raw_segment_iter_from(
         config: config.clone(),
         max_lsn: end_of_last_contiguous_msg,
         cur_lsn: 0,
-        segment_lid: None,
         segment_base: None,
         segments,
     })

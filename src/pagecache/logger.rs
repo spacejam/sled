@@ -272,9 +272,10 @@ impl Log {
 
             // try to claim space
             let prospective_size = buf_offset + inline_buf_len;
-            // we don't reserve anything if we're within the last MAX_MSG_HEADER_LEN
-            // bytes of the buffer. during recovery, we assume that nothing
-            // can begin here, because headers are dynamically sized.
+            // we don't reserve anything if we're within the last
+            // MAX_MSG_HEADER_LEN bytes of the buffer. during
+            // recovery, we assume that nothing can begin here,
+            // because headers are dynamically sized.
             let red_zone = iobuf.capacity - buf_offset < MAX_MSG_HEADER_LEN;
             let would_overflow = prospective_size > iobuf.capacity || red_zone;
             if would_overflow {
@@ -651,19 +652,19 @@ impl ReadAt for File {
 
 impl ReadAt for BasedBuf {
     fn pread_exact(&self, dst: &mut [u8], mut at: u64) -> std::io::Result<()> {
-        if at < self.1
+        if at < self.offset
             || u64::try_from(dst.len()).unwrap() + at
-                > u64::try_from(self.0.len()).unwrap() + self.1
+                > u64::try_from(self.buf.len()).unwrap() + self.offset
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "failed to fill buffer",
             ));
         }
-        at -= self.1;
+        at -= self.offset;
         let at_usize = usize::try_from(at).unwrap();
         let to_usize = at_usize + dst.len();
-        dst.copy_from_slice(self.0[at_usize..to_usize].as_ref());
+        dst.copy_from_slice(self.buf[at_usize..to_usize].as_ref());
         Ok(())
     }
 
@@ -672,21 +673,23 @@ impl ReadAt for BasedBuf {
         dst: &mut [u8],
         mut at: u64,
     ) -> std::io::Result<usize> {
-        if at < self.1 || u64::try_from(self.0.len()).unwrap() < at - self.1 {
+        if at < self.offset
+            || u64::try_from(self.buf.len()).unwrap() < at - self.offset
+        {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "failed to fill buffer",
             ));
         }
-        at -= self.1;
+        at -= self.offset;
 
         let at_usize = usize::try_from(at).unwrap();
 
-        let len = std::cmp::min(dst.len(), self.0.len() - at_usize);
+        let len = std::cmp::min(dst.len(), self.buf.len() - at_usize);
 
         let start = at_usize;
         let end = start + len;
-        dst[..len].copy_from_slice(self.0[start..end].as_ref());
+        dst[..len].copy_from_slice(self.buf[start..end].as_ref());
         Ok(len)
     }
 }
@@ -704,7 +707,8 @@ pub(crate) fn read_message<R: ReadAt>(
     trace!("reading message from segment: {} at lid: {}", seg_start, lid);
     assert!(seg_start + SEG_HEADER_LEN as LogOffset <= lid);
     assert!(
-        (seg_start + segment_len as LogOffset) - lid >= MAX_MSG_HEADER_LEN as LogOffset,
+        (seg_start + segment_len as LogOffset) - lid
+            >= MAX_MSG_HEADER_LEN as LogOffset,
         "tried to read a message from the red zone"
     );
 
@@ -804,8 +808,7 @@ pub(crate) fn read_message<R: ReadAt>(
                 {
                     debug!(
                         "underlying blob file not found for blob {} in segment number {:?}",
-                        id,
-                        header.segment_number,
+                        id, header.segment_number,
                     );
                     Ok(LogRead::DanglingBlob(header, id, inline_len))
                 }

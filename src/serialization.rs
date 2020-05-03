@@ -438,8 +438,8 @@ impl Serialize for Node {
 
 impl Serialize for Snapshot {
     fn serialized_size(&self) -> u64 {
-        self.last_lsn.serialized_size()
-            + self.last_lid.serialized_size()
+        self.stable_lsn.serialized_size()
+            + self.tip_lid.unwrap_or(0).serialized_size()
             + self
                 .pt
                 .iter()
@@ -448,8 +448,8 @@ impl Serialize for Snapshot {
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        self.last_lsn.serialize_into(buf);
-        self.last_lid.serialize_into(buf);
+        self.stable_lsn.serialize_into(buf);
+        self.tip_lid.unwrap_or(0).serialize_into(buf);
         for page_state in &self.pt {
             page_state.serialize_into(buf);
         }
@@ -457,8 +457,11 @@ impl Serialize for Snapshot {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         Ok(Snapshot {
-            last_lsn: { i64::deserialize(buf)? },
-            last_lid: { u64::deserialize(buf)? },
+            stable_lsn: { i64::deserialize(buf)? },
+            tip_lid: {
+                let lid = u64::deserialize(buf)?;
+                if lid != 0 { Some(lid) } else { None }
+            },
             pt: deserialize_sequence(buf)?,
         })
     }
@@ -932,8 +935,8 @@ mod qc {
     impl Arbitrary for Snapshot {
         fn arbitrary<G: Gen>(g: &mut G) -> Snapshot {
             Snapshot {
-                last_lsn: g.gen(),
-                last_lid: g.gen(),
+                stable_lsn: g.gen(),
+                tip_lid: g.gen(),
                 pt: Arbitrary::arbitrary(g),
             }
         }

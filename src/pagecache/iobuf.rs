@@ -515,7 +515,6 @@ impl IoBufs {
             config: self.config.clone(),
             max_lsn: self.stable(),
             cur_lsn: corrected_lsn,
-            segment_lid: None,
             segment_base: None,
             segments,
         }

@@ -5,8 +5,8 @@ use crate::*;
 
 use super::{
     arr_to_u32, gc_blobs, pwrite_all, raw_segment_iter_from, u32_to_arr,
-    u64_to_arr, DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind,
-    MAX_MSG_HEADER_LEN,
+    u64_to_arr, BasedBuf, DiskPtr, LogIter, LogKind, LogOffset, Lsn,
+    MessageKind,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -15,9 +15,9 @@ use super::{
 #[cfg_attr(test, derive(Clone, PartialEq))]
 pub struct Snapshot {
     /// The last read message lsn
-    pub last_lsn: Lsn,
+    pub stable_lsn: Lsn,
     /// The last read message lid
-    pub last_lid: LogOffset,
+    pub tip_lid: Option<LogOffset>,
     /// the mapping from pages to (lsn, lid)
     pub pt: Vec<PageState>,
 }
@@ -148,7 +148,7 @@ fn advance_snapshot(
 
     trace!("building on top of old snapshot: {:?}", snapshot);
 
-    let old_last_lsn = snapshot.last_lsn;
+    let old_stable_lsn = snapshot.stable_lsn;
 
     while let Some((log_kind, pid, lsn, ptr, sz)) = iter.next() {
         trace!(
@@ -158,65 +158,76 @@ fn advance_snapshot(
             ptr
         );
 
-        if lsn < snapshot.last_lsn {
-            // don't process already-processed Lsn's. last_lsn is for the last
+        if lsn < snapshot.stable_lsn {
+            // don't process already-processed Lsn's. stable_lsn is for the last
             // item ALREADY INCLUDED lsn in the snapshot.
             trace!(
-                "continuing in advance_snapshot, lsn {} ptr {} last_lsn {}",
+                "continuing in advance_snapshot, lsn {} ptr {} stable_lsn {:?}",
                 lsn,
                 ptr,
-                snapshot.last_lsn
+                snapshot.stable_lsn
             );
             continue;
         }
 
-        assert!(lsn >= snapshot.last_lsn);
-        snapshot.last_lsn = lsn + Lsn::try_from(sz).unwrap();
-        snapshot.last_lid = ptr.lid() + sz;
-
         snapshot.apply(log_kind, pid, lsn, ptr, sz);
     }
 
-    if (config.segment_size as Lsn)
-        - snapshot.last_lsn % (config.segment_size as Lsn)
-        < (MAX_MSG_HEADER_LEN as Lsn)
-    {
-        let current_segment_idx =
-            snapshot.last_lsn / (config.segment_size as Lsn);
-        let end_of_segment =
-            (current_segment_idx + 1) * (config.segment_size as Lsn);
+    // `snapshot.tip_lid` can be set based on 4 possibilities for the tip of the
+    // log:
+    // 1. an empty DB - tip set to None, causing a fresh segment to be
+    //    allocated on initialization
+    // 2. the recovered tip is at the end of a
+    //    segment with less space left than would fit MAX_MSG_HEADER_LEN -
+    //    tip set to None, causing a fresh segment to be allocated on
+    //    initialization, as in #1 above
+    // 3. the recovered tip is in the middle of a segment - both set to the end
+    //    of the last valid message, causing the system to be initialized to
+    //    that point without allocating a new segment
+    // 4. the recovered tip is at the beginning of a new segment, but without
+    //    any valid messages in it yet. treat as #3 above, but also take care
+    //    in te SA initialization to properly initialize any segment tracking
+    //    state despite not having any pages currently residing there.
+    //
+    // The information we have at this point is iter.cur_lsn and the
+    // iter.segment_base.offset. Situation 1 & 2 happen if iter.cur_lsn %
+    // segment_size == 0, and result in None for the recovered log tip.
+    // Situations 3 & 4 otherwise. We don't need to differentiate between them
+    // here.
 
+    let segment_progress: Lsn = iter.cur_lsn % (config.segment_size as Lsn);
+    snapshot.stable_lsn = iter.cur_lsn;
+
+    if segment_progress == 0 || iter.segment_base.is_none() {
+        // either situation 1 or situation 2
+        snapshot.tip_lid = None;
+    } else if let Some(BasedBuf { offset, .. }) = iter.segment_base {
+        // either situation 3 or situation 4. we need to zero the
+
+        snapshot.tip_lid = Some(offset + segment_progress as LogOffset);
+
+        // zero the tail of the segment after the recovered tip
+        let shred_len = config.segment_size - segment_progress as usize;
+        let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
         debug!(
-            "remaining segment is too small for another message. setting last_lsn to {}",
-            end_of_segment
+            "zeroing the end of the recovered segment between {} and {}",
+            snapshot.tip_lid.unwrap(),
+            snapshot.tip_lid.unwrap() + shred_len as LogOffset
         );
-
-        snapshot.last_lsn = end_of_segment;
+        pwrite_all(&config.file, &shred_zone, snapshot.tip_lid.unwrap())?;
+        config.file.sync_all()?;
+    } else {
+        unreachable!()
     }
 
-    trace!("generated snapshot: {:#?}", snapshot);
+    trace!("generated snapshot: {:?}", snapshot);
 
-    if snapshot.last_lsn != old_last_lsn {
+    if snapshot.stable_lsn != old_stable_lsn {
         write_snapshot(config, &snapshot)?;
     }
 
-    let mut to_zero: Vec<_> = iter.segments.values().copied().collect();
-
-    if let Some(segment_lid) = iter.segment_lid {
-        if snapshot.last_lid < segment_lid {
-            // the snapshot never made it into
-            // this segment, so we can free it
-            debug!(
-                "adding segment with 0 recovered messages \
-                to the to_zero list: {}",
-                segment_lid
-            );
-            to_zero.push(segment_lid);
-        }
-    }
-
-    for lid in to_zero {
-        debug!("zeroing torn segment at lid {}", lid);
+    for to_zero in iter.segments.values().copied() {
+        debug!("zeroing torn segment at lid {}", to_zero);
 
         // NB we intentionally corrupt this header to prevent any segment
         // from being allocated which would duplicate its LSN, messing
@@ -225,7 +236,7 @@ fn advance_snapshot(
         pwrite_all(
             &config.file,
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
-            lid,
+            to_zero,
         )?;
         if !config.temporary {
             config.file.sync_all()?;
@@ -233,25 +244,10 @@ fn advance_snapshot(
     }
 
     // remove all blob files larger than our stable offset
-    gc_blobs(config, snapshot.last_lsn)?;
-
-    // zero the tail of the segment after the recovered tip
-    let segment_size = config.segment_size;
-    let last_segment_base = config.normalize(snapshot.last_lid);
-    let next_segment_base = last_segment_base + segment_size as LogOffset;
-    let shred_len =
-        usize::try_from(next_segment_base - snapshot.last_lid).unwrap();
-    let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
-    debug!(
-        "zeroing the end of the recovered segment between {} and {}",
-        snapshot.last_lid,
-        snapshot.last_lid + shred_len as LogOffset
-    );
-    pwrite_all(&config.file, &shred_zone, snapshot.last_lid)?;
-    config.file.sync_all()?;
+    gc_blobs(config, iter.cur_lsn)?;
 
     #[cfg(feature = "event_log")]
-    config.event_log.recovered_lsn(snapshot.last_lsn);
+    config.event_log.recovered_lsn(iter.cur_lsn);
 
     Ok(snapshot)
 }
@@ -261,7 +257,7 @@ fn advance_snapshot(
 pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
     let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
-    let log_iter = raw_segment_iter_from(last_snap.last_lsn, config)?;
+    let log_iter = raw_segment_iter_from(last_snap.stable_lsn, config)?;
 
     let res = advance_snapshot(log_iter, last_snap, config)?;
 
@@ -351,12 +347,12 @@ fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
     let crc32: [u8; 4] = u32_to_arr(crc32(&bytes));
     let len_bytes: [u8; 8] = u64_to_arr(decompressed_len as u64);
 
-    let path_1_suffix = format!("snap.{:016X}.generating", snapshot.last_lsn);
+    let path_1_suffix = format!("snap.{:016X}.generating", snapshot.stable_lsn);
 
     let mut path_1 = config.get_path();
     path_1.push(path_1_suffix);
 
-    let path_2_suffix = format!("snap.{:016X}", snapshot.last_lsn);
+    let path_2_suffix = format!("snap.{:016X}", snapshot.stable_lsn);
 
     let mut path_2 = config.get_path();
     path_2.push(path_2_suffix);

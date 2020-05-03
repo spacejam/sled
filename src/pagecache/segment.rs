@@ -512,6 +512,22 @@ impl SegmentAccountant {
         // generate segments from snapshot lids
         let mut segments = vec![Segment::default(); number_of_segments];
 
+        // sometimes the current segment is still empty, after only
+        // recovering the segment header but no valid messages yet
+        if let Some(tip_lid) = snapshot.tip_lid {
+            if tip_lid % segment_size as LogOffset
+                == SEG_HEADER_LEN as LogOffset
+            {
+                let tip_idx = (tip_lid / segment_size as LogOffset) as usize;
+                if tip_idx == number_of_segments {
+                    segments.push(Segment::default());
+                }
+                segments[tip_idx].recovery_ensure_initialized(
+                    self.config.normalize(snapshot.stable_lsn),
+                );
+            }
+        }
+
         let add =
             |pid, lsn: Lsn, sz, lid: LogOffset, segments: &mut Vec<Segment>| {
                 let idx = assert_usize(lid / segment_size as LogOffset);
@@ -569,30 +585,12 @@ impl SegmentAccountant {
 
         self.segments = segments;
 
-        let currently_active_segment = {
-            // this logic allows us to free the last
-            // active segment if it was empty.
-            let prospective_currently_active_segment =
-                usize::try_from(snapshot.last_lid / segment_size as LogOffset)
-                    .unwrap();
-            if let Some(segment) =
-                self.segments.get(prospective_currently_active_segment)
-            {
-                if segment.is_empty() {
-                    // we want to add this to the free list below,
-                    // so don't skip freeing it for being active
-                    usize::max_value()
-                } else {
-                    prospective_currently_active_segment
-                }
-            } else {
-                // segment was not used yet
-                usize::max_value()
-            }
-        };
-
         let mut to_free = vec![];
         let mut maybe_clean = vec![];
+
+        let currently_active_segment = snapshot
+            .tip_lid
+            .map(|tl| (tl / segment_size as LogOffset) as usize);
 
         for (idx, segment) in self.segments.iter_mut().enumerate() {
             let segment_base = idx as LogOffset * segment_size as LogOffset;
@@ -615,8 +613,10 @@ impl SegmentAccountant {
 
             let segment_lsn = segment.lsn();
 
-            if idx != currently_active_segment {
-                maybe_clean.push((idx, segment_lsn));
+            if let Some(tip_idx) = currently_active_segment {
+                if tip_idx != idx {
+                    maybe_clean.push((idx, segment_lsn));
+                }
             }
         }
 

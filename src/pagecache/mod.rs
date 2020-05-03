@@ -87,7 +87,10 @@ pub struct BatchManifest(pub Lsn);
 /// A buffer with an associated offset. Useful for
 /// batching many reads over a file segment.
 #[derive(Debug)]
-pub struct BasedBuf(pub Vec<u8>, pub u64);
+pub struct BasedBuf {
+    pub buf: Vec<u8>,
+    pub offset: LogOffset,
+}
 
 /// A byte used to disambiguate log message types
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1506,34 +1509,60 @@ impl PageCache {
             ));
         }
 
-        let page_view = match self.inner.get(pid, guard) {
-            None => return Ok(None),
-            Some(p) => p,
-        };
+        let mut last_attempted_cache_info = None;
+        let mut last_err = None;
+        let mut page_view;
 
-        if page_view.is_free() {
-            return Ok(None);
-        }
+        let mut updates: Vec<Update> = loop {
+            // we loop here because if the page we want to
+            // pull is moved, we want to retry. but if we
+            // get a corruption and then
+            page_view = match self.inner.get(pid, guard) {
+                None => return Ok(None),
+                Some(p) => p,
+            };
 
-        if page_view.update.is_some() {
-            // possibly evict an item now that our cache has grown
-            let total_page_size = page_view.log_size();
-            let to_evict = self.lru.accessed(pid, total_page_size, guard);
-            trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
-            if !to_evict.is_empty() {
-                self.page_out(to_evict, guard)?;
+            if page_view.is_free() {
+                return Ok(None);
             }
-            return Ok(Some(NodeView(page_view)));
-        }
 
-        // need to page-in
-        let updates_result: Result<Vec<Update>> = page_view
-            .cache_infos
-            .iter()
-            .map(|ci| self.pull(pid, ci.lsn, ci.pointer))
-            .collect();
+            if page_view.update.is_some() {
+                // possibly evict an item now that our cache has grown
+                let total_page_size = page_view.log_size();
+                let to_evict = self.lru.accessed(pid, total_page_size, guard);
+                trace!(
+                    "accessed pid {} -> paging out pids {:?}",
+                    pid,
+                    to_evict
+                );
+                if !to_evict.is_empty() {
+                    self.page_out(to_evict, guard)?;
+                }
+                return Ok(Some(NodeView(page_view)));
+            }
 
-        let mut updates: Vec<Update> = updates_result?;
+            if page_view.cache_infos.first()
+                == last_attempted_cache_info.as_ref()
+            {
+                return Err(last_err.unwrap());
+            } else {
+                last_attempted_cache_info =
+                    page_view.cache_infos.first().copied();
+            }
+
+            // need to page-in
+            let updates_result: Result<Vec<Update>> = page_view
+                .cache_infos
+                .iter()
+                .map(|ci| self.pull(pid, ci.lsn, ci.pointer))
+                .collect();
+
+            last_err = if let Ok(updates) = updates_result {
+                break updates;
+            } else {
+                Some(updates_result.unwrap_err())
+            };
+        };
 
         let (base_slice, links) = updates.split_at_mut(1);
 
@@ -1584,11 +1613,6 @@ impl PageCache {
 
             self.get(pid, guard)
         }
-    }
-
-    /// The highest known stable Lsn on disk.
-    pub fn stable_lsn(&self) -> Lsn {
-        self.log.stable_offset()
     }
 
     /// Blocks until the provided Lsn is stable on disk,
@@ -1658,9 +1682,9 @@ impl PageCache {
                     // this is the most pessimistic case, hopefully
                     // we only ever hit this on the first ID generation
                     // of a process's lifetime
-                    let _written = self.flush()?;
-                } else if key.last_lsn() > self.stable_lsn() {
-                    let _written = self.make_stable(key.last_lsn())?;
+                    self.flush()?;
+                } else {
+                    self.make_stable(key.last_lsn())?;
                 }
             }
         }
