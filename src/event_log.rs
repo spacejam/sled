@@ -76,9 +76,13 @@ impl EventLog {
                         assert!(
                             later_lsn >= lsn,
                             "lsn must never go down between recoveries \
-                            or stabilizations. It was {} but later became {}",
+                            or stabilizations. It was {} but later became {}. history: {:?}",
                             lsn,
                             later_lsn,
+                            self.iter(&guard)
+                                .filter(|e| matches!(e, Event::Stabilized(_))
+                                    || matches!(e, Event::RecoveredLsn(_)))
+                                .collect::<Vec<_>>(),
                         );
                     }
                     minimum_lsn = Some(lsn);
