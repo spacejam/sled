@@ -911,6 +911,16 @@ pub(in crate::pagecache) fn make_stable(
         // block until another thread updates the stable lsn
         let mut waiter = iobufs.intervals.lock();
 
+        // check global error again now that we are holding a mutex
+        if let Err(e) = iobufs.config.global_error() {
+            // having held the mutex makes this linearized
+            // with the notify below.
+            drop(waiter);
+
+            let _notified = iobufs.interval_updated.notify_all();
+            return Err(e);
+        }
+
         stable = iobufs.stable();
         if stable < lsn {
             trace!("waiting on cond var for make_stable({})", lsn);
