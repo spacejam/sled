@@ -196,7 +196,13 @@ fn advance_snapshot(
     // here.
 
     let segment_progress: Lsn = iter.cur_lsn % (config.segment_size as Lsn);
-    snapshot.stable_lsn = iter.cur_lsn;
+    snapshot.stable_lsn = if segment_progress + MAX_MSG_HEADER_LEN as Lsn
+        >= config.segment_size as Lsn
+    {
+        config.normalize(iter.cur_lsn) + config.segment_size as Lsn
+    } else {
+        iter.cur_lsn
+    };
 
     if segment_progress == 0 || iter.segment_base.is_none() {
         // either situation 1 or situation 2
@@ -244,10 +250,10 @@ fn advance_snapshot(
     }
 
     // remove all blob files larger than our stable offset
-    gc_blobs(config, iter.cur_lsn)?;
+    gc_blobs(config, snapshot.stable_lsn)?;
 
     #[cfg(feature = "event_log")]
-    config.event_log.recovered_lsn(iter.cur_lsn);
+    config.event_log.recovered_lsn(snapshot.stable_lsn);
 
     Ok(snapshot)
 }
