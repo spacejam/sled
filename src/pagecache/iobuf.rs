@@ -325,10 +325,6 @@ impl Drop for IoBufs {
 /// writes to underlying storage.
 impl IoBufs {
     pub fn start(config: RunningConfig, snapshot: &Snapshot) -> Result<IoBufs> {
-        let next_lsn = snapshot.last_lsn;
-        let next_lid = snapshot.last_lid;
-        let segment_size = config.segment_size;
-
         let segment_cleaner = SegmentCleaner::default();
 
         let mut segment_accountant: SegmentAccountant =
@@ -337,6 +333,35 @@ impl IoBufs {
                 snapshot,
                 segment_cleaner.clone(),
             )?;
+
+        let segment_size = config.segment_size;
+
+        let (next_lid, next_lsn) = if let Some(next_lid) = snapshot.tip_lid {
+            debug!(
+                "starting log at split offset {}, recovered lsn {}",
+                next_lid, snapshot.stable_lsn
+            );
+            (next_lid, snapshot.stable_lsn)
+        } else {
+            // allocate new segment for data
+
+            let next_lsn = if snapshot.stable_lsn % segment_size as Lsn == 0 {
+                snapshot.stable_lsn
+            } else {
+                let lsn_idx = snapshot.stable_lsn / segment_size as Lsn;
+                (lsn_idx + 1) * segment_size as Lsn
+            };
+            let next_lid = segment_accountant.next(next_lsn)?;
+
+            debug!(
+                "starting log at clean offset {}, recovered lsn {}",
+                next_lid, next_lsn
+            );
+
+            (next_lid, next_lsn)
+        };
+
+        assert!(next_lsn >= next_lid as Lsn);
 
         debug!(
             "starting IoBufs with next_lsn: {} \
@@ -348,58 +373,24 @@ impl IoBufs {
         // of our file has not yet been written.
         let stable = next_lsn - 1;
 
-        let iobuf = if next_lsn % config.segment_size as Lsn == 0 {
-            // allocate new segment for data
+        // the tip offset is not completely full yet, reuse it
+        let base = assert_usize(next_lid % segment_size as LogOffset);
 
-            if next_lsn == 0 {
-                assert_eq!(next_lid, 0);
-            }
-            let lid = segment_accountant.next(next_lsn)?;
-            if next_lsn == 0 {
-                assert_eq!(0, lid);
-            }
-
-            debug!(
-                "starting log at clean offset {}, recovered lsn {}",
-                next_lid, next_lsn
-            );
-
-            let mut iobuf = IoBuf {
-                buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
-                header: CachePadded::new(AtomicU64::new(0)),
-                base: 0,
-                offset: lid,
-                lsn: 0,
-                capacity: segment_size,
-                maxed: AtomicBool::new(false),
-                linearizer: Mutex::new(()),
-                stored_max_stable_lsn: -1,
-            };
-
-            iobuf.store_segment_header(0, next_lsn, stable);
-
-            iobuf
-        } else {
-            // the tip offset is not completely full yet, reuse it
-            let base = assert_usize(next_lid % segment_size as LogOffset);
-
-            debug!(
-                "starting log at split offset {}, recovered lsn {}",
-                next_lid, next_lsn
-            );
-
-            IoBuf {
-                buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
-                header: CachePadded::new(AtomicU64::new(0)),
-                base,
-                offset: next_lid,
-                lsn: next_lsn,
-                capacity: segment_size - base,
-                maxed: AtomicBool::new(false),
-                linearizer: Mutex::new(()),
-                stored_max_stable_lsn: -1,
-            }
+        let mut iobuf = IoBuf {
+            buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
+            header: CachePadded::new(AtomicU64::new(0)),
+            base,
+            offset: next_lid,
+            lsn: next_lsn,
+            capacity: segment_size - base,
+            maxed: AtomicBool::new(false),
+            linearizer: Mutex::new(()),
+            stored_max_stable_lsn: -1,
         };
+
+        if snapshot.tip_lid.is_none() {
+            iobuf.store_segment_header(0, next_lsn, stable);
+        }
 
         Ok(IoBufs {
             config,
