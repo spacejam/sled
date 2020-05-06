@@ -173,13 +173,6 @@ impl StorageParameters {
 ///     .cache_capacity(10_000_000_000)
 ///     .flush_every_ms(Some(1000));
 /// ```
-///
-/// ```
-/// // Read-only mode
-/// let _config = sled::Config::default()
-///     .path("/path/to/data".to_owned())
-///     .read_only(true);
-/// ```
 #[derive(Default, Debug, Clone)]
 pub struct Config(Arc<Inner>);
 
@@ -202,8 +195,6 @@ pub struct Inner {
     pub segment_size: usize,
     #[doc(hidden)]
     pub path: PathBuf,
-    #[doc(hidden)]
-    pub read_only: bool,
     #[doc(hidden)]
     pub create_new: bool,
     #[doc(hidden)]
@@ -233,7 +224,6 @@ impl Default for Inner {
             // generally useful
             path: PathBuf::from(DEFAULT_PATH),
             tmp_path: Config::gen_temp_path(),
-            read_only: false,
             create_new: false,
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             mode: Mode::LowSpace,
@@ -511,27 +501,10 @@ impl Config {
             "specify whether the system should run in \"small\" or \"fast\" mode"
         ),
         (use_compression, bool, "whether to use zstd compression"),
-        (
-            compression_factor,
-            i32,
-            "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."
-        ),
-        (
-            temporary,
-            bool,
-            "deletes the database after drop. if no path is set, uses /dev/shm on linux"
-        ),
-        (
-            create_new,
-            bool,
-            "attempts to exclusively open the database, failing if it already exists"
-        ),
-        (read_only, bool, "whether to run in read-only mode"),
-        (
-            print_profile_on_drop,
-            bool,
-            "print a performance profile when the Config is dropped"
-        )
+        (compression_factor, i32, "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."),
+        (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
+        (create_new, bool, "attempts to exclusively open the database, failing if it already exists"),
+        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped")
     );
 
     // panics if config options are outside of advised range
@@ -603,10 +576,7 @@ impl Config {
 
         let _ = options.create(true);
         let _ = options.read(true);
-
-        if !self.read_only {
-            let _ = options.write(true);
-        }
+        let _ = options.write(true);
 
         if self.create_new {
             options.create_new(true);
@@ -620,9 +590,7 @@ impl Config {
         {
             use fs2::FileExt;
 
-            let try_lock = if self.read_only {
-                file.try_lock_shared()
-            } else if cfg!(feature = "testing") {
+            let try_lock = if cfg!(feature = "testing") {
                 // we block here because during testing
                 // there are many filesystem race condition
                 // that happen, causing locks to be held

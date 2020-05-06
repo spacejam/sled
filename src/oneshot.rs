@@ -58,7 +58,7 @@ impl<T> OneShot<T> {
 }
 
 impl<T> Future for OneShot<T> {
-    type Output = T;
+    type Output = Option<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.mu.lock();
@@ -67,7 +67,7 @@ impl<T> Future for OneShot<T> {
         }
         if state.filled {
             state.fused = true;
-            Poll::Ready(state.item.take().unwrap())
+            Poll::Ready(state.item.take())
         } else {
             state.waker = Some(cx.waker().clone());
             Poll::Pending

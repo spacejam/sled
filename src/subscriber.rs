@@ -108,7 +108,7 @@ impl Future for Subscriber {
 
                     match Future::poll(future_rx, cx) {
                         Poll::Ready(Some(event)) => {
-                            return Poll::Ready(Some(event));
+                            return Poll::Ready(event);
                         }
                         Poll::Ready(None) => {
                             continue;

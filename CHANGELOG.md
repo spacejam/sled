@@ -32,6 +32,9 @@
   its argument by reference instead of by value.
 * `Event` has been changed to make the inner fields
   named instead of anonymous.
+* read-only mode has been removed due to not having
+  the resources to properly keep it tested while
+  making progress on high priority issues.
 
 # 0.31
 

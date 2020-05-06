@@ -148,12 +148,6 @@ impl Tree {
         trace!("setting key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_set);
 
-        if self.context.read_only {
-            return Err(Error::Unsupported(
-                "the database is in read-only mode".to_owned(),
-            ));
-        }
-
         let value = IVec::from(value);
 
         loop {
@@ -450,10 +444,6 @@ impl Tree {
 
         trace!("removing key {:?}", key.as_ref());
 
-        if self.context.read_only {
-            return Ok(None);
-        }
-
         loop {
             let View { pid, node_view, .. } =
                 self.view_for_key(key.as_ref(), guard)?;
@@ -553,12 +543,6 @@ impl Tree {
 
         let guard = pin();
         let _ = self.concurrency_control.read(&guard);
-
-        if self.context.read_only {
-            return Err(Error::Unsupported(
-                "can not perform a cas on a read-only Tree".into(),
-            ));
-        }
 
         let new = new.map(IVec::from);
 
@@ -851,11 +835,18 @@ impl Tree {
     /// should measure the performance impact of
     /// using it on realistic sustained workloads
     /// running on realistic hardware.
-    pub fn flush_async(
+    pub async fn flush_async(
         &self,
-    ) -> impl std::future::Future<Output = Result<usize>> {
+    ) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
-        threadpool::spawn(move || pagecache.flush())
+        if let Some(result) = threadpool::spawn(move || pagecache.flush()).await {
+            result
+        } else {
+            Err(Error::ReportableBug(
+                "threadpool failed to complete \
+                action before shutdown".to_string()
+            ))
+        }
     }
 
     /// Returns `true` if the `Tree` contains a value for
@@ -1059,12 +1050,6 @@ impl Tree {
     {
         trace!("merging key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_merge);
-
-        if self.context.read_only {
-            return Err(Error::Unsupported(
-                "the database is in read-only mode".to_owned(),
-            ));
-        }
 
         let merge_operator_opt = self.merge_operator.read();
 
