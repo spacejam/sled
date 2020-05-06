@@ -822,11 +822,18 @@ impl Tree {
     /// should measure the performance impact of
     /// using it on realistic sustained workloads
     /// running on realistic hardware.
-    pub fn flush_async(
+    pub async fn flush_async(
         &self,
-    ) -> impl std::future::Future<Output = Result<usize>> {
+    ) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
-        threadpool::spawn(move || pagecache.flush())
+        if let Some(result) = threadpool::spawn(move || pagecache.flush()).await {
+            result
+        } else {
+            Err(Error::ReportableBug(
+                "threadpool failed to complete \
+                action before shutdown".to_string()
+            ))
+        }
     }
 
     /// Returns `true` if the `Tree` contains a value for
