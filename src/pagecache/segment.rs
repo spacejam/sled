@@ -450,17 +450,6 @@ impl Segment {
             false
         }
     }
-
-    fn is_empty(&self) -> bool {
-        match self {
-            Segment::Active(Active { pids, .. })
-            | Segment::Inactive(Inactive { pids, .. }) => pids.is_empty(),
-            Segment::Draining(Draining { replaced_pids, max_pids, .. }) => {
-                replaced_pids == max_pids
-            }
-            Segment::Free(_) => false,
-        }
-    }
 }
 
 impl SegmentAccountant {
