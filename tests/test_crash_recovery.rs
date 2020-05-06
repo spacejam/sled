@@ -110,7 +110,7 @@ fn slice_to_u32(b: &[u8]) -> u32 {
 
 fn spawn_killah() {
     thread::spawn(|| {
-        let runtime = rand::thread_rng().gen_range(0, 20);
+        let runtime = rand::thread_rng().gen_range(0, 60);
         thread::sleep(Duration::from_millis(runtime));
         println!("~");
         exit(9);
@@ -205,19 +205,9 @@ fn run_batches_inner(db: sled::Db) {
         db.apply_batch(batch).unwrap();
     }
 
-    let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
-
-    if crash_during_initialization {
-        spawn_killah();
-    }
-
     let mut i = verify_batches(&db);
     i += 1;
     do_batch(i, &db);
-
-    if !crash_during_initialization {
-        spawn_killah();
-    }
 
     loop {
         i += 1;
@@ -242,6 +232,12 @@ fn run(dir: &str) {
 }
 
 fn run_batches(dir: &str) {
+    let crash_during_initialization = rand::thread_rng().gen_ratio(1, 10);
+
+    if crash_during_initialization {
+        spawn_killah();
+    }
+
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(1))
@@ -253,6 +249,11 @@ fn run_batches(dir: &str) {
 
     let t1 = thread::spawn(|| run_batches_inner(db));
     let t2 = thread::spawn(|| {}); // run_batches_inner(db2));
+
+    if !crash_during_initialization {
+        spawn_killah();
+    }
+
     match t1.join().and_then(|_| t2.join()) {
         Err(e) => {
             println!("worker thread failed: {:?}", e);
