@@ -196,12 +196,15 @@ fn advance_snapshot(
     // here.
 
     let segment_progress: Lsn = iter.cur_lsn % (config.segment_size as Lsn);
+
     snapshot.stable_lsn = if segment_progress + MAX_MSG_HEADER_LEN as Lsn
         >= config.segment_size as Lsn
     {
         config.normalize(iter.cur_lsn) + config.segment_size as Lsn
-    } else {
+    } else if iter.cur_lsn != 0 {
         iter.cur_lsn
+    } else {
+        snapshot.stable_lsn
     };
 
     if segment_progress == 0 || iter.segment_base.is_none() {
@@ -228,7 +231,9 @@ fn advance_snapshot(
 
     trace!("generated snapshot: {:?}", snapshot);
 
-    if snapshot.stable_lsn != old_stable_lsn {
+    assert!(snapshot.stable_lsn >= old_stable_lsn);
+
+    if snapshot.stable_lsn > old_stable_lsn {
         write_snapshot(config, &snapshot)?;
     }
 
