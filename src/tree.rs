@@ -148,12 +148,6 @@ impl Tree {
         trace!("setting key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_set);
 
-        if self.context.read_only {
-            return Err(Error::Unsupported(
-                "the database is in read-only mode".to_owned(),
-            ));
-        }
-
         let value = IVec::from(value);
 
         loop {
@@ -437,10 +431,6 @@ impl Tree {
 
         trace!("removing key {:?}", key.as_ref());
 
-        if self.context.read_only {
-            return Ok(None);
-        }
-
         loop {
             let View { pid, node_view, .. } =
                 self.view_for_key(key.as_ref(), guard)?;
@@ -540,12 +530,6 @@ impl Tree {
 
         let guard = pin();
         let _ = self.concurrency_control.read(&guard);
-
-        if self.context.read_only {
-            return Err(Error::Unsupported(
-                "can not perform a cas on a read-only Tree".into(),
-            ));
-        }
 
         let new = new.map(IVec::from);
 
@@ -1046,12 +1030,6 @@ impl Tree {
     {
         trace!("merging key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_merge);
-
-        if self.context.read_only {
-            return Err(Error::Unsupported(
-                "the database is in read-only mode".to_owned(),
-            ));
-        }
 
         let merge_operator_opt = self.merge_operator.read();
 
