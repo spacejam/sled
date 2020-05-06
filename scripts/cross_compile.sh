@@ -17,7 +17,7 @@ for target in $targets; do
   cargo check --target $target
 done
 
-rustup toolchain install 1.38.0
+rustup toolchain install 1.39.0
 cargo clean
 rm Cargo.lock
-cargo +1.38.0 check
+cargo +1.39.0 check
