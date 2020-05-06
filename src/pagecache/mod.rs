@@ -746,9 +746,6 @@ impl PageCache {
     /// to GC. Returns an Err if we encountered an IO problem
     /// while performing this GC.
     pub fn attempt_gc(&self) -> Result<bool> {
-        if self.config.read_only {
-            return Ok(false);
-        }
         let guard = pin();
         let to_clean = self.log.iobufs.segment_cleaner.pop();
         let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
