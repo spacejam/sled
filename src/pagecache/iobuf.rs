@@ -896,6 +896,16 @@ pub(in crate::pagecache) fn make_stable(
         // block until another thread updates the stable lsn
         let mut waiter = iobufs.intervals.lock();
 
+        // check global error again now that we are holding a mutex
+        if let Err(e) = iobufs.config.global_error() {
+            // having held the mutex makes this linearized
+            // with the notify below.
+            drop(waiter);
+
+            let _notified = iobufs.interval_updated.notify_all();
+            return Err(e);
+        }
+
         stable = iobufs.stable();
         if stable < lsn {
             trace!("waiting on cond var for make_stable({})", lsn);
@@ -1129,6 +1139,10 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
                     "hit error while writing iobuf with lsn {}: {:?}",
                     lsn, e
                 );
+
+                // store error before notifying so that waiting threads will see it
+                iobufs.config.set_global_error(e);
+
                 let intervals = iobufs.intervals.lock();
 
                 // having held the mutex makes this linearized
@@ -1136,7 +1150,6 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
                 drop(intervals);
 
                 let _notified = iobufs.interval_updated.notify_all();
-                iobufs.config.set_global_error(e);
             }
         });
 

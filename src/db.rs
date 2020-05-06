@@ -276,16 +276,16 @@ impl Db {
     /// than the current `sled::open` method:
     ///
     /// ```compile_fail
-    /// let old = old_sled::Db::open("my_old_db").unwrap();
+    /// let old = old_sled::Db::open("my_old_db")?;
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
-    /// let new = sled::open("my_new_db").unwrap();
+    /// let new = sled::open("my_new_db")?;
     ///
     /// let export = old.export();
     /// new.import(export);
     ///
-    /// assert_eq!(old.checksum().unwrap(), new.checksum().unwrap());
+    /// assert_eq!(old.checksum()?, new.checksum()?);
     /// ```
     pub fn export(
         &self,
@@ -335,16 +335,16 @@ impl Db {
     /// than the current `sled::open` method:
     ///
     /// ```compile_fail
-    /// let old = old_sled::Db::open("my_old_db").unwrap();
+    /// let old = old_sled::Db::open("my_old_db")?;
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
-    /// let new = sled::open("my_new_db").unwrap();
+    /// let new = sled::open("my_new_db")?;
     ///
     /// let export = old.export();
     /// new.import(export);
     ///
-    /// assert_eq!(old.checksum().unwrap(), new.checksum().unwrap());
+    /// assert_eq!(old.checksum()?, new.checksum()?);
     /// ```
     pub fn import(
         &self,
