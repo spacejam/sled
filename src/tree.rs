@@ -824,14 +824,14 @@ impl Tree {
     /// running on realistic hardware.
     pub async fn flush_async(
         &self,
-    ) ->  Result<usize> {
+    ) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
         if let Some(result) = threadpool::spawn(move || pagecache.flush()).await {
             result
         } else {
             Err(Error::ReportableBug(
-                    "threadpool failed to complete \
-                    action before shutdown".to_string()
+                "threadpool failed to complete \
+                action before shutdown".to_string()
             ))
         }
     }
