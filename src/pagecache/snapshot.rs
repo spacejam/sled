@@ -64,17 +64,18 @@ impl Snapshot {
         disk_ptr: DiskPtr,
         sz: u64,
     ) {
-        // unwrapping this because it's already passed the crc check
-        // in the log iterator
         trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
         let _measure = Measure::new(&M.snapshot_apply);
 
-        if self.pt.len() <= usize::try_from(pid).unwrap() {
+        let pushed = if self.pt.len() <= usize::try_from(pid).unwrap() {
             self.pt.resize(
                 usize::try_from(pid + 1).unwrap(),
                 PageState::Uninitialized,
             );
-        }
+            true
+        } else {
+            false
+        };
 
         match log_kind {
             LogKind::Replace => {
@@ -124,6 +125,10 @@ impl Snapshot {
                         disk_ptr,
                         lsn,
                     );
+                    if pushed {
+                        let old = self.pt.pop().unwrap();
+                        assert_eq!(old, PageState::Uninitialized);
+                    }
                 }
             }
             LogKind::Free => {
