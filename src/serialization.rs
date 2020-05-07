@@ -460,7 +460,7 @@ impl Serialize for Snapshot {
             stable_lsn: { i64::deserialize(buf)? },
             tip_lid: {
                 let lid = u64::deserialize(buf)?;
-                if lid != 0 { Some(lid) } else { None }
+                if lid == 0 { None } else { Some(lid) }
             },
             pt: deserialize_sequence(buf)?,
         })

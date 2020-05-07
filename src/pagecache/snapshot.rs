@@ -200,11 +200,12 @@ fn advance_snapshot(
     snapshot.stable_lsn = if segment_progress + MAX_MSG_HEADER_LEN as Lsn
         >= config.segment_size as Lsn
     {
+        assert!(iter.segment_base.is_none());
         config.normalize(iter.cur_lsn) + config.segment_size as Lsn
-    } else if iter.cur_lsn != 0 {
-        iter.cur_lsn
-    } else {
+    } else if iter.cur_lsn == 0 {
         snapshot.stable_lsn
+    } else {
+        iter.cur_lsn
     };
 
     if segment_progress == 0 || iter.segment_base.is_none() {
@@ -227,6 +228,13 @@ fn advance_snapshot(
         config.file.sync_all()?;
     } else {
         unreachable!()
+    }
+
+    // turn off snapshot mutability
+    let snapshot = snapshot;
+
+    if snapshot.tip_lid.is_some() {
+        assert!(segment_progress >= SEG_HEADER_LEN as Lsn);
     }
 
     trace!("generated snapshot: {:?}", snapshot);

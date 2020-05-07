@@ -352,7 +352,11 @@ impl Segment {
         // using the SA to add pids AFTER their calls to
         // res.complete() worked.
         if let Segment::Active(active) = self {
-            assert_eq!(lsn, active.lsn);
+            assert_eq!(
+                lsn, active.lsn,
+                "insert_pid specified lsn {} for pid {} in segment {:?}",
+                lsn, pid, active
+            );
             active.pids.insert(pid);
             active.rss += size;
         } else {
@@ -504,17 +508,17 @@ impl SegmentAccountant {
         // sometimes the current segment is still empty, after only
         // recovering the segment header but no valid messages yet
         if let Some(tip_lid) = snapshot.tip_lid {
-            if tip_lid % segment_size as LogOffset
-                == SEG_HEADER_LEN as LogOffset
-            {
-                let tip_idx = (tip_lid / segment_size as LogOffset) as usize;
-                if tip_idx == number_of_segments {
-                    segments.push(Segment::default());
-                }
-                segments[tip_idx].recovery_ensure_initialized(
-                    self.config.normalize(snapshot.stable_lsn),
-                );
+            let tip_idx = (tip_lid / segment_size as LogOffset) as usize;
+            if tip_idx == number_of_segments {
+                segments.push(Segment::default());
             }
+            println!(
+                "setting segment for tip_lid {} to stable_lsn {}",
+                tip_lid, snapshot.stable_lsn
+            );
+            segments[tip_idx].recovery_ensure_initialized(
+                self.config.normalize(snapshot.stable_lsn),
+            );
         }
 
         let add =
@@ -1000,10 +1004,16 @@ impl SegmentAccountant {
 
         self.ordering.insert(lsn, lid);
 
-        debug!(
-            "segment accountant returning offset: {} \
+        println!(
+            "segment accountant returning offset: {} for lsn {} \
              on deck: {:?}",
-            lid, self.free,
+            lid, lsn, self.free,
+        );
+
+        debug!(
+            "segment accountant returning offset: {} for lsn {} \
+             on deck: {:?}",
+            lid, lsn, self.free,
         );
 
         assert!(
