@@ -24,14 +24,30 @@ enum Op {
     FailPoint(&'static str, u64),
 }
 
+#[derive(Debug, Clone)]
+enum BatchOp {
+    Set,
+    Del(u8),
+}
+
+impl Arbitrary for BatchOp {
+    fn arbitrary<G: Gen>(g: &mut G) -> BatchOp {
+        if g.gen_ratio(1, 2) {
+            BatchOp::Set
+        } else {
+            BatchOp::Del(g.gen::<u8>())
+        }
+    }
+}
+
 use self::Op::*;
 
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
         let fail_points = vec![
+            "buffer write",
             "zero garbage segment",
             "zero garbage segment post",
-            "buffer write",
             "buffer write post",
             "write_config bytes",
             "write_config crc",
@@ -78,15 +94,24 @@ impl Arbitrary for Op {
             Batched(batch_ops) => Box::new(batch_ops.shrink().map(Batched)),
             FailPoint(name, bitset) => {
                 if bitset.count_ones() > 1 {
-                    Box::new(vec![
-                        // clear last failure bit
-                        FailPoint(name, bitset ^ (1 << (63 - bitset.leading_zeros()))),
-                        // clear first failure bit
-                        FailPoint(name, bitset ^ (1 << bitset.trailing_zeros())),
-                        // rewind all failure bits by one call
-                        FailPoint(name, bitset >> 1),
-                    ].into_iter())
-                } else if bitset > 1 {
+                    Box::new(
+                        vec![
+                            // clear last failure bit
+                            FailPoint(
+                                name,
+                                bitset ^ (1 << (63 - bitset.leading_zeros())),
+                            ),
+                            // clear first failure bit
+                            FailPoint(
+                                name,
+                                bitset ^ (1 << bitset.trailing_zeros()),
+                            ),
+                            // rewind all failure bits by one call
+                            FailPoint(name, bitset >> 1),
+                        ]
+                        .into_iter(),
+                    )
+                } else if *bitset > 1 {
                     Box::new(vec![FailPoint(name, bitset >> 1)].into_iter())
                 } else {
                     Box::new(vec![].into_iter())
@@ -502,7 +527,12 @@ fn failpoints_bug_01() {
 fn failpoints_bug_02() {
     // postmortem 1: the system was assuming the happy path across failpoints
     assert!(prop_tree_crashes_nicely(
-        vec![FailPoint("buffer write post", 0xFFFFFFFFFFFFFFFF), Set, Set, Restart],
+        vec![
+            FailPoint("buffer write post", 0xFFFFFFFFFFFFFFFF),
+            Set,
+            Set,
+            Restart
+        ],
         false,
     ))
 }
@@ -525,7 +555,13 @@ fn failpoints_bug_04() {
     // postmortem 1: the test model was not properly accounting for
     // writes that may-or-may-not be present due to an error.
     assert!(prop_tree_crashes_nicely(
-        vec![Set, FailPoint("snap write", 0xFFFFFFFFFFFFFFFF), Del(0), Set, Restart],
+        vec![
+            Set,
+            FailPoint("snap write", 0xFFFFFFFFFFFFFFFF),
+            Del(0),
+            Set,
+            Restart
+        ],
         false,
     ))
 }
@@ -1248,7 +1284,13 @@ fn failpoints_bug_22() {
 fn failpoints_bug_23() {
     // postmortem 1: failed to handle allocation failures
     assert!(prop_tree_crashes_nicely(
-        vec![Set, FailPoint("blob blob write", 0xFFFFFFFFFFFFFFFF), Set, Set, Set],
+        vec![
+            Set,
+            FailPoint("blob blob write", 0xFFFFFFFFFFFFFFFF),
+            Set,
+            Set,
+            Set
+        ],
         false,
     ))
 }
@@ -1479,11 +1521,24 @@ fn failpoints_bug_29() {
     // into certain entries even when there was an intervening crash
     // between the Set and the Flush
     assert!(prop_tree_crashes_nicely(
-        vec![FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF), Set, Flush, Restart],
+        vec![
+            FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF),
+            Set,
+            Flush,
+            Restart
+        ],
         false,
     ));
     assert!(prop_tree_crashes_nicely(
-        vec![Set, Set, Set, FailPoint("snap write mv", 0xFFFFFFFFFFFFFFFF), Set, Flush, Restart],
+        vec![
+            Set,
+            Set,
+            Set,
+            FailPoint("snap write mv", 0xFFFFFFFFFFFFFFFF),
+            Set,
+            Flush,
+            Restart
+        ],
         false,
     ));
 }
@@ -1492,7 +1547,13 @@ fn failpoints_bug_29() {
 fn failpoints_bug_30() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
-        vec![Set, FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF), Restart, Flush, Id],
+        vec![
+            Set,
+            FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF),
+            Restart,
+            Flush,
+            Id
+        ],
         false,
     ));
 }
