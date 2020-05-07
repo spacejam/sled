@@ -347,7 +347,10 @@ impl Log {
                 reservation_lid,
             );
 
-            bump_atomic_lsn(&self.iobufs.max_reserved_lsn, reservation_lsn);
+            bump_atomic_lsn(
+                &self.iobufs.max_reserved_lsn,
+                reservation_lsn + inline_buf_len as Lsn - 1,
+            );
 
             let blob_id =
                 if over_blob_threshold { Some(reservation_lsn) } else { None };
