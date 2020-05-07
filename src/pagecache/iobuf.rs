@@ -1140,7 +1140,8 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
                     lsn, e
                 );
 
-                // store error before notifying so that waiting threads will see it
+                // store error before notifying so that waiting threads will see
+                // it
                 iobufs.config.set_global_error(e);
 
                 let intervals = iobufs.intervals.lock();

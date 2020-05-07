@@ -221,13 +221,14 @@ impl LogIter {
 
         trace!("read segment header {:?}", segment_header);
 
-        self.cur_lsn = segment_header.lsn + SEG_HEADER_LEN as Lsn;
-
         let mut buf = vec![0; self.config.segment_size];
         let size = pread_exact_or_eof(f, &mut buf, offset)?;
 
         trace!("setting stored segment buffer length to {} after read", size);
         buf.truncate(size);
+
+        self.cur_lsn = segment_header.lsn + SEG_HEADER_LEN as Lsn;
+
         self.segment_base = Some(BasedBuf { buf, offset });
 
         // NB this should only happen after we've successfully read
