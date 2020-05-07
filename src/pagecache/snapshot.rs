@@ -246,7 +246,7 @@ fn advance_snapshot(
         io_fail!(config, "segment initial free zero");
         pwrite_all(
             &config.file,
-            &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
+            &*vec![MessageKind::Corrupted.into(); config.segment_size],
             to_zero,
         )?;
         if !config.temporary {
