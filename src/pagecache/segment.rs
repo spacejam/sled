@@ -953,17 +953,17 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    fn bump_tip(&mut self) -> LogOffset {
+    fn bump_tip(&mut self) -> Result<LogOffset> {
         let lid = self.tip;
 
         let truncations = self.async_truncations.split_off(&lid);
 
         for (_at, truncation) in truncations {
-            match truncation.wait() {
-                Some(Ok(())) => {}
-                error => {
-                    // TODO propagate!
+            match truncation.wait().unwrap() {
+                Ok(()) => {}
+                Err(error) => {
                     error!("failed to shrink file: {:?}", error);
+                    return Err(error);
                 }
             }
         }
@@ -972,7 +972,7 @@ impl SegmentAccountant {
 
         trace!("advancing file tip from {} to {}", lid, self.tip);
 
-        lid
+        Ok(lid)
     }
 
     /// Returns the next offset to write a new segment in.
@@ -994,7 +994,7 @@ impl SegmentAccountant {
             self.free.remove(&next);
             next
         } else {
-            self.bump_tip()
+            self.bump_tip()?
         };
 
         // pin lsn to this segment
