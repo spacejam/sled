@@ -256,22 +256,15 @@ impl Inner {
     }
 
     pub(crate) fn blob_path(&self, id: Lsn) -> PathBuf {
-        let mut path = self.get_path();
-        path.push("blobs");
-        path.push(format!("{}", id));
-        path
+        self.get_path().join("blobs").join(format!("{}", id))
     }
 
     fn db_path(&self) -> PathBuf {
-        let mut path = self.get_path();
-        path.push("db");
-        path
+        self.get_path().join("db")
     }
 
     fn config_path(&self) -> PathBuf {
-        let mut path = self.get_path();
-        path.push("conf");
-        path
+        self.get_path().join("conf")
     }
 
     pub(crate) fn normalize<T>(&self, value: T) -> T
@@ -470,9 +463,7 @@ impl Config {
             // use shared memory for temporary linux files
             format!("/dev/shm/pagecache.tmp.{}", salt).into()
         } else {
-            let mut pb = std::env::temp_dir();
-            pb.push(format!("pagecache.tmp.{}", salt));
-            pb
+            std::env::temp_dir().join(format!("pagecache.tmp.{}", salt))
         }
     }
 
@@ -535,30 +526,10 @@ impl Config {
     }
 
     fn open_file(&self) -> Result<File> {
-        let path = self.db_path();
+        let blob_dir: PathBuf = self.get_path().join("blobs");
 
-        // panic if we can't parse the path
-        let dir = match Path::new(&path).parent() {
-            None => {
-                return Err(Error::Unsupported(format!(
-                    "could not determine parent directory of {:?}",
-                    path
-                )));
-            }
-            Some(dir) => dir.join("blobs"),
-        };
-
-        // create data directory if it doesn't exist yet
-        if dir.is_file() {
-            return Err(Error::Unsupported(format!(
-                "provided parent directory is a file, \
-                 not a directory: {:?}",
-                dir
-            )));
-        }
-
-        if !dir.exists() {
-            fs::create_dir_all(dir)?;
+        if !blob_dir.exists() {
+            fs::create_dir_all(blob_dir)?;
         }
 
         self.verify_config()?;
@@ -574,7 +545,7 @@ impl Config {
             options.create_new(true);
         }
 
-        self.try_lock(options.open(&path)?)
+        self.try_lock(options.open(&self.db_path())?)
     }
 
     fn try_lock(&self, file: File) -> Result<File> {
@@ -820,16 +791,12 @@ impl RunningConfig {
     // returns the snapshot file paths for this system
     #[doc(hidden)]
     pub fn get_snapshot_files(&self) -> io::Result<Vec<PathBuf>> {
-        let mut path = self.get_path();
-
-        path.push("snap.");
+        let path = self.get_path().join("snap.");
 
         let absolute_path: PathBuf = if Path::new(&path).is_absolute() {
             path
         } else {
-            let mut abs_path = std::env::current_dir()?;
-            abs_path.push(path);
-            abs_path
+            std::env::current_dir()?.join(path)
         };
 
         let filter = |dir_entry: io::Result<fs::DirEntry>| {
