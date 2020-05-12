@@ -77,6 +77,23 @@ impl PageState {
             _ => false,
         }
     }
+
+    #[cfg(feature = "testing")]
+    fn offsets(&self) -> Vec<LogOffset> {
+        match *self {
+            PageState::Present { base, ref frags } => {
+                let mut offsets = vec![base.1.lid()];
+                for (_, ptr, _) in frags {
+                    offsets.push(ptr.lid());
+                }
+                offsets
+            }
+            PageState::Free(_, ptr) => vec![ptr.lid()],
+            PageState::Uninitialized => {
+                panic!("called offsets on Uninitialized")
+            }
+        }
+    }
 }
 
 impl Snapshot {
@@ -222,7 +239,7 @@ fn advance_snapshot(
     //  if db is empty:
     //      None
     //  else if progress is
-    let nothing_happened = iter.cur_lsn == 0;
+    let nothing_happened = iter.cur_lsn <= snapshot.stable_lsn.unwrap_or(0);
     let db_is_empty = nothing_happened && snapshot.stable_lsn.is_none();
 
     let snapshot = if db_is_empty {
@@ -237,8 +254,6 @@ fn advance_snapshot(
         snapshot
     } else {
         let iterated_lsn = iter.cur_lsn;
-        assert!(iterated_lsn > SEG_HEADER_LEN as Lsn);
-        assert!(iterated_lsn > snapshot.stable_lsn.unwrap_or(0));
 
         let segment_progress: Lsn = iterated_lsn % (config.segment_size as Lsn);
         assert!(segment_progress >= SEG_HEADER_LEN as Lsn);
@@ -269,6 +284,13 @@ fn advance_snapshot(
             (iterated_lsn, iter.segment_base.map(|bb| bb.offset))
         };
 
+        assert!(
+            stable_lsn >= snapshot.stable_lsn.unwrap_or(0),
+            "{} >= {}",
+            stable_lsn,
+            snapshot.stable_lsn.unwrap_or(0),
+        );
+
         snapshot.stable_lsn = Some(stable_lsn);
         snapshot.active_segment = active_segment;
 
@@ -283,8 +305,37 @@ fn advance_snapshot(
         write_snapshot(config, &snapshot)?;
     }
 
+    #[cfg(feature = "testing")]
+    let reverse_segments = {
+        use std::collections::{HashMap, HashSet};
+        let mut reverse_segments = HashMap::new();
+        for (pid, page) in snapshot.pt.iter().enumerate() {
+            let offsets = page.offsets();
+            for offset in offsets {
+                let segment = config.normalize(offset);
+                let entry =
+                    reverse_segments.entry(segment).or_insert(HashSet::new());
+                entry.insert(pid);
+            }
+        }
+        reverse_segments
+    };
+
     for to_zero in iter.segments.values().copied() {
         debug!("zeroing torn segment at lid {}", to_zero);
+
+        #[cfg(feature = "testing")]
+        {
+            if let Some(pids) = reverse_segments.get(&to_zero) {
+                assert!(
+                    pids.is_empty(),
+                    "expected segment that we're zeroing at {} \
+                    to contain no pages, but it contained pids {:?}",
+                    to_zero,
+                    pids
+                );
+            }
+        }
 
         // NB we intentionally corrupt this header to prevent any segment
         // from being allocated which would duplicate its LSN, messing
