@@ -939,7 +939,7 @@ mod qc {
         fn arbitrary<G: Gen>(g: &mut G) -> Snapshot {
             Snapshot {
                 stable_lsn: g.gen(),
-                tip_lid: g.gen(),
+                active_segment: g.gen(),
                 pt: Arbitrary::arbitrary(g),
             }
         }

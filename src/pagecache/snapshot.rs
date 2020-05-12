@@ -12,7 +12,7 @@ use super::{
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
 #[derive(PartialEq, Debug, Default)]
-#[cfg_attr(test, derive(Clone, PartialEq))]
+#[cfg_attr(test, derive(Clone))]
 pub struct Snapshot {
     /// The last read message lsn
     pub stable_lsn: Option<Lsn>,
@@ -306,7 +306,7 @@ fn advance_snapshot(
     }
 
     #[cfg(feature = "event_log")]
-    config.event_log.recovered_lsn(snapshot.stable_lsn);
+    config.event_log.recovered_lsn(snapshot.stable_lsn.unwrap_or(0));
 
     Ok(snapshot)
 }
