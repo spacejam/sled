@@ -11,13 +11,13 @@ use super::{
 
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
-#[derive(Debug, Default)]
+#[derive(PartialEq, Debug, Default)]
 #[cfg_attr(test, derive(Clone, PartialEq))]
 pub struct Snapshot {
     /// The last read message lsn
-    pub stable_lsn: Lsn,
+    pub stable_lsn: Option<Lsn>,
     /// The last read message lid
-    pub tip_lid: Option<LogOffset>,
+    pub active_segment: Option<LogOffset>,
     /// the mapping from pages to (lsn, lid)
     pub pt: Vec<PageState>,
 }
@@ -105,18 +105,6 @@ impl Snapshot {
                         lsn,
                     );
 
-                    if lids.is_free() {
-                        // this can happen if the allocate or replace
-                        // has been moved to a later segment.
-
-                        trace!(
-                            "we have not yet encountered an \
-                             allocation of this page, skipping push"
-                        );
-
-                        return;
-                    }
-
                     lids.push((lsn, disk_ptr, sz));
                 } else {
                     trace!(
@@ -200,47 +188,69 @@ fn advance_snapshot(
     // Situations 3 & 4 otherwise. We don't need to differentiate between them
     // here.
 
-    let segment_progress: Lsn = iter.cur_lsn % (config.segment_size as Lsn);
+    // we need to put 2 things into the snapshot:
+    // 1. stable_lsn:
+    //  if db is empty:
+    //      None
+    //  else:
+    //      max(last stable_lsn, SEG_HEADER_LEN, iter.cur_lsn)
+    // 2. active_segment:
+    //  if db is empty:
+    //      None
+    //  else if progress is
+    let nothing_happened = iter.cur_lsn == 0;
+    let db_is_empty = nothing_happened && snapshot.stable_lsn.is_none();
 
-    snapshot.stable_lsn = if segment_progress + MAX_MSG_HEADER_LEN as Lsn
-        >= config.segment_size as Lsn
-    {
-        assert!(iter.segment_base.is_none());
-        config.normalize(iter.cur_lsn) + config.segment_size as Lsn
-    } else if iter.cur_lsn == 0 {
-        snapshot.stable_lsn
-    } else {
-        iter.cur_lsn
-    };
-
-    if segment_progress == 0 || iter.segment_base.is_none() {
-        // either situation 1 or situation 2
-        snapshot.tip_lid = None;
-    } else if let Some(BasedBuf { offset, .. }) = iter.segment_base {
-        // either situation 3 or situation 4. we need to zero the
-
-        snapshot.tip_lid = Some(offset + segment_progress as LogOffset);
-
-        // zero the tail of the segment after the recovered tip
-        let shred_len = config.segment_size - segment_progress as usize;
-        let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
-        debug!(
-            "zeroing the end of the recovered segment between {} and {}",
-            snapshot.tip_lid.unwrap(),
-            snapshot.tip_lid.unwrap() + shred_len as LogOffset
+    let snapshot = if db_is_empty {
+        trace!("db is empty, returning default snapshot");
+        assert_eq!(snapshot, Snapshot::default());
+        snapshot
+    } else if nothing_happened {
+        trace!(
+            "nothing happened since the last snapshot \
+            was generated, returning the previous one"
         );
-        pwrite_all(&config.file, &shred_zone, snapshot.tip_lid.unwrap())?;
-        config.file.sync_all()?;
+        snapshot
     } else {
-        unreachable!()
-    }
+        let iterated_lsn = iter.cur_lsn;
+        drop(iter);
+        assert!(iterated_lsn > SEG_HEADER_LEN as Lsn);
+        assert!(iterated_lsn > snapshot.stable_lsn.unwrap_or(0));
 
-    // turn off snapshot mutability
-    let snapshot = snapshot;
-
-    if snapshot.tip_lid.is_some() {
+        let segment_progress: Lsn = iterated_lsn % (config.segment_size as Lsn);
         assert!(segment_progress >= SEG_HEADER_LEN as Lsn);
-    }
+
+        let (stable_lsn, active_segment) = if segment_progress
+            + MAX_MSG_HEADER_LEN as Lsn
+            >= config.segment_size as Lsn
+        {
+            let bumped =
+                config.normalize(iter.cur_lsn) + config.segment_size as Lsn;
+            trace!("bumping snapshot.stable_lsn to {}", bumped);
+            (bumped, None)
+        } else {
+            if let Some(BasedBuf { offset, .. }) = iter.segment_base {
+                // either situation 3 or situation 4. we need to zero the
+                // tail of the segment after the recovered tip
+                let shred_len = config.segment_size - segment_progress as usize;
+                let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
+                let shred_base = offset + segment_progress as LogOffset;
+                debug!(
+                    "zeroing the end of the recovered segment between {} and {}",
+                    shred_base,
+                    shred_base + shred_len as LogOffset
+                );
+                pwrite_all(&config.file, &shred_zone, shred_base)?;
+                config.file.sync_all()?;
+            }
+            (iterated_lsn, iter.segment_base.map(|bb| bb.offset))
+        };
+
+        snapshot.stable_lsn = Some(stable_lsn);
+        snapshot.active_segment = active_segment;
+
+        snapshot
+    };
 
     trace!("generated snapshot: {:?}", snapshot);
 
@@ -268,7 +278,9 @@ fn advance_snapshot(
     }
 
     // remove all blob files larger than our stable offset
-    gc_blobs(config, snapshot.stable_lsn)?;
+    if let Some(stable_lsn) = snapshot.stable_lsn {
+        gc_blobs(config, stable_lsn)?;
+    }
 
     #[cfg(feature = "event_log")]
     config.event_log.recovered_lsn(snapshot.stable_lsn);
