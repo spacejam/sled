@@ -507,17 +507,18 @@ impl SegmentAccountant {
 
         // sometimes the current segment is still empty, after only
         // recovering the segment header but no valid messages yet
-        if let Some(tip_lid) = snapshot.tip_lid {
+        if let Some(tip_lid) = snapshot.active_segment {
             let tip_idx = (tip_lid / segment_size as LogOffset) as usize;
             if tip_idx == number_of_segments {
                 segments.push(Segment::default());
             }
             println!(
                 "setting segment for tip_lid {} to stable_lsn {}",
-                tip_lid, snapshot.stable_lsn
+                tip_lid,
+                self.config.normalize(snapshot.stable_lsn.unwrap_or(0))
             );
             segments[tip_idx].recovery_ensure_initialized(
-                self.config.normalize(snapshot.stable_lsn),
+                self.config.normalize(snapshot.stable_lsn.unwrap_or(0)),
             );
         }
 
@@ -582,7 +583,7 @@ impl SegmentAccountant {
         let mut maybe_clean = vec![];
 
         let currently_active_segment = snapshot
-            .tip_lid
+            .active_segment
             .map(|tl| (tl / segment_size as LogOffset) as usize);
 
         for (idx, segment) in self.segments.iter_mut().enumerate() {

@@ -22,6 +22,30 @@ pub struct Snapshot {
     pub pt: Vec<PageState>,
 }
 
+impl Snapshot {
+    pub fn recovered_coords(
+        &self,
+        segment_size: usize,
+    ) -> (Option<LogOffset>, Option<Lsn>) {
+        if self.stable_lsn.is_none() {
+            return (None, None);
+        }
+
+        let stable_lsn = self.stable_lsn.unwrap();
+
+        if let Some(base_offset) = self.active_segment {
+            let progress = stable_lsn % segment_size as Lsn;
+            let offset = base_offset + progress as LogOffset;
+
+            (Some(offset), Some(stable_lsn))
+        } else {
+            let lsn_idx = stable_lsn / segment_size as Lsn;
+            let next_lsn = (lsn_idx + 1) * segment_size as Lsn;
+            (None, Some(next_lsn))
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageState {
     Present { base: (Lsn, DiskPtr, u64), frags: Vec<(Lsn, DiskPtr, u64)> },
@@ -151,7 +175,7 @@ fn advance_snapshot(
             ptr
         );
 
-        if lsn < snapshot.stable_lsn {
+        if lsn < snapshot.stable_lsn.unwrap_or(-1) {
             // don't process already-processed Lsn's. stable_lsn is for the last
             // item ALREADY INCLUDED lsn in the snapshot.
             trace!(
@@ -213,7 +237,6 @@ fn advance_snapshot(
         snapshot
     } else {
         let iterated_lsn = iter.cur_lsn;
-        drop(iter);
         assert!(iterated_lsn > SEG_HEADER_LEN as Lsn);
         assert!(iterated_lsn > snapshot.stable_lsn.unwrap_or(0));
 
@@ -293,7 +316,8 @@ fn advance_snapshot(
 pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
     let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
-    let log_iter = raw_segment_iter_from(last_snap.stable_lsn, config)?;
+    let log_iter =
+        raw_segment_iter_from(last_snap.stable_lsn.unwrap_or(0), config)?;
 
     let res = advance_snapshot(log_iter, last_snap, config)?;
 
@@ -383,12 +407,14 @@ fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
     let crc32: [u8; 4] = u32_to_arr(crc32(&bytes));
     let len_bytes: [u8; 8] = u64_to_arr(decompressed_len as u64);
 
-    let path_1_suffix = format!("snap.{:016X}.generating", snapshot.stable_lsn);
+    let path_1_suffix =
+        format!("snap.{:016X}.generating", snapshot.stable_lsn.unwrap_or(0));
 
     let mut path_1 = config.get_path();
     path_1.push(path_1_suffix);
 
-    let path_2_suffix = format!("snap.{:016X}", snapshot.stable_lsn);
+    let path_2_suffix =
+        format!("snap.{:016X}", snapshot.stable_lsn.unwrap_or(0));
 
     let mut path_2 = config.get_path();
     path_2.push(path_2_suffix);

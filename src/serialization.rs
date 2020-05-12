@@ -438,8 +438,8 @@ impl Serialize for Node {
 
 impl Serialize for Snapshot {
     fn serialized_size(&self) -> u64 {
-        self.stable_lsn.serialized_size()
-            + self.tip_lid.unwrap_or(0).serialized_size()
+        self.stable_lsn.unwrap_or(0).serialized_size()
+            + self.active_segment.unwrap_or(0).serialized_size()
             + self
                 .pt
                 .iter()
@@ -448,8 +448,8 @@ impl Serialize for Snapshot {
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        self.stable_lsn.serialize_into(buf);
-        self.tip_lid.unwrap_or(0).serialize_into(buf);
+        self.stable_lsn.unwrap_or(0).serialize_into(buf);
+        self.active_segment.unwrap_or(0).serialize_into(buf);
         for page_state in &self.pt {
             page_state.serialize_into(buf);
         }
@@ -457,8 +457,11 @@ impl Serialize for Snapshot {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         Ok(Snapshot {
-            stable_lsn: { i64::deserialize(buf)? },
-            tip_lid: {
+            stable_lsn: {
+                let lsn = i64::deserialize(buf)?;
+                if lsn == 0 { None } else { Some(lsn) }
+            },
+            active_segment: {
                 let lid = u64::deserialize(buf)?;
                 if lid == 0 { None } else { Some(lid) }
             },

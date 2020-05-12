@@ -336,29 +336,33 @@ impl IoBufs {
 
         let segment_size = config.segment_size;
 
-        let (next_lid, next_lsn) = if let Some(next_lid) = snapshot.tip_lid {
-            debug!(
-                "starting log at split offset {}, recovered lsn {}",
-                next_lid, snapshot.stable_lsn
-            );
-            (next_lid, snapshot.stable_lsn)
-        } else {
-            // allocate new segment for data
+        let (recovered_lid, recovered_lsn) =
+            snapshot.recovered_coords(config.segment_size);
 
-            let next_lsn = if snapshot.stable_lsn % segment_size as Lsn == 0 {
-                snapshot.stable_lsn
-            } else {
-                let lsn_idx = snapshot.stable_lsn / segment_size as Lsn;
-                (lsn_idx + 1) * segment_size as Lsn
-            };
-            let next_lid = segment_accountant.next(next_lsn)?;
-
-            debug!(
-                "starting log at clean offset {}, recovered lsn {}",
-                next_lid, next_lsn
-            );
-
-            (next_lid, next_lsn)
+        let (next_lid, next_lsn) = match (recovered_lid, recovered_lsn) {
+            (Some(next_lid), Some(next_lsn)) => {
+                debug!(
+                    "starting log at recovered active \
+                    offset {}, recovered lsn {}",
+                    next_lid, next_lsn
+                );
+                (next_lid, next_lsn)
+            }
+            (None, None) => {
+                debug!("starting log for a totally fresh system");
+                let next_lsn = 0;
+                let next_lid = segment_accountant.next(next_lsn)?;
+                (next_lid, next_lsn)
+            }
+            (None, Some(next_lsn)) => {
+                let next_lid = segment_accountant.next(next_lsn)?;
+                debug!(
+                    "starting log at clean offset {}, recovered lsn {}",
+                    next_lid, next_lsn
+                );
+                (next_lid, next_lsn)
+            }
+            (Some(_), None) => unreachable!(),
         };
 
         assert!(next_lsn >= next_lid as Lsn);
@@ -388,7 +392,7 @@ impl IoBufs {
             stored_max_stable_lsn: -1,
         };
 
-        if snapshot.tip_lid.is_none() {
+        if snapshot.active_segment.is_none() {
             iobuf.store_segment_header(0, next_lsn, stable);
         }
 
