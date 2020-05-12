@@ -64,7 +64,15 @@ impl Context {
         Ok(Self {
             config,
             pagecache,
-            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+            #[cfg(any(
+                windows,
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd",
+            ))]
             flusher: Arc::new(parking_lot::Mutex::new(None)),
         })
     }
