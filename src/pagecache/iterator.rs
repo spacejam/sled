@@ -54,7 +54,7 @@ impl Iterator for LogIter {
             // NB this inequality must be greater than or equal to the
             // max_lsn. max_lsn may be set to the beginning of the first
             // corrupt message encountered in the previous sweep of recovery.
-            if self.cur_lsn >= self.max_lsn {
+            if self.cur_lsn > self.max_lsn {
                 // all done
                 debug!("hit max_lsn {} in iterator, stopping", self.max_lsn);
                 return None;
@@ -109,7 +109,7 @@ impl Iterator for LogIter {
                     ));
                 }
                 Ok(LogRead::BatchManifest(last_lsn_in_batch, inline_len)) => {
-                    if last_lsn_in_batch >= self.max_lsn {
+                    if last_lsn_in_batch > self.max_lsn {
                         debug!(
                             "cutting recovery short due to torn batch. \
                             required stable lsn: {} actual max possible lsn: {}",
@@ -134,6 +134,7 @@ impl Iterator for LogIter {
                     return None;
                 }
                 Ok(LogRead::Cap(_segment_number)) => {
+                    trace!("read cap in LogIter::next");
                     let _taken = self.segment_base.take().unwrap();
 
                     continue;
@@ -175,7 +176,14 @@ impl LogIter {
 
         let first_ref = self.segments.iter().next().unwrap();
         let (lsn, offset) = (*first_ref.0, *first_ref.1);
-        //Some(first)
+
+        if lsn > self.max_lsn {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "next segment is above our configured max_lsn",
+            )
+            .into());
+        }
 
         assert!(
             lsn + (self.config.segment_size as Lsn) >= self.cur_lsn,
@@ -422,7 +430,9 @@ fn check_contiguity_in_unstable_tail(
     // run the iterator to completion
     while let Some(_) = iter.next() {}
 
-    let end_of_last_message = iter.cur_lsn;
+    // `cur_lsn` is set to the beginning
+    // of the next message
+    let end_of_last_message = iter.cur_lsn - 1;
 
     debug!(
         "filtering out segments after detected tear at (lsn, lid) {:?}",
@@ -443,7 +453,7 @@ pub fn raw_segment_iter_from(
     let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let (ordering, end_of_last_contiguous_msg) =
+    let (ordering, end_of_last_msg) =
         scan_segment_headers_and_tail(normalized_lsn, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
@@ -459,7 +469,7 @@ pub fn raw_segment_iter_from(
          bounding batch manifests with segment iter {:?} \
          of segments >= first_tip {}",
         tip_segment_iter,
-        end_of_last_contiguous_msg,
+        end_of_last_msg,
     );
 
     trace!(
@@ -477,7 +487,7 @@ pub fn raw_segment_iter_from(
 
     Ok(LogIter {
         config: config.clone(),
-        max_lsn: end_of_last_contiguous_msg,
+        max_lsn: end_of_last_msg,
         cur_lsn: 0,
         segment_base: None,
         segments,
