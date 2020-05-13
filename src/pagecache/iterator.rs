@@ -48,6 +48,8 @@ impl Iterator for LogIter {
                 }
             }
 
+            let lsn = self.cur_lsn.unwrap();
+
             // self.segment_base is `Some` now.
             let _measure = Measure::new(&M.read_segment_message);
 
@@ -67,13 +69,11 @@ impl Iterator for LogIter {
             let segment_base = &self.segment_base.as_ref().unwrap();
 
             let lid = segment_base.offset
-                + LogOffset::try_from(
-                    self.cur_lsn.unwrap() % self.config.segment_size as Lsn,
-                )
-                .unwrap();
+                + LogOffset::try_from(lsn % self.config.segment_size as Lsn)
+                    .unwrap();
 
             let expected_segment_number = SegmentNumber(
-                u64::try_from(self.cur_lsn.unwrap()).unwrap()
+                u64::try_from(lsn).unwrap()
                     / u64::try_from(self.config.segment_size).unwrap(),
             );
 
@@ -85,9 +85,7 @@ impl Iterator for LogIter {
             ) {
                 Ok(LogRead::Blob(header, _buf, blob_ptr, inline_len)) => {
                     trace!("read blob flush in LogIter::next");
-                    let lsn = self.cur_lsn.unwrap();
-                    self.cur_lsn =
-                        Some(self.cur_lsn.unwrap() + Lsn::from(inline_len));
+                    self.cur_lsn = Some(lsn + Lsn::from(inline_len));
 
                     return Some((
                         LogKind::from(header.kind),
@@ -102,9 +100,7 @@ impl Iterator for LogIter {
                         "read inline flush with header {:?} in LogIter::next",
                         header,
                     );
-                    let lsn = self.cur_lsn.unwrap();
-                    self.cur_lsn =
-                        Some(self.cur_lsn.unwrap() + Lsn::from(inline_len));
+                    self.cur_lsn = Some(lsn + Lsn::from(inline_len));
 
                     return Some((
                         LogKind::from(header.kind),
@@ -124,22 +120,19 @@ impl Iterator for LogIter {
                         );
                             return None;
                         }
-                    } else {
-                        self.cur_lsn =
-                            Some(self.cur_lsn.unwrap() + Lsn::from(inline_len));
-                        continue;
                     }
+                    self.cur_lsn = Some(lsn + Lsn::from(inline_len));
+                    continue;
                 }
                 Ok(LogRead::Canceled(inline_len)) => {
                     trace!("read zeroed in LogIter::next");
-                    self.cur_lsn =
-                        Some(self.cur_lsn.unwrap() + Lsn::from(inline_len));
+                    self.cur_lsn = Some(lsn + Lsn::from(inline_len));
                 }
                 Ok(LogRead::Corrupted) => {
                     trace!(
                         "read corrupted msg in LogIter::next as lid {} lsn {}",
                         lid,
-                        self.cur_lsn.unwrap()
+                        lsn
                     );
                     return None;
                 }
@@ -153,20 +146,16 @@ impl Iterator for LogIter {
                     debug!(
                         "encountered dangling blob \
                          pointer at lsn {} ptr {}",
-                        self.cur_lsn.unwrap(),
-                        blob_ptr
+                        lsn, blob_ptr
                     );
-                    self.cur_lsn =
-                        Some(self.cur_lsn.unwrap() + Lsn::from(inline_len));
+                    self.cur_lsn = Some(lsn + Lsn::from(inline_len));
                     continue;
                 }
                 Err(e) => {
                     debug!(
                         "failed to read log message at lid {} \
                          with expected lsn {} during iteration: {}",
-                        lid,
-                        self.cur_lsn.unwrap(),
-                        e
+                        lid, lsn, e
                     );
                     return None;
                 }
