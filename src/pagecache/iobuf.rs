@@ -191,7 +191,11 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old { Ok(new) } else { Err(res) }
+        if res == old {
+            Ok(new)
+        } else {
+            Err(res)
+        }
     }
 }
 
@@ -496,20 +500,12 @@ impl IoBufs {
     /// a specified offset.
     pub(crate) fn iter_from(&self, lsn: Lsn) -> LogIter {
         trace!("iterating from lsn {}", lsn);
-        let segment_size = self.config.segment_size;
-        let segment_base_lsn = lsn / segment_size as Lsn * segment_size as Lsn;
-        let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
-
-        // corrected_lsn accounts for the segment header length
-        let corrected_lsn = std::cmp::max(lsn, min_lsn);
-
-        let segments =
-            self.with_sa(|sa| sa.segment_snapshot_iter_from(corrected_lsn));
+        let segments = self.with_sa(|sa| sa.segment_snapshot_iter_from(lsn));
 
         LogIter {
             config: self.config.clone(),
-            max_lsn: self.stable(),
-            cur_lsn: corrected_lsn,
+            max_lsn: Some(self.stable()),
+            cur_lsn: None,
             segment_base: None,
             segments,
         }

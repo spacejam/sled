@@ -239,8 +239,12 @@ fn advance_snapshot(
     //  if db is empty:
     //      None
     //  else if progress is
-    let nothing_happened = iter.cur_lsn <= snapshot.stable_lsn.unwrap_or(0);
+    let nothing_happened = iter.cur_lsn.is_none()
+        || iter.cur_lsn.unwrap() <= snapshot.stable_lsn.unwrap_or(0);
     let db_is_empty = nothing_happened && snapshot.stable_lsn.is_none();
+
+    #[cfg(feature = "testing")]
+    let mut shred_point = None;
 
     let snapshot = if db_is_empty {
         trace!("db is empty, returning default snapshot");
@@ -253,7 +257,7 @@ fn advance_snapshot(
         );
         snapshot
     } else {
-        let iterated_lsn = iter.cur_lsn;
+        let iterated_lsn = iter.cur_lsn.unwrap();
 
         let segment_progress: Lsn = iterated_lsn % (config.segment_size as Lsn);
         assert!(segment_progress >= SEG_HEADER_LEN as Lsn);
@@ -263,7 +267,7 @@ fn advance_snapshot(
             >= config.segment_size as Lsn
         {
             let bumped =
-                config.normalize(iter.cur_lsn) + config.segment_size as Lsn;
+                config.normalize(iterated_lsn) + config.segment_size as Lsn;
             trace!("bumping snapshot.stable_lsn to {}", bumped);
             (bumped, None)
         } else {
@@ -273,6 +277,12 @@ fn advance_snapshot(
                 let shred_len = config.segment_size - segment_progress as usize;
                 let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
                 let shred_base = offset + segment_progress as LogOffset;
+
+                #[cfg(feature = "testing")]
+                {
+                    shred_point = Some(shred_base);
+                }
+
                 debug!(
                     "zeroing the end of the recovered segment between {} and {}",
                     shred_base,
@@ -308,30 +318,44 @@ fn advance_snapshot(
     #[cfg(feature = "testing")]
     let reverse_segments = {
         use std::collections::{HashMap, HashSet};
+        let shred_base = shred_point.unwrap_or(LogOffset::max_value());
         let mut reverse_segments = HashMap::new();
         for (pid, page) in snapshot.pt.iter().enumerate() {
             let offsets = page.offsets();
             for offset in offsets {
                 let segment = config.normalize(offset);
+                if segment == config.normalize(shred_base) {
+                    assert!(
+                        offset < shred_base,
+                        "we shredded the location for pid {}
+                        with locations {:?}
+                        by zeroing the file tip after lid {}",
+                        pid,
+                        page,
+                        shred_base
+                    );
+                }
                 let entry =
                     reverse_segments.entry(segment).or_insert(HashSet::new());
-                entry.insert(pid);
+                entry.insert((pid, offset));
             }
         }
         reverse_segments
     };
 
-    for to_zero in iter.segments.values().copied() {
+    for (_lsn, to_zero) in iter.segments.iter() {
         debug!("zeroing torn segment at lid {}", to_zero);
 
         #[cfg(feature = "testing")]
         {
-            if let Some(pids) = reverse_segments.get(&to_zero) {
+            if let Some(pids) = reverse_segments.get(to_zero) {
                 assert!(
                     pids.is_empty(),
-                    "expected segment that we're zeroing at {} \
+                    "expected segment that we're zeroing at lid {} \
+                    lsn {} \
                     to contain no pages, but it contained pids {:?}",
                     to_zero,
+                    _lsn,
                     pids
                 );
             }
@@ -344,7 +368,7 @@ fn advance_snapshot(
         pwrite_all(
             &config.file,
             &*vec![MessageKind::Corrupted.into(); config.segment_size],
-            to_zero,
+            *to_zero,
         )?;
         if !config.temporary {
             config.file.sync_all()?;
