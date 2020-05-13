@@ -105,7 +105,12 @@ impl Snapshot {
         disk_ptr: DiskPtr,
         sz: u64,
     ) {
-        trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
+        trace!(
+            "trying to deserialize buf for pid {} ptr {} lsn {}",
+            pid,
+            disk_ptr,
+            lsn
+        );
         let _measure = Measure::new(&M.snapshot_apply);
 
         let pushed = if self.pt.len() <= usize::try_from(pid).unwrap() {
@@ -166,7 +171,8 @@ impl Snapshot {
                     PageState::Free(lsn, disk_ptr);
             }
             LogKind::Corrupted | LogKind::Skip => panic!(
-                "unexppected messagekind in snapshot application: {:?}",
+                "unexppected messagekind in snapshot application for pid {}: {:?}",
+                pid,
                 log_kind
             ),
         }
@@ -222,23 +228,7 @@ fn advance_snapshot(
     //    any valid messages in it yet. treat as #3 above, but also take care
     //    in te SA initialization to properly initialize any segment tracking
     //    state despite not having any pages currently residing there.
-    //
-    // The information we have at this point is iter.cur_lsn and the
-    // iter.segment_base.offset. Situation 1 & 2 happen if iter.cur_lsn %
-    // segment_size == 0, and result in None for the recovered log tip.
-    // Situations 3 & 4 otherwise. We don't need to differentiate between them
-    // here.
 
-    // we need to put 2 things into the snapshot:
-    // 1. stable_lsn:
-    //  if db is empty:
-    //      None
-    //  else:
-    //      max(last stable_lsn, SEG_HEADER_LEN, iter.cur_lsn)
-    // 2. active_segment:
-    //  if db is empty:
-    //      None
-    //  else if progress is
     let nothing_happened = iter.cur_lsn.is_none()
         || iter.cur_lsn.unwrap() <= snapshot.stable_lsn.unwrap_or(0);
     let db_is_empty = nothing_happened && snapshot.stable_lsn.is_none();
@@ -274,7 +264,8 @@ fn advance_snapshot(
             if let Some(BasedBuf { offset, .. }) = iter.segment_base {
                 // either situation 3 or situation 4. we need to zero the
                 // tail of the segment after the recovered tip
-                let shred_len = config.segment_size - segment_progress as usize;
+                let shred_len =
+                    config.segment_size - segment_progress as usize - 1;
                 let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
                 let shred_base = offset + segment_progress as LogOffset;
 
@@ -284,7 +275,8 @@ fn advance_snapshot(
                 }
 
                 debug!(
-                    "zeroing the end of the recovered segment between {} and {}",
+                    "zeroing the end of the recovered segment at lsn {} between lids {} and {}",
+                    config.normalize(iterated_lsn),
                     shred_base,
                     shred_base + shred_len as LogOffset
                 );
@@ -343,8 +335,8 @@ fn advance_snapshot(
         reverse_segments
     };
 
-    for (_lsn, to_zero) in iter.segments.iter() {
-        debug!("zeroing torn segment at lid {}", to_zero);
+    for (lsn, to_zero) in iter.segments.iter() {
+        debug!("zeroing torn segment at lsn {} lid {}", lsn, to_zero);
 
         #[cfg(feature = "testing")]
         {
@@ -355,7 +347,7 @@ fn advance_snapshot(
                     lsn {} \
                     to contain no pages, but it contained pids {:?}",
                     to_zero,
-                    _lsn,
+                    lsn,
                     pids
                 );
             }

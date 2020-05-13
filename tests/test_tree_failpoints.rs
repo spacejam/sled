@@ -248,7 +248,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 });
                 if let Some((committed_index, _)) = committed_find_result {
                     let tail_versions = ref_entry.versions.split_off(committed_index);
-                    std::mem::replace(&mut ref_entry.versions, tail_versions);
+                    let _ = std::mem::replace(&mut ref_entry.versions, tail_versions);
                 }
                 // find the first version from a batch that wasn't committed,
                 // throw away it and all subsequent versions
@@ -502,7 +502,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 fn quickcheck_tree_with_failpoints() {
     // use fewer tests for travis OSX builds that stall out all the time
     let mut n_tests = 50;
-    if let Ok(Ok(value)) = std::env::var("QUICKCHECK_TESTS").map(|s| s.parse()) {
+    if let Ok(Ok(value)) = std::env::var("QUICKCHECK_TESTS").map(|s| s.parse())
+    {
         n_tests = value;
     }
 
@@ -1564,9 +1565,13 @@ fn failpoints_bug_31() {
     // drops a Reservation, and Reservation's drop implementation flushes
     // itself and unwraps the Result returned, which has the FailPoint error
     // in it
-    for _ in 0..1000 {
+    for _ in 0..10 {
         assert!(prop_tree_crashes_nicely(
-            vec![Del(0), FailPoint("snap write"), Batched(vec![])],
+            vec![
+                Del(0),
+                FailPoint("snap write", 0xFFFFFFFFFFFFFFFF),
+                Batched(vec![])
+            ],
             true,
         ));
     }
