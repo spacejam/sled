@@ -966,10 +966,12 @@ impl Tree {
     /// Merge operators can be used to implement arbitrary data
     /// structures.
     ///
-    /// # Panics
+    /// Calling `merge` will return an `Unsupported` error if it
+    /// is called without first setting a merge operator function.
     ///
-    /// Calling `merge` will panic if no merge operator has been
-    /// configured.
+    /// Merge operators are shared by all instances of a particular
+    /// `Tree`. Different merge operators may be set on different
+    /// `Tree`s.
     ///
     /// # Examples
     ///

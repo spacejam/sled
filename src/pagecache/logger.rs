@@ -111,7 +111,7 @@ impl Log {
     /// linearizability across CAS operations that may need to
     /// persist part of their operation.
     #[allow(unused)]
-    pub fn reserve<T: Serialize + Debug>(
+    pub(crate) fn reserve<T: Serialize + Debug>(
         &self,
         log_kind: LogKind,
         pid: PageId,
@@ -704,7 +704,8 @@ pub(crate) fn read_message<R: ReadAt>(
     trace!("reading message from segment: {} at lid: {}", seg_start, lid);
     assert!(seg_start + SEG_HEADER_LEN as LogOffset <= lid);
     assert!(
-        (seg_start + segment_len as LogOffset) - lid >= MAX_MSG_HEADER_LEN as LogOffset,
+        (seg_start + segment_len as LogOffset) - lid
+            >= MAX_MSG_HEADER_LEN as LogOffset,
         "tried to read a message from the red zone"
     );
 

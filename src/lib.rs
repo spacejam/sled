@@ -395,8 +395,66 @@ pub(crate) type FastSet8<V> = std::collections::HashSet<
     std::hash::BuildHasherDefault<fxhash::FxHasher64>,
 >;
 
-/// Allows arbitrary logic to be injected into mere operations of the
-/// `PageCache`.
+/// A function that may be configured on a particular shared `Tree`
+/// that will be applied as a kind of read-modify-write operator
+/// to any values that are written using the `Tree::merge` method.
+///
+/// The first argument is the key. The second argument is the
+/// optional existing value that was in place before the
+/// merged value being applied. The Third argument is the
+/// data being merged into the item.
+///
+/// You may return `None` to delete the value completely.
+///
+/// Merge operators are shared by all instances of a particular
+/// `Tree`. Different merge operators may be set on different
+/// `Tree`s.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use sled::{Config, IVec};
+///
+/// fn concatenate_merge(
+///   _key: &[u8],               // the key being merged
+///   old_value: Option<&[u8]>,  // the previous value, if one existed
+///   merged_bytes: &[u8]        // the new bytes being merged in
+/// ) -> Option<Vec<u8>> {       // set the new value, return None to delete
+///   let mut ret = old_value
+///     .map(|ov| ov.to_vec())
+///     .unwrap_or_else(|| vec![]);
+///
+///   ret.extend_from_slice(merged_bytes);
+///
+///   Some(ret)
+/// }
+///
+/// let config = Config::new()
+///   .temporary(true);
+///
+/// let tree = config.open()?;
+/// tree.set_merge_operator(concatenate_merge);
+///
+/// let k = b"k1";
+///
+/// tree.insert(k, vec![0]);
+/// tree.merge(k, vec![1]);
+/// tree.merge(k, vec![2]);
+/// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![0, 1, 2]))));
+///
+/// // Replace previously merged data. The merge function will not be called.
+/// tree.insert(k, vec![3]);
+/// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![3]))));
+///
+/// // Merges on non-present values will cause the merge function to be called
+/// // with `old_value == None`. If the merge function returns something (which it
+/// // does, in this case) a new value will be inserted.
+/// tree.remove(k);
+/// tree.merge(k, vec![4]);
+/// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
+/// # Ok(()) }
+/// ```
 pub trait MergeOperator:
     Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
 {

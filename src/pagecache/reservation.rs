@@ -30,7 +30,7 @@ impl<'a> Drop for Reservation<'a> {
 impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
-    pub fn abort(mut self) -> Result<(Lsn, DiskPtr)> {
+    pub(crate) fn abort(mut self) -> Result<(Lsn, DiskPtr)> {
         if self.pointer.is_blob() && !self.is_blob_rewrite {
             // we don't want to remove this blob if something
             // else may still be using it.
@@ -48,13 +48,8 @@ impl<'a> Reservation<'a> {
 
     /// Complete the reservation, placing the buffer on disk. returns
     /// the log sequence number of the write, and the file offset.
-    pub fn complete(mut self) -> Result<(Lsn, DiskPtr)> {
+    pub(crate) fn complete(mut self) -> Result<(Lsn, DiskPtr)> {
         self.flush(true)
-    }
-
-    /// Get the log file offset for reading this buffer in the future.
-    pub fn lid(&self) -> LogOffset {
-        self.pointer.lid()
     }
 
     /// Get the log sequence number for this update.
@@ -70,7 +65,7 @@ impl<'a> Reservation<'a> {
     }
 
     /// Returns the length of the on-log reservation.
-    pub fn reservation_len(&self) -> usize {
+    pub(crate) fn reservation_len(&self) -> usize {
         self.buf.len()
     }
 
@@ -84,7 +79,7 @@ impl<'a> Reservation<'a> {
     /// Will panic if the reservation is not the correct
     /// size to hold a serialized Lsn.
     #[doc(hidden)]
-    pub fn mark_writebatch(&mut self, peg_lsn: Lsn, guard: &Guard) {
+    pub(crate) fn mark_writebatch(&mut self, peg_lsn: Lsn, guard: &Guard) {
         trace!(
             "writing batch required stable lsn {} into \
              BatchManifest at lid {} peg_lsn {}",
