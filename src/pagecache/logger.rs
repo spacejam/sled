@@ -111,7 +111,7 @@ impl Log {
     /// linearizability across CAS operations that may need to
     /// persist part of their operation.
     #[allow(unused)]
-    pub(crate) fn reserve<T: Serialize + Debug>(
+    pub fn reserve<T: Serialize + Debug>(
         &self,
         log_kind: LogKind,
         pid: PageId,
