@@ -210,7 +210,7 @@ unsafe impl Sync for Lru {}
 
 impl Lru {
     /// Instantiates a new `Lru` cache.
-    pub fn new(cache_capacity: u64) -> Self {
+    pub(crate) fn new(cache_capacity: u64) -> Self {
         assert!(
             cache_capacity >= 256,
             "Please configure the cache \
@@ -235,7 +235,7 @@ impl Lru {
     ///   shards:  1 0 1 0 1 0 1 0 1 0
     ///   shard 0:   2   4   6   8   10
     ///   shard 1: 1   3   5   7   9
-    pub fn accessed(
+    pub(crate) fn accessed(
         &self,
         id: PageId,
         item_size: u64,

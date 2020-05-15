@@ -52,11 +52,6 @@ impl<'a> Reservation<'a> {
         self.flush(true)
     }
 
-    /// Get the log file offset for reading this buffer in the future.
-    pub fn lid(&self) -> LogOffset {
-        self.pointer.lid()
-    }
-
     /// Get the log sequence number for this update.
     pub const fn lsn(&self) -> Lsn {
         self.lsn
@@ -70,7 +65,7 @@ impl<'a> Reservation<'a> {
     }
 
     /// Returns the length of the on-log reservation.
-    pub fn reservation_len(&self) -> usize {
+    pub(crate) fn reservation_len(&self) -> usize {
         self.buf.len()
     }
 

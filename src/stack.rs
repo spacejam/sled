@@ -92,7 +92,7 @@ impl<T: Send + 'static> Deref for Node<T> {
 
 impl<T: Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
-    pub fn push(&self, inner: T, guard: &Guard) {
+    pub(crate) fn push(&self, inner: T, guard: &Guard) {
         debug_delay();
         let node = Owned::new(Node { inner, next: Atomic::null() });
 
@@ -111,7 +111,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
     }
 
     /// Clears the stack and returns all items
-    pub fn take_iter<'a>(
+    pub(crate) fn take_iter<'a>(
         &self,
         guard: &'a Guard,
     ) -> impl Iterator<Item = &'a T> {
@@ -159,7 +159,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
 
     /// Returns the current head pointer of the stack, which can
     /// later be used as the key for cas and cap operations.
-    pub fn head<'g>(&self, guard: &'g Guard) -> Shared<'g, Node<T>> {
+    pub(crate) fn head<'g>(&self, guard: &'g Guard) -> Shared<'g, Node<T>> {
         self.head.load(Acquire, guard)
     }
 }
@@ -178,7 +178,7 @@ where
     T: 'a + Send + 'static + Sync,
 {
     /// Creates a `Iter` from a pointer to one.
-    pub fn from_ptr<'b>(
+    pub(crate) fn from_ptr<'b>(
         ptr: Shared<'b, Node<T>>,
         guard: &'b Guard,
     ) -> Iter<'b, T> {
