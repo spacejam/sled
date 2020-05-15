@@ -290,7 +290,11 @@ impl TransactionalTree {
 
         // not found in a cache, need to hit the backing db
         let guard = pin();
-        let get = self.tree.get_inner(key.as_ref(), &guard)?;
+        let get = loop {
+            if let Ok(get) = self.tree.get_inner(key.as_ref(), &guard)? {
+                break get;
+            }
+        };
         let last = reads.insert(key.as_ref().into(), get.clone());
         assert!(last.is_none());
 
@@ -327,12 +331,10 @@ impl TransactionalTree {
 
     fn commit(&self) -> Result<()> {
         let writes = self.writes.borrow();
-        let guard = pin();
+        let mut guard = pin();
         for (k, v_opt) in &*writes {
-            if let Some(v) = v_opt {
-                let _old = self.tree.insert_inner(k, v, &guard)?;
-            } else {
-                let _old = self.tree.remove_inner(k, &guard)?;
+            while self.tree.insert_inner(k, v_opt.clone(), &mut guard)?.is_err()
+            {
             }
         }
         Ok(())

@@ -286,7 +286,9 @@ pub use {
         },
         serialization::Serialize,
     },
-    crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared},
+    crossbeam_epoch::{
+        pin as crossbeam_pin, Atomic, Guard as CrossbeamGuard, Owned, Shared,
+    },
 };
 
 pub use self::{
@@ -336,6 +338,31 @@ use {
         },
     },
 };
+
+#[doc(hidden)]
+pub fn pin() -> Guard {
+    Guard { inner: crossbeam_pin(), readset: vec![], writeset: vec![] }
+}
+
+#[doc(hidden)]
+pub struct Guard {
+    inner: CrossbeamGuard,
+    readset: Vec<PageId>,
+    writeset: Vec<PageId>,
+}
+
+impl std::ops::Deref for Guard {
+    type Target = CrossbeamGuard;
+
+    fn deref(&self) -> &CrossbeamGuard {
+        &self.inner
+    }
+}
+
+#[derive(Debug)]
+struct Abort;
+
+type Abortable<T> = std::result::Result<T, Abort>;
 
 fn crc32(buf: &[u8]) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
