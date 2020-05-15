@@ -130,56 +130,74 @@ impl Tree {
         K: AsRef<[u8]>,
         IVec: From<V>,
     {
-        let guard = pin();
+        let value = IVec::from(value);
+        let mut guard = pin();
         let _ = self.concurrency_control.read(&guard);
-        self.insert_inner(key, value, &guard)
+        loop {
+            trace!("setting key {:?}", key.as_ref());
+            if let Ok(res) =
+                self.insert_inner(key.as_ref(), Some(value.clone()), &mut guard)?
+            {
+                return Ok(res);
+            }
+        }
     }
 
-    pub(crate) fn insert_inner<K, V>(
+    pub(crate) fn insert_inner(
         &self,
-        key: K,
-        value: V,
-        guard: &Guard,
-    ) -> Result<Option<IVec>>
-    where
-        K: AsRef<[u8]>,
-        IVec: From<V>,
-    {
-        trace!("setting key {:?}", key.as_ref());
+        key: &[u8],
+        mut value: Option<IVec>,
+        guard: &mut Guard,
+    ) -> Result<Abortable<Option<IVec>>> {
         let _measure = Measure::new(&M.tree_set);
 
-        let value = IVec::from(value);
+        let View { node_view, pid, .. } =
+            self.view_for_key(key.as_ref(), guard)?;
 
-        loop {
-            let View { node_view, pid, .. } =
-                self.view_for_key(key.as_ref(), guard)?;
+        let mut subscriber_reservation = self.subscribers.reserve(&key);
 
-            let mut subscriber_reservation = self.subscribers.reserve(&key);
+        let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
 
-            let (encoded_key, last_value) =
-                node_view.node_kv_pair(key.as_ref());
-            let frag = Link::Set(encoded_key, value.clone());
-            let link = self.context.pagecache.link(
-                pid,
-                node_view.0,
-                frag.clone(),
-                guard,
-            )?;
-            if let Ok(_new_cas_key) = link {
-                // success
-                if let Some(res) = subscriber_reservation.take() {
-                    let event = subscriber::Event::Insert {
+        if value == last_value {
+            // short-circuit a no-op set or delete
+            return Ok(Ok(value))
+        }
+
+        let frag = if let Some(value) = value.clone() {
+            Link::Set(encoded_key, value)
+        } else {
+            Link::Del(encoded_key)
+        };
+
+        let link = self.context.pagecache.link(
+            pid,
+            node_view.0,
+            frag.clone(),
+            guard,
+        )?;
+
+        if let Ok(_new_cas_key) = link {
+            // success
+            if let Some(res) = subscriber_reservation.take() {
+                let event = if let Some(value) = value.take() {
+                    subscriber::Event::Insert {
                         key: key.as_ref().into(),
                         value,
-                    };
+                    }
+                } else {
+                    subscriber::Event::Remove { key: key.as_ref().into() }
+                };
 
-                    res.complete(&event);
-                }
-
-                return Ok(last_value);
+                res.complete(&event);
             }
-            M.tree_looped();
+
+            guard.writeset.push(pid);
+
+            return Ok(Ok(last_value));
         }
+
+        M.tree_looped();
+        Ok(Err(Abort))
     }
 
     /// Perform a multi-key serializable transaction.
@@ -335,22 +353,18 @@ impl Tree {
     /// ```
     pub fn apply_batch(&self, batch: Batch) -> Result<()> {
         let _ = self.concurrency_control.write();
-        let guard = pin();
-        self.apply_batch_inner(batch, &guard)
+        let mut guard = pin();
+        self.apply_batch_inner(batch, &mut guard)
     }
 
     pub(crate) fn apply_batch_inner(
         &self,
         batch: Batch,
-        guard: &Guard,
+        guard: &mut Guard,
     ) -> Result<()> {
         let peg = self.context.pin_log(guard)?;
         for (k, v_opt) in batch.writes {
-            if let Some(v) = v_opt {
-                let _old = self.insert_inner(k, v, guard)?;
-            } else {
-                let _old = self.remove_inner(k, guard)?;
-            }
+            let _old = self.insert_inner(&k, v_opt, guard)?;
         }
 
         // when the peg drops, it ensures all updates
@@ -375,26 +389,32 @@ impl Tree {
     /// # Ok(()) }
     /// ```
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let guard = pin();
+        let mut guard = pin();
         let _ = self.concurrency_control.read(&guard);
-        self.get_inner(key, &guard)
+        loop {
+            if let Ok(get) = self.get_inner(key.as_ref(), &mut guard)? {
+                return Ok(get);
+            }
+        }
     }
 
-    pub(crate) fn get_inner<K: AsRef<[u8]>>(
+    pub(crate) fn get_inner(
         &self,
-        key: K,
-        guard: &Guard,
-    ) -> Result<Option<IVec>> {
+        key: &[u8],
+        guard: &mut Guard,
+    ) -> Result<Abortable<Option<IVec>>> {
         let _measure = Measure::new(&M.tree_get);
 
         trace!("getting key {:?}", key.as_ref());
 
-        let View { node_view, .. } = self.view_for_key(key.as_ref(), guard)?;
+        let View { node_view, pid, .. } = self.view_for_key(key.as_ref(), guard)?;
 
         let pair = node_view.leaf_pair_for_key(key.as_ref());
         let val = pair.map(|kv| kv.1.clone());
 
-        Ok(val)
+        guard.readset.push(pid);
+
+        Ok(Ok(val))
     }
 
     #[doc(hidden)]
@@ -417,47 +437,13 @@ impl Tree {
     /// # Ok(()) }
     /// ```
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let guard = pin();
+        let mut guard = pin();
         let _ = self.concurrency_control.read(&guard);
-        self.remove_inner(key, &guard)
-    }
-
-    pub(crate) fn remove_inner<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-        guard: &Guard,
-    ) -> Result<Option<IVec>> {
-        let _measure = Measure::new(&M.tree_del);
-
-        trace!("removing key {:?}", key.as_ref());
-
         loop {
-            let View { pid, node_view, .. } =
-                self.view_for_key(key.as_ref(), guard)?;
+            trace!("removing key {:?}", key.as_ref());
 
-            let mut subscriber_reservation = self.subscribers.reserve(&key);
-
-            let (encoded_key, existing_val) =
-                node_view.node_kv_pair(key.as_ref());
-
-            if existing_val.is_none() {
-                return Ok(None);
-            }
-
-            let frag = Link::Del(encoded_key);
-            let link =
-                self.context.pagecache.link(pid, node_view.0, frag, guard)?;
-
-            if link.is_ok() {
-                // success
-                if let Some(res) = subscriber_reservation.take() {
-                    let event =
-                        subscriber::Event::Remove { key: key.as_ref().into() };
-
-                    res.complete(&event);
-                }
-
-                return Ok(existing_val);
+            if let Ok(res) = self.insert_inner(key.as_ref(), None, &mut guard)? {
+                return Ok(res);
             }
         }
     }
@@ -525,7 +511,7 @@ impl Tree {
         OV: AsRef<[u8]>,
         IVec: From<NV>,
     {
-        trace!("casing key {:?}", key.as_ref());
+        trace!("cas'ing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
 
         let guard = pin();
@@ -581,26 +567,6 @@ impl Tree {
                 return Ok(Ok(()));
             }
             M.tree_looped();
-        }
-    }
-
-    #[deprecated(since = "0.28.1", note = "replaced with compare_and_swap")]
-    #[doc(hidden)]
-    pub fn cas<K, OV, NV>(
-        &self,
-        key: K,
-        old: Option<OV>,
-        new: Option<NV>,
-    ) -> Result<std::result::Result<(), Option<IVec>>>
-    where
-        K: AsRef<[u8]>,
-        OV: AsRef<[u8]>,
-        IVec: From<NV>,
-    {
-        match self.compare_and_swap(key, old, new) {
-            Ok(Ok(())) => Ok(Ok(())),
-            Ok(Err(CompareAndSwapError { current: cur, .. })) => Ok(Err(cur)),
-            Err(e) => Err(e),
         }
     }
 
@@ -822,16 +788,16 @@ impl Tree {
     /// should measure the performance impact of
     /// using it on realistic sustained workloads
     /// running on realistic hardware.
-    pub async fn flush_async(
-        &self,
-    ) -> Result<usize> {
+    pub async fn flush_async(&self) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
-        if let Some(result) = threadpool::spawn(move || pagecache.flush()).await {
+        if let Some(result) = threadpool::spawn(move || pagecache.flush()).await
+        {
             result
         } else {
             Err(Error::ReportableBug(
                 "threadpool failed to complete \
-                action before shutdown".to_string()
+                action before shutdown"
+                    .to_string(),
             ))
         }
     }
@@ -1025,18 +991,18 @@ impl Tree {
     {
         let guard = pin();
         let _ = self.concurrency_control.read(&guard);
-        self.merge_inner(key, value)
+        loop {
+            if let Ok(merge) = self.merge_inner(key.as_ref(), value.as_ref())? {
+                return Ok(merge);
+            }
+        }
     }
 
-    pub(crate) fn merge_inner<K, V>(
+    pub(crate) fn merge_inner(
         &self,
-        key: K,
-        value: V,
-    ) -> Result<Option<IVec>>
-    where
-        K: AsRef<[u8]>,
-        V: AsRef<[u8]>,
-    {
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<Abortable<Option<IVec>>> {
         trace!("merging key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_merge);
 
@@ -1088,7 +1054,7 @@ impl Tree {
                     res.complete(&event);
                 }
 
-                return Ok(new);
+                return Ok(Ok(new));
             }
             M.tree_looped();
         }
