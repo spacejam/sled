@@ -289,9 +289,9 @@ impl TransactionalTree {
         }
 
         // not found in a cache, need to hit the backing db
-        let guard = pin();
+        let mut guard = pin();
         let get = loop {
-            if let Ok(get) = self.tree.get_inner(key.as_ref(), &guard)? {
+            if let Ok(get) = self.tree.get_inner(key.as_ref(), &mut guard)? {
                 break get;
             }
         };
