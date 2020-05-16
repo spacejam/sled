@@ -39,8 +39,9 @@ impl Snapshot {
 
             (Some(offset), Some(stable_lsn))
         } else {
-            let lsn_idx = stable_lsn / segment_size as Lsn;
-            let next_lsn = (lsn_idx + 1) * segment_size as Lsn;
+            let lsn_idx = stable_lsn / segment_size as Lsn
+                + if stable_lsn % segment_size as Lsn == 0 { 0 } else { 1 };
+            let next_lsn = lsn_idx * segment_size as Lsn;
             (None, Some(next_lsn))
         }
     }
@@ -172,8 +173,7 @@ impl Snapshot {
             }
             LogKind::Corrupted | LogKind::Skip => panic!(
                 "unexppected messagekind in snapshot application for pid {}: {:?}",
-                pid,
-                log_kind
+                pid, log_kind
             ),
         }
     }
