@@ -554,6 +554,60 @@ impl PageCache {
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
 
+        #[cfg(feature = "testing")]
+        {
+            // these checks are in place to catch non-idempotent
+            // recovery which could trigger feedback loops and
+            // emergent behavior.
+            trace!(
+                "\n\n~~~~ regenerating snapshot for idempotency test ~~~~\n"
+            );
+
+            let snapshot2 = read_snapshot_or_default(&config)
+                .expect("second read snapshot");
+            assert_eq!(
+                snapshot.active_segment, snapshot2.active_segment,
+                "snapshot active_segment diverged across recoveries.\n\n \
+                first: {:?}\n\n
+                second: {:?}\n\n",
+                snapshot, snapshot2
+            );
+            assert_eq!(
+                snapshot.stable_lsn, snapshot2.stable_lsn,
+                "snapshot stable_lsn diverged across recoveries.\n\n \
+                first: {:?}\n\n
+                second: {:?}\n\n",
+                snapshot, snapshot2
+            );
+            for (pid, (p1, p2)) in
+                snapshot.pt.iter().zip(snapshot2.pt.iter()).enumerate()
+            {
+                assert_eq!(
+                    p1, p2,
+                    "snapshot pid {} diverged across recoveries.\n\n \
+                first: {:?}\n\n
+                second: {:?}\n\n",
+                    pid, p1, p2
+                );
+            }
+            assert_eq!(
+                snapshot.pt.len(),
+                snapshot2.pt.len(),
+                "snapshots number of pages diverged across recoveries.\n\n \
+                first: {:?}\n\n
+                second: {:?}\n\n",
+                snapshot.pt,
+                snapshot2.pt
+            );
+            assert_eq!(
+                snapshot, snapshot2,
+                "snapshots diverged across recoveries.\n\n \
+                first: {:?}\n\n
+                second: {:?}\n\n",
+                snapshot, snapshot2
+            );
+        }
+
         let _measure = Measure::new(&M.start_pagecache);
 
         let cache_capacity = config.cache_capacity;
@@ -575,7 +629,7 @@ impl PageCache {
         // now we read it back in
         pc.load_snapshot(&snapshot)?;
 
-        #[cfg(feature = "event_log")]
+        #[cfg(feature = "testing")]
         {
             use std::collections::HashMap;
 
