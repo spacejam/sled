@@ -363,8 +363,13 @@ impl Tree {
         guard: &mut Guard,
     ) -> Result<()> {
         let peg = self.context.pin_log(guard)?;
+        trace!("applying batch {:?}", batch);
         for (k, v_opt) in batch.writes {
-            let _old = self.insert_inner(&k, v_opt, guard)?;
+            loop {
+                if self.insert_inner(&k, v_opt.clone(), guard)?.is_ok() {
+                    break;
+                }
+            }
         }
 
         // when the peg drops, it ensures all updates
