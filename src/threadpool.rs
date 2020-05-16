@@ -18,9 +18,9 @@ const MAX_THREADS: usize = 16;
 #[cfg(not(windows))]
 const MAX_THREADS: usize = 128;
 
-const MIN_THREADS: usize = 2;
+const DESIRED_WAITING_THREADS: usize = 2;
 
-static STANDBY_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+static WAITING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 macro_rules! once {
@@ -47,7 +47,9 @@ impl Queue {
         let cutoff = Instant::now() + duration;
 
         while queue.is_empty() {
+            WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
             let res = self.cv.wait_until(&mut queue, cutoff);
+            WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
             if res.timed_out() {
                 break;
             }
@@ -83,26 +85,17 @@ fn init_queue() -> Queue {
 fn perform_work() {
     let wait_limit = Duration::from_secs(1);
 
-    while STANDBY_THREAD_COUNT.load(SeqCst) < MIN_THREADS {
-        debug_delay();
-        STANDBY_THREAD_COUNT.fetch_add(1, SeqCst);
-
+    while WAITING_THREAD_COUNT.load(SeqCst) < DESIRED_WAITING_THREADS {
         debug_delay();
         let task_res = QUEUE.recv_timeout(wait_limit);
-
-        debug_delay();
-        if STANDBY_THREAD_COUNT.fetch_sub(1, SeqCst) <= MIN_THREADS {
-            maybe_spawn_new_thread();
-        }
 
         if let Some(task) = task_res {
             (task)();
         }
 
-        debug_delay();
         while let Some(task) = QUEUE.try_recv() {
-            (task)();
             debug_delay();
+            (task)();
         }
 
         debug_delay();
@@ -116,8 +109,10 @@ fn maybe_spawn_new_thread() {
     debug_delay();
     let total_workers = TOTAL_THREAD_COUNT.load(SeqCst);
     debug_delay();
-    let standby_workers = STANDBY_THREAD_COUNT.load(SeqCst);
-    if standby_workers >= MIN_THREADS || total_workers >= MAX_THREADS {
+    let waiting_threads = WAITING_THREAD_COUNT.load(SeqCst);
+    if waiting_threads >= DESIRED_WAITING_THREADS
+        || total_workers >= MAX_THREADS
+    {
         return;
     }
 
