@@ -98,7 +98,6 @@ impl Serialize for MessageHeader {
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        crate::trace!("serializing {:?}", self);
         self.crc32.serialize_into(buf);
         self.kind.into().serialize_into(buf);
         self.len.serialize_into(buf);
@@ -396,9 +395,9 @@ impl Serialize for Link {
 
 impl Serialize for Node {
     fn serialized_size(&self) -> u64 {
-        let next_sz = self.next.unwrap_or(0_u64).serialized_size();
+        let next_sz = shift_u64_opt(&self.next).serialized_size();
         let merging_child_sz =
-            self.merging_child.unwrap_or(0_u64).serialized_size();
+            shift_u64_opt(&self.merging_child).serialized_size();
 
         2 + next_sz
             + merging_child_sz
@@ -408,8 +407,8 @@ impl Serialize for Node {
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        self.next.unwrap_or(0_u64).serialize_into(buf);
-        self.merging_child.unwrap_or(0_u64).serialize_into(buf);
+        shift_u64_opt(&self.next).serialize_into(buf);
+        shift_u64_opt(&self.merging_child).serialize_into(buf);
         self.merging.serialize_into(buf);
         self.prefix_len.serialize_into(buf);
         self.lo.serialize_into(buf);
@@ -421,12 +420,8 @@ impl Serialize for Node {
         let next = u64::deserialize(buf)?;
         let merging_child = u64::deserialize(buf)?;
         Ok(Node {
-            next: if next == 0 { None } else { Some(next) },
-            merging_child: if merging_child == 0 {
-                None
-            } else {
-                Some(merging_child)
-            },
+            next: unshift_u64_opt(next),
+            merging_child: unshift_u64_opt(merging_child),
             merging: bool::deserialize(buf)?,
             prefix_len: u8::deserialize(buf)?,
             lo: IVec::deserialize(buf)?,
@@ -436,10 +431,60 @@ impl Serialize for Node {
     }
 }
 
+impl Serialize for Option<i64> {
+    fn serialized_size(&self) -> u64 {
+        shift_i64_opt(self).serialized_size()
+    }
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        shift_i64_opt(self).serialize_into(buf)
+    }
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        Ok(unshift_i64_opt(i64::deserialize(buf)?))
+    }
+}
+
+fn shift_i64_opt(value_opt: &Option<i64>) -> i64 {
+    if let Some(value) = value_opt {
+        if value.signum() == -1 { *value } else { value + 1 }
+    } else {
+        0
+    }
+}
+
+fn unshift_i64_opt(value: i64) -> Option<i64> {
+    if value == 0 {
+        None
+    } else if value.signum() == -1 {
+        Some(value)
+    } else {
+        Some(value - 1)
+    }
+}
+
+fn shift_u64_opt(value: &Option<u64>) -> u64 {
+    value.map(|s| s + 1).unwrap_or(0)
+}
+
+fn unshift_u64_opt(value: u64) -> Option<u64> {
+    if value == 0 { None } else { Some(value - 1) }
+}
+
+impl Serialize for Option<u64> {
+    fn serialized_size(&self) -> u64 {
+        shift_u64_opt(self).serialized_size()
+    }
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        shift_u64_opt(self).serialize_into(buf)
+    }
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        Ok(unshift_u64_opt(u64::deserialize(buf)?))
+    }
+}
+
 impl Serialize for Snapshot {
     fn serialized_size(&self) -> u64 {
-        self.stable_lsn.unwrap_or(0).serialized_size()
-            + self.active_segment.unwrap_or(0).serialized_size()
+        self.stable_lsn.serialized_size()
+            + self.active_segment.serialized_size()
             + self
                 .pt
                 .iter()
@@ -448,8 +493,8 @@ impl Serialize for Snapshot {
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        self.stable_lsn.unwrap_or(0).serialize_into(buf);
-        self.active_segment.unwrap_or(0).serialize_into(buf);
+        self.stable_lsn.serialize_into(buf);
+        self.active_segment.serialize_into(buf);
         for page_state in &self.pt {
             page_state.serialize_into(buf);
         }
@@ -459,11 +504,11 @@ impl Serialize for Snapshot {
         Ok(Snapshot {
             stable_lsn: {
                 let lsn = i64::deserialize(buf)?;
-                if lsn == 0 { None } else { Some(lsn) }
+                unshift_i64_opt(lsn)
             },
             active_segment: {
                 let lid = u64::deserialize(buf)?;
-                if lid == 0 { None } else { Some(lid) }
+                unshift_u64_opt(lid)
             },
             pt: deserialize_sequence(buf)?,
         })
