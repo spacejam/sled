@@ -2303,3 +2303,29 @@ fn tree_bug_43() {
         52,
     );
 }
+
+#[test]
+fn tree_bug_44() {
+    // postmortem: off-by-one bug related to LSN recovery
+    // where 1 was added to the index when the recovered
+    // LSN was actually divisible by the segment size
+    assert!(prop_tree_matches_btreemap(
+        vec![
+            Merge(Key(vec![]), 97),
+            Merge(Key(vec![]), 41),
+            Merge(Key(vec![]), 241),
+            Set(Key(vec![21; 1]), 24),
+            Del(Key(vec![])),
+            Set(Key(vec![]), 145),
+            Set(Key(vec![151; 1]), 187),
+            Get(Key(vec![])),
+            Restart,
+            Set(Key(vec![]), 151),
+            Restart,
+        ],
+        false,
+        false,
+        0,
+        0,
+    ))
+}
