@@ -158,9 +158,6 @@ impl Tree {
 
         let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
 
-        let (encoded_key, last_value) =
-            node_view.node_kv_pair(key.as_ref());
-      
         if value == last_value {
             // short-circuit a no-op set or delete
             return Ok(Ok(value))
@@ -171,7 +168,7 @@ impl Tree {
         } else {
             Link::Del(encoded_key)
         };
-      
+
         let link = self.context.pagecache.link(
             pid,
             node_view.0,
