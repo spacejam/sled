@@ -191,11 +191,7 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old {
-            Ok(new)
-        } else {
-            Err(res)
-        }
+        if res == old { Ok(new) } else { Err(res) }
     }
 }
 
@@ -263,7 +259,7 @@ impl StabilityIntervals {
                 low,
                 high
             );
-            if high < self.stable_lsn {
+            if high <= self.stable_lsn {
                 if let Some(bsl) = batch_stable_lsn {
                     assert!(bsl < high);
                 }
