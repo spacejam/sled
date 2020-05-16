@@ -211,27 +211,15 @@ impl Default for Segment {
 
 impl Segment {
     fn is_free(&self) -> bool {
-        if let Segment::Free(_) = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Free(_) = self { true } else { false }
     }
 
     fn is_active(&self) -> bool {
-        if let Segment::Active { .. } = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Active { .. } = self { true } else { false }
     }
 
     fn is_inactive(&self) -> bool {
-        if let Segment::Inactive { .. } = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Inactive { .. } = self { true } else { false }
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
@@ -512,7 +500,8 @@ impl SegmentAccountant {
         let segment_size = self.config.segment_size;
         let file_len = self.config.file.metadata()?.len();
         let number_of_segments =
-            usize::try_from(file_len / segment_size as u64).unwrap();
+            usize::try_from(file_len / segment_size as u64).unwrap()
+                + if file_len % segment_size as u64 == 0 { 0 } else { 1 };
 
         // generate segments from snapshot lids
         let mut segments = vec![Segment::default(); number_of_segments];
@@ -1061,11 +1050,7 @@ impl SegmentAccountant {
         self.ordering
             .iter()
             .filter_map(move |(l, r)| {
-                if *l >= normalized_lsn {
-                    Some((*l, *r))
-                } else {
-                    None
-                }
+                if *l >= normalized_lsn { Some((*l, *r)) } else { None }
             })
             .collect()
     }
