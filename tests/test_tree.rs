@@ -2329,3 +2329,26 @@ fn tree_bug_44() {
         0,
     ))
 }
+#[test]
+fn tree_bug_45() {
+    // postmortem: recovery was not properly accounting for
+    // the possibility of a segment to be maxed out, similar
+    // to bug 44.
+    for _ in 0..10 {
+        assert!(prop_tree_matches_btreemap(
+            vec![
+                Merge(Key(vec![206; 77]), 225),
+                Set(Key(vec![88; 190]), 40),
+                Set(Key(vec![162; 1]), 213),
+                Merge(Key(vec![186; 1]), 175),
+                Set(Key(vec![105; 16]), 111),
+                Cas(Key(vec![]), 75, 252),
+                Restart
+            ],
+            false,
+            true,
+            0,
+            210
+        ))
+    }
+}
