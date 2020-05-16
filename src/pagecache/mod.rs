@@ -416,7 +416,7 @@ pub struct RecoveryGuard<'a> {
 impl<'a> RecoveryGuard<'a> {
     /// Writes the last LSN for a batch into an earlier
     /// reservation, releasing it.
-    pub fn seal_batch(self) -> Result<()> {
+    pub(crate) fn seal_batch(self) -> Result<()> {
         let max_reserved =
             self.batch_res.log.iobufs.max_reserved_lsn.load(Acquire);
         self.batch_res.mark_writebatch(max_reserved).map(|_| ())
@@ -544,7 +544,7 @@ impl Drop for PageCache {
 
 impl PageCache {
     /// Instantiate a new `PageCache`.
-    pub fn start(config: RunningConfig) -> Result<Self> {
+    pub(crate) fn start(config: RunningConfig) -> Result<Self> {
         trace!("starting pagecache");
 
         config.reset_global_error();
@@ -725,7 +725,7 @@ impl PageCache {
 
     /// Flushes any pending IO buffers to disk to ensure durability.
     /// Returns the number of bytes written during this call.
-    pub fn flush(&self) -> Result<usize> {
+    pub(crate) fn flush(&self) -> Result<usize> {
         self.log.flush()
     }
 
@@ -733,7 +733,7 @@ impl PageCache {
     /// to maximize underlying `PageTable` pointer density. Returns
     /// the page ID and its pointer for use in future atomic `replace`
     /// and `link` operations.
-    pub fn allocate<'g>(
+    pub(crate) fn allocate<'g>(
         &self,
         new: Node,
         guard: &'g Guard,
@@ -799,7 +799,7 @@ impl PageCache {
     /// move a page. Returns Ok(false) if there were no pages
     /// to GC. Returns an Err if we encountered an IO problem
     /// while performing this GC.
-    pub fn attempt_gc(&self) -> Result<bool> {
+    pub(crate) fn attempt_gc(&self) -> Result<bool> {
         let guard = pin();
         let to_clean = self.log.iobufs.segment_cleaner.pop();
         let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
@@ -824,7 +824,7 @@ impl PageCache {
     /// to facilitate transactions and write batches when
     /// combined with a concurrency control system in another
     /// component.
-    pub fn pin_log(&self, guard: &Guard) -> Result<RecoveryGuard<'_>> {
+    pub(crate) fn pin_log(&self, guard: &Guard) -> Result<RecoveryGuard<'_>> {
         let batch_res = self.log.reserve(
             LogKind::Skip,
             BATCH_MANIFEST_PID,
@@ -836,7 +836,7 @@ impl PageCache {
 
     #[doc(hidden)]
     #[cfg(feature = "failpoints")]
-    pub fn set_failpoint(&self, e: Error) {
+    pub(crate) fn set_failpoint(&self, e: Error) {
         if let Error::FailPoint = e {
             self.config.set_global_error(e);
 
@@ -853,7 +853,7 @@ impl PageCache {
     }
 
     /// Free a particular page.
-    pub fn free<'g>(
+    pub(crate) fn free<'g>(
         &self,
         pid: PageId,
         old: PageView<'g>,
@@ -1060,7 +1060,7 @@ impl PageCache {
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns
     /// `Err(Some(actual_key))` if the atomic swap fails.
-    pub fn replace<'g>(
+    pub(crate) fn replace<'g>(
         &self,
         pid: PageId,
         old: PageView<'g>,
@@ -1293,7 +1293,7 @@ impl PageCache {
     #[allow(clippy::cast_precision_loss)]
     #[allow(clippy::float_arithmetic)]
     #[doc(hidden)]
-    pub fn space_amplification(&self) -> Result<f64> {
+    pub(crate) fn space_amplification(&self) -> Result<f64> {
         let on_disk_bytes = self.size_on_disk()? as f64;
         let logical_size = (self.logical_size_of_all_pages()?
             + self.config.segment_size as u64)
@@ -1542,7 +1542,7 @@ impl PageCache {
     }
 
     /// Try to retrieve a page by its logical ID.
-    pub fn get<'g>(
+    pub(crate) fn get<'g>(
         &self,
         pid: PageId,
         guard: &'g Guard,
@@ -1670,7 +1670,7 @@ impl PageCache {
     /// triggering necessary flushes in the process.
     /// Returns the number of bytes written during
     /// this call.
-    pub fn make_stable(&self, lsn: Lsn) -> Result<usize> {
+    pub(crate) fn make_stable(&self, lsn: Lsn) -> Result<usize> {
         self.log.make_stable(lsn)
     }
 
@@ -1696,7 +1696,7 @@ impl PageCache {
     /// previous persisted counter wasn't synced to disk yet, we will do
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
-    pub fn generate_id(&self) -> Result<u64> {
+    pub(crate) fn generate_id(&self) -> Result<u64> {
         let ret = self.idgen.fetch_add(1, Relaxed);
 
         let interval = self.config.idgen_persist_interval;
@@ -1750,7 +1750,7 @@ impl PageCache {
     /// sled's `Tree` root tracking for an example of
     /// avoiding this in a lock-free way that handles
     /// various race conditions.
-    pub fn meta_pid_for_name(
+    pub(crate) fn meta_pid_for_name(
         &self,
         name: &[u8],
         guard: &Guard,
@@ -1765,7 +1765,7 @@ impl PageCache {
 
     /// Compare-and-swap the `Meta` mapping for a given
     /// identifier.
-    pub fn cas_root_in_meta<'g>(
+    pub(crate) fn cas_root_in_meta<'g>(
         &self,
         name: &[u8],
         old: Option<PageId>,

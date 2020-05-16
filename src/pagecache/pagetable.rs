@@ -113,7 +113,7 @@ impl PageTable {
     /// which represents a serious failure to
     /// properly handle lifecycles of pages in the
     /// using system.
-    pub fn insert<'g>(
+    pub(crate) fn insert<'g>(
         &self,
         pid: PageId,
         item: Page,
@@ -130,7 +130,7 @@ impl PageTable {
     }
 
     /// Try to get a value from the tree.
-    pub fn get<'g>(
+    pub(crate) fn get<'g>(
         &self,
         pid: PageId,
         guard: &'g Guard,
