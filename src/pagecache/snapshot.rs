@@ -250,7 +250,18 @@ fn advance_snapshot(
         let iterated_lsn = iter.cur_lsn.unwrap();
 
         let segment_progress: Lsn = iterated_lsn % (config.segment_size as Lsn);
-        assert!(segment_progress >= SEG_HEADER_LEN as Lsn);
+
+        // progress should never be below the SEG_HEADER_LEN if the segment_base
+        // is set. progress can only be 0 if we've maxed out the
+        // previous segment, unsetting the iterator segment_base in the
+        // process.
+        assert!(
+            segment_progress >= SEG_HEADER_LEN as Lsn
+                || (segment_progress == 0 && iter.segment_base.is_none()),
+            "expected segment progress {} to be above SEG_HEADER_LEN or == 0, cur_lsn: {}",
+            segment_progress,
+            iterated_lsn,
+        );
 
         let (stable_lsn, active_segment) = if segment_progress
             + MAX_MSG_HEADER_LEN as Lsn
