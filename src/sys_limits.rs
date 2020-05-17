@@ -105,5 +105,16 @@ pub fn get_memory_limit() -> u64 {
         max = MAX_USIZE;
     }
 
+    #[cfg(miri)]
+    {
+        // Miri has a significant memory consumption overhead. During a small
+        // test run, a memory amplification of ~35x was observed. Certain
+        // memory overheads may increase asymptotically with longer test runs,
+        // such as the interpreter's dead_alloc_map. Memory overhead is
+        // dominated by stacked borrows tags; the asymptotic behavior of this
+        // overhead needs further investigation.
+        max /= 40;
+    }
+
     max
 }
