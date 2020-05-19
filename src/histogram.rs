@@ -60,7 +60,7 @@ impl Default for Histogram {
             // Avoid calling Vec::resize_with with a large length because its
             // internals cause stacked borrows tracking information to add an
             // item for each element of the vector.
-            let mut vals = std::mem::ManuallyDrop::new(vec![0usize; BUCKETS]);
+            let mut vals = std::mem::ManuallyDrop::new(vec![0_usize; BUCKETS]);
             let ptr: *mut usize = vals.as_mut_ptr();
             let len = vals.len();
             let capacity = vals.capacity();
