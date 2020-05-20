@@ -3,14 +3,12 @@ use std::{
     borrow::Cow,
     fmt::{self, Debug},
     ops::{self, Deref, RangeBounds},
-    sync::{
-        atomic::{AtomicU64, Ordering::SeqCst},
-    },
+    sync::atomic::Ordering::SeqCst,
 };
 
 use parking_lot::RwLock;
 
-use crate::{pagecache::NodeView, *};
+use crate::{atomic_shim::AtomicU64, pagecache::NodeView, *};
 
 #[derive(Debug, Clone)]
 pub(crate) struct View<'g> {

@@ -34,6 +34,7 @@ measure_allocs = []
 pretty_backtrace = ["color-backtrace"]
 io_uring = ["rio"]
 docs = []
+mutex = []
 
 [dependencies]
 crossbeam-epoch = "0.8.2"
@@ -47,6 +48,7 @@ parking_lot = "0.10.2"
 color-backtrace = { version = "0.4.2", optional = true }
 rio = { version = "0.9.3", optional = true }
 backtrace = "0.3.49"
+array-init = "0.1.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os="windows"))'.dependencies]
 fs2 = "0.4.3"
