@@ -39,7 +39,7 @@ let tree = sled::open("/tmp/welcome-to-sled").expect("open");
 
 // insert and get, similar to std's BTreeMap
 tree.insert("KEY1", "VAL1");
-assert_eq!(tree.get(&"KEY1"), Ok(Some("VAL1")));
+assert_eq!(tree.get(&"KEY1"), Ok(Some(sled::IVec::from("VAL1"))));
 
 // range queries
 for kv in tree.range("KEY1".."KEY9") {}
