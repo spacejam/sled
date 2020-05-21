@@ -1576,3 +1576,85 @@ fn failpoints_bug_31() {
         ));
     }
 }
+
+#[test]
+fn failpoints_bug_32() {
+    // postmortem 1:
+    for _ in 0..10 {
+        assert!(prop_tree_crashes_nicely(
+            vec![Batched(vec![BatchOp::Set, BatchOp::Set]), Restart],
+            false
+        ));
+    }
+}
+
+#[test]
+fn failpoints_bug_33() {
+    // postmortem 1:
+    for _ in 0..10 {
+        assert!(prop_tree_crashes_nicely(
+            vec![
+                Batched(vec![
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Del(85),
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Del(148),
+                    BatchOp::Set,
+                    BatchOp::Set
+                ]),
+                Restart,
+                Batched(vec![
+                    BatchOp::Del(255),
+                    BatchOp::Del(42),
+                    BatchOp::Del(150),
+                    BatchOp::Del(16),
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Del(111),
+                    BatchOp::Del(65),
+                    BatchOp::Del(102),
+                    BatchOp::Del(99),
+                    BatchOp::Del(25),
+                    BatchOp::Del(156),
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Del(73),
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Del(238),
+                    BatchOp::Del(211),
+                    BatchOp::Del(14),
+                    BatchOp::Del(7),
+                    BatchOp::Del(137),
+                    BatchOp::Del(115),
+                    BatchOp::Del(91),
+                    BatchOp::Set,
+                    BatchOp::Del(172),
+                    BatchOp::Del(49),
+                    BatchOp::Del(152),
+                    BatchOp::Set,
+                    BatchOp::Del(189),
+                    BatchOp::Set,
+                    BatchOp::Del(37),
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Del(96),
+                    BatchOp::Set,
+                    BatchOp::Set,
+                    BatchOp::Del(159),
+                    BatchOp::Del(126)
+                ])
+            ],
+            true
+        ));
+    }
+}
