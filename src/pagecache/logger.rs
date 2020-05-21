@@ -48,13 +48,13 @@ impl Log {
     pub fn read(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<LogRead> {
         trace!("reading log lsn {} ptr {}", lsn, ptr);
 
-        let _wrote = self.make_stable(lsn)?;
         let expected_segment_number = SegmentNumber(
             u64::try_from(lsn).unwrap()
                 / u64::try_from(self.config.segment_size).unwrap(),
         );
 
         if ptr.is_inline() {
+            self.make_stable(lsn)?;
             let f = &self.config.file;
             read_message(&**f, ptr.lid(), expected_segment_number, &self.config)
         } else {
@@ -62,6 +62,7 @@ impl Log {
             // here because it might not still
             // exist in the inline log.
             let (_, blob_ptr) = ptr.blob();
+            self.make_stable(blob_ptr)?;
             read_blob(blob_ptr, &self.config).map(|(kind, buf)| {
                 let header = MessageHeader {
                     kind,
