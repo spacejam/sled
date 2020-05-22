@@ -1592,6 +1592,12 @@ impl PageCache {
                 return Ok(Some(NodeView(page_view)));
             }
 
+            trace!(
+                "pulling pid {} view {:?} deref {:?}",
+                pid,
+                page_view,
+                page_view.deref()
+            );
             if page_view.cache_infos.first()
                 == last_attempted_cache_info.as_ref()
             {

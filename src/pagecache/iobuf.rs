@@ -365,7 +365,7 @@ impl IoBufs {
             (Some(_), None) => unreachable!(),
         };
 
-        assert!(next_lsn >= next_lid as Lsn);
+        assert!(next_lsn >= Lsn::try_from(next_lid).unwrap());
 
         debug!(
             "starting IoBufs with next_lsn: {} \

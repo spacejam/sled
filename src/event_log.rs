@@ -129,7 +129,7 @@ impl EventLog {
             }
         }
 
-        debug!("event log verified ✓");
+        debug!("event log verified \u{2713}");
     }
 
     pub(crate) fn stabilized_lsn(&self, lsn: Lsn) {

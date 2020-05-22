@@ -22,31 +22,6 @@ pub struct Snapshot {
     pub pt: Vec<PageState>,
 }
 
-impl Snapshot {
-    pub fn recovered_coords(
-        &self,
-        segment_size: usize,
-    ) -> (Option<LogOffset>, Option<Lsn>) {
-        if self.stable_lsn.is_none() {
-            return (None, None);
-        }
-
-        let stable_lsn = self.stable_lsn.unwrap();
-
-        if let Some(base_offset) = self.active_segment {
-            let progress = stable_lsn % segment_size as Lsn;
-            let offset = base_offset + progress as LogOffset;
-
-            (Some(offset), Some(stable_lsn))
-        } else {
-            let lsn_idx = stable_lsn / segment_size as Lsn
-                + if stable_lsn % segment_size as Lsn == 0 { 0 } else { 1 };
-            let next_lsn = lsn_idx * segment_size as Lsn;
-            (None, Some(next_lsn))
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageState {
     Present { base: (Lsn, DiskPtr, u64), frags: Vec<(Lsn, DiskPtr, u64)> },
@@ -98,6 +73,29 @@ impl PageState {
 }
 
 impl Snapshot {
+    pub fn recovered_coords(
+        &self,
+        segment_size: usize,
+    ) -> (Option<LogOffset>, Option<Lsn>) {
+        if self.stable_lsn.is_none() {
+            return (None, None);
+        }
+
+        let stable_lsn = self.stable_lsn.unwrap();
+
+        if let Some(base_offset) = self.active_segment {
+            let progress = stable_lsn % segment_size as Lsn;
+            let offset = base_offset + LogOffset::try_from(progress).unwrap();
+
+            (Some(offset), Some(stable_lsn))
+        } else {
+            let lsn_idx = stable_lsn / segment_size as Lsn
+                + if stable_lsn % segment_size as Lsn == 0 { 0 } else { 1 };
+            let next_lsn = lsn_idx * segment_size as Lsn;
+            (None, Some(next_lsn))
+        }
+    }
+
     fn apply(
         &mut self,
         log_kind: LogKind,
@@ -279,10 +277,12 @@ fn advance_snapshot(
             if let Some(BasedBuf { offset, .. }) = iter.segment_base {
                 // either situation 3 or situation 4. we need to zero the
                 // tail of the segment after the recovered tip
-                let shred_len =
-                    config.segment_size - segment_progress as usize - 1;
+                let shred_len = config.segment_size
+                    - usize::try_from(segment_progress).unwrap()
+                    - 1;
                 let shred_zone = vec![MessageKind::Corrupted.into(); shred_len];
-                let shred_base = offset + segment_progress as LogOffset;
+                let shred_base =
+                    offset + LogOffset::try_from(segment_progress).unwrap();
 
                 #[cfg(feature = "testing")]
                 {
@@ -342,15 +342,16 @@ fn advance_snapshot(
                         shred_base
                     );
                 }
-                let entry =
-                    reverse_segments.entry(segment).or_insert(HashSet::new());
+                let entry = reverse_segments
+                    .entry(segment)
+                    .or_insert_with(HashSet::new);
                 entry.insert((pid, offset));
             }
         }
         reverse_segments
     };
 
-    for (lsn, to_zero) in iter.segments.iter() {
+    for (lsn, to_zero) in &iter.segments {
         debug!("zeroing torn segment at lsn {} lid {}", lsn, to_zero);
 
         #[cfg(feature = "testing")]

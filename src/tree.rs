@@ -172,7 +172,7 @@ impl Tree {
         let link = self.context.pagecache.link(
             pid,
             node_view.0,
-            frag.clone(),
+            frag,
             guard,
         )?;
 
@@ -410,7 +410,7 @@ impl Tree {
     ) -> Result<Abortable<Option<IVec>>> {
         let _measure = Measure::new(&M.tree_get);
 
-        trace!("getting key {:?}", key.as_ref());
+        trace!("getting key {:?}", key);
 
         let View { node_view, pid, .. } = self.view_for_key(key.as_ref(), guard)?;
 
@@ -1008,7 +1008,7 @@ impl Tree {
         key: &[u8],
         value: &[u8],
     ) -> Result<Abortable<Option<IVec>>> {
-        trace!("merging key {:?}", key.as_ref());
+        trace!("merging key {:?}", key);
         let _measure = Measure::new(&M.tree_merge);
 
         let merge_operator_opt = self.merge_operator.read();
@@ -1032,8 +1032,7 @@ impl Tree {
             let (encoded_key, current_value) =
                 node_view.node_kv_pair(key.as_ref());
             let tmp = current_value.as_ref().map(AsRef::as_ref);
-            let new = merge_operator(key.as_ref(), tmp, value.as_ref())
-                .map(IVec::from);
+            let new = merge_operator(key, tmp, value).map(IVec::from);
 
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 

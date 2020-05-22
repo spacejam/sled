@@ -509,11 +509,12 @@ impl SegmentAccountant {
         // sometimes the current segment is still empty, after only
         // recovering the segment header but no valid messages yet
         if let Some(tip_lid) = snapshot.active_segment {
-            let tip_idx = (tip_lid / segment_size as LogOffset) as usize;
+            let tip_idx =
+                usize::try_from(tip_lid / segment_size as LogOffset).unwrap();
             if tip_idx == number_of_segments {
                 segments.push(Segment::default());
             }
-            println!(
+            trace!(
                 "setting segment for tip_lid {} to stable_lsn {}",
                 tip_lid,
                 self.config.normalize(snapshot.stable_lsn.unwrap_or(0))
@@ -585,7 +586,7 @@ impl SegmentAccountant {
 
         let currently_active_segment = snapshot
             .active_segment
-            .map(|tl| (tl / segment_size as LogOffset) as usize);
+            .map(|tl| usize::try_from(tl / segment_size as LogOffset).unwrap());
 
         for (idx, segment) in self.segments.iter_mut().enumerate() {
             let segment_base = idx as LogOffset * segment_size as LogOffset;
@@ -1005,12 +1006,6 @@ impl SegmentAccountant {
         self.segments[idx].free_to_active(lsn);
 
         self.ordering.insert(lsn, lid);
-
-        println!(
-            "segment accountant returning offset: {} for lsn {} \
-             on deck: {:?}",
-            lid, lsn, self.free,
-        );
 
         debug!(
             "segment accountant returning offset: {} for lsn {} \
