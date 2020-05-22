@@ -28,9 +28,6 @@ fn main() {
     match env::var(TEST_ENV_VAR) {
         Err(VarError::NotPresent) => {
             test_crash_recovery();
-
-            // TODO this is currently being ignored until it is fixed
-            // with a refactor of recovery logic.
             test_crash_batches();
         }
 
@@ -112,7 +109,6 @@ fn spawn_killah() {
     thread::spawn(|| {
         let runtime = rand::thread_rng().gen_range(0, 60);
         thread::sleep(Duration::from_millis(runtime));
-        println!("~");
         exit(9);
     });
 }

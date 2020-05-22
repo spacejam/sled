@@ -263,7 +263,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
             let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, *rv));
             for res in tree.iter() {
-                let t = match res {
+                let actual = match res {
                     Ok((ref tk, _)) => {
                         if tk == BATCH_COUNTER_KEY {
                             continue;
@@ -283,13 +283,15 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     } else if ref_expected.versions.iter().all(|version| version.value.is_some()) {
                         // this key must be present in the tree, check if the keys from both
                         // iterators match
-                        if t != ref_key {
-                            println!(
-                                "expected to iterate over {:?} but got {:?} instead",
+                        if actual != ref_key {
+                            panic!(
+                                "expected to iterate over key {:?} but got {:?} instead due to it being missing in \n\ntree: {:?}\n\nref: {:?}\n",
                                 ref_key,
-                                t
+                                actual,
+                                tree,
+                                reference,
+
                             );
-                            return false;
                         }
                         break;
                     } else {
@@ -301,17 +303,17 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                         // skip the entry in the reference. if the reference iterator ever gets
                         // further than the tree iterator, that means the tree has a key that it
                         // should not.
-                        if t == ref_key {
+                        if actual == ref_key {
                             // tree and reference agree, we can move on to the next tree item
                             break;
-                        } else if ref_key > t {
+                        } else if ref_key > actual {
                             // we have a bug, the reference iterator should always be <= tree
                             // (this means that the key t was in the tree, but it wasn't in
                             // the reference, so the reference iterator has advanced on past t)
                             println!(
                                 "tree verification failed: expected {:?} got {:?}",
                                 ref_key,
-                                t
+                                actual
                             );
                             return false;
                         } else {
