@@ -133,7 +133,9 @@ impl Snapshot {
                     lsn,
                 );
 
-                self.pt[usize::try_from(pid).unwrap()] = PageState::Present {
+                let pid_usize = usize::try_from(pid).unwrap();
+
+                self.pt[pid_usize] = PageState::Present {
                     base: (lsn, disk_ptr, sz),
                     frags: vec![],
                 };
@@ -209,6 +211,8 @@ fn advance_snapshot(
             );
             continue;
         }
+
+        assert!(lsn < iter.max_lsn.unwrap());
 
         snapshot.apply(log_kind, pid, lsn, ptr, sz);
     }

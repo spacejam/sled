@@ -729,14 +729,6 @@ pub(crate) fn read_message<R: ReadAt>(
 
     assert!(lid + message_offset as LogOffset <= ceiling);
 
-    if header.segment_number != expected_segment_number {
-        debug!(
-            "header {:?} does not contain expected segment_number {:?}",
-            header, expected_segment_number
-        );
-        return Ok(LogRead::Corrupted);
-    }
-
     let max_possible_len =
         assert_usize(ceiling - lid - message_offset as LogOffset);
 
@@ -781,6 +773,14 @@ pub(crate) fn read_message<R: ReadAt>(
 
     let inline_len = u32::try_from(message_offset).unwrap()
         + u32::try_from(header.len).unwrap();
+
+    if header.segment_number != expected_segment_number {
+        debug!(
+            "header {:?} does not contain expected segment_number {:?}",
+            header, expected_segment_number
+        );
+        return Ok(LogRead::Corrupted);
+    }
 
     match header.kind {
         MessageKind::Canceled => {

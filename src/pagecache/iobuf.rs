@@ -504,6 +504,7 @@ impl IoBufs {
             cur_lsn: None,
             segment_base: None,
             segments,
+            last_stage: false,
         }
     }
 
@@ -813,6 +814,7 @@ impl IoBufs {
         let updated = intervals.mark_fsync(interval);
 
         if let Some(new_stable_lsn) = updated {
+            trace!("mark_interval new highest lsn {}", new_stable_lsn);
             self.stable_lsn.store(new_stable_lsn, SeqCst);
 
             #[cfg(feature = "event_log")]

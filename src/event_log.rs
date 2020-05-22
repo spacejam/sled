@@ -128,6 +128,8 @@ impl EventLog {
                 }
             }
         }
+
+        debug!("event log verified ✓");
     }
 
     pub(crate) fn stabilized_lsn(&self, lsn: Lsn) {

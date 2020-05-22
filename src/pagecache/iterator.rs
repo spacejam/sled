@@ -14,6 +14,7 @@ pub struct LogIter {
     pub segment_base: Option<BasedBuf>,
     pub max_lsn: Option<Lsn>,
     pub cur_lsn: Option<Lsn>,
+    pub last_stage: bool,
 }
 
 impl Iterator for LogIter {
@@ -114,10 +115,11 @@ impl Iterator for LogIter {
                     if let Some(max_lsn) = self.max_lsn {
                         if last_lsn_in_batch > max_lsn {
                             debug!(
-                            "cutting recovery short due to torn batch. \
+                                "cutting recovery short due to torn batch. \
                             required stable lsn: {} actual max possible lsn: {}",
-                            last_lsn_in_batch, self.max_lsn.unwrap()
-                        );
+                                last_lsn_in_batch,
+                                self.max_lsn.unwrap()
+                            );
                             return None;
                         }
                     }
@@ -134,7 +136,20 @@ impl Iterator for LogIter {
                         lid,
                         lsn
                     );
-                    return None;
+                    if self.last_stage {
+                        // this happens when the second half of a freed segment
+                        // is overwritten before its segment header. it's fine
+                        // to just treat it like a cap
+                        // because any already applied
+                        // state can be assumed to be replaced later on by
+                        // the stabilized state that came afterwards.
+                        let _taken = self.segment_base.take().unwrap();
+
+                        continue;
+                    } else {
+                        // found a tear
+                        return None;
+                    }
                 }
                 Ok(LogRead::Cap(_segment_number)) => {
                     trace!("read cap in LogIter::next");
@@ -433,6 +448,7 @@ fn check_contiguity_in_unstable_tail(
         segment_base: None,
         max_lsn: missing_item_in_tail,
         cur_lsn: None,
+        last_stage: false,
     };
 
     // run the iterator to completion
@@ -499,5 +515,6 @@ pub fn raw_segment_iter_from(
         cur_lsn: None,
         segment_base: None,
         segments,
+        last_stage: true,
     })
 }
