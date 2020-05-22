@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     future::Future,
     pin::Pin,
     sync::{
@@ -8,6 +7,14 @@ use std::{
     },
     task::{Context, Poll, Waker},
 };
+
+#[cfg(not(feature = "testing"))]
+use std::collections::HashMap as Map;
+
+// we avoid HashMap while testing because
+// it makes tests non-deterministic
+#[cfg(feature = "testing")]
+use std::collections::BTreeMap as Map;
 
 use crate::*;
 
@@ -39,8 +46,7 @@ impl Event {
     }
 }
 
-type Senders =
-    HashMap<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
+type Senders = Map<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 
 /// A subscriber listening on a specified prefix
 ///
@@ -179,7 +185,7 @@ impl Subscribers {
                 if !w_mu.contains_key(prefix) {
                     let old = w_mu.insert(
                         prefix.to_vec(),
-                        Arc::new(RwLock::new(HashMap::default())),
+                        Arc::new(RwLock::new(Map::default())),
                     );
                     assert!(old.is_none());
                 }

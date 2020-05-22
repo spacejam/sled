@@ -1837,6 +1837,7 @@ impl PageCache {
                         update: None,
                         cache_infos: page_view.cache_infos,
                     });
+
                     debug_delay();
                     if page_view
                         .entry

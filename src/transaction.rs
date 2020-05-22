@@ -71,7 +71,15 @@
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
 //! ```
 #![allow(clippy::module_name_repetitions)]
-use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
+use std::{cell::RefCell, fmt, rc::Rc};
+
+#[cfg(not(feature = "testing"))]
+use std::collections::HashMap as Map;
+
+// we avoid HashMap while testing because
+// it makes tests non-deterministic
+#[cfg(feature = "testing")]
+use std::collections::BTreeMap as Map;
 
 use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};
 
@@ -81,8 +89,8 @@ use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};
 #[derive(Clone)]
 pub struct TransactionalTree {
     pub(super) tree: Tree,
-    pub(super) writes: Rc<RefCell<HashMap<IVec, Option<IVec>>>>,
-    pub(super) read_cache: Rc<RefCell<HashMap<IVec, Option<IVec>>>>,
+    pub(super) writes: Rc<RefCell<Map<IVec, Option<IVec>>>>,
+    pub(super) read_cache: Rc<RefCell<Map<IVec, Option<IVec>>>>,
 }
 
 /// An error type that is returned from the closure
