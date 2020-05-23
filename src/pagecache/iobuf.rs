@@ -218,7 +218,22 @@ impl StabilityIntervals {
     }
 
     fn mark_fsync(&mut self, interval: (Lsn, Lsn)) -> Option<Lsn> {
-        self.fsynced_ranges.push(interval);
+        trace!(
+            "pushing interval {:?} into fsynced_ranges {:?}",
+            interval,
+            self.fsynced_ranges
+        );
+        if let Some((low, high)) = self.fsynced_ranges.last_mut() {
+            if *low == interval.1 + 1 {
+                *low = interval.0
+            } else if *high + 1 == interval.0 {
+                *high = interval.1
+            } else {
+                self.fsynced_ranges.push(interval);
+            }
+        } else {
+            self.fsynced_ranges.push(interval);
+        }
 
         #[cfg(any(test, feature = "event_log", feature = "lock_free_delays"))]
         assert!(
