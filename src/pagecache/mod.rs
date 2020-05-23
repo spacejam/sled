@@ -826,12 +826,46 @@ impl PageCache {
     /// combined with a concurrency control system in another
     /// component.
     pub(crate) fn pin_log(&self, guard: &Guard) -> Result<RecoveryGuard<'_>> {
+        // HACK: we are rolling the io buffer before AND
+        // after taking out the reservation pin to avoid
+        // a deadlock where the batch reservation causes
+        // writes to fail to flush to disk. in the future,
+        // this may be addressed in a nicer way by representing
+        // transactions with a begin and end message, rather
+        // than a single beginning message that needs to
+        // be held until we know the final batch LSN.
+
+        let backoff = Backoff::new();
+        loop {
+            let iobuf = self.log.iobufs.current_iobuf();
+            let header = iobuf.get_header();
+            if iobuf::is_sealed(header) {
+                backoff.snooze();
+                continue;
+            }
+            iobuf::maybe_seal_and_write_iobuf(
+                &self.log.iobufs,
+                &iobuf,
+                header,
+                false,
+            )?;
+            break;
+        }
+
         let batch_res = self.log.reserve(
             LogKind::Skip,
             BATCH_MANIFEST_PID,
             &BatchManifest::default(),
             guard,
         )?;
+
+        iobuf::maybe_seal_and_write_iobuf(
+            &self.log.iobufs,
+            &batch_res.iobuf,
+            batch_res.iobuf.get_header(),
+            false,
+        )?;
+
         Ok(RecoveryGuard { batch_res })
     }
 
