@@ -12,6 +12,15 @@ pub(crate) struct ConcurrencyControl {
     rw: RwLock<()>,
 }
 
+static CONCURRENCY_CONTROL: Lazy<
+    ConcurrencyControl,
+    fn() -> ConcurrencyControl,
+> = Lazy::new(init_cc);
+
+fn init_cc() -> ConcurrencyControl {
+    ConcurrencyControl::default()
+}
+
 pub(crate) enum Protector<'a> {
     Write(RwLockWriteGuard<'a, ()>),
     Read(RwLockReadGuard<'a, ()>),
@@ -26,6 +35,14 @@ impl<'a> Drop for Protector<'a> {
     }
 }
 
+pub(crate) fn read<'a>(guard: &'a Guard) -> Protector<'a> {
+    CONCURRENCY_CONTROL.read(guard)
+}
+
+pub(crate) fn write<'a>() -> Protector<'a> {
+    CONCURRENCY_CONTROL.write()
+}
+
 impl ConcurrencyControl {
     fn enable(&self) {
         if !self.necessary.load(Acquire) && !self.necessary.swap(true, SeqCst) {
@@ -36,7 +53,7 @@ impl ConcurrencyControl {
         }
     }
 
-    pub(crate) fn read<'a>(&'a self, _: &'a Guard) -> Protector<'a> {
+    fn read<'a>(&'a self, _: &'a Guard) -> Protector<'a> {
         if self.necessary.load(Acquire) {
             Protector::Read(self.rw.read())
         } else {
@@ -45,7 +62,7 @@ impl ConcurrencyControl {
         }
     }
 
-    pub(crate) fn write(&self) -> Protector<'_> {
+    fn write(&self) -> Protector<'_> {
         self.enable();
         while !self.upgrade_complete.load(Acquire) {
             std::sync::atomic::spin_loop_hint()

@@ -81,7 +81,10 @@ use std::collections::HashMap as Map;
 #[cfg(feature = "testing")]
 use std::collections::BTreeMap as Map;
 
-use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};
+use crate::{
+    concurrency_control, pin, Batch, Error, Guard, IVec, Protector, Result,
+    Tree,
+};
 
 /// A transaction that will
 /// be applied atomically to the
@@ -325,7 +328,7 @@ impl TransactionalTree {
     }
 
     fn stage(&self) -> UnabortableTransactionResult<Vec<Protector<'_>>> {
-        let protector = self.tree.concurrency_control.write();
+        let protector = concurrency_control::write();
         Ok(vec![protector])
     }
 

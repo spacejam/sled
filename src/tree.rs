@@ -10,7 +10,7 @@ use std::{
 
 use parking_lot::RwLock;
 
-use crate::pagecache::NodeView;
+use crate::{concurrency_control, pagecache::NodeView};
 
 use super::*;
 
@@ -81,7 +81,6 @@ pub struct TreeInner {
     pub(crate) context: Context,
     pub(crate) subscribers: Subscribers,
     pub(crate) root: AtomicU64,
-    pub(crate) concurrency_control: ConcurrencyControl,
     pub(crate) merge_operator: RwLock<Option<Box<dyn MergeOperator>>>,
 }
 
@@ -132,7 +131,7 @@ impl Tree {
     {
         let value = IVec::from(value);
         let mut guard = pin();
-        let _ = self.concurrency_control.read(&guard);
+        let _ = concurrency_control::read(&guard);
         loop {
             trace!("setting key {:?}", key.as_ref());
             if let Ok(res) =
@@ -352,7 +351,7 @@ impl Tree {
     /// # Ok(()) }
     /// ```
     pub fn apply_batch(&self, batch: Batch) -> Result<()> {
-        let _ = self.concurrency_control.write();
+        let _ = concurrency_control::write();
         let mut guard = pin();
         self.apply_batch_inner(batch, &mut guard)
     }
@@ -395,7 +394,7 @@ impl Tree {
     /// ```
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         let mut guard = pin();
-        let _ = self.concurrency_control.read(&guard);
+        let _ = concurrency_control::read(&guard);
         loop {
             if let Ok(get) = self.get_inner(key.as_ref(), &mut guard)? {
                 return Ok(get);
@@ -443,7 +442,7 @@ impl Tree {
     /// ```
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         let mut guard = pin();
-        let _ = self.concurrency_control.read(&guard);
+        let _ = concurrency_control::read(&guard);
         loop {
             trace!("removing key {:?}", key.as_ref());
 
@@ -520,7 +519,7 @@ impl Tree {
         let _measure = Measure::new(&M.tree_cas);
 
         let guard = pin();
-        let _ = self.concurrency_control.read(&guard);
+        let _ = concurrency_control::read(&guard);
 
         let new = new.map(IVec::from);
 
@@ -868,7 +867,7 @@ impl Tree {
     {
         let _measure = Measure::new(&M.tree_get);
         let guard = pin();
-        let _ = self.concurrency_control.read(&guard);
+        let _ = concurrency_control::read(&guard);
         self.range(..key).next_back().transpose()
     }
 
@@ -925,7 +924,7 @@ impl Tree {
     {
         let _measure = Measure::new(&M.tree_get);
         let guard = pin();
-        let _ = self.concurrency_control.read(&guard);
+        let _ = concurrency_control::read(&guard);
         self.range((ops::Bound::Excluded(key), ops::Bound::Unbounded))
             .next()
             .transpose()
@@ -995,7 +994,7 @@ impl Tree {
         V: AsRef<[u8]>,
     {
         let guard = pin();
-        let _ = self.concurrency_control.read(&guard);
+        let _ = concurrency_control::read(&guard);
         loop {
             if let Ok(merge) = self.merge_inner(key.as_ref(), value.as_ref())? {
                 return Ok(merge);
@@ -1426,7 +1425,7 @@ impl Tree {
     pub fn checksum(&self) -> Result<u32> {
         let mut hasher = crc32fast::Hasher::new();
         let mut iter = self.iter();
-        let _ = self.concurrency_control.write();
+        let _ = concurrency_control::write();
         while let Some(kv_res) = iter.next_inner() {
             let (k, v) = kv_res?;
             hasher.update(&k);

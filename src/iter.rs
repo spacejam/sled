@@ -159,7 +159,7 @@ impl Iterator for Iter {
     fn next(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
         let guard = pin();
-        let _ = self.tree.concurrency_control.read(&guard);
+        let _ = concurrency_control::read(&guard);
         self.next_inner()
     }
 
@@ -172,7 +172,7 @@ impl DoubleEndedIterator for Iter {
     fn next_back(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_reverse_scan);
         let guard = pin();
-        let _ = self.tree.concurrency_control.read(&guard);
+        let _ = concurrency_control::read(&guard);
 
         let (mut pid, mut node, guard) =
             if let (false, Some((pid, node, guard))) =

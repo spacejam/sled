@@ -801,6 +801,7 @@ impl PageCache {
     /// while performing this GC.
     pub(crate) fn attempt_gc(&self) -> Result<bool> {
         let guard = pin();
+        let _cc = concurrency_control::read(&guard);
         let to_clean = self.log.iobufs.segment_cleaner.pop();
         let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
             self.rewrite_page(pid_to_clean, segment_to_clean, &guard)

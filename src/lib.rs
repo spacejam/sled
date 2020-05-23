@@ -305,7 +305,7 @@ pub use self::{
 use {
     self::{
         binary_search::binary_search_lub,
-        concurrency_control::{ConcurrencyControl, Protector},
+        concurrency_control::Protector,
         context::Context,
         fastcmp::fastcmp,
         histogram::Histogram,
