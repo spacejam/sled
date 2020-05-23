@@ -845,9 +845,8 @@ impl IoBufs {
             // having held the mutex makes this linearized
             // with the notify below.
             drop(intervals);
-
-            let _notified = self.interval_updated.notify_all();
         }
+        let _notified = self.interval_updated.notify_all();
     }
 
     pub(in crate::pagecache) fn current_iobuf(&self) -> Arc<IoBuf> {
