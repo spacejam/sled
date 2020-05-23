@@ -1660,3 +1660,40 @@ fn failpoints_bug_33() {
         ));
     }
 }
+
+#[test]
+fn failpoints_bug_34() {
+    // postmortem 1: the implementation of make_durable was not properly
+    // exiting the function when local durability was detected
+    use BatchOp::*;
+    assert!(prop_tree_crashes_nicely(
+        vec![Batched(vec![
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set,
+        ])],
+        false
+    ));
+}

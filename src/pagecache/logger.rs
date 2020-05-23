@@ -54,7 +54,7 @@ impl Log {
         );
 
         if ptr.is_inline() {
-            self.make_stable(lsn)?;
+            iobuf::make_durable(&self.iobufs, lsn)?;
             let f = &self.config.file;
             read_message(&**f, ptr.lid(), expected_segment_number, &self.config)
         } else {
@@ -62,7 +62,7 @@ impl Log {
             // here because it might not still
             // exist in the inline log.
             let (_, blob_ptr) = ptr.blob();
-            self.make_stable(blob_ptr)?;
+            iobuf::make_durable(&self.iobufs, blob_ptr)?;
             read_blob(blob_ptr, &self.config).map(|(kind, buf)| {
                 let header = MessageHeader {
                     kind,
@@ -83,7 +83,9 @@ impl Log {
 
     /// blocks until the specified log sequence number has
     /// been made stable on disk. Returns the number of
-    /// bytes written during this call.
+    /// bytes written during this call. this is appropriate
+    /// as a full consistency-barrier for all data written
+    /// up until this point.
     pub fn make_stable(&self, lsn: Lsn) -> Result<usize> {
         iobuf::make_stable(&self.iobufs, lsn)
     }

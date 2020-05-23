@@ -863,10 +863,35 @@ impl IoBufs {
 
 /// Blocks until the specified log sequence number has
 /// been made stable on disk. Returns the number of
-/// bytes written.
+/// bytes written. Suitable as a full consistency
+/// barrier.
 pub(in crate::pagecache) fn make_stable(
     iobufs: &Arc<IoBufs>,
     lsn: Lsn,
+) -> Result<usize> {
+    make_stable_inner(iobufs, lsn, false)
+}
+
+/// Blocks until the specified log sequence number
+/// has been written to disk. it's assumed that
+/// log messages are always written contiguously
+/// due to the way reservations manage io buffer
+/// tenancy. this is only suitable for use
+/// before trying to read a message from the log,
+/// so that the system can avoid a full barrier
+/// if the desired item has already been made
+/// durable.
+pub(in crate::pagecache) fn make_durable(
+    iobufs: &Arc<IoBufs>,
+    lsn: Lsn,
+) -> Result<usize> {
+    make_stable_inner(iobufs, lsn, true)
+}
+
+pub(in crate::pagecache) fn make_stable_inner(
+    iobufs: &Arc<IoBufs>,
+    lsn: Lsn,
+    partial_durability: bool,
 ) -> Result<usize> {
     let _measure = Measure::new(&M.make_stable);
 
@@ -919,6 +944,19 @@ pub(in crate::pagecache) fn make_stable(
         }
 
         stable = iobufs.stable();
+
+        if partial_durability {
+            if waiter.stable_lsn > lsn {
+                return Ok(assert_usize(stable - first_stable));
+            }
+
+            for (low, high) in &waiter.fsynced_ranges {
+                if *low <= lsn && *high > lsn {
+                    return Ok(assert_usize(stable - first_stable));
+                }
+            }
+        }
+
         if stable < lsn {
             trace!("waiting on cond var for make_stable({})", lsn);
 
