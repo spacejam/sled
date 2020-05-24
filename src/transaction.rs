@@ -141,6 +141,17 @@ impl<E> From<UnabortableTransactionError> for ConflictableTransactionError<E> {
     }
 }
 
+impl<E> From<UnabortableTransactionError> for TransactionError<E> {
+    fn from(error: UnabortableTransactionError) -> Self {
+        match error {
+            UnabortableTransactionError::Conflict =>
+                panic!("UnabortableTransactionError::Conflict called outside of transaction"),
+            UnabortableTransactionError::Storage(other) =>
+                TransactionError::Storage(other)
+        }
+    }
+}
+
 /// An error type that is returned from the closure
 /// passed to the `transaction` method.
 #[derive(Debug, Clone, PartialEq)]
@@ -242,6 +253,14 @@ impl<T> From<Error> for TransactionError<T> {
 }
 
 impl TransactionalTree {
+    /// Create new `TransactionalTree` wrapper from `Tree`
+    pub fn from_tree(tree: &Tree) -> Self {
+        Self {
+            tree: tree.clone(),
+            writes: Default::default(),
+            read_cache: Default::default(),
+        }
+    }
     /// Set a key to a new value
     pub fn insert<K, V>(
         &self,
@@ -342,11 +361,65 @@ impl TransactionalTree {
 }
 
 /// A type which allows for pluggable transactional capabilities
+///
+/// # Example
+/// ```
+/// # use sled::{ transaction::*, Config };
+///
+/// fn main() -> TransactionResult<()> {
+///    let config = Config::new().temporary(true);
+///    let db1 = config.open().unwrap();
+///    let dba = db1.open_tree(b"a").unwrap();
+///    let dbb = db1.open_tree(b"b").unwrap();
+///
+///    struct MyTransactions {
+///        trees:    Vec<TransactionalTree>,
+///        my_stuff: i32,
+///    }
+///    impl Transactional<()> for MyTransactions {
+///        type View = i32;
+///        fn make_overlay(&self) -> TransactionalTrees {
+///            TransactionalTrees::from_vec(self.trees.clone())
+///        }
+///        fn view_overlay(&self, _: &TransactionalTrees) -> Self::View {
+///            self.my_stuff // passed to transaction closure
+///        }
+///    }
+///
+///    let mut my_transactions = MyTransactions{ trees: vec![], my_stuff: 111 };
+///
+///    let tt1 = TransactionalTree::from_tree(&dba);
+///    tt1.insert(b"k1", b"cats")?;
+///    tt1.insert(b"k2", b"dogs")?;
+///    my_transactions.trees.push(tt1);
+///
+///
+///    let tt2 = TransactionalTree::from_tree(&dbb);
+///    tt2.insert(b"k3", b"bats")?;
+///    tt2.insert(b"k4", b"rats")?;
+///    my_transactions.trees.push(tt2);
+///
+///    let ret = my_transactions.transaction(|my_stuff| Ok(my_stuff + 1))?;
+///    assert_eq!(ret, 112);
+///
+///    assert_eq!(&dba.get(b"k1")?.unwrap(), b"cats");
+///    assert_eq!(&dba.get(b"k2")?.unwrap(), b"dogs");
+///    assert_eq!(&dbb.get(b"k3")?.unwrap(), b"bats");
+///    assert_eq!(&dbb.get(b"k4")?.unwrap(), b"rats");
+///
+///    Ok(())
+/// }
+/// ```
 pub struct TransactionalTrees {
     inner: Vec<TransactionalTree>,
 }
 
 impl TransactionalTrees {
+    /// Construct new `TransactionalTrees` from `Vec<TransactionalTree>`
+    pub fn from_vec(trees: Vec<TransactionalTree>) -> Self {
+        Self { inner: trees }
+    }
+
     fn stage(&self) -> UnabortableTransactionResult<Vec<Protector<'_>>> {
         // we want to stage our trees in
         // lexicographic order to guarantee
@@ -421,7 +494,7 @@ pub trait Transactional<E = ()> {
     /// An internal function for viewing the transactional
     /// subcomponents based on the top-level transactional
     /// structure.
-    fn view_overlay(overlay: &TransactionalTrees) -> Self::View;
+    fn view_overlay(&self, overlay: &TransactionalTrees) -> Self::View;
 
     /// Runs a transaction, possibly retrying the passed-in closure if
     /// a concurrent conflict is detected that would cause a violation
@@ -433,7 +506,7 @@ pub trait Transactional<E = ()> {
     {
         loop {
             let tt = self.make_overlay();
-            let view = Self::view_overlay(&tt);
+            let view = Self::view_overlay(&self,&tt);
 
             // NB locks must exist until this function returns.
             let _locks = if let Ok(l) = tt.stage() {
@@ -470,15 +543,11 @@ impl<E> Transactional<E> for &Tree {
 
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
-            inner: vec![TransactionalTree {
-                tree: (*self).clone(),
-                writes: Default::default(),
-                read_cache: Default::default(),
-            }],
+            inner: vec![TransactionalTree::from_tree(self)],
         }
     }
 
-    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+    fn view_overlay(&self, overlay: &TransactionalTrees) -> Self::View {
         overlay.inner[0].clone()
     }
 }
@@ -488,15 +557,11 @@ impl<E> Transactional<E> for &&Tree {
 
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
-            inner: vec![TransactionalTree {
-                tree: (**self).clone(),
-                writes: Default::default(),
-                read_cache: Default::default(),
-            }],
+            inner: vec![TransactionalTree::from_tree(*self)],
         }
     }
 
-    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+    fn view_overlay(&self, overlay: &TransactionalTrees) -> Self::View {
         overlay.inner[0].clone()
     }
 }
@@ -506,15 +571,11 @@ impl<E> Transactional<E> for Tree {
 
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
-            inner: vec![TransactionalTree {
-                tree: self.clone(),
-                writes: Default::default(),
-                read_cache: Default::default(),
-            }],
+            inner: vec![TransactionalTree::from_tree(&self)],
         }
     }
 
-    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+    fn view_overlay(&self, overlay: &TransactionalTrees) -> Self::View {
         overlay.inner[0].clone()
     }
 }
@@ -543,17 +604,13 @@ macro_rules! impl_transactional_tuple_trees {
                 TransactionalTrees {
                     inner: vec![
                         $(
-                            TransactionalTree {
-                                tree: self.$indices.clone(),
-                                writes: Default::default(),
-                                read_cache: Default::default(),
-                            }
+                            TransactionalTree::from_tree(self.$indices)
                         ),+
                     ],
                 }
             }
 
-            fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+            fn view_overlay(&self, overlay: &TransactionalTrees) -> Self::View {
                 (
                     $(
                         overlay.inner[$indices].clone()
