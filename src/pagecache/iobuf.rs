@@ -514,14 +514,14 @@ impl IoBufs {
             trace!("skipping roll_iobuf due to already-sealed header");
             return Ok(0);
         }
-        if offset(header) != 0 {
+        if offset(header) == 0 {
+            trace!("skipping roll_iobuf due to empty segment");
+        } else {
             trace!("sealing ioubuf from  roll_iobuf");
             maybe_seal_and_write_iobuf(self, &iobuf, header, false)?;
-        } else {
-            trace!("skipping roll_iobuf due to empty segment");
         }
 
-        return Ok(offset(header));
+        Ok(offset(header))
     }
 
     /// Return an iterator over the log, starting with

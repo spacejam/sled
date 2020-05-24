@@ -50,12 +50,10 @@ impl<'a> Drop for Protector<'a> {
     }
 }
 
-#[must_use]
 pub(crate) fn read<'a>() -> Protector<'a> {
     CONCURRENCY_CONTROL.read()
 }
 
-#[must_use]
 pub(crate) fn write<'a>() -> Protector<'a> {
     CONCURRENCY_CONTROL.write()
 }
@@ -70,7 +68,7 @@ impl ConcurrencyControl {
         }
     }
 
-    fn read<'a>(&'a self) -> Protector<'a> {
+    fn read(&self) -> Protector<'_> {
         #[cfg(feature = "testing")]
         COUNT.with(|c| {
             let mut c = c.borrow_mut();
