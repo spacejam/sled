@@ -1014,8 +1014,7 @@ pub(in crate::pagecache) fn make_stable_inner(
 /// to flush some pending writes. Returns the number
 /// of bytes written during this call.
 pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
-    let guard = pin();
-    let _cc = concurrency_control::read(&guard);
+    let _cc = concurrency_control::read();
     let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst);
     make_stable(iobufs, max_reserved_lsn)
 }

@@ -400,7 +400,6 @@ impl Db {
             hasher.update(name);
 
             let mut iter = tree.iter();
-            let _ = concurrency_control::write();
             while let Some(kv_res) = iter.next_inner() {
                 let (k, v) = kv_res?;
                 hasher.update(&k);

@@ -65,8 +65,7 @@ fn run(
     let mut wrote_data = false;
     while shutdown.is_running() || wrote_data {
         let before = std::time::Instant::now();
-        let guard = pin();
-        let cc = concurrency_control::read(&guard);
+        let cc = concurrency_control::read();
         match pagecache.log.iobufs.roll_iobuf() {
             Ok(0) => {
                 wrote_data = false;

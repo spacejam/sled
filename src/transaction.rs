@@ -327,11 +327,6 @@ impl TransactionalTree {
         Ok(())
     }
 
-    fn stage(&self) -> UnabortableTransactionResult<Vec<Protector<'_>>> {
-        let protector = concurrency_control::write();
-        Ok(vec![protector])
-    }
-
     fn unstage(&self) {
         unimplemented!()
     }
@@ -372,17 +367,7 @@ impl TransactionalTrees {
             .collect();
         tree_idxs.sort_unstable();
 
-        let mut last_idx = usize::max_value();
-        let mut all_guards = vec![];
-        for (_, idx) in tree_idxs {
-            if idx == last_idx {
-                // prevents us from double-locking
-                continue;
-            }
-            last_idx = idx;
-            let mut guards = self.inner[idx].stage()?;
-            all_guards.append(&mut guards);
-        }
+        let all_guards = vec![concurrency_control::write()];
         Ok(all_guards)
     }
 
