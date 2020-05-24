@@ -339,6 +339,13 @@ impl TransactionalTree {
         }
         Ok(())
     }
+    fn from_tree(tree: &Tree) -> Self {
+        Self {
+            tree: tree.clone(),
+            writes: Default::default(),
+            read_cache: Default::default(),
+        }
+    }
 }
 
 /// A type which allows for pluggable transactional capabilities
@@ -470,11 +477,7 @@ impl<E> Transactional<E> for &Tree {
 
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
-            inner: vec![TransactionalTree {
-                tree: (*self).clone(),
-                writes: Default::default(),
-                read_cache: Default::default(),
-            }],
+            inner: vec![TransactionalTree::from_tree(self)],
         }
     }
 
@@ -488,11 +491,7 @@ impl<E> Transactional<E> for &&Tree {
 
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
-            inner: vec![TransactionalTree {
-                tree: (**self).clone(),
-                writes: Default::default(),
-                read_cache: Default::default(),
-            }],
+            inner: vec![TransactionalTree::from_tree(*self)],
         }
     }
 
@@ -506,16 +505,40 @@ impl<E> Transactional<E> for Tree {
 
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
-            inner: vec![TransactionalTree {
-                tree: self.clone(),
-                writes: Default::default(),
-                read_cache: Default::default(),
-            }],
+            inner: vec![TransactionalTree::from_tree(&self)],
         }
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
         overlay.inner[0].clone()
+    }
+}
+
+impl<E> Transactional<E> for [Tree] {
+    type View = Vec<TransactionalTree>;
+
+    fn make_overlay(&self) -> TransactionalTrees {
+        TransactionalTrees {
+            inner: self.into_iter().map(|t| TransactionalTree::from_tree(t)).collect(),
+        }
+    }
+
+    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+        overlay.inner.clone()
+    }
+}
+
+impl<E> Transactional<E> for [&Tree] {
+    type View = Vec<TransactionalTree>;
+
+    fn make_overlay(&self) -> TransactionalTrees {
+        TransactionalTrees {
+            inner: self.into_iter().map(|&t| TransactionalTree::from_tree(t)).collect(),
+        }
+    }
+
+    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+        overlay.inner.clone()
     }
 }
 
@@ -543,11 +566,7 @@ macro_rules! impl_transactional_tuple_trees {
                 TransactionalTrees {
                     inner: vec![
                         $(
-                            TransactionalTree {
-                                tree: self.$indices.clone(),
-                                writes: Default::default(),
-                                read_cache: Default::default(),
-                            }
+                            TransactionalTree::from_tree(self.$indices)
                         ),+
                     ],
                 }
