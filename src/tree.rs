@@ -351,7 +351,7 @@ impl Tree {
     /// # Ok(()) }
     /// ```
     pub fn apply_batch(&self, batch: Batch) -> Result<()> {
-        let _ = concurrency_control::write();
+        let _cc = concurrency_control::write();
         let mut guard = pin();
         self.apply_batch_inner(batch, &mut guard)
     }
