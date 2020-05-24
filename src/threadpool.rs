@@ -22,6 +22,7 @@ const DESIRED_WAITING_THREADS: usize = 2;
 
 static WAITING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+static SPAWNS: AtomicUsize = AtomicUsize::new(1);
 
 macro_rules! once {
     ($args:block) => {
@@ -116,8 +117,10 @@ fn maybe_spawn_new_thread() {
         return;
     }
 
-    let spawn_res =
-        thread::Builder::new().name("sled-io".to_string()).spawn(|| {
+    let spawn_id = SPAWNS.fetch_add(1, Relaxed);
+    let spawn_res = thread::Builder::new()
+        .name(format!("sled-io-{}", spawn_id))
+        .spawn(|| {
             debug_delay();
             TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
             perform_work();
