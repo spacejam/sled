@@ -66,7 +66,7 @@ fn run(
     while shutdown.is_running() || wrote_data {
         let before = std::time::Instant::now();
         let cc = concurrency_control::read();
-        match pagecache.log.iobufs.roll_iobuf() {
+        match pagecache.log.roll_iobuf() {
             Ok(0) => {
                 wrote_data = false;
                 if !shutdown.is_running() {

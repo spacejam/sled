@@ -39,7 +39,7 @@ use self::{
         BATCH_MANIFEST_PID, COUNTER_PID, META_PID,
         PAGE_CONSOLIDATION_THRESHOLD, SEGMENT_CLEANUP_THRESHOLD,
     },
-    iobuf::{IoBuf, IoBufs},
+    iobuf::{roll_iobuf, IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
     segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
@@ -835,7 +835,7 @@ impl PageCache {
         // transactions with a begin and end message, rather
         // than a single beginning message that needs to
         // be held until we know the final batch LSN.
-        self.log.iobufs.roll_iobuf()?;
+        self.log.roll_iobuf()?;
 
         let batch_res = self.log.reserve(
             LogKind::Skip,

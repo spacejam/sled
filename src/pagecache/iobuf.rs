@@ -507,23 +507,6 @@ impl IoBufs {
         ret
     }
 
-    pub(crate) fn roll_iobuf(self: &Arc<Self>) -> Result<usize> {
-        let iobuf = self.current_iobuf();
-        let header = iobuf.get_header();
-        if is_sealed(header) {
-            trace!("skipping roll_iobuf due to already-sealed header");
-            return Ok(0);
-        }
-        if offset(header) == 0 {
-            trace!("skipping roll_iobuf due to empty segment");
-        } else {
-            trace!("sealing ioubuf from  roll_iobuf");
-            maybe_seal_and_write_iobuf(self, &iobuf, header, false)?;
-        }
-
-        Ok(offset(header))
-    }
-
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub(crate) fn iter_from(&self, lsn: Lsn) -> LogIter {
@@ -876,6 +859,23 @@ impl IoBufs {
         std::mem::forget(arc.clone());
         arc
     }
+}
+
+pub(crate) fn roll_iobuf(iobufs: &Arc<IoBufs>) -> Result<usize> {
+    let iobuf = iobufs.current_iobuf();
+    let header = iobuf.get_header();
+    if is_sealed(header) {
+        trace!("skipping roll_iobuf due to already-sealed header");
+        return Ok(0);
+    }
+    if offset(header) == 0 {
+        trace!("skipping roll_iobuf due to empty segment");
+    } else {
+        trace!("sealing ioubuf from  roll_iobuf");
+        maybe_seal_and_write_iobuf(iobufs, &iobuf, header, false)?;
+    }
+
+    Ok(offset(header))
 }
 
 /// Blocks until the specified log sequence number has

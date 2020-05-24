@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use super::{
     arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, iobuf, lsn_to_arr,
-    maybe_decompress, pread_exact, pread_exact_or_eof, read_blob, u32_to_arr,
-    BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
-    MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
-    COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
-    SEG_HEADER_LEN,
+    maybe_decompress, pread_exact, pread_exact_or_eof, read_blob, roll_iobuf,
+    u32_to_arr, BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind,
+    LogOffset, Lsn, MessageKind, Reservation, Serialize, Snapshot,
+    BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
+    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -42,6 +42,10 @@ impl Log {
     /// a specified offset.
     pub fn iter_from(&self, lsn: Lsn) -> super::LogIter {
         self.iobufs.iter_from(lsn)
+    }
+
+    pub(crate) fn roll_iobuf(&self) -> Result<usize> {
+        roll_iobuf(&self.iobufs)
     }
 
     /// read a buffer from the disk
