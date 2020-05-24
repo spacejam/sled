@@ -19,7 +19,7 @@ use crate::*;
 #[derive(Debug)]
 pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
-    pub(super) iobufs: Arc<IoBufs>,
+    pub(crate) iobufs: Arc<IoBufs>,
     pub(crate) config: RunningConfig,
 }
 

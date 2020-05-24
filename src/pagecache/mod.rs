@@ -801,7 +801,7 @@ impl PageCache {
     /// while performing this GC.
     pub(crate) fn attempt_gc(&self) -> Result<bool> {
         let guard = pin();
-        let _cc = concurrency_control::read(&guard);
+        let cc = concurrency_control::read(&guard);
         let to_clean = self.log.iobufs.segment_cleaner.pop();
         let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
             self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
@@ -809,6 +809,7 @@ impl PageCache {
         } else {
             Ok(false)
         };
+        drop(cc);
         guard.flush();
         ret
     }
@@ -834,23 +835,7 @@ impl PageCache {
         // transactions with a begin and end message, rather
         // than a single beginning message that needs to
         // be held until we know the final batch LSN.
-
-        let backoff = Backoff::new();
-        loop {
-            let iobuf = self.log.iobufs.current_iobuf();
-            let header = iobuf.get_header();
-            if iobuf::is_sealed(header) {
-                backoff.snooze();
-                continue;
-            }
-            iobuf::maybe_seal_and_write_iobuf(
-                &self.log.iobufs,
-                &iobuf,
-                header,
-                false,
-            )?;
-            break;
-        }
+        self.log.iobufs.roll_iobuf()?;
 
         let batch_res = self.log.reserve(
             LogKind::Skip,

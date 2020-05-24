@@ -507,6 +507,23 @@ impl IoBufs {
         ret
     }
 
+    pub(crate) fn roll_iobuf(self: &Arc<Self>) -> Result<usize> {
+        let iobuf = self.current_iobuf();
+        let header = iobuf.get_header();
+        if is_sealed(header) {
+            trace!("skipping roll_iobuf due to already-sealed header");
+            return Ok(0);
+        }
+        if offset(header) != 0 {
+            trace!("sealing ioubuf from  roll_iobuf");
+            maybe_seal_and_write_iobuf(self, &iobuf, header, false)?;
+        } else {
+            trace!("skipping roll_iobuf due to empty segment");
+        }
+
+        return Ok(offset(header));
+    }
+
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub(crate) fn iter_from(&self, lsn: Lsn) -> LogIter {
@@ -997,6 +1014,8 @@ pub(in crate::pagecache) fn make_stable_inner(
 /// to flush some pending writes. Returns the number
 /// of bytes written during this call.
 pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
+    let guard = pin();
+    let _cc = concurrency_control::read(&guard);
     let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst);
     make_stable(iobufs, max_reserved_lsn)
 }
