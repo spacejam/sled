@@ -1692,14 +1692,6 @@ impl PageCache {
         }
     }
 
-    /// Blocks until the provided Lsn is stable on disk,
-    /// triggering necessary flushes in the process.
-    /// Returns the number of bytes written during
-    /// this call.
-    pub(crate) fn make_stable(&self, lsn: Lsn) -> Result<usize> {
-        self.log.make_stable(lsn)
-    }
-
     /// Returns `true` if the database was
     /// recovered from a previous process.
     /// Note that database state is only
