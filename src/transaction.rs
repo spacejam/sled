@@ -476,9 +476,7 @@ impl<E> Transactional<E> for &Tree {
     type View = TransactionalTree;
 
     fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
-            inner: vec![TransactionalTree::from_tree(self)],
-        }
+        TransactionalTrees { inner: vec![TransactionalTree::from_tree(self)] }
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -490,9 +488,7 @@ impl<E> Transactional<E> for &&Tree {
     type View = TransactionalTree;
 
     fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
-            inner: vec![TransactionalTree::from_tree(*self)],
-        }
+        TransactionalTrees { inner: vec![TransactionalTree::from_tree(*self)] }
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -504,9 +500,7 @@ impl<E> Transactional<E> for Tree {
     type View = TransactionalTree;
 
     fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
-            inner: vec![TransactionalTree::from_tree(&self)],
-        }
+        TransactionalTrees { inner: vec![TransactionalTree::from_tree(self)] }
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -519,7 +513,10 @@ impl<E> Transactional<E> for [Tree] {
 
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
-            inner: self.into_iter().map(|t| TransactionalTree::from_tree(t)).collect(),
+            inner: self
+                .into_iter()
+                .map(|t| TransactionalTree::from_tree(t))
+                .collect(),
         }
     }
 
@@ -533,7 +530,10 @@ impl<E> Transactional<E> for [&Tree] {
 
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
-            inner: self.into_iter().map(|&t| TransactionalTree::from_tree(t)).collect(),
+            inner: self
+                .into_iter()
+                .map(|&t| TransactionalTree::from_tree(t))
+                .collect(),
         }
     }
 
