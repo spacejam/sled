@@ -2,6 +2,9 @@
 
 ## New Features
 
+* `Transactional` is now implemented for `[&Tree]` and
+  `[Tree]` so you can avoid the previous friction of
+  using tuples, as was necessary previously.
 * The minimum supported Rust version (MSRV) is now 1.37.0.
 * `Subscriber` now implements `Future` (non-fused)
   so prefix watching may now be iterated over via
