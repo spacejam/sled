@@ -32,7 +32,7 @@ pub trait Serialize: Sized {
     /// Returns owned serialized bytes.
     fn serialize(&self) -> Vec<u8> {
         let sz = self.serialized_size();
-        let mut buf = vec![0; usize::try_from(sz).unwrap()];
+        let mut buf = vec![0; sz as usize];
         self.serialize_into(&mut buf.as_mut_slice());
         buf
     }
@@ -71,7 +71,7 @@ impl Serialize for BatchManifest {
             return Err(Error::Corruption { at: DiskPtr::Inline(103) });
         }
 
-        let array = buf[..8].try_into().unwrap();
+        let array = buf[..8].try_into()?;
         *buf = &buf[8..];
         Ok(BatchManifest(i64::from_le_bytes(array)))
     }
@@ -246,7 +246,7 @@ impl Serialize for i64 {
             return Err(Error::Corruption { at: DiskPtr::Inline(103) });
         }
 
-        let array = buf[..8].try_into().unwrap();
+        let array = buf[..8].try_into()?;
         *buf = &buf[8..];
         Ok(i64::from_le_bytes(array))
     }
@@ -267,7 +267,7 @@ impl Serialize for u32 {
             return Err(Error::Corruption { at: DiskPtr::Inline(250) });
         }
 
-        let array = buf[..4].try_into().unwrap();
+        let array = buf[..4].try_into()?;
         *buf = &buf[4..];
         Ok(u32::from_le_bytes(array))
     }
@@ -285,12 +285,13 @@ impl Serialize for bool {
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<bool> {
-        if buf.is_empty() {
+        if let Some(v) = buf.get(0) {
+            let value = *v != 0;
+            *buf = &buf[1..];
+            Ok(value)
+        } else {
             return Err(Error::Corruption { at: DiskPtr::Inline(77) });
         }
-        let value = buf[0] != 0;
-        *buf = &buf[1..];
-        Ok(value)
     }
 }
 
@@ -320,7 +321,7 @@ impl Serialize for Meta {
             .iter()
             .map(|(k, v)| {
                 (k.len() as u64).serialized_size()
-                    + u64::try_from(k.len()).unwrap()
+                    + k.len() as u64
                     + v.serialized_size()
             })
             .sum()
@@ -341,12 +342,11 @@ impl Serialize for Link {
             Link::Set(key, value) => {
                 1 + (key.len() as u64).serialized_size()
                     + (value.len() as u64).serialized_size()
-                    + u64::try_from(key.len()).unwrap()
-                    + u64::try_from(value.len()).unwrap()
+                    + key.len() as u64
+                    + value.len() as u64
             }
             Link::Del(key) => {
-                1 + (key.len() as u64).serialized_size()
-                    + u64::try_from(key.len()).unwrap()
+                1 + (key.len() as u64).serialized_size() + key.len() as u64
             }
             Link::ParentMergeIntention(a) => 1 + a.serialized_size(),
             Link::ParentMergeConfirm | Link::ChildMergeCap => 1,
@@ -535,7 +535,7 @@ impl Serialize for Data {
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
-        let len = usize::try_from(u64::deserialize(buf)?).unwrap();
+        let len = usize::try_from(u64::deserialize(buf)?)?;
         Ok(match discriminant {
             0 => Data::Leaf(Leaf {
                 keys: deserialize_bounded_sequence(buf, len)?,
@@ -751,6 +751,7 @@ where
 
 #[cfg(test)]
 mod qc {
+    use no_panic::no_panic;
     use quickcheck::{Arbitrary, Gen};
     use rand::Rng;
 
@@ -962,6 +963,7 @@ mod qc {
         }
     }
 
+    //#[no_panic]
     fn prop_serialize<T>(item: T) -> bool
     where
         T: Serialize + PartialEq + Clone + std::fmt::Debug,
@@ -969,12 +971,17 @@ mod qc {
         let mut buf = vec![0; item.serialized_size() as usize];
         let buf_ref = &mut buf.as_mut_slice();
         item.serialize_into(buf_ref);
-        assert_eq!(
-            buf_ref.len(),
-            0,
-            "round-trip failed to consume produced bytes"
-        );
-        let deserialized = T::deserialize(&mut buf.as_slice()).unwrap();
+        if !buf_ref.is_empty() {
+            eprintln!("round-trip failed to consume produced bytes");
+            return false;
+        }
+        let deserialized_res = T::deserialize(&mut buf.as_slice());
+        let deserialized = if let Ok(deserialized) = deserialized_res {
+            deserialized
+        } else {
+            eprintln!("failed to deserialize the slice");
+            return false;
+        };
         if item != deserialized {
             eprintln!(
                 "round-trip serialization failed. original:\n\n{:?}\n\n \
@@ -992,6 +999,7 @@ mod qc {
             prop_serialize(item)
         }
 
+        /*
         fn u8(item: u8) -> bool {
             prop_serialize(item)
         }
@@ -1035,8 +1043,10 @@ mod qc {
         fn msg_header(item: MessageHeader) -> bool {
             prop_serialize(item)
         }
+        */
     }
 
+    /*
     #[test]
     fn debug_node() {
         // color_backtrace::install();
@@ -1053,4 +1063,5 @@ mod qc {
 
         prop_serialize(node);
     }
+    */
 }

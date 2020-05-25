@@ -109,6 +109,20 @@ impl PartialEq for Error {
     }
 }
 
+impl From<std::array::TryFromSliceError> for Error {
+    #[inline]
+    fn from(_: std::array::TryFromSliceError) -> Self {
+        Error::ReportableBug("hit error in conversion code".into())
+    }
+}
+
+impl From<std::num::TryFromIntError> for Error {
+    #[inline]
+    fn from(_: std::num::TryFromIntError) -> Self {
+        Error::ReportableBug("hit error in conversion code".into())
+    }
+}
+
 impl From<io::Error> for Error {
     #[inline]
     fn from(io_error: io::Error) -> Self {
