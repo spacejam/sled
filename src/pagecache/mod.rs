@@ -1723,7 +1723,10 @@ impl PageCache {
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
     pub(crate) fn generate_id(&self) -> Result<u64> {
-        let ret = self.idgen.fetch_add(1, Relaxed);
+        let _cc = concurrency_control::read();
+        let ret = self.idgen.fetch_add(1, Release);
+
+        trace!("generating ID {}", ret);
 
         let interval = self.config.idgen_persist_interval;
         let necessary_persists = ret / interval * interval;
@@ -1734,6 +1737,12 @@ impl PageCache {
             persisted = self.idgen_persists.load(Acquire);
             if persisted < necessary_persists {
                 // it's our responsibility to persist up to our ID
+                trace!(
+                    "persisting ID gen, as persist count {} \
+                    is below necessary persists {}",
+                    persisted,
+                    necessary_persists
+                );
                 let guard = pin();
                 let (key, current) = self.get_idgen(&guard)?;
 
@@ -1754,15 +1763,13 @@ impl PageCache {
 
                 // during recovery we add 2x the interval. we only
                 // need to block if the last one wasn't stable yet.
-                let gap = (necessary_persists - persisted) / interval;
-                if gap > 1 {
-                    // this is the most pessimistic case, hopefully
-                    // we only ever hit this on the first ID generation
-                    // of a process's lifetime
-                    self.flush()?;
-                } else {
-                    self.make_stable(key.last_lsn())?;
-                }
+                // we only call make_durable instead of make_stable
+                // because we took out the initial reservation
+                // outside of a writebatch (guaranteed by using the reader
+                // concurrency control) and it's possible we
+                // could cyclically wait if the reservation for
+                // a replacement happened inside a writebatch.
+                iobuf::make_durable(&self.log.iobufs, key.last_lsn())?;
             }
         }
 
