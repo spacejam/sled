@@ -7,12 +7,14 @@ use super::{
 };
 use crate::*;
 
+#[derive(Debug)]
 pub struct LogIter {
     pub config: RunningConfig,
-    pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogOffset)>>,
+    pub segments: BTreeMap<Lsn, LogOffset>,
     pub segment_base: Option<BasedBuf>,
-    pub max_lsn: Lsn,
-    pub cur_lsn: Lsn,
+    pub max_lsn: Option<Lsn>,
+    pub cur_lsn: Option<Lsn>,
+    pub last_stage: bool,
 }
 
 impl Iterator for LogIter {
@@ -24,55 +26,55 @@ impl Iterator for LogIter {
         // return None if there are no more remaining segments.
         loop {
             let remaining_seg_too_small_for_msg = !valid_entry_offset(
-                LogOffset::try_from(self.cur_lsn).unwrap(),
+                LogOffset::try_from(self.cur_lsn.unwrap_or(0)).unwrap(),
                 self.config.segment_size,
             );
 
-            if self.segment_base.is_none() || remaining_seg_too_small_for_msg {
-                if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
-                    assert!(
-                        next_lsn + (self.config.segment_size as Lsn)
-                            >= self.cur_lsn,
-                        "caller is responsible for providing segments \
-                         that contain the initial cur_lsn value or higher"
+            if remaining_seg_too_small_for_msg {
+                // clearing this also communicates to code in
+                // the snapshot generation logic that there was
+                // no more available space for a message in the
+                // last read segment
+                self.segment_base = None;
+            }
+
+            if self.segment_base.is_none() {
+                if let Err(e) = self.read_segment() {
+                    debug!(
+                        "hit snap while reading segments in \
+                         iterator: {:?}",
+                        e
                     );
-
-                    #[cfg(target_os = "linux")]
-                    self.fadvise_willneed(next_lid);
-
-                    if let Err(e) = self.read_segment(next_lsn, next_lid) {
-                        debug!(
-                            "hit snap while reading segments in \
-                             iterator: {:?}",
-                            e
-                        );
-                        return None;
-                    }
-                } else {
-                    trace!("no segments remaining to iterate over");
                     return None;
                 }
             }
 
+            let lsn = self.cur_lsn.unwrap();
+
             // self.segment_base is `Some` now.
             let _measure = Measure::new(&M.read_segment_message);
 
-            if self.cur_lsn > self.max_lsn {
-                // all done
-                trace!("hit max_lsn {} in iterator, stopping", self.max_lsn);
-                return None;
+            // NB this inequality must be greater than or equal to the
+            // max_lsn. max_lsn may be set to the beginning of the first
+            // corrupt message encountered in the previous sweep of recovery.
+            if let Some(max_lsn) = self.max_lsn {
+                if let Some(cur_lsn) = self.cur_lsn {
+                    if cur_lsn > max_lsn {
+                        // all done
+                        debug!("hit max_lsn {} in iterator, stopping", max_lsn);
+                        return None;
+                    }
+                }
             }
 
             let segment_base = &self.segment_base.as_ref().unwrap();
 
-            let lid = segment_base.1
-                + LogOffset::try_from(
-                    self.cur_lsn % self.config.segment_size as Lsn,
-                )
-                .unwrap();
+            let lid = segment_base.offset
+                + LogOffset::try_from(lsn % self.config.segment_size as Lsn)
+                    .unwrap();
 
             let expected_segment_number = SegmentNumber(
-                u64::try_from(self.cur_lsn).unwrap()
+                u64::try_from(lsn).unwrap()
                     / u64::try_from(self.config.segment_size).unwrap(),
             );
 
@@ -84,8 +86,7 @@ impl Iterator for LogIter {
             ) {
                 Ok(LogRead::Blob(header, _buf, blob_ptr, inline_len)) => {
                     trace!("read blob flush in LogIter::next");
-                    let lsn = self.cur_lsn;
-                    self.cur_lsn += Lsn::from(inline_len);
+                    self.cur_lsn = Some(lsn + Lsn::from(inline_len));
 
                     return Some((
                         LogKind::from(header.kind),
@@ -100,8 +101,7 @@ impl Iterator for LogIter {
                         "read inline flush with header {:?} in LogIter::next",
                         header,
                     );
-                    let lsn = self.cur_lsn;
-                    self.cur_lsn += Lsn::from(inline_len);
+                    self.cur_lsn = Some(lsn + Lsn::from(inline_len));
 
                     return Some((
                         LogKind::from(header.kind),
@@ -112,26 +112,47 @@ impl Iterator for LogIter {
                     ));
                 }
                 Ok(LogRead::BatchManifest(last_lsn_in_batch, inline_len)) => {
-                    if last_lsn_in_batch > self.max_lsn {
-                        return None;
-                    } else {
-                        self.cur_lsn += Lsn::from(inline_len);
-                        continue;
+                    if let Some(max_lsn) = self.max_lsn {
+                        if last_lsn_in_batch > max_lsn {
+                            debug!(
+                                "cutting recovery short due to torn batch. \
+                            required stable lsn: {} actual max possible lsn: {}",
+                                last_lsn_in_batch,
+                                self.max_lsn.unwrap()
+                            );
+                            return None;
+                        }
                     }
+                    self.cur_lsn = Some(lsn + Lsn::from(inline_len));
+                    continue;
                 }
                 Ok(LogRead::Canceled(inline_len)) => {
                     trace!("read zeroed in LogIter::next");
-                    self.cur_lsn += Lsn::from(inline_len);
+                    self.cur_lsn = Some(lsn + Lsn::from(inline_len));
                 }
                 Ok(LogRead::Corrupted) => {
                     trace!(
                         "read corrupted msg in LogIter::next as lid {} lsn {}",
                         lid,
-                        self.cur_lsn
+                        lsn
                     );
-                    return None;
+                    if self.last_stage {
+                        // this happens when the second half of a freed segment
+                        // is overwritten before its segment header. it's fine
+                        // to just treat it like a cap
+                        // because any already applied
+                        // state can be assumed to be replaced later on by
+                        // the stabilized state that came afterwards.
+                        let _taken = self.segment_base.take().unwrap();
+
+                        continue;
+                    } else {
+                        // found a tear
+                        return None;
+                    }
                 }
                 Ok(LogRead::Cap(_segment_number)) => {
+                    trace!("read cap in LogIter::next");
                     let _taken = self.segment_base.take().unwrap();
 
                     continue;
@@ -140,16 +161,16 @@ impl Iterator for LogIter {
                     debug!(
                         "encountered dangling blob \
                          pointer at lsn {} ptr {}",
-                        self.cur_lsn, blob_ptr
+                        lsn, blob_ptr
                     );
-                    self.cur_lsn += Lsn::from(inline_len);
+                    self.cur_lsn = Some(lsn + Lsn::from(inline_len));
                     continue;
                 }
                 Err(e) => {
                     debug!(
                         "failed to read log message at lid {} \
                          with expected lsn {} during iteration: {}",
-                        lid, self.cur_lsn, e
+                        lid, lsn, e
                     );
                     return None;
                 }
@@ -161,8 +182,36 @@ impl Iterator for LogIter {
 impl LogIter {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
-    fn read_segment(&mut self, lsn: Lsn, offset: LogOffset) -> Result<()> {
+    fn read_segment(&mut self) -> Result<()> {
         let _measure = Measure::new(&M.segment_read);
+        if self.segments.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "no segments remaining to iterate over",
+            )
+            .into());
+        }
+
+        let first_ref = self.segments.iter().next().unwrap();
+        let (lsn, offset) = (*first_ref.0, *first_ref.1);
+
+        if let Some(max_lsn) = self.max_lsn {
+            if lsn > max_lsn {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "next segment is above our configured max_lsn",
+                )
+                .into());
+            }
+        }
+
+        assert!(
+            lsn + (self.config.segment_size as Lsn)
+                >= self.cur_lsn.unwrap_or(0),
+            "caller is responsible for providing segments \
+             that contain the initial cur_lsn value or higher"
+        );
+
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,
@@ -170,12 +219,14 @@ impl LogIter {
         );
         // we add segment_len to this check because we may be getting the
         // initial segment that is a bit behind where we left off before.
-        assert!(lsn + self.config.segment_size as Lsn >= self.cur_lsn);
+        assert!(
+            lsn + self.config.segment_size as Lsn >= self.cur_lsn.unwrap_or(0)
+        );
         let f = &self.config.file;
         let segment_header = read_segment_header(f, offset)?;
         if offset % self.config.segment_size as LogOffset != 0 {
             debug!("segment offset not divisible by segment length");
-            return Err(Error::Corruption { at: DiskPtr::Inline(offset) });
+            return Err(Error::corruption(None));
         }
         if segment_header.lsn % self.config.segment_size as Lsn != 0 {
             debug!(
@@ -183,7 +234,7 @@ impl LogIter {
                  by the segment_size ({}) instead it was {}",
                 self.config.segment_size, segment_header.lsn
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(offset) });
+            return Err(Error::corruption(None));
         }
 
         if segment_header.lsn != lsn {
@@ -201,38 +252,23 @@ impl LogIter {
 
         trace!("read segment header {:?}", segment_header);
 
-        self.cur_lsn = segment_header.lsn + SEG_HEADER_LEN as Lsn;
-
         let mut buf = vec![0; self.config.segment_size];
         let size = pread_exact_or_eof(f, &mut buf, offset)?;
 
         trace!("setting stored segment buffer length to {} after read", size);
         buf.truncate(size);
-        self.segment_base = Some(BasedBuf(buf, offset));
+
+        self.cur_lsn = Some(segment_header.lsn + SEG_HEADER_LEN as Lsn);
+
+        self.segment_base = Some(BasedBuf { buf, offset });
+
+        // NB this should only happen after we've successfully read
+        // the header, because we want to zero the segment if we
+        // fail to read that, and we use the remaining segment
+        // list to perform zeroing off of.
+        self.segments.remove(&lsn);
 
         Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    fn fadvise_willneed(&self, lid: LogOffset) {
-        use std::os::unix::io::AsRawFd;
-
-        let f = &self.config.file;
-        #[allow(unsafe_code)]
-        let ret = unsafe {
-            libc::posix_fadvise(
-                f.as_raw_fd(),
-                libc::off_t::try_from(lid).unwrap(),
-                libc::off_t::try_from(self.config.segment_size).unwrap(),
-                libc::POSIX_FADV_WILLNEED,
-            )
-        };
-        if ret != 0 {
-            panic!(
-                "failed to call fadvise: {}",
-                std::io::Error::from_raw_os_error(ret)
-            );
-        }
     }
 }
 
@@ -249,10 +285,10 @@ fn valid_entry_offset(lid: LogOffset, segment_len: usize) -> bool {
 
 // Scan the log file if we don't know of any Lsn offsets yet,
 // and recover the order of segments, and the highest Lsn.
-fn scan_segment_lsns(
+fn scan_segment_headers_and_tail(
     min: Lsn,
     config: &RunningConfig,
-) -> Result<(BTreeMap<Lsn, LogOffset>, Lsn, Vec<LogOffset>)> {
+) -> Result<(BTreeMap<Lsn, LogOffset>, Lsn)> {
     fn fetch(
         idx: u64,
         min: Lsn,
@@ -293,6 +329,7 @@ fn scan_segment_lsns(
         } else {
             1
         };
+
     trace!(
         "file len: {} segment len {} segments: {}",
         file_len,
@@ -300,6 +337,7 @@ fn scan_segment_lsns(
         segments
     );
 
+    // scatter
     let header_promises: Vec<OneShot<Option<(LogOffset, SegmentHeader)>>> = (0
         ..segments)
         .map({
@@ -313,6 +351,7 @@ fn scan_segment_lsns(
         })
         .collect();
 
+    // gather
     let mut headers: Vec<(LogOffset, SegmentHeader)> = vec![];
     for promise in header_promises {
         let read_attempt =
@@ -323,6 +362,7 @@ fn scan_segment_lsns(
         }
     }
 
+    // find max stable LSN recorded in segment headers
     let mut ordering = BTreeMap::new();
     let mut max_header_stable_lsn = min;
 
@@ -348,10 +388,14 @@ fn scan_segment_lsns(
 
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
-    let (ordering, to_zero_after_snap_write) =
-        clean_tail_tears(max_header_stable_lsn, ordering, config)?;
+    let end_of_last_contiguous_message_in_unstable_tail =
+        check_contiguity_in_unstable_tail(
+            max_header_stable_lsn,
+            &ordering,
+            config,
+        )?;
 
-    Ok((ordering, max_header_stable_lsn, to_zero_after_snap_write))
+    Ok((ordering, end_of_last_contiguous_message_in_unstable_tail))
 }
 
 // This ensures that the last <# io buffers> segments on
@@ -359,11 +403,11 @@ fn scan_segment_lsns(
 // the header. This is important because we expect that
 // the last <# io buffers> segments will join up, and we
 // never reuse buffers within this safety range.
-fn clean_tail_tears(
+fn check_contiguity_in_unstable_tail(
     max_header_stable_lsn: Lsn,
-    mut ordering: BTreeMap<Lsn, LogOffset>,
+    ordering: &BTreeMap<Lsn, LogOffset>,
     config: &RunningConfig,
-) -> Result<(BTreeMap<Lsn, LogOffset>, Vec<LogOffset>)> {
+) -> Result<Lsn> {
     let segment_size = config.segment_size as Lsn;
 
     // -1..(2 *  segment_size) - 1 => 0
@@ -390,7 +434,7 @@ fn clean_tail_tears(
             expected_present += segment_size;
             matches
         })
-        .collect::<Vec<_>>();
+        .collect();
 
     debug!(
         "in clean_tail_tears, found missing item in tail: {:?} \
@@ -398,48 +442,28 @@ fn clean_tail_tears(
         missing_item_in_tail, logical_tail, lowest_lsn_in_tail
     );
 
-    let iter = LogIter {
+    let mut iter = LogIter {
         config: config.clone(),
-        segment_iter: Box::new(logical_tail.into_iter()),
+        segments: logical_tail,
         segment_base: None,
-        max_lsn: missing_item_in_tail.unwrap_or(Lsn::max_value()),
-        cur_lsn: 0,
+        max_lsn: missing_item_in_tail,
+        cur_lsn: None,
+        last_stage: false,
     };
 
-    let tip: (Lsn, LogOffset) =
-        iter.max_by_key(|(_kind, _pid, lsn, _ptr, _sz)| *lsn).map_or_else(
-            || {
-                if max_header_stable_lsn > 0 {
-                    (lowest_lsn_in_tail, ordering[&lowest_lsn_in_tail])
-                } else {
-                    (0, 0)
-                }
-            },
-            |(_, _, lsn, ptr, _)| (lsn, ptr.lid()),
-        );
+    // run the iterator to completion
+    while let Some(_) = iter.next() {}
+
+    // `cur_lsn` is set to the beginning
+    // of the next message
+    let end_of_last_message = iter.cur_lsn.unwrap_or(0) - 1;
 
     debug!(
-        "filtering out segments after detected tear at lsn {} lid {}",
-        tip.0, tip.1
+        "filtering out segments after detected tear at (lsn, lid) {:?}",
+        end_of_last_message,
     );
 
-    let mut to_zero_after_snap_write = vec![];
-
-    for (lsn, lid) in ordering
-        .range((std::ops::Bound::Excluded(tip.0), std::ops::Bound::Unbounded))
-    {
-        debug!(
-            "marking torn segment with lsn {} at lid {} \
-             as zeroable after snapshot is written",
-            lsn, lid
-        );
-        to_zero_after_snap_write.push(*lid);
-    }
-
-    ordering =
-        ordering.into_iter().filter(|&(lsn, _lid)| lsn <= tip.0).collect();
-
-    Ok((ordering, to_zero_after_snap_write))
+    Ok(end_of_last_message)
 }
 
 /// Returns a log iterator, the max stable lsn,
@@ -449,42 +473,28 @@ fn clean_tail_tears(
 pub fn raw_segment_iter_from(
     lsn: Lsn,
     config: &RunningConfig,
-) -> Result<(LogIter, Lsn, Vec<LogOffset>)> {
+) -> Result<LogIter> {
     let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let (ordering, max_header_stable_lsn, to_zero_after_snap_write) =
-        scan_segment_lsns(normalized_lsn, config)?;
+    let (ordering, end_of_last_msg) =
+        scan_segment_headers_and_tail(normalized_lsn, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
-    let tip_segment_iter =
-        Box::new(ordering.iter().map(|(a, b)| (*a, *b)).last().into_iter());
+    let tip_segment_iter: BTreeMap<_, _> = ordering
+        .iter()
+        .next_back()
+        .map(|(a, b)| (*a, *b))
+        .into_iter()
+        .collect();
+
     trace!(
         "trying to find the max stable tip for \
          bounding batch manifests with segment iter {:?} \
-         of segments >= max_header_stable_lsn {}",
+         of segments >= first_tip {}",
         tip_segment_iter,
-        max_header_stable_lsn
+        end_of_last_msg,
     );
-
-    let mut tip_iter = LogIter {
-        config: config.clone(),
-        max_lsn: Lsn::max_value(),
-        cur_lsn: 0,
-        segment_base: None,
-        segment_iter: tip_segment_iter,
-    };
-
-    // run the iterator to the end so
-    // we can grab its current lsn, inclusive
-    // of any zeroed messages and other
-    // legit items it may not have returned
-    // in the actual iterator.
-    while let Some(_) = tip_iter.next() {}
-
-    let tip = tip_iter.cur_lsn;
-
-    trace!("found max stable tip: {}", tip);
 
     trace!(
         "generated iterator over segments {:?} with lsn >= {}",
@@ -492,19 +502,19 @@ pub fn raw_segment_iter_from(
         normalized_lsn,
     );
 
-    let segment_iter = Box::new(
-        ordering.into_iter().filter(move |&(l, _)| l >= normalized_lsn),
-    );
+    let ordering = ordering;
 
-    Ok((
-        LogIter {
-            config: config.clone(),
-            max_lsn: tip,
-            cur_lsn: 0,
-            segment_base: None,
-            segment_iter,
-        },
-        max_header_stable_lsn,
-        to_zero_after_snap_write,
-    ))
+    let segments = ordering
+        .into_iter()
+        .filter(move |&(l, _)| l >= normalized_lsn)
+        .collect();
+
+    Ok(LogIter {
+        config: config.clone(),
+        max_lsn: Some(end_of_last_msg),
+        cur_lsn: None,
+        segment_base: None,
+        segments,
+        last_stage: true,
+    })
 }

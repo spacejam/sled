@@ -10,9 +10,7 @@ pub(crate) struct StackVec {
 
 impl fmt::Debug for StackVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        f.debug_list()
-            .entries(std::ops::Deref::deref(self))
-            .finish()
+        f.debug_list().entries(std::ops::Deref::deref(self)).finish()
     }
 }
 

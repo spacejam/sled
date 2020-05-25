@@ -78,13 +78,13 @@ impl StorageParameters {
                 k
             } else {
                 error!("failed to parse persisted config line: {}", line);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
             let v = if let Some(v) = split.next() {
                 v
             } else {
                 error!("failed to parse persisted config line: {}", line);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
             lines.insert(k, v);
         }
@@ -94,13 +94,13 @@ impl StorageParameters {
                 parsed
             } else {
                 error!("failed to parse segment_size value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             }
         } else {
             error!(
                 "failed to retrieve required configuration parameter: segment_size"
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::corruption(None));
         };
 
         let use_compression: bool = if let Some(raw) =
@@ -110,13 +110,13 @@ impl StorageParameters {
                 parsed
             } else {
                 error!("failed to parse use_compression value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             }
         } else {
             error!(
                 "failed to retrieve required configuration parameter: use_compression"
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::corruption(None));
         };
 
         let version: (usize, usize) = if let Some(raw) = lines.get("version") {
@@ -129,11 +129,11 @@ impl StorageParameters {
                         "failed to parse major version value from line: {}",
                         raw
                     );
-                    return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                    return Err(Error::corruption(None));
                 }
             } else {
                 error!("failed to parse major version value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
 
             let minor = if let Some(raw_minor) = split.next() {
@@ -144,11 +144,11 @@ impl StorageParameters {
                         "failed to parse minor version value from line: {}",
                         raw
                     );
-                    return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                    return Err(Error::corruption(None));
                 }
             } else {
                 error!("failed to parse minor version value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
 
             (major, minor)
@@ -156,7 +156,7 @@ impl StorageParameters {
             error!(
                 "failed to retrieve required configuration parameter: version"
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::corruption(None));
         };
 
         Ok(StorageParameters { segment_size, use_compression, version })
@@ -481,13 +481,37 @@ impl Config {
     }
 
     builder!(
-        (cache_capacity, u64, "maximum size in bytes for the system page cache"),
-        (mode, Mode, "specify whether the system should run in \"small\" or \"fast\" mode"),
+        (
+            cache_capacity,
+            u64,
+            "maximum size in bytes for the system page cache"
+        ),
+        (
+            mode,
+            Mode,
+            "specify whether the system should run in \"small\" or \"fast\" mode"
+        ),
         (use_compression, bool, "whether to use zstd compression"),
-        (compression_factor, i32, "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."),
-        (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
-        (create_new, bool, "attempts to exclusively open the database, failing if it already exists"),
-        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped")
+        (
+            compression_factor,
+            i32,
+            "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."
+        ),
+        (
+            temporary,
+            bool,
+            "deletes the database after drop. if no path is set, uses /dev/shm on linux"
+        ),
+        (
+            create_new,
+            bool,
+            "attempts to exclusively open the database, failing if it already exists"
+        ),
+        (
+            print_profile_on_drop,
+            bool,
+            "print a performance profile when the Config is dropped"
+        )
     );
 
     // panics if config options are outside of advised range

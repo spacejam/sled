@@ -37,6 +37,7 @@ enum Event {
     MetaOnShutdown { meta: Meta },
     MetaOnRecovery { meta: Meta },
     RecoveredLsn(Lsn),
+    Stabilized(Lsn),
 }
 
 /// A lock-free queue of Events.
@@ -66,18 +67,25 @@ impl EventLog {
 
         let mut recovered_pages = None;
         let mut recovered_meta = None;
-        let mut recovered_lsn = None;
+        let mut minimum_lsn = None;
 
         for event in iter {
             match event {
-                Event::RecoveredLsn(lsn) => {
-                    if let Some(later_lsn) = recovered_lsn {
+                Event::Stabilized(lsn) | Event::RecoveredLsn(lsn) => {
+                    if let Some(later_lsn) = minimum_lsn {
                         assert!(
                             later_lsn >= lsn,
-                            "lsn must never go down between recoveries"
+                            "lsn must never go down between recoveries \
+                            or stabilizations. It was {} but later became {}. history: {:?}",
+                            lsn,
+                            later_lsn,
+                            self.iter(&guard)
+                                .filter(|e| matches!(e, Event::Stabilized(_))
+                                    || matches!(e, Event::RecoveredLsn(_)))
+                                .collect::<Vec<_>>(),
                         );
                     }
-                    recovered_lsn = Some(lsn);
+                    minimum_lsn = Some(lsn);
                 }
                 Event::PagesOnRecovery { pages } => {
                     recovered_pages = Some(pages.clone());
@@ -120,6 +128,13 @@ impl EventLog {
                 }
             }
         }
+
+        debug!("event log verified \u{2713}");
+    }
+
+    pub(crate) fn stabilized_lsn(&self, lsn: Lsn) {
+        let guard = pin();
+        self.inner.push(Event::Stabilized(lsn), &guard);
     }
 
     pub(crate) fn recovered_lsn(&self, lsn: Lsn) {
@@ -151,11 +166,5 @@ impl EventLog {
     pub fn meta_after_restart(&self, meta: Meta) {
         let guard = pin();
         self.inner.push(Event::MetaOnRecovery { meta }, &guard);
-    }
-}
-
-impl Drop for EventLog {
-    fn drop(&mut self) {
-        self.verify();
     }
 }

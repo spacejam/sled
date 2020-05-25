@@ -16,22 +16,22 @@ const TEST_ENV_VAR: &str = "SLED_CRASH_TEST";
 const N_TESTS: usize = 100;
 const CYCLE: usize = 256;
 const BATCH_SIZE: u32 = 8;
+const SEGMENT_SIZE: usize = 1024;
 
 // test names, also used as dir names
 const RECOVERY_NO_SNAPSHOT: &str = "crash_recovery_no_runtime_snapshot";
 const BATCHES_NO_SNAPSHOT: &str = "crash_batches_no_runtime_snapshot";
 
 fn main() {
+    common::setup_logger();
+
     match env::var(TEST_ENV_VAR) {
         Err(VarError::NotPresent) => {
             test_crash_recovery();
-
-            // TODO this is currently being ignored until it is fixed
-            // with a refactor of recovery logic.
-            // test_crash_batches();
+            test_crash_batches();
         }
 
-        Ok(ref s) if s == RECOVERY_NO_SNAPSHOT => run_without_snapshot(s),
+        Ok(ref s) if s == RECOVERY_NO_SNAPSHOT => run(s),
         Ok(ref s) if s == BATCHES_NO_SNAPSHOT => run_batches(s),
 
         Ok(_) | Err(_) => panic!("invalid crash test case"),
@@ -107,15 +107,13 @@ fn slice_to_u32(b: &[u8]) -> u32 {
 
 fn spawn_killah() {
     thread::spawn(|| {
-        let runtime = rand::thread_rng().gen_range(0, 200);
+        let runtime = rand::thread_rng().gen_range(0, 60);
         thread::sleep(Duration::from_millis(runtime));
         exit(9);
     });
 }
 
 fn run_inner(config: Config) {
-    common::setup_logger();
-
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     if crash_during_initialization {
@@ -144,7 +142,7 @@ fn run_inner(config: Config) {
         let key = u32_to_vec((hu % CYCLE) as u32);
 
         let mut value = u32_to_vec((hu / CYCLE) as u32);
-        let additional_len = rand::thread_rng().gen_range(0, 1000);
+        let additional_len = rand::thread_rng().gen_range(0, SEGMENT_SIZE / 3);
         value.append(&mut vec![0u8; additional_len]);
 
         tree.insert(&key, value).unwrap();
@@ -167,27 +165,22 @@ fn verify_batches(tree: &sled::Tree) -> u32 {
             Some(v) => v,
             None => panic!(
                 "expected key {} to have a value, instead it was missing in db: {:?}",
-                key,
-                tree
+                key, tree
             ),
         };
         let value = slice_to_u32(&*v);
         assert_eq!(
-            first_value,
-            value,
+            first_value, value,
             "expected key {} to have value {}, instead it had value {} in db: {:?}",
-            key,
-            first_value,
-            value,
-            tree
+            key, first_value, value, tree
         );
     }
 
     first_value
 }
 
-fn run_batches_inner(config: Config) {
-    fn do_batch(i: u32, tree: &sled::Tree) {
+fn run_batches_inner(db: sled::Db) {
+    fn do_batch(i: u32, db: &sled::Db) {
         let mut rng = rand::thread_rng();
         let base_value = u32_to_vec(i);
 
@@ -199,45 +192,31 @@ fn run_batches_inner(config: Config) {
         } else {
             for key in 0..BATCH_SIZE {
                 let mut value = base_value.clone();
-                let additional_len = rng.gen_range(0, 1000);
+                let additional_len = rng.gen_range(0, SEGMENT_SIZE / 3);
                 value.append(&mut vec![0u8; additional_len]);
 
                 batch.insert(u32_to_vec(key), value);
             }
         }
-        tree.apply_batch(batch).unwrap();
+        db.apply_batch(batch).unwrap();
     }
 
-    common::setup_logger();
-
-    let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
-
-    if crash_during_initialization {
-        spawn_killah();
-    }
-
-    let tree = config.open().unwrap();
-
-    let mut i = verify_batches(&tree);
+    let mut i = verify_batches(&db);
     i += 1;
-    do_batch(i, &tree);
-
-    if !crash_during_initialization {
-        spawn_killah();
-    }
+    do_batch(i, &db);
 
     loop {
         i += 1;
-        do_batch(i, &tree);
+        do_batch(i, &db);
     }
 }
 
-fn run_without_snapshot(dir: &str) {
+fn run(dir: &str) {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
+        .flush_every_ms(Some(1))
         .path(dir.to_string())
-        .segment_size(1024);
+        .segment_size(SEGMENT_SIZE);
 
     match thread::spawn(|| run_inner(config)).join() {
         Err(e) => {
@@ -249,13 +228,29 @@ fn run_without_snapshot(dir: &str) {
 }
 
 fn run_batches(dir: &str) {
+    let crash_during_initialization = rand::thread_rng().gen_ratio(1, 10);
+
+    if crash_during_initialization {
+        spawn_killah();
+    }
+
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
+        .flush_every_ms(Some(1))
         .path(dir.to_string())
-        .segment_size(1024);
+        .segment_size(SEGMENT_SIZE);
 
-    match thread::spawn(|| run_batches_inner(config)).join() {
+    let db = config.open().unwrap();
+    // let db2 = db.clone();
+
+    let t1 = thread::spawn(|| run_batches_inner(db));
+    let t2 = thread::spawn(|| {}); // run_batches_inner(db2));
+
+    if !crash_during_initialization {
+        spawn_killah();
+    }
+
+    match t1.join().and_then(|_| t2.join()) {
         Err(e) => {
             println!("worker thread failed: {:?}", e);
             std::process::exit(15);

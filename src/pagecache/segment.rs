@@ -66,10 +66,6 @@ use crate::*;
 /// A operation that can be applied asynchronously.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum SegmentOp {
-    Peg {
-        peg_start_lsn: Lsn,
-        peg_end_lsn: Lsn,
-    },
     Link {
         pid: PageId,
         cache_info: CacheInfo,
@@ -215,27 +211,15 @@ impl Default for Segment {
 
 impl Segment {
     fn is_free(&self) -> bool {
-        if let Segment::Free(_) = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Free(_) = self { true } else { false }
     }
 
     fn is_active(&self) -> bool {
-        if let Segment::Active { .. } = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Active { .. } = self { true } else { false }
     }
 
     fn is_inactive(&self) -> bool {
-        if let Segment::Inactive { .. } = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Inactive { .. } = self { true } else { false }
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
@@ -271,7 +255,7 @@ impl Segment {
             for ptr in &active.deferred_rm_blob {
                 trace!(
                     "removing blob {} while transitioning \
-                 segment lsn {:?} to Inactive",
+                     segment lsn {:?} to Inactive",
                     ptr,
                     active.lsn,
                 );
@@ -344,26 +328,6 @@ impl Segment {
         }
     }
 
-    fn mark_peg(&mut self, peg_lsn: Lsn) {
-        match self {
-            Segment::Active(Active { lsn, latest_replacement_lsn, .. })
-            | Segment::Inactive(Inactive {
-                lsn, latest_replacement_lsn, ..
-            })
-            | Segment::Draining(Draining {
-                lsn, latest_replacement_lsn, ..
-            }) => {
-                assert!(*lsn <= peg_lsn);
-                if peg_lsn > *latest_replacement_lsn {
-                    *latest_replacement_lsn = peg_lsn;
-                }
-            }
-            Segment::Free(_) => {
-                panic!("called mark_peg {} on Segment::Free", peg_lsn)
-            }
-        }
-    }
-
     fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
         if self.is_free() {
             trace!("(snapshot) recovering segment with base lsn {}", lsn);
@@ -388,7 +352,11 @@ impl Segment {
         // using the SA to add pids AFTER their calls to
         // res.complete() worked.
         if let Segment::Active(active) = self {
-            assert_eq!(lsn, active.lsn);
+            assert_eq!(
+                lsn, active.lsn,
+                "insert_pid specified lsn {} for pid {} in segment {:?}",
+                lsn, pid, active
+            );
             active.pids.insert(pid);
             active.rss += size;
         } else {
@@ -486,17 +454,6 @@ impl Segment {
             false
         }
     }
-
-    fn is_empty(&self) -> bool {
-        match self {
-            Segment::Active(Active { pids, .. })
-            | Segment::Inactive(Inactive { pids, .. }) => pids.is_empty(),
-            Segment::Draining(Draining { replaced_pids, max_pids, .. }) => {
-                replaced_pids == max_pids
-            }
-            Segment::Free(_) => false,
-        }
-    }
 }
 
 impl SegmentAccountant {
@@ -520,37 +477,59 @@ impl SegmentAccountant {
 
         ret.initialize_from_snapshot(snapshot)?;
 
+        if let Some(max_free) = ret.free.iter().max() {
+            assert!(
+                ret.tip > *max_free,
+                "expected recovered tip {} to \
+                be above max item in recovered \
+                free list {:?}",
+                ret.tip,
+                ret.free
+            );
+        }
+
+        debug!(
+            "SA starting with tip {} stable {} free {:?}",
+            ret.tip, ret.max_stabilized_lsn, ret.free,
+        );
+
         Ok(ret)
     }
 
     fn initial_segments(&self, snapshot: &Snapshot) -> Result<Vec<Segment>> {
         let segment_size = self.config.segment_size;
         let file_len = self.config.file.metadata()?.len();
-        let empty_snapshot = snapshot.pt.is_empty();
         let number_of_segments =
             usize::try_from(file_len / segment_size as u64).unwrap()
-                + if empty_snapshot
-                    || file_len % u64::try_from(segment_size).unwrap()
-                        < u64::try_from(SEG_HEADER_LEN).unwrap()
-                {
-                    0
-                } else {
-                    1
-                };
-
-        if empty_snapshot {
-            assert_eq!(number_of_segments, 0);
-        }
+                + if file_len % segment_size as u64 == 0 { 0 } else { 1 };
 
         // generate segments from snapshot lids
         let mut segments = vec![Segment::default(); number_of_segments];
+
+        // sometimes the current segment is still empty, after only
+        // recovering the segment header but no valid messages yet
+        if let Some(tip_lid) = snapshot.active_segment {
+            let tip_idx =
+                usize::try_from(tip_lid / segment_size as LogOffset).unwrap();
+            if tip_idx == number_of_segments {
+                segments.push(Segment::default());
+            }
+            trace!(
+                "setting segment for tip_lid {} to stable_lsn {}",
+                tip_lid,
+                self.config.normalize(snapshot.stable_lsn.unwrap_or(0))
+            );
+            segments[tip_idx].recovery_ensure_initialized(
+                self.config.normalize(snapshot.stable_lsn.unwrap_or(0)),
+            );
+        }
 
         let add =
             |pid, lsn: Lsn, sz, lid: LogOffset, segments: &mut Vec<Segment>| {
                 let idx = assert_usize(lid / segment_size as LogOffset);
                 trace!(
                     "adding lsn: {} lid: {} sz: {} for \
-                    pid {} to segment {} during SA recovery",
+                     pid {} to segment {} during SA recovery",
                     lsn,
                     lid,
                     sz,
@@ -568,8 +547,15 @@ impl SegmentAccountant {
 
         for (pid, state) in snapshot.pt.iter().enumerate() {
             match state {
-                PageState::Present(coords) => {
-                    for (lsn, ptr, sz) in coords {
+                PageState::Present { base, frags } => {
+                    add(
+                        pid as PageId,
+                        base.0,
+                        base.2,
+                        base.1.lid(),
+                        &mut segments,
+                    );
+                    for (lsn, ptr, sz) in frags {
                         add(pid as PageId, *lsn, *sz, ptr.lid(), &mut segments);
                     }
                 }
@@ -595,30 +581,12 @@ impl SegmentAccountant {
 
         self.segments = segments;
 
-        let currently_active_segment = {
-            // this logic allows us to free the last
-            // active segment if it was empty.
-            let prospective_currently_active_segment =
-                usize::try_from(snapshot.last_lid / segment_size as LogOffset)
-                    .unwrap();
-            if let Some(segment) =
-                self.segments.get(prospective_currently_active_segment)
-            {
-                if segment.is_empty() {
-                    // we want to add this to the free list below,
-                    // so don't skip freeing it for being active
-                    usize::max_value()
-                } else {
-                    prospective_currently_active_segment
-                }
-            } else {
-                // segment was not used yet
-                usize::max_value()
-            }
-        };
-
         let mut to_free = vec![];
         let mut maybe_clean = vec![];
+
+        let currently_active_segment = snapshot
+            .active_segment
+            .map(|tl| usize::try_from(tl / segment_size as LogOffset).unwrap());
 
         for (idx, segment) in self.segments.iter_mut().enumerate() {
             let segment_base = idx as LogOffset * segment_size as LogOffset;
@@ -641,11 +609,10 @@ impl SegmentAccountant {
 
             let segment_lsn = segment.lsn();
 
-            if idx != currently_active_segment
-                && segment_lsn + segment_size as Lsn
-                    <= snapshot.max_header_stable_lsn
-            {
-                maybe_clean.push((idx, segment_lsn));
+            if let Some(tip_idx) = currently_active_segment {
+                if tip_idx != idx {
+                    maybe_clean.push((idx, segment_lsn));
+                }
             }
         }
 
@@ -685,7 +652,7 @@ impl SegmentAccountant {
 
     fn free_segment(&mut self, lid: LogOffset) -> Result<()> {
         debug!("freeing segment {}", lid);
-        debug!("free list before free {:?}", self.free);
+        trace!("free list before free {:?}", self.free);
         self.segment_cleaner.remove_pids(lid);
 
         let idx = self.segment_id(lid);
@@ -737,29 +704,12 @@ impl SegmentAccountant {
     pub(super) fn apply_op(&mut self, op: &SegmentOp) -> Result<()> {
         use SegmentOp::*;
         match op {
-            Peg { peg_start_lsn, peg_end_lsn } => {
-                self.mark_peg(*peg_start_lsn, *peg_end_lsn)
-            }
             Link { pid, cache_info } => self.mark_link(*pid, *cache_info),
             Replace { pid, lsn, old_cache_infos, new_cache_info } => {
                 self.mark_replace(*pid, *lsn, old_cache_infos, *new_cache_info)?
             }
         }
         Ok(())
-    }
-
-    fn mark_peg(&mut self, peg_start_lsn: Lsn, peg_end_lsn: Lsn) {
-        let mut lsn_start = self.config.normalize(peg_start_lsn);
-        let lsn_end = self.config.normalize(peg_end_lsn);
-
-        while lsn_start < lsn_end {
-            let lid = self.ordering[&lsn_start];
-            let idx = self.segment_id(lid);
-            let segment = &mut self.segments[idx];
-            segment.mark_peg(lsn_end);
-
-            lsn_start += self.config.segment_size as Lsn;
-        }
     }
 
     /// Called by the `PageCache` when a page has been rewritten completely.
@@ -783,7 +733,7 @@ impl SegmentAccountant {
             old_cache_infos,
             new_cache_info,
             self.config.normalize(lsn)
-            );
+        );
 
         let new_idx = self.segment_id(new_cache_info.pointer.lid());
 
@@ -1006,17 +956,17 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    fn bump_tip(&mut self) -> LogOffset {
+    fn bump_tip(&mut self) -> Result<LogOffset> {
         let lid = self.tip;
 
         let truncations = self.async_truncations.split_off(&lid);
 
         for (_at, truncation) in truncations {
-            match truncation.wait() {
-                Some(Ok(())) => {}
-                error => {
-                    // TODO propagate!
+            match truncation.wait().unwrap() {
+                Ok(()) => {}
+                Err(error) => {
                     error!("failed to shrink file: {:?}", error);
+                    return Err(error);
                 }
             }
         }
@@ -1025,7 +975,7 @@ impl SegmentAccountant {
 
         trace!("advancing file tip from {} to {}", lid, self.tip);
 
-        lid
+        Ok(lid)
     }
 
     /// Returns the next offset to write a new segment in.
@@ -1047,7 +997,7 @@ impl SegmentAccountant {
             self.free.remove(&next);
             next
         } else {
-            self.bump_tip()
+            self.bump_tip()?
         };
 
         // pin lsn to this segment
@@ -1058,9 +1008,9 @@ impl SegmentAccountant {
         self.ordering.insert(lsn, lid);
 
         debug!(
-            "segment accountant returning offset: {} \
+            "segment accountant returning offset: {} for lsn {} \
              on deck: {:?}",
-            lid, self.free,
+            lid, lsn, self.free,
         );
 
         assert!(
@@ -1078,14 +1028,13 @@ impl SegmentAccountant {
     pub(super) fn segment_snapshot_iter_from(
         &mut self,
         lsn: Lsn,
-    ) -> Box<dyn Iterator<Item = (Lsn, LogOffset)>> {
+    ) -> BTreeMap<Lsn, LogOffset> {
         assert!(
             !self.ordering.is_empty(),
             "expected ordering to have been initialized already"
         );
 
-        let segment_len = self.config.segment_size as Lsn;
-        let normalized_lsn = lsn / segment_len * segment_len;
+        let normalized_lsn = self.config.normalize(lsn);
 
         trace!(
             "generated iterator over {:?} where lsn >= {}",
@@ -1093,12 +1042,12 @@ impl SegmentAccountant {
             normalized_lsn
         );
 
-        Box::new(
-            self.ordering
-                .clone()
-                .into_iter()
-                .filter(move |&(l, _)| l >= normalized_lsn),
-        )
+        self.ordering
+            .iter()
+            .filter_map(move |(l, r)| {
+                if *l >= normalized_lsn { Some((*l, *r)) } else { None }
+            })
+            .collect()
     }
 
     // truncate the file to the desired length

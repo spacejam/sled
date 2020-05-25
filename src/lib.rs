@@ -135,7 +135,6 @@
     clippy::print_stdout,
     clippy::pub_enum_variant_names,
     clippy::redundant_closure_for_method_calls,
-    clippy::replace_consts,
     clippy::result_map_unwrap_or_else,
     clippy::shadow_reuse,
     clippy::shadow_same,
@@ -306,7 +305,7 @@ pub use self::{
 use {
     self::{
         binary_search::binary_search_lub,
-        concurrency_control::{ConcurrencyControl, Protector},
+        concurrency_control::Protector,
         context::Context,
         fastcmp::fastcmp,
         histogram::Histogram,

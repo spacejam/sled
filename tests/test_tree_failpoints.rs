@@ -2,6 +2,7 @@
 mod common;
 
 use std::collections::BTreeMap;
+use std::convert::TryInto;
 use std::sync::Mutex;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
@@ -9,14 +10,34 @@ use rand::{seq::SliceRandom, Rng};
 
 use sled::*;
 
+const SEGMENT_SIZE: usize = 256;
+const BATCH_COUNTER_KEY: &[u8] = b"batch_counter";
+
 #[derive(Debug, Clone)]
 enum Op {
     Set,
     Del(u8),
     Id,
+    Batched(Vec<BatchOp>),
     Restart,
     Flush,
     FailPoint(&'static str, u64),
+}
+
+#[derive(Debug, Clone)]
+enum BatchOp {
+    Set,
+    Del(u8),
+}
+
+impl Arbitrary for BatchOp {
+    fn arbitrary<G: Gen>(g: &mut G) -> BatchOp {
+        if g.gen_ratio(1, 2) {
+            BatchOp::Set
+        } else {
+            BatchOp::Del(g.gen::<u8>())
+        }
+    }
 }
 
 use self::Op::*;
@@ -24,9 +45,9 @@ use self::Op::*;
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
         let fail_points = vec![
+            "buffer write",
             "zero garbage segment",
             "zero garbage segment post",
-            "buffer write",
             "buffer write post",
             "write_config bytes",
             "write_config crc",
@@ -53,33 +74,44 @@ impl Arbitrary for Op {
             return Restart;
         }
 
-        let choice = g.gen_range(0, 4);
+        let choice = g.gen_range(0, 5);
 
         match choice {
             0 => Set,
             1 => Del(g.gen::<u8>()),
             2 => Id,
-            3 => Flush,
+            3 => Batched(Arbitrary::arbitrary(g)),
+            4 => Flush,
             _ => panic!("impossible choice"),
         }
     }
 
     fn shrink(&self) -> Box<dyn Iterator<Item = Op>> {
-        match *self {
-            Op::Del(ref lid) if *lid > 0 => {
-                Box::new(vec![Op::Del(*lid / 2), Op::Del(*lid - 1)].into_iter())
+        match self {
+            Del(ref lid) if *lid > 0 => {
+                Box::new(vec![Del(*lid / 2), Del(*lid - 1)].into_iter())
             }
-            Op::FailPoint(name, bitset) => {
+            Batched(batch_ops) => Box::new(batch_ops.shrink().map(Batched)),
+            FailPoint(name, bitset) => {
                 if bitset.count_ones() > 1 {
-                    Box::new(vec![
-                        // clear last failure bit
-                        FailPoint(name, bitset ^ (1 << (63 - bitset.leading_zeros()))),
-                        // clear first failure bit
-                        FailPoint(name, bitset ^ (1 << bitset.trailing_zeros())),
-                        // rewind all failure bits by one call
-                        FailPoint(name, bitset >> 1),
-                    ].into_iter())
-                } else if bitset > 1 {
+                    Box::new(
+                        vec![
+                            // clear last failure bit
+                            FailPoint(
+                                name,
+                                bitset ^ (1 << (63 - bitset.leading_zeros())),
+                            ),
+                            // clear first failure bit
+                            FailPoint(
+                                name,
+                                bitset ^ (1 << bitset.trailing_zeros()),
+                            ),
+                            // rewind all failure bits by one call
+                            FailPoint(name, bitset >> 1),
+                        ]
+                        .into_iter(),
+                    )
+                } else if *bitset > 1 {
                     Box::new(vec![FailPoint(name, bitset >> 1)].into_iter())
                 } else {
                     Box::new(vec![].into_iter())
@@ -97,13 +129,34 @@ fn v(b: &[u8]) -> u16 {
     (u16::from(b[0]) << 8) + u16::from(b[1])
 }
 
+fn value_factory(set_counter: u16) -> Vec<u8> {
+    let hi = (set_counter >> 8) as u8;
+    let lo = set_counter as u8;
+    if hi % 4 == 0 {
+        let mut val = vec![hi, lo];
+        val.extend(vec![
+            lo;
+            hi as usize * SEGMENT_SIZE / 4 * set_counter as usize
+        ]);
+        val
+    } else {
+        vec![hi, lo]
+    }
+}
+
 fn tear_down_failpoints() {
     sled::fail::reset();
 }
 
 #[derive(Debug)]
+struct ReferenceVersion {
+    value: Option<u16>,
+    batch: Option<u32>,
+}
+
+#[derive(Debug)]
 struct ReferenceEntry {
-    values: Vec<Option<u16>>,
+    versions: Vec<ReferenceVersion>,
     crash_epoch: u32,
 }
 
@@ -142,59 +195,103 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     common::setup_logger();
 
-    let segment_size = 256;
-
     let config = Config::new()
         .temporary(true)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .cache_capacity(256)
         .idgen_persist_interval(1)
-        .segment_size(segment_size);
+        .segment_size(SEGMENT_SIZE);
 
     let mut tree = config.open().expect("tree should start");
     let mut reference = BTreeMap::new();
     let mut max_id: isize = -1;
     let mut crash_counter = 0;
+    let mut batch_counter: u32 = 1;
+
+    // For each Set operation, one entry is inserted to the tree with a two-byte
+    // key, and a variable-length value. The key is set to the encoded value
+    // of the `set_counter`, which increments by one with each Set
+    // operation. The value starts with the same two bytes as the
+    // key does, but some values are extended to be many segments long.
+    //
+    // Del operations delete one entry from the tree. Only keys from 0 to 255
+    // are eligible for deletion.
 
     macro_rules! restart {
         () => {
             drop(tree);
             let tree_res = config.global_error().and_then(|_| config.open());
-            if let Err(ref e) = tree_res {
-                if e == &Error::FailPoint {
-                    return true;
+            tree = match tree_res {
+                Err(Error::FailPoint) => return true,
+                Err(e) => {
+                    println!("could not start database: {}", e);
+                    return false;
                 }
+                Ok(tree) => tree,
+            };
 
-                println!("could not start database: {}", e);
-                return false;
+            let stable_batch = match tree.get(BATCH_COUNTER_KEY) {
+                Ok(Some(value)) => u32::from_be_bytes(value.as_ref().try_into().unwrap()),
+                Ok(None) => 0,
+                Err(Error::FailPoint) => return true,
+                Err(other) => panic!("failed to fetch batch counter after restart: {:?}", other),
+            };
+            for (_, ref_entry) in reference.iter_mut() {
+                if ref_entry.versions.len() == 1 {
+                    continue;
+                }
+                // find the last version from a stable batch, if there is one,
+                // throw away all preceeding versions
+                let committed_find_result = ref_entry.versions.iter().enumerate().rev().find(|(_, ReferenceVersion{ batch, value: _ })| match batch {
+                    Some(batch) => *batch <= stable_batch,
+                    None => false,
+                });
+                if let Some((committed_index, _)) = committed_find_result {
+                    let tail_versions = ref_entry.versions.split_off(committed_index);
+                    let _ = std::mem::replace(&mut ref_entry.versions, tail_versions);
+                }
+                // find the first version from a batch that wasn't committed,
+                // throw away it and all subsequent versions
+                let discarded_find_result = ref_entry.versions.iter().enumerate().find(|(_, ReferenceVersion{ batch, value: _})| match batch {
+                    Some(batch) => *batch > stable_batch,
+                    None => false,
+                });
+                if let Some((discarded_index, _)) = discarded_find_result {
+                    let _ = ref_entry.versions.split_off(discarded_index);
+                }
             }
-
-            tree = tree_res.expect("tree should restart");
 
             let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, *rv));
             for res in tree.iter() {
-                let t = match res {
-                    Ok((ref tk, _)) => v(tk),
+                let actual = match res {
+                    Ok((ref tk, _)) => {
+                        if tk == BATCH_COUNTER_KEY {
+                            continue;
+                        }
+                        v(tk)
+                    }
                     Err(Error::FailPoint) => return true,
                     Err(other) => panic!("failed to iterate over items in tree after restart: {:?}", other),
                 };
 
                 // make sure the tree value is in there
                 while let Some((ref_key, ref_expected)) = ref_iter.next() {
-                    if ref_expected.values.iter().all(Option::is_none) {
+                    if ref_expected.versions.iter().all(|version| version.value.is_none()) {
                         // this key should not be present in the tree, skip it and move on to the
                         // next entry in the reference
                         continue;
-                    } else if ref_expected.values.iter().all(Option::is_some) {
+                    } else if ref_expected.versions.iter().all(|version| version.value.is_some()) {
                         // this key must be present in the tree, check if the keys from both
                         // iterators match
-                        if t != ref_key {
-                            println!(
-                                "expected to iterate over {:?} but got {:?} instead",
+                        if actual != ref_key {
+                            panic!(
+                                "expected to iterate over key {:?} but got {:?} instead due to it being missing in \n\ntree: {:?}\n\nref: {:?}\n",
                                 ref_key,
-                                t
+                                actual,
+                                tree,
+                                reference,
+
                             );
-                            return false;
                         }
                         break;
                     } else {
@@ -206,17 +303,17 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                         // skip the entry in the reference. if the reference iterator ever gets
                         // further than the tree iterator, that means the tree has a key that it
                         // should not.
-                        if t == ref_key {
+                        if actual == ref_key {
                             // tree and reference agree, we can move on to the next tree item
                             break;
-                        } else if ref_key > t {
+                        } else if ref_key > actual {
                             // we have a bug, the reference iterator should always be <= tree
                             // (this means that the key t was in the tree, but it wasn't in
                             // the reference, so the reference iterator has advanced on past t)
                             println!(
                                 "tree verification failed: expected {:?} got {:?}",
                                 ref_key,
-                                t
+                                actual
                             );
                             return false;
                         } else {
@@ -232,7 +329,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             // finish the rest of the reference iterator, and confirm the tree isn't missing
             // any keys it needs to have at the end
             while let Some((ref_key, ref_expected)) = ref_iter.next() {
-                if ref_expected.values.iter().all(Option::is_some) {
+                if ref_expected.versions.iter().all(|version| version.value.is_some()) {
                     // this key had to be present, but we got to the end of the tree without
                     // seeing it
                     println!("tree verification failed: expected {:?} got end", ref_key);
@@ -270,20 +367,6 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     for op in ops.into_iter() {
         match op {
             Set => {
-                let hi = (set_counter >> 8) as u8;
-                let lo = set_counter as u8;
-                let val = if hi % 4 == 0 {
-                    let mut val = vec![hi, lo];
-                    val.extend(vec![
-                        lo;
-                        hi as usize * segment_size / 4
-                            * set_counter as usize
-                    ]);
-                    val
-                } else {
-                    vec![hi, lo]
-                };
-
                 // update the reference to show that this key could be present.
                 // the next Flush operation will update the
                 // reference again, and require this key to be present
@@ -291,13 +374,22 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 let reference_entry = reference
                     .entry(set_counter)
                     .or_insert_with(|| ReferenceEntry {
-                        values: vec![None],
+                        versions: vec![ReferenceVersion {
+                            value: None,
+                            batch: None,
+                        }],
                         crash_epoch: crash_counter,
                     });
-                reference_entry.values.push(Some(set_counter));
+                reference_entry.versions.push(ReferenceVersion {
+                    value: Some(set_counter),
+                    batch: None,
+                });
                 reference_entry.crash_epoch = crash_counter;
 
-                fp_crash!(tree.insert(&[hi, lo], val));
+                fp_crash!(tree.insert(
+                    &u16::to_be_bytes(set_counter),
+                    value_factory(set_counter),
+                ));
 
                 set_counter += 1;
             }
@@ -308,7 +400,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // again, and require this key to be absent (unless there's a
                 // crash before then).
                 reference.entry(u16::from(k)).and_modify(|v| {
-                    v.values.push(None);
+                    v.versions
+                        .push(ReferenceVersion { value: None, batch: None });
                     v.crash_epoch = crash_counter;
                 });
 
@@ -325,6 +418,53 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 );
                 max_id = id as isize;
             }
+            Batched(batch_ops) => {
+                let mut batch = Batch::default();
+                batch.insert(
+                    BATCH_COUNTER_KEY,
+                    batch_counter.to_be_bytes().to_vec(),
+                );
+                for batch_op in batch_ops {
+                    match batch_op {
+                        BatchOp::Set => {
+                            let reference_entry = reference
+                                .entry(set_counter)
+                                .or_insert_with(|| ReferenceEntry {
+                                    versions: vec![ReferenceVersion {
+                                        value: None,
+                                        batch: None,
+                                    }],
+                                    crash_epoch: crash_counter,
+                                });
+                            reference_entry.versions.push(ReferenceVersion {
+                                value: Some(set_counter),
+                                batch: Some(batch_counter),
+                            });
+                            reference_entry.crash_epoch = crash_counter;
+
+                            batch.insert(
+                                u16::to_be_bytes(set_counter).to_vec(),
+                                value_factory(set_counter),
+                            );
+
+                            set_counter += 1;
+                        }
+                        BatchOp::Del(k) => {
+                            reference.entry(u16::from(k)).and_modify(|v| {
+                                v.versions.push(ReferenceVersion {
+                                    value: None,
+                                    batch: Some(batch_counter),
+                                });
+                                v.crash_epoch = crash_counter;
+                            });
+
+                            batch.remove(u16::to_be_bytes(k.into()).to_vec());
+                        }
+                    }
+                }
+                batch_counter += 1;
+                fp_crash!(tree.apply_batch(batch));
+            }
             Flush => {
                 fp_crash!(tree.flush());
 
@@ -334,11 +474,15 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // the last crash, keep the value for that key corresponding to
                 // the most recent operation, and toss the rest.
                 for (_key, reference_entry) in reference.iter_mut() {
-                    if reference_entry.values.len() > 1 {
+                    if reference_entry.versions.len() > 1 {
                         if reference_entry.crash_epoch == crash_counter {
-                            let last = *reference_entry.values.last().unwrap();
-                            reference_entry.values.clear();
-                            reference_entry.values.push(last);
+                            let last = std::mem::replace(
+                                &mut reference_entry.versions,
+                                Vec::new(),
+                            )
+                            .pop()
+                            .unwrap();
+                            reference_entry.versions.push(last);
                         }
                     }
                 }
@@ -360,7 +504,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 fn quickcheck_tree_with_failpoints() {
     // use fewer tests for travis OSX builds that stall out all the time
     let mut n_tests = 50;
-    if let Ok(Ok(value)) = std::env::var("QUICKCHECK_TESTS").map(|s| s.parse()) {
+    if let Ok(Ok(value)) = std::env::var("QUICKCHECK_TESTS").map(|s| s.parse())
+    {
         n_tests = value;
     }
 
@@ -382,16 +527,21 @@ fn failpoints_bug_01() {
 }
 
 #[test]
-fn failpoints_bug_2() {
+fn failpoints_bug_02() {
     // postmortem 1: the system was assuming the happy path across failpoints
     assert!(prop_tree_crashes_nicely(
-        vec![FailPoint("buffer write post", 0xFFFFFFFFFFFFFFFF), Set, Set, Restart],
+        vec![
+            FailPoint("buffer write post", 0xFFFFFFFFFFFFFFFF),
+            Set,
+            Set,
+            Restart
+        ],
         false,
     ))
 }
 
 #[test]
-fn failpoints_bug_3() {
+fn failpoints_bug_03() {
     // postmortem 1: this was a regression that happened because we
     // chose to eat errors about advancing snapshots, which trigger
     // log flushes. We should not trigger flushes from snapshots,
@@ -404,17 +554,23 @@ fn failpoints_bug_3() {
 }
 
 #[test]
-fn failpoints_bug_4() {
+fn failpoints_bug_04() {
     // postmortem 1: the test model was not properly accounting for
     // writes that may-or-may-not be present due to an error.
     assert!(prop_tree_crashes_nicely(
-        vec![Set, FailPoint("snap write", 0xFFFFFFFFFFFFFFFF), Del(0), Set, Restart],
+        vec![
+            Set,
+            FailPoint("snap write", 0xFFFFFFFFFFFFFFFF),
+            Del(0),
+            Set,
+            Restart
+        ],
         false,
     ))
 }
 
 #[test]
-fn failpoints_bug_5() {
+fn failpoints_bug_05() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
         vec![
@@ -437,7 +593,7 @@ fn failpoints_bug_5() {
 }
 
 #[test]
-fn failpoints_bug_6() {
+fn failpoints_bug_06() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
         vec![
@@ -458,7 +614,7 @@ fn failpoints_bug_6() {
 }
 
 #[test]
-fn failpoints_bug_7() {
+fn failpoints_bug_07() {
     // postmortem 1: We were crashing because a Segment was
     // in the SegmentAccountant's to_clean Vec, but it had
     // no present pages. This can legitimately happen when
@@ -493,7 +649,7 @@ fn failpoints_bug_7() {
 }
 
 #[test]
-fn failpoints_bug_8() {
+fn failpoints_bug_08() {
     // postmortem 1: we were assuming that deletes would fail if buffer writes
     // are disabled, but that's not true, because deletes might not cause any
     // writes if the value was not present.
@@ -525,7 +681,7 @@ fn failpoints_bug_8() {
 }
 
 #[test]
-fn failpoints_bug_9() {
+fn failpoints_bug_09() {
     // postmortem 1: recovery was not properly accounting for
     // ordering issues around allocation and freeing of pages.
     assert!(prop_tree_crashes_nicely(
@@ -1131,7 +1287,13 @@ fn failpoints_bug_22() {
 fn failpoints_bug_23() {
     // postmortem 1: failed to handle allocation failures
     assert!(prop_tree_crashes_nicely(
-        vec![Set, FailPoint("blob blob write", 0xFFFFFFFFFFFFFFFF), Set, Set, Set],
+        vec![
+            Set,
+            FailPoint("blob blob write", 0xFFFFFFFFFFFFFFFF),
+            Set,
+            Set,
+            Set
+        ],
         false,
     ))
 }
@@ -1362,11 +1524,24 @@ fn failpoints_bug_29() {
     // into certain entries even when there was an intervening crash
     // between the Set and the Flush
     assert!(prop_tree_crashes_nicely(
-        vec![FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF), Set, Flush, Restart],
+        vec![
+            FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF),
+            Set,
+            Flush,
+            Restart
+        ],
         false,
     ));
     assert!(prop_tree_crashes_nicely(
-        vec![Set, Set, Set, FailPoint("snap write mv", 0xFFFFFFFFFFFFFFFF), Set, Flush, Restart],
+        vec![
+            Set,
+            Set,
+            Set,
+            FailPoint("snap write mv", 0xFFFFFFFFFFFFFFFF),
+            Set,
+            Flush,
+            Restart
+        ],
         false,
     ));
 }
@@ -1375,7 +1550,173 @@ fn failpoints_bug_29() {
 fn failpoints_bug_30() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
-        vec![Set, FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF), Restart, Flush, Id],
+        vec![
+            Set,
+            FailPoint("buffer write", 0xFFFFFFFFFFFFFFFF),
+            Restart,
+            Flush,
+            Id
+        ],
         false,
     ));
+}
+
+#[test]
+fn failpoints_bug_31() {
+    // postmortem 1: apply_batch_inner drops a RecoveryGuard, which in turn
+    // drops a Reservation, and Reservation's drop implementation flushes
+    // itself and unwraps the Result returned, which has the FailPoint error
+    // in it
+    for _ in 0..10 {
+        assert!(prop_tree_crashes_nicely(
+            vec![
+                Del(0),
+                FailPoint("snap write", 0xFFFFFFFFFFFFFFFF),
+                Batched(vec![])
+            ],
+            true,
+        ));
+    }
+}
+
+#[test]
+fn failpoints_bug_32() {
+    // postmortem 1:
+    for _ in 0..10 {
+        assert!(prop_tree_crashes_nicely(
+            vec![Batched(vec![BatchOp::Set, BatchOp::Set]), Restart],
+            false
+        ));
+    }
+}
+
+#[test]
+fn failpoints_bug_33() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Batched(vec![
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Del(85),
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Del(148),
+                BatchOp::Set,
+                BatchOp::Set
+            ]),
+            Restart,
+            Batched(vec![
+                BatchOp::Del(255),
+                BatchOp::Del(42),
+                BatchOp::Del(150),
+                BatchOp::Del(16),
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Del(111),
+                BatchOp::Del(65),
+                BatchOp::Del(102),
+                BatchOp::Del(99),
+                BatchOp::Del(25),
+                BatchOp::Del(156),
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Del(73),
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Del(238),
+                BatchOp::Del(211),
+                BatchOp::Del(14),
+                BatchOp::Del(7),
+                BatchOp::Del(137),
+                BatchOp::Del(115),
+                BatchOp::Del(91),
+                BatchOp::Set,
+                BatchOp::Del(172),
+                BatchOp::Del(49),
+                BatchOp::Del(152),
+                BatchOp::Set,
+                BatchOp::Del(189),
+                BatchOp::Set,
+                BatchOp::Del(37),
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Del(96),
+                BatchOp::Set,
+                BatchOp::Set,
+                BatchOp::Del(159),
+                BatchOp::Del(126)
+            ])
+        ],
+        false
+    ));
+}
+
+#[test]
+fn failpoints_bug_34() {
+    // postmortem 1: the implementation of make_durable was not properly
+    // exiting the function when local durability was detected
+    use BatchOp::*;
+    assert!(prop_tree_crashes_nicely(
+        vec![Batched(vec![
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+            Set, Set, Set, Set, Set, Set,
+        ])],
+        false
+    ));
+}
+
+#[test]
+fn failpoints_bug_35() {
+    // postmortem 1:
+    use BatchOp::*;
+    for _ in 0..50 {
+        assert!(prop_tree_crashes_nicely(
+            vec![
+                Batched(vec![Del(106), Set, Del(32), Del(149), Set]),
+                Flush,
+                Batched(vec![Del(136), Set, Set, Del(61), Set, Del(202)]),
+                Flush,
+                Batched(vec![Del(106), Set, Del(32), Del(149), Set]),
+                Flush,
+                Batched(vec![Del(136), Set, Set, Del(61), Set, Del(202)]),
+                Flush,
+                Batched(vec![Del(106), Set, Del(32), Del(149), Set]),
+                Flush,
+                Batched(vec![Del(136), Set, Set, Del(61), Set, Del(202)]),
+                Flush,
+            ],
+            true
+        ));
+    }
 }

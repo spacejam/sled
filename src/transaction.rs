@@ -71,9 +71,20 @@
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
 //! ```
 #![allow(clippy::module_name_repetitions)]
-use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
+use std::{cell::RefCell, fmt, rc::Rc};
 
-use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};
+#[cfg(not(feature = "testing"))]
+use std::collections::HashMap as Map;
+
+// we avoid HashMap while testing because
+// it makes tests non-deterministic
+#[cfg(feature = "testing")]
+use std::collections::BTreeMap as Map;
+
+use crate::{
+    concurrency_control, pin, Batch, Error, Guard, IVec, Protector, Result,
+    Tree,
+};
 
 /// A transaction that will
 /// be applied atomically to the
@@ -81,8 +92,8 @@ use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};
 #[derive(Clone)]
 pub struct TransactionalTree {
     pub(super) tree: Tree,
-    pub(super) writes: Rc<RefCell<HashMap<IVec, Option<IVec>>>>,
-    pub(super) read_cache: Rc<RefCell<HashMap<IVec, Option<IVec>>>>,
+    pub(super) writes: Rc<RefCell<Map<IVec, Option<IVec>>>>,
+    pub(super) read_cache: Rc<RefCell<Map<IVec, Option<IVec>>>>,
 }
 
 /// An error type that is returned from the closure
@@ -316,11 +327,6 @@ impl TransactionalTree {
         Ok(())
     }
 
-    fn stage(&self) -> UnabortableTransactionResult<Vec<Protector<'_>>> {
-        let protector = self.tree.concurrency_control.write();
-        Ok(vec![protector])
-    }
-
     fn unstage(&self) {
         unimplemented!()
     }
@@ -368,17 +374,7 @@ impl TransactionalTrees {
             .collect();
         tree_idxs.sort_unstable();
 
-        let mut last_idx = usize::max_value();
-        let mut all_guards = vec![];
-        for (_, idx) in tree_idxs {
-            if idx == last_idx {
-                // prevents us from double-locking
-                continue;
-            }
-            last_idx = idx;
-            let mut guards = self.inner[idx].stage()?;
-            all_guards.append(&mut guards);
-        }
+        let all_guards = vec![concurrency_control::write()];
         Ok(all_guards)
     }
 
@@ -406,7 +402,7 @@ impl TransactionalTrees {
         // when the peg drops, it ensures all updates
         // written to the log since its creation are
         // recovered atomically
-        peg.seal_batch(guard)
+        peg.seal_batch()
     }
 }
 

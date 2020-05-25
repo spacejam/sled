@@ -2278,3 +2278,77 @@ fn tree_bug_42() {
         );
     }
 }
+
+#[test]
+fn tree_bug_43() {
+    // postmortem: when changing the PageState to always
+    // include a base node, we did not account for this
+    // in the tag + size compressed value. This was not
+    // caught by the quickcheck tests because PageState's
+    // Arbitrary implementation would ensure that at least
+    // one frag was present, which was the invariant before
+    // the base was extracted away from the vec of frags.
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![241; 1]), 199),
+            Set(Key(vec![]), 198),
+            Set(Key(vec![72; 108]), 175),
+            GetLt(Key(vec![])),
+            Restart,
+            Restart,
+        ],
+        false,
+        false,
+        0,
+        52,
+    );
+}
+
+#[test]
+fn tree_bug_44() {
+    // postmortem: off-by-one bug related to LSN recovery
+    // where 1 was added to the index when the recovered
+    // LSN was actually divisible by the segment size
+    assert!(prop_tree_matches_btreemap(
+        vec![
+            Merge(Key(vec![]), 97),
+            Merge(Key(vec![]), 41),
+            Merge(Key(vec![]), 241),
+            Set(Key(vec![21; 1]), 24),
+            Del(Key(vec![])),
+            Set(Key(vec![]), 145),
+            Set(Key(vec![151; 1]), 187),
+            Get(Key(vec![])),
+            Restart,
+            Set(Key(vec![]), 151),
+            Restart,
+        ],
+        false,
+        false,
+        0,
+        0,
+    ))
+}
+#[test]
+fn tree_bug_45() {
+    // postmortem: recovery was not properly accounting for
+    // the possibility of a segment to be maxed out, similar
+    // to bug 44.
+    for _ in 0..10 {
+        assert!(prop_tree_matches_btreemap(
+            vec![
+                Merge(Key(vec![206; 77]), 225),
+                Set(Key(vec![88; 190]), 40),
+                Set(Key(vec![162; 1]), 213),
+                Merge(Key(vec![186; 1]), 175),
+                Set(Key(vec![105; 16]), 111),
+                Cas(Key(vec![]), 75, 252),
+                Restart
+            ],
+            false,
+            true,
+            0,
+            210
+        ))
+    }
+}

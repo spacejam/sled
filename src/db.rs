@@ -113,7 +113,6 @@ impl Db {
                 subscribers: Subscribers::default(),
                 context: context.clone(),
                 root: AtomicU64::new(root),
-                concurrency_control: ConcurrencyControl::default(),
                 merge_operator: RwLock::new(None),
             }));
             assert!(tenants.insert(id, tree).is_none());
@@ -395,15 +394,12 @@ impl Db {
         let mut hasher = crc32fast::Hasher::new();
         let mut locks = vec![];
 
-        for tree in tenants.values() {
-            locks.push(tree.concurrency_control.write());
-        }
+        locks.push(concurrency_control::write());
 
         for (name, tree) in &tenants {
             hasher.update(name);
 
             let mut iter = tree.iter();
-            let _ = self.concurrency_control.write();
             while let Some(kv_res) = iter.next_inner() {
                 let (k, v) = kv_res?;
                 hasher.update(&k);

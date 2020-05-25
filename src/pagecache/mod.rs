@@ -20,8 +20,9 @@ mod reservation;
 mod segment;
 mod snapshot;
 
-use crate::*;
 use std::{collections::BinaryHeap, ops::Deref};
+
+use crate::*;
 
 #[cfg(all(not(unix), not(windows)))]
 use parallel_io_polyfill::{pread_exact, pread_exact_or_eof, pwrite_all};
@@ -38,7 +39,7 @@ use self::{
         BATCH_MANIFEST_PID, COUNTER_PID, META_PID,
         PAGE_CONSOLIDATION_THRESHOLD, SEGMENT_CLEANUP_THRESHOLD,
     },
-    iobuf::{IoBuf, IoBufs},
+    iobuf::{roll_iobuf, IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
     segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
@@ -85,7 +86,11 @@ pub struct BatchManifest(pub Lsn);
 
 /// A buffer with an associated offset. Useful for
 /// batching many reads over a file segment.
-pub struct BasedBuf(pub Vec<u8>, pub u64);
+#[derive(Debug)]
+pub struct BasedBuf {
+    pub buf: Vec<u8>,
+    pub offset: LogOffset,
+}
 
 /// A byte used to disambiguate log message types
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -411,11 +416,10 @@ pub struct RecoveryGuard<'a> {
 impl<'a> RecoveryGuard<'a> {
     /// Writes the last LSN for a batch into an earlier
     /// reservation, releasing it.
-    pub(crate) fn seal_batch(mut self, guard: &Guard) -> Result<()> {
+    pub(crate) fn seal_batch(self) -> Result<()> {
         let max_reserved =
             self.batch_res.log.iobufs.max_reserved_lsn.load(Acquire);
-        self.batch_res.mark_writebatch(max_reserved, guard);
-        self.batch_res.complete().map(|_| ())
+        self.batch_res.mark_writebatch(max_reserved).map(|_| ())
     }
 }
 
@@ -550,6 +554,60 @@ impl PageCache {
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
 
+        #[cfg(feature = "testing")]
+        {
+            // these checks are in place to catch non-idempotent
+            // recovery which could trigger feedback loops and
+            // emergent behavior.
+            trace!(
+                "\n\n~~~~ regenerating snapshot for idempotency test ~~~~\n"
+            );
+
+            let snapshot2 = read_snapshot_or_default(&config)
+                .expect("second read snapshot");
+            assert_eq!(
+                snapshot.active_segment, snapshot2.active_segment,
+                "snapshot active_segment diverged across recoveries.\n\n \
+                first: {:?}\n\n
+                second: {:?}\n\n",
+                snapshot, snapshot2
+            );
+            assert_eq!(
+                snapshot.stable_lsn, snapshot2.stable_lsn,
+                "snapshot stable_lsn diverged across recoveries.\n\n \
+                first: {:?}\n\n
+                second: {:?}\n\n",
+                snapshot, snapshot2
+            );
+            for (pid, (p1, p2)) in
+                snapshot.pt.iter().zip(snapshot2.pt.iter()).enumerate()
+            {
+                assert_eq!(
+                    p1, p2,
+                    "snapshot pid {} diverged across recoveries.\n\n \
+                first: {:?}\n\n
+                second: {:?}\n\n",
+                    pid, p1, p2
+                );
+            }
+            assert_eq!(
+                snapshot.pt.len(),
+                snapshot2.pt.len(),
+                "snapshots number of pages diverged across recoveries.\n\n \
+                first: {:?}\n\n
+                second: {:?}\n\n",
+                snapshot.pt,
+                snapshot2.pt
+            );
+            assert_eq!(
+                snapshot, snapshot2,
+                "snapshots diverged across recoveries.\n\n \
+                first: {:?}\n\n
+                second: {:?}\n\n",
+                snapshot, snapshot2
+            );
+        }
+
         let _measure = Measure::new(&M.start_pagecache);
 
         let cache_capacity = config.cache_capacity;
@@ -571,7 +629,7 @@ impl PageCache {
         // now we read it back in
         pc.load_snapshot(&snapshot)?;
 
-        #[cfg(feature = "event_log")]
+        #[cfg(feature = "testing")]
         {
             use std::collections::HashMap;
 
@@ -743,6 +801,7 @@ impl PageCache {
     /// while performing this GC.
     pub(crate) fn attempt_gc(&self) -> Result<bool> {
         let guard = pin();
+        let cc = concurrency_control::read();
         let to_clean = self.log.iobufs.segment_cleaner.pop();
         let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
             self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
@@ -750,6 +809,7 @@ impl PageCache {
         } else {
             Ok(false)
         };
+        drop(cc);
         guard.flush();
         ret
     }
@@ -767,12 +827,30 @@ impl PageCache {
     /// combined with a concurrency control system in another
     /// component.
     pub(crate) fn pin_log(&self, guard: &Guard) -> Result<RecoveryGuard<'_>> {
+        // HACK: we are rolling the io buffer before AND
+        // after taking out the reservation pin to avoid
+        // a deadlock where the batch reservation causes
+        // writes to fail to flush to disk. in the future,
+        // this may be addressed in a nicer way by representing
+        // transactions with a begin and end message, rather
+        // than a single beginning message that needs to
+        // be held until we know the final batch LSN.
+        self.log.roll_iobuf()?;
+
         let batch_res = self.log.reserve(
             LogKind::Skip,
             BATCH_MANIFEST_PID,
             &BatchManifest::default(),
             guard,
         )?;
+
+        iobuf::maybe_seal_and_write_iobuf(
+            &self.log.iobufs,
+            &batch_res.iobuf,
+            batch_res.iobuf.get_header(),
+            false,
+        )?;
+
         Ok(RecoveryGuard { batch_res })
     }
 
@@ -1502,34 +1580,66 @@ impl PageCache {
             ));
         }
 
-        let page_view = match self.inner.get(pid, guard) {
-            None => return Ok(None),
-            Some(p) => p,
-        };
+        let mut last_attempted_cache_info = None;
+        let mut last_err = None;
+        let mut page_view;
 
-        if page_view.is_free() {
-            return Ok(None);
-        }
+        let mut updates: Vec<Update> = loop {
+            // we loop here because if the page we want to
+            // pull is moved, we want to retry. but if we
+            // get a corruption and then
+            page_view = match self.inner.get(pid, guard) {
+                None => return Ok(None),
+                Some(p) => p,
+            };
 
-        if page_view.update.is_some() {
-            // possibly evict an item now that our cache has grown
-            let total_page_size = page_view.log_size();
-            let to_evict = self.lru.accessed(pid, total_page_size, guard);
-            trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
-            if !to_evict.is_empty() {
-                self.page_out(to_evict, guard)?;
+            if page_view.is_free() {
+                return Ok(None);
             }
-            return Ok(Some(NodeView(page_view)));
-        }
 
-        // need to page-in
-        let updates_result: Result<Vec<Update>> = page_view
-            .cache_infos
-            .iter()
-            .map(|ci| self.pull(pid, ci.lsn, ci.pointer))
-            .collect();
+            if page_view.update.is_some() {
+                // possibly evict an item now that our cache has grown
+                let total_page_size = page_view.log_size();
+                let to_evict = self.lru.accessed(pid, total_page_size, guard);
+                trace!(
+                    "accessed pid {} -> paging out pids {:?}",
+                    pid,
+                    to_evict
+                );
+                if !to_evict.is_empty() {
+                    self.page_out(to_evict, guard)?;
+                }
+                return Ok(Some(NodeView(page_view)));
+            }
 
-        let mut updates: Vec<Update> = updates_result?;
+            trace!(
+                "pulling pid {} view {:?} deref {:?}",
+                pid,
+                page_view,
+                page_view.deref()
+            );
+            if page_view.cache_infos.first()
+                == last_attempted_cache_info.as_ref()
+            {
+                return Err(last_err.unwrap());
+            } else {
+                last_attempted_cache_info =
+                    page_view.cache_infos.first().copied();
+            }
+
+            // need to page-in
+            let updates_result: Result<Vec<Update>> = page_view
+                .cache_infos
+                .iter()
+                .map(|ci| self.pull(pid, ci.lsn, ci.pointer))
+                .collect();
+
+            last_err = if let Ok(updates) = updates_result {
+                break updates;
+            } else {
+                Some(updates_result.unwrap_err())
+            };
+        };
 
         let (base_slice, links) = updates.split_at_mut(1);
 
@@ -1582,19 +1692,6 @@ impl PageCache {
         }
     }
 
-    /// The highest known stable Lsn on disk.
-    pub(crate) fn stable_lsn(&self) -> Lsn {
-        self.log.stable_offset()
-    }
-
-    /// Blocks until the provided Lsn is stable on disk,
-    /// triggering necessary flushes in the process.
-    /// Returns the number of bytes written during
-    /// this call.
-    pub(crate) fn make_stable(&self, lsn: Lsn) -> Result<usize> {
-        self.log.make_stable(lsn)
-    }
-
     /// Returns `true` if the database was
     /// recovered from a previous process.
     /// Note that database state is only
@@ -1618,7 +1715,10 @@ impl PageCache {
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
     pub(crate) fn generate_id(&self) -> Result<u64> {
-        let ret = self.idgen.fetch_add(1, Relaxed);
+        let _cc = concurrency_control::read();
+        let ret = self.idgen.fetch_add(1, Release);
+
+        trace!("generating ID {}", ret);
 
         let interval = self.config.idgen_persist_interval;
         let necessary_persists = ret / interval * interval;
@@ -1629,6 +1729,12 @@ impl PageCache {
             persisted = self.idgen_persists.load(Acquire);
             if persisted < necessary_persists {
                 // it's our responsibility to persist up to our ID
+                trace!(
+                    "persisting ID gen, as persist count {} \
+                    is below necessary persists {}",
+                    persisted,
+                    necessary_persists
+                );
                 let guard = pin();
                 let (key, current) = self.get_idgen(&guard)?;
 
@@ -1640,13 +1746,7 @@ impl PageCache {
                 assert_eq!(old, persisted);
 
                 if self
-                    .cas_page(
-                        COUNTER_PID,
-                        key.clone(),
-                        counter_update,
-                        false,
-                        &guard,
-                    )?
+                    .cas_page(COUNTER_PID, key, counter_update, false, &guard)?
                     .is_err()
                 {
                     // CAS failed
@@ -1655,15 +1755,13 @@ impl PageCache {
 
                 // during recovery we add 2x the interval. we only
                 // need to block if the last one wasn't stable yet.
-                let gap = (necessary_persists - persisted) / interval;
-                if gap > 1 {
-                    // this is the most pessimistic case, hopefully
-                    // we only ever hit this on the first ID generation
-                    // of a process's lifetime
-                    let _written = self.flush()?;
-                } else if key.last_lsn() > self.stable_lsn() {
-                    let _written = self.make_stable(key.last_lsn())?;
-                }
+                // we only call make_durable instead of make_stable
+                // because we took out the initial reservation
+                // outside of a writebatch (guaranteed by using the reader
+                // concurrency control) and it's possible we
+                // could cyclically wait if the reservation for
+                // a replacement happened inside a writebatch.
+                iobuf::make_durable(&self.log.iobufs, key.last_lsn())?;
             }
         }
 
@@ -1758,6 +1856,7 @@ impl PageCache {
                         update: None,
                         cache_infos: page_view.cache_infos,
                     });
+
                     debug_delay();
                     if page_view
                         .entry
@@ -1827,7 +1926,7 @@ impl PageCache {
             }
             Ok(other) => {
                 debug!("read unexpected page: {:?}", other);
-                Err(Error::Corruption { at: pointer })
+                Err(Error::corruption(Some(pointer)))
             }
             Err(e) => {
                 debug!("failed to read page: {:?}", e);
@@ -1899,10 +1998,20 @@ impl PageCache {
             let guard = pin();
 
             match *state {
-                PageState::Present(ref pointers) => {
-                    for &(lsn, pointer, sz) in pointers {
-                        let cache_info =
-                            CacheInfo { lsn, pointer, log_size: sz, ts: 0 };
+                PageState::Present { base, ref frags } => {
+                    cache_infos.push(CacheInfo {
+                        lsn: base.0,
+                        pointer: base.1,
+                        log_size: base.2,
+                        ts: 0,
+                    });
+                    for (lsn, pointer, sz) in frags {
+                        let cache_info = CacheInfo {
+                            lsn: *lsn,
+                            pointer: *pointer,
+                            log_size: *sz,
+                            ts: 0,
+                        };
 
                         cache_infos.push(cache_info);
                     }

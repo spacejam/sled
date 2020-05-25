@@ -58,7 +58,7 @@ pub(crate) fn read_blob(
     } else {
         warn!("blob {} failed crc check!", blob_ptr);
 
-        Err(Error::Corruption { at: DiskPtr::Blob(0, blob_ptr) })
+        Err(Error::corruption(Some(DiskPtr::Blob(0, blob_ptr))))
     }
 }
 
@@ -123,7 +123,7 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
 
         let lsn = lsn_res.unwrap();
 
-        if lsn > stable_lsn {
+        if lsn >= stable_lsn {
             to_remove.push(path);
         }
     }

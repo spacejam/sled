@@ -191,10 +191,104 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old {
-            Ok(new)
+        if res == old { Ok(new) } else { Err(res) }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct StabilityIntervals {
+    fsynced_ranges: Vec<(Lsn, Lsn)>,
+    batches: Vec<(Lsn, Lsn)>,
+    stable_lsn: Lsn,
+}
+
+impl StabilityIntervals {
+    fn new(lsn: Lsn) -> StabilityIntervals {
+        StabilityIntervals {
+            stable_lsn: lsn,
+            fsynced_ranges: vec![],
+            batches: vec![],
+        }
+    }
+
+    pub(crate) fn mark_batch(&mut self, interval: (Lsn, Lsn)) {
+        self.batches.push(interval);
+        // reverse sort
+        self.batches.sort_unstable_by(|a, b| b.cmp(a));
+    }
+
+    fn mark_fsync(&mut self, interval: (Lsn, Lsn)) -> Option<Lsn> {
+        trace!(
+            "pushing interval {:?} into fsynced_ranges {:?}",
+            interval,
+            self.fsynced_ranges
+        );
+        if let Some((low, high)) = self.fsynced_ranges.last_mut() {
+            if *low == interval.1 + 1 {
+                *low = interval.0
+            } else if *high + 1 == interval.0 {
+                *high = interval.1
+            } else {
+                self.fsynced_ranges.push(interval);
+            }
         } else {
-            Err(res)
+            self.fsynced_ranges.push(interval);
+        }
+
+        #[cfg(any(test, feature = "event_log", feature = "lock_free_delays"))]
+        assert!(
+            self.fsynced_ranges.len() < 10000,
+            "intervals is getting strangely long... {:?}",
+            self
+        );
+
+        // reverse sort
+        self.fsynced_ranges.sort_unstable_by(|a, b| b.cmp(a));
+
+        while let Some(&(low, high)) = self.fsynced_ranges.last() {
+            assert!(low <= high);
+            let cur_stable = self.stable_lsn;
+            assert!(
+                low > cur_stable,
+                "somehow, we marked offset {} stable while \
+                 interval {}-{} had not yet been applied!",
+                cur_stable,
+                low,
+                high
+            );
+            if cur_stable + 1 == low {
+                debug!("new highest interval: {} - {}", low, high);
+                self.fsynced_ranges.pop().unwrap();
+                self.stable_lsn = high;
+            } else {
+                break;
+            }
+        }
+
+        let mut batch_stable_lsn = None;
+
+        while let Some(&(low, high)) = self.batches.last() {
+            assert!(
+                low < high,
+                "expected batch low mark {} to be below high mark {}",
+                low,
+                high
+            );
+            if high <= self.stable_lsn {
+                if let Some(bsl) = batch_stable_lsn {
+                    assert!(bsl < high);
+                }
+                batch_stable_lsn = Some(high);
+                self.batches.pop().unwrap();
+            } else {
+                break;
+            }
+        }
+
+        if self.batches.is_empty() {
+            Some(self.stable_lsn)
+        } else {
+            batch_stable_lsn
         }
     }
 }
@@ -213,7 +307,7 @@ pub(crate) struct IoBufs {
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
-    pub intervals: Mutex<Vec<(Lsn, Lsn)>>,
+    pub intervals: Mutex<StabilityIntervals>,
     pub interval_updated: Condvar,
 
     // The highest CONTIGUOUS log sequence number that has been written to
@@ -246,15 +340,6 @@ impl Drop for IoBufs {
 /// writes to underlying storage.
 impl IoBufs {
     pub fn start(config: RunningConfig, snapshot: &Snapshot) -> Result<IoBufs> {
-        // open file for writing
-        let file = &config.file;
-
-        let segment_size = config.segment_size;
-
-        let snapshot_last_lsn = snapshot.last_lsn;
-        let snapshot_last_lid = snapshot.last_lid;
-        let snapshot_max_header_stable_lsn = snapshot.max_header_stable_lsn;
-
         let segment_cleaner = SegmentCleaner::default();
 
         let mut segment_accountant: SegmentAccountant =
@@ -264,120 +349,79 @@ impl IoBufs {
                 segment_cleaner.clone(),
             )?;
 
-        let (next_lsn, next_lid) =
-            if snapshot_last_lsn % segment_size as Lsn == 0 {
-                (snapshot_last_lsn, snapshot_last_lid)
-            } else {
-                let width = match read_message(
-                    &**file,
-                    snapshot_last_lid,
-                    SegmentNumber(
-                        u64::try_from(snapshot_last_lsn).unwrap()
-                            / u64::try_from(config.segment_size).unwrap(),
-                    ),
-                    &config,
-                ) {
-                    Ok(LogRead::Canceled(inline_len))
-                    | Ok(LogRead::Inline(_, _, inline_len)) => inline_len,
-                    Ok(LogRead::Blob(_header, _buf, _blob_ptr, inline_len)) => {
-                        inline_len
-                    }
-                    other => {
-                        // we can overwrite this non-flush
-                        debug!(
-                            "got non-flush tip while recovering at {}: {:?}",
-                            snapshot_last_lid, other
-                        );
-                        0
-                    }
-                };
+        let segment_size = config.segment_size;
 
-                (
-                    snapshot_last_lsn + Lsn::from(width),
-                    snapshot_last_lid + LogOffset::from(width),
-                )
-            };
+        let (recovered_lid, recovered_lsn) =
+            snapshot.recovered_coords(config.segment_size);
 
-        trace!(
+        let (next_lid, next_lsn) = match (recovered_lid, recovered_lsn) {
+            (Some(next_lid), Some(next_lsn)) => {
+                debug!(
+                    "starting log at recovered active \
+                    offset {}, recovered lsn {}",
+                    next_lid, next_lsn
+                );
+                (next_lid, next_lsn)
+            }
+            (None, None) => {
+                debug!("starting log for a totally fresh system");
+                let next_lsn = 0;
+                let next_lid = segment_accountant.next(next_lsn)?;
+                (next_lid, next_lsn)
+            }
+            (None, Some(next_lsn)) => {
+                let next_lid = segment_accountant.next(next_lsn)?;
+                debug!(
+                    "starting log at clean offset {}, recovered lsn {}",
+                    next_lid, next_lsn
+                );
+                (next_lid, next_lsn)
+            }
+            (Some(_), None) => unreachable!(),
+        };
+
+        assert!(next_lsn >= Lsn::try_from(next_lid).unwrap());
+
+        debug!(
             "starting IoBufs with next_lsn: {} \
              next_lid: {}",
-            next_lsn,
-            next_lid
+            next_lsn, next_lid
         );
 
         // we want stable to begin at -1 if the 0th byte
         // of our file has not yet been written.
         let stable = next_lsn - 1;
 
-        let iobuf = if next_lsn % config.segment_size as Lsn == 0 {
-            // allocate new segment for data
+        // the tip offset is not completely full yet, reuse it
+        let base = assert_usize(next_lid % segment_size as LogOffset);
 
-            if next_lsn == 0 {
-                assert_eq!(next_lid, 0);
-            }
-            let lid = segment_accountant.next(next_lsn)?;
-            if next_lsn == 0 {
-                assert_eq!(0, lid);
-            }
-
-            debug!(
-                "starting log at clean offset {}, recovered lsn {}",
-                next_lid, next_lsn
-            );
-
-            let mut iobuf = IoBuf {
-                buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
-                header: CachePadded::new(AtomicU64::new(0)),
-                base: 0,
-                offset: lid,
-                lsn: 0,
-                capacity: segment_size,
-                maxed: AtomicBool::new(false),
-                linearizer: Mutex::new(()),
-                stored_max_stable_lsn: -1,
-            };
-
-            iobuf.store_segment_header(0, next_lsn, stable);
-
-            iobuf
-        } else {
-            // the tip offset is not completely full yet, reuse it
-            let base = assert_usize(next_lid % segment_size as LogOffset);
-
-            debug!(
-                "starting log at split offset {}, recovered lsn {}",
-                next_lid, next_lsn
-            );
-
-            IoBuf {
-                buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
-                header: CachePadded::new(AtomicU64::new(0)),
-                base,
-                offset: next_lid,
-                lsn: next_lsn,
-                capacity: segment_size - base,
-                maxed: AtomicBool::new(false),
-                linearizer: Mutex::new(()),
-                stored_max_stable_lsn: -1,
-            }
+        let mut iobuf = IoBuf {
+            buf: Arc::new(UnsafeCell::new(AlignedBuf::new(segment_size))),
+            header: CachePadded::new(AtomicU64::new(0)),
+            base,
+            offset: next_lid,
+            lsn: next_lsn,
+            capacity: segment_size - base,
+            maxed: AtomicBool::new(false),
+            linearizer: Mutex::new(()),
+            stored_max_stable_lsn: -1,
         };
 
-        // remove all blob files larger than our stable offset
-        gc_blobs(&config, stable)?;
+        if snapshot.active_segment.is_none() {
+            iobuf.store_segment_header(0, next_lsn, stable);
+        }
 
         Ok(IoBufs {
             config,
 
             iobuf: AtomicPtr::new(Arc::into_raw(Arc::new(iobuf)) as *mut IoBuf),
 
-            intervals: Mutex::new(vec![]),
+            intervals: Mutex::new(StabilityIntervals::new(stable)),
             interval_updated: Condvar::new(),
 
             stable_lsn: AtomicLsn::new(stable),
             max_reserved_lsn: AtomicLsn::new(stable),
-            max_header_stable_lsn: Arc::new(AtomicLsn::new(
-                snapshot_max_header_stable_lsn,
-            )),
+            max_header_stable_lsn: Arc::new(AtomicLsn::new(next_lsn)),
             segment_accountant: Mutex::new(segment_accountant),
             segment_cleaner,
             deferred_segment_ops: stack::Stack::default(),
@@ -386,16 +430,6 @@ impl IoBufs {
             #[cfg(feature = "io_uring")]
             io_uring: rio::new()?,
         })
-    }
-
-    pub(in crate::pagecache) fn sa_mark_peg(
-        &self,
-        peg_start_lsn: Lsn,
-        peg_end_lsn: Lsn,
-        guard: &Guard,
-    ) {
-        let op = SegmentOp::Peg { peg_start_lsn, peg_end_lsn };
-        self.deferred_segment_ops.push(op, guard);
     }
 
     pub(in crate::pagecache) fn sa_mark_link(
@@ -477,22 +511,15 @@ impl IoBufs {
     /// a specified offset.
     pub(crate) fn iter_from(&self, lsn: Lsn) -> LogIter {
         trace!("iterating from lsn {}", lsn);
-        let segment_size = self.config.segment_size;
-        let segment_base_lsn = lsn / segment_size as Lsn * segment_size as Lsn;
-        let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
-
-        // corrected_lsn accounts for the segment header length
-        let corrected_lsn = std::cmp::max(lsn, min_lsn);
-
-        let segment_iter =
-            self.with_sa(|sa| sa.segment_snapshot_iter_from(corrected_lsn));
+        let segments = self.with_sa(|sa| sa.segment_snapshot_iter_from(lsn));
 
         LogIter {
             config: self.config.clone(),
-            max_lsn: self.stable(),
-            cur_lsn: corrected_lsn,
+            max_lsn: Some(self.stable()),
+            cur_lsn: None,
             segment_base: None,
-            segment_iter,
+            segments,
+            last_stage: false,
         }
     }
 
@@ -603,7 +630,8 @@ impl IoBufs {
 
             let header_bytes = header.serialize();
 
-            // initialize the remainder of this buffer (only pad_len of this will be part of the Cap message)
+            // initialize the remainder of this buffer (only pad_len of this
+            // will be part of the Cap message)
             let padding_bytes = vec![
                 MessageKind::Corrupted.into();
                 unused_space - header_bytes.len()
@@ -798,58 +826,27 @@ impl IoBufs {
 
         let interval = (whence, whence + len as Lsn - 1);
 
-        intervals.push(interval);
+        let updated = intervals.mark_fsync(interval);
 
-        #[cfg(any(test, feature = "event_log", feature = "lock_free_delays"))]
-        assert!(
-            intervals.len() < 10000,
-            "intervals is getting strangely long... {:?}",
-            *intervals
-        );
+        if let Some(new_stable_lsn) = updated {
+            trace!("mark_interval new highest lsn {}", new_stable_lsn);
+            self.stable_lsn.store(new_stable_lsn, SeqCst);
 
-        // reverse sort
-        intervals.sort_unstable_by(|a, b| b.cmp(a));
-
-        let mut updated = false;
-
-        let len_before = intervals.len();
-
-        while let Some(&(low, high)) = intervals.last() {
-            assert!(low <= high);
-            let cur_stable = self.stable_lsn.load(SeqCst);
-            assert!(
-                low > cur_stable,
-                "somehow, we marked offset {} stable while \
-                 interval {}-{} had not yet been applied!",
-                cur_stable,
-                low,
-                high
-            );
-            if cur_stable + 1 == low {
-                let old = self.stable_lsn.swap(high, SeqCst);
-                assert_eq!(
-                    old, cur_stable,
-                    "concurrent stable offset modification detected"
-                );
-                debug!("new highest interval: {} - {}", low, high);
-                let (_low, _high) = intervals.pop().unwrap();
-                updated = true;
-            } else {
-                break;
+            #[cfg(feature = "event_log")]
+            {
+                // We add 1 because we want it to stay monotonic with recovery
+                // LSN, which deals with the next LSN after the last stable one.
+                // We need to do this while intervals is held otherwise it
+                // may race with another thread that stabilizes something
+                // lower.
+                self.config.event_log.stabilized_lsn(new_stable_lsn + 1);
             }
-        }
 
-        if len_before - intervals.len() > 100 {
-            debug!("large merge of {} intervals", len_before - intervals.len());
-        }
-
-        if updated {
             // having held the mutex makes this linearized
             // with the notify below.
             drop(intervals);
-
-            let _notified = self.interval_updated.notify_all();
         }
+        let _notified = self.interval_updated.notify_all();
     }
 
     pub(in crate::pagecache) fn current_iobuf(&self) -> Arc<IoBuf> {
@@ -864,12 +861,54 @@ impl IoBufs {
     }
 }
 
+pub(crate) fn roll_iobuf(iobufs: &Arc<IoBufs>) -> Result<usize> {
+    let iobuf = iobufs.current_iobuf();
+    let header = iobuf.get_header();
+    if is_sealed(header) {
+        trace!("skipping roll_iobuf due to already-sealed header");
+        return Ok(0);
+    }
+    if offset(header) == 0 {
+        trace!("skipping roll_iobuf due to empty segment");
+    } else {
+        trace!("sealing ioubuf from  roll_iobuf");
+        maybe_seal_and_write_iobuf(iobufs, &iobuf, header, false)?;
+    }
+
+    Ok(offset(header))
+}
+
 /// Blocks until the specified log sequence number has
 /// been made stable on disk. Returns the number of
-/// bytes written.
+/// bytes written. Suitable as a full consistency
+/// barrier.
 pub(in crate::pagecache) fn make_stable(
     iobufs: &Arc<IoBufs>,
     lsn: Lsn,
+) -> Result<usize> {
+    make_stable_inner(iobufs, lsn, false)
+}
+
+/// Blocks until the specified log sequence number
+/// has been written to disk. it's assumed that
+/// log messages are always written contiguously
+/// due to the way reservations manage io buffer
+/// tenancy. this is only suitable for use
+/// before trying to read a message from the log,
+/// so that the system can avoid a full barrier
+/// if the desired item has already been made
+/// durable.
+pub(in crate::pagecache) fn make_durable(
+    iobufs: &Arc<IoBufs>,
+    lsn: Lsn,
+) -> Result<usize> {
+    make_stable_inner(iobufs, lsn, true)
+}
+
+pub(in crate::pagecache) fn make_stable_inner(
+    iobufs: &Arc<IoBufs>,
+    lsn: Lsn,
+    partial_durability: bool,
 ) -> Result<usize> {
     let _measure = Measure::new(&M.make_stable);
 
@@ -922,6 +961,19 @@ pub(in crate::pagecache) fn make_stable(
         }
 
         stable = iobufs.stable();
+
+        if partial_durability {
+            if waiter.stable_lsn > lsn {
+                return Ok(assert_usize(stable - first_stable));
+            }
+
+            for (low, high) in &waiter.fsynced_ranges {
+                if *low <= lsn && *high > lsn {
+                    return Ok(assert_usize(stable - first_stable));
+                }
+            }
+        }
+
         if stable < lsn {
             trace!("waiting on cond var for make_stable({})", lsn);
 
@@ -950,7 +1002,7 @@ pub(in crate::pagecache) fn make_stable(
                 iobufs.interval_updated.wait(&mut waiter);
             }
         } else {
-            trace!("make_stable({}) returning", lsn);
+            debug!("make_stable({}) returning", lsn);
             break;
         }
     }
@@ -962,6 +1014,7 @@ pub(in crate::pagecache) fn make_stable(
 /// to flush some pending writes. Returns the number
 /// of bytes written during this call.
 pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
+    let _cc = concurrency_control::read();
     let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst);
     make_stable(iobufs, max_reserved_lsn)
 }
@@ -1155,7 +1208,8 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
                     lsn, e
                 );
 
-                // store error before notifying so that waiting threads will see it
+                // store error before notifying so that waiting threads will see
+                // it
                 iobufs.config.set_global_error(e);
 
                 let intervals = iobufs.intervals.lock();

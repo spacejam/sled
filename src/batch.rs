@@ -1,6 +1,12 @@
 #![allow(unused_results)]
 
-use std::collections::HashMap;
+#[cfg(not(feature = "testing"))]
+use std::collections::HashMap as Map;
+
+// we avoid HashMap while testing because
+// it makes tests non-deterministic
+#[cfg(feature = "testing")]
+use std::collections::BTreeMap as Map;
 
 use super::*;
 
@@ -32,7 +38,7 @@ use super::*;
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct Batch {
-    pub(crate) writes: HashMap<IVec, Option<IVec>>,
+    pub(crate) writes: Map<IVec, Option<IVec>>,
 }
 
 impl Batch {
