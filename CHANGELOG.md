@@ -1,11 +1,11 @@
-# Unreleased
+# 0.32
 
 ## New Features
 
 * `Transactional` is now implemented for `[&Tree]` and
   `[Tree]` so you can avoid the previous friction of
   using tuples, as was necessary previously.
-* The minimum supported Rust version (MSRV) is now 1.37.0.
+* The minimum supported Rust version (MSRV) is now 1.39.0.
 * `Subscriber` now implements `Future` (non-fused)
   so prefix watching may now be iterated over via
   `while let Some(event) = (&mut subscriber).await {}`
@@ -23,7 +23,6 @@
 
 ## Breaking Changes
 
-* Minimum supported Rust version is now 1.40.
 * Changed the default `segment_size` from 8m to 512k.
   This will result in far smaller database files.
 * deprecated several `Config` options that will be
