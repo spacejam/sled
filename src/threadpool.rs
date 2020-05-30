@@ -18,11 +18,12 @@ const MAX_THREADS: usize = 16;
 #[cfg(not(windows))]
 const MAX_THREADS: usize = 128;
 
-const DESIRED_WAITING_THREADS: usize = 2;
+const DESIRED_WAITING_THREADS: usize = 4;
 
 static WAITING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
-static SPAWNS: AtomicUsize = AtomicUsize::new(1);
+static SPAWNS: AtomicUsize = AtomicUsize::new(0);
+static SPAWNING: AtomicBool = AtomicBool::new(false);
 
 macro_rules! once {
     ($args:block) => {
@@ -64,42 +65,65 @@ impl Queue {
         queue.pop_front()
     }
 
-    fn send(&self, work: Work) {
+    fn send(&self, work: Work) -> usize {
         let mut queue = self.mu.lock();
         queue.push_back(work);
+
+        let len = queue.len();
 
         // having held the mutex makes this linearized
         // with the notify below.
         drop(queue);
 
-        self.cv.notify_one();
+        self.cv.notify_all();
+
+        len
     }
 }
 
 static QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(init_queue);
 
 fn init_queue() -> Queue {
-    maybe_spawn_new_thread();
+    for _ in 1..DESIRED_WAITING_THREADS {
+        maybe_spawn_new_thread();
+    }
     Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
 }
 
 fn perform_work() {
     let wait_limit = Duration::from_secs(1);
 
-    while WAITING_THREAD_COUNT.load(SeqCst) < DESIRED_WAITING_THREADS {
+    let mut performed = 0;
+    let mut contiguous_overshoots = 0;
+
+    while performed < 5 || contiguous_overshoots < 3 {
         debug_delay();
         let task_res = QUEUE.recv_timeout(wait_limit);
 
         if let Some(task) = task_res {
+            WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
             (task)();
+            WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
+            performed += 1;
         }
 
         while let Some(task) = QUEUE.try_recv() {
             debug_delay();
+            WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
             (task)();
+            WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
+            performed += 1;
         }
 
         debug_delay();
+
+        let waiting = WAITING_THREAD_COUNT.load(SeqCst);
+
+        if waiting > DESIRED_WAITING_THREADS {
+            contiguous_overshoots += 1;
+        } else {
+            contiguous_overshoots = 0;
+        }
     }
 }
 
@@ -111,28 +135,37 @@ fn maybe_spawn_new_thread() {
     let total_workers = TOTAL_THREAD_COUNT.load(SeqCst);
     debug_delay();
     let waiting_threads = WAITING_THREAD_COUNT.load(SeqCst);
+
     if waiting_threads >= DESIRED_WAITING_THREADS
         || total_workers >= MAX_THREADS
     {
         return;
     }
 
-    let spawn_id = SPAWNS.fetch_add(1, Relaxed);
+    if SPAWNING.compare_and_swap(false, true, SeqCst) == false {
+        spawn_new_thread();
+    }
+}
+
+fn spawn_new_thread() {
+    let spawn_id = SPAWNS.fetch_add(1, SeqCst);
+
+    TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
     let spawn_res = thread::Builder::new()
         .name(format!("sled-io-{}", spawn_id))
         .spawn(|| {
+            SPAWNING.store(false, SeqCst);
             debug_delay();
-            TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
             perform_work();
             TOTAL_THREAD_COUNT.fetch_sub(1, SeqCst);
         });
 
     if let Err(e) = spawn_res {
+        SPAWNING.store(false, SeqCst);
         once!({
             warn!(
-                "Failed to dynamically increase the threadpool size: {:?}. \
-                 Currently have {} running IO threads",
-                e, total_workers
+                "Failed to dynamically increase the threadpool size: {:?}.",
+                e,
             )
         });
     }
@@ -150,9 +183,11 @@ where
         promise_filler.fill(result);
     };
 
-    QUEUE.send(Box::new(task));
+    let depth = QUEUE.send(Box::new(task));
 
-    maybe_spawn_new_thread();
+    if depth > DESIRED_WAITING_THREADS {
+        maybe_spawn_new_thread();
+    }
 
     promise
 }
