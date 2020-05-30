@@ -103,6 +103,7 @@ impl<'a> Reservation<'a> {
 
             let mut intervals = self.log.iobufs.intervals.lock();
             intervals.mark_batch((self.lsn, peg_lsn));
+            drop(intervals);
 
             self.complete()
         }
