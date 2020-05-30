@@ -171,16 +171,16 @@ fn run(args: Args, tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     let merge_max = cas_max + args.merge_prop;
     let scan_max = merge_max + args.scan_prop;
 
-    let bytes = |len| -> sled::IVec {
+    let keygen = |len| -> sled::IVec {
         let i = if args.sequential {
             SEQ.fetch_add(1, Ordering::Relaxed)
         } else {
             thread_rng().gen::<usize>()
         } % args.entries;
 
-        let i_bytes = i.to_be_bytes();
+        let i_keygen = i.to_be_bytes();
 
-        i_bytes
+        i_keygen
             .iter()
             .skip_while(|v| **v == 0)
             .cycle()
@@ -188,13 +188,26 @@ fn run(args: Args, tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
             .copied()
             .collect()
     };
-    let mut rng = thread_rng();
 
-    let value = sled::IVec::from(vec![0; args.val_len]);
+    let valgen = |len| -> sled::IVec {
+        let i: usize = thread_rng().gen::<usize>() % len;
+
+        let i_keygen = i.to_be_bytes();
+
+        i_keygen
+            .iter()
+            .skip_while(|v| **v == 0)
+            .cycle()
+            .take(len)
+            .copied()
+            .collect()
+    };
+
+    let mut rng = thread_rng();
 
     while !shutdown.load(Ordering::Relaxed) {
         let op = TOTAL.fetch_add(1, Ordering::Release);
-        let key = bytes(args.key_len);
+        let key = keygen(args.key_len);
         let choice = rng.gen_range(0, scan_max + 1);
 
         match choice {
@@ -202,24 +215,34 @@ fn run(args: Args, tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                 tree.get(&key).unwrap();
             }
             v if v > get_max && v <= set_max => {
-                tree.insert(&key, value.clone()).unwrap();
+                let value = valgen(args.val_len);
+                tree.insert(&key, value).unwrap();
             }
             v if v > set_max && v <= del_max => {
                 tree.remove(&key).unwrap();
             }
             v if v > del_max && v <= cas_max => {
-                let old =
-                    if rng.gen::<bool>() { Some(value.clone()) } else { None };
+                let old = if rng.gen::<bool>() {
+                    let value = valgen(args.val_len);
+                    Some(value)
+                } else {
+                    None
+                };
 
-                let new =
-                    if rng.gen::<bool>() { Some(value.clone()) } else { None };
+                let new = if rng.gen::<bool>() {
+                    let value = valgen(args.val_len);
+                    Some(value)
+                } else {
+                    None
+                };
 
                 if let Err(e) = tree.compare_and_swap(&key, old, new) {
                     panic!("operational error: {:?}", e);
                 }
             }
             v if v > cas_max && v <= merge_max => {
-                tree.merge(&key, value.clone()).unwrap();
+                let value = valgen(args.val_len);
+                tree.merge(&key, value).unwrap();
             }
             _ => {
                 let iter = tree.range(key..).map(|res| res.unwrap());
@@ -346,8 +369,8 @@ pub fn setup_logger() {
         })
         .filter(None, log::LevelFilter::Info);
 
-    if std::env::var("RUST_LOG").is_ok() {
-        builder.parse(&std::env::var("RUST_LOG").unwrap());
+    if let Ok(env_var) = std::env::var("RUST_LOG") {
+        builder.parse(env_var);
     }
 
     let _r = builder.try_init();
