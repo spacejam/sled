@@ -212,6 +212,7 @@ impl StabilityIntervals {
     }
 
     pub(crate) fn mark_batch(&mut self, interval: (Lsn, Lsn)) {
+        assert!(interval.0 > self.stable_lsn);
         self.batches.push(interval);
         // reverse sort
         self.batches.sort_unstable_by(|a, b| b.cmp(a));
@@ -267,6 +268,11 @@ impl StabilityIntervals {
 
         let mut batch_stable_lsn = None;
 
+        // batches must be atomically recoverable, which
+        // means that we should wait until the entire
+        // batch has been stabilized before any parts
+        // of the batch are allowed to be reused
+        // due to having marked them as stable.
         while let Some(&(low, high)) = self.batches.last() {
             assert!(
                 low < high,
@@ -274,13 +280,24 @@ impl StabilityIntervals {
                 low,
                 high
             );
+
             if high <= self.stable_lsn {
+                // the entire batch has been written to disk
+                // and fsynced, so we can propagate its stability
+                // through the `batch_stable_lsn` variable.
                 if let Some(bsl) = batch_stable_lsn {
                     assert!(bsl < high);
                 }
                 batch_stable_lsn = Some(high);
                 self.batches.pop().unwrap();
             } else {
+                if low <= self.stable_lsn {
+                    // the batch has not been fully written
+                    // to disk, but we can communicate that
+                    // the region before the batch has
+                    // stabilized.
+                    batch_stable_lsn = Some(low - 1);
+                }
                 break;
             }
         }
