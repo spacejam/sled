@@ -215,6 +215,7 @@ impl StabilityIntervals {
         self.batches.push(interval);
         // reverse sort
         self.batches.sort_unstable_by(|a, b| b.cmp(a));
+        assert!(interval.0 > self.stable_lsn);
     }
 
     fn mark_fsync(&mut self, interval: (Lsn, Lsn)) -> Option<Lsn> {
@@ -281,6 +282,9 @@ impl StabilityIntervals {
                 batch_stable_lsn = Some(high);
                 self.batches.pop().unwrap();
             } else {
+                if low <= self.stable_lsn {
+                    batch_stable_lsn = Some(low - 1);
+                }
                 break;
             }
         }
