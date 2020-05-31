@@ -432,6 +432,32 @@ pub struct Page {
 }
 
 impl Page {
+    #[allow(unused)]
+    pub(crate) fn to_page_state(&self) -> PageState {
+        let is_free =
+            if let Some(Update::Free) = self.update { true } else { false };
+
+        let base = &self.cache_infos[0];
+        if is_free {
+            PageState::Free(base.lsn, base.pointer)
+        } else {
+            let mut frags: Vec<(Lsn, DiskPtr, u64)> = vec![];
+
+            for cache_info in self.cache_infos.iter().skip(1) {
+                frags.push((
+                    cache_info.lsn,
+                    cache_info.pointer,
+                    cache_info.log_size,
+                ));
+            }
+
+            PageState::Present {
+                base: (base.lsn, base.pointer, base.log_size),
+                frags,
+            }
+        }
+    }
+
     pub(crate) fn as_node(&self) -> &Node {
         self.update.as_ref().unwrap().as_node()
     }
