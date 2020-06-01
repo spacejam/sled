@@ -18,7 +18,7 @@ const MAX_THREADS: usize = 16;
 #[cfg(not(windows))]
 const MAX_THREADS: usize = 128;
 
-const DESIRED_WAITING_THREADS: usize = 2;
+const DESIRED_WAITING_THREADS: usize = 4;
 
 static WAITING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -84,11 +84,14 @@ impl Queue {
 static QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(init_queue);
 
 fn init_queue() -> Queue {
+    debug_delay();
     for _ in 0..DESIRED_WAITING_THREADS {
+        debug_delay();
         while SPAWNING.load(SeqCst) {
+            debug_delay();
             std::thread::yield_now();
         }
-        maybe_spawn_new_thread(true);
+        spawn_new_thread(true);
     }
     Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
 }
@@ -133,7 +136,7 @@ fn perform_work(is_immortal: bool) {
 // Create up to MAX_THREADS dynamic blocking task worker threads.
 // Dynamic threads will terminate themselves if they don't
 // receive any work after one second.
-fn maybe_spawn_new_thread(is_immortal: bool) {
+fn maybe_spawn_new_thread() {
     debug_delay();
     let total_workers = TOTAL_THREAD_COUNT.load(SeqCst);
     debug_delay();
@@ -146,7 +149,7 @@ fn maybe_spawn_new_thread(is_immortal: bool) {
     }
 
     if SPAWNING.compare_and_swap(false, true, SeqCst) == false {
-        spawn_new_thread(is_immortal);
+        spawn_new_thread(false);
     }
 }
 
@@ -190,7 +193,7 @@ where
     let depth = QUEUE.send(Box::new(task));
 
     if depth > DESIRED_WAITING_THREADS {
-        maybe_spawn_new_thread(false);
+        maybe_spawn_new_thread();
     }
 
     promise
