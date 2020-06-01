@@ -2092,13 +2092,30 @@ impl PageCache {
 
         let pid_bound_usize = assert_usize(pid_bound);
 
-        let mut page_states =
-            Vec::<PageState>::with_capacity(pid_bound_usize);
+        let mut page_states = Vec::<PageState>::with_capacity(pid_bound_usize);
         let guard = pin();
         for pid in 0..pid_bound {
-            if let Some(pg_view) = self.inner.get(pid, &guard) {
-                let page_state = pg_view.to_page_state();
-                page_states.push(page_state);
+            'inner: loop {
+                if let Some(pg_view) = self.inner.get(pid, &guard) {
+                    if pg_view.cache_infos.is_empty() {
+                        // there is a benign race with the thread
+                        // that is allocating this page. the allocating
+                        // thread has not yet written the new page to disk,
+                        // and it does not yet have any storage tracking
+                        // information.
+                        std::thread::yield_now();
+                    } else {
+                        let page_state = pg_view.to_page_state();
+                        page_states.push(page_state);
+                        break 'inner;
+                    }
+                } else {
+                    // there is a benign race with the thread
+                    // that bumped the next_pid_to_allocate
+                    // atomic counter above. it has not yet
+                    // installed the page that it is allocating.
+                    std::thread::yield_now();
+                }
             }
         }
 
