@@ -436,7 +436,7 @@ impl Log {
             );
             let iobufs = self.iobufs.clone();
             let iobuf = iobuf.clone();
-            let _result = threadpool::spawn(move || {
+            threadpool::spawn(move || {
                 if let Err(e) = iobufs.write_to_log(&iobuf) {
                     error!(
                         "hit error while writing iobuf with lsn {}: {:?}",
@@ -445,9 +445,6 @@ impl Log {
                     iobufs.config.set_global_error(e);
                 }
             });
-
-            #[cfg(test)]
-            _result.wait();
 
             Ok(())
         } else {
