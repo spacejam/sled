@@ -18,7 +18,7 @@ const MAX_THREADS: usize = 16;
 #[cfg(not(windows))]
 const MAX_THREADS: usize = 128;
 
-const DESIRED_WAITING_THREADS: usize = 4;
+const DESIRED_WAITING_THREADS: usize = 7;
 
 static WAITING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -87,10 +87,6 @@ fn init_queue() -> Queue {
     debug_delay();
     for _ in 0..DESIRED_WAITING_THREADS {
         debug_delay();
-        while SPAWNING.load(SeqCst) {
-            debug_delay();
-            std::thread::yield_now();
-        }
         spawn_new_thread(true);
     }
     Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
