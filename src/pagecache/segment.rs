@@ -1068,7 +1068,7 @@ impl SegmentAccountant {
 
         let config = self.config.clone();
 
-        let _result = threadpool::spawn(move || {
+        threadpool::spawn(move || {
             debug!("truncating file to length {}", at);
             let res = config
                 .file
@@ -1077,9 +1077,6 @@ impl SegmentAccountant {
                 .map_err(|e| e.into());
             completer.fill(res);
         });
-
-        #[cfg(test)]
-        _result.wait();
 
         if self.async_truncations.insert(at, promise).is_some() {
             panic!(

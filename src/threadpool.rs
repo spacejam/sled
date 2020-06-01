@@ -18,7 +18,7 @@ const MAX_THREADS: usize = 16;
 #[cfg(not(windows))]
 const MAX_THREADS: usize = 128;
 
-const DESIRED_WAITING_THREADS: usize = 4;
+const DESIRED_WAITING_THREADS: usize = 2;
 
 static WAITING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -84,19 +84,22 @@ impl Queue {
 static QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(init_queue);
 
 fn init_queue() -> Queue {
-    for _ in 1..DESIRED_WAITING_THREADS {
-        maybe_spawn_new_thread();
+    for _ in 0..DESIRED_WAITING_THREADS {
+        while SPAWNING.load(SeqCst) {
+            std::thread::yield_now();
+        }
+        maybe_spawn_new_thread(true);
     }
     Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
 }
 
-fn perform_work() {
+fn perform_work(is_immortal: bool) {
     let wait_limit = Duration::from_secs(1);
 
     let mut performed = 0;
     let mut contiguous_overshoots = 0;
 
-    while performed < 5 || contiguous_overshoots < 3 {
+    while is_immortal || performed < 5 || contiguous_overshoots < 3 {
         debug_delay();
         let task_res = QUEUE.recv_timeout(wait_limit);
 
@@ -130,7 +133,7 @@ fn perform_work() {
 // Create up to MAX_THREADS dynamic blocking task worker threads.
 // Dynamic threads will terminate themselves if they don't
 // receive any work after one second.
-fn maybe_spawn_new_thread() {
+fn maybe_spawn_new_thread(is_immortal: bool) {
     debug_delay();
     let total_workers = TOTAL_THREAD_COUNT.load(SeqCst);
     debug_delay();
@@ -143,21 +146,22 @@ fn maybe_spawn_new_thread() {
     }
 
     if SPAWNING.compare_and_swap(false, true, SeqCst) == false {
-        spawn_new_thread();
+        spawn_new_thread(is_immortal);
     }
 }
 
-fn spawn_new_thread() {
+fn spawn_new_thread(is_immortal: bool) {
     let spawn_id = SPAWNS.fetch_add(1, SeqCst);
 
     TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
     let spawn_res = thread::Builder::new()
         .name(format!("sled-io-{}", spawn_id))
-        .spawn(|| {
+        .spawn(move || {
             SPAWNING.store(false, SeqCst);
             debug_delay();
-            perform_work();
+            perform_work(is_immortal);
             TOTAL_THREAD_COUNT.fetch_sub(1, SeqCst);
+            assert!(!is_immortal);
         });
 
     if let Err(e) = spawn_res {
@@ -186,7 +190,7 @@ where
     let depth = QUEUE.send(Box::new(task));
 
     if depth > DESIRED_WAITING_THREADS {
-        maybe_spawn_new_thread();
+        maybe_spawn_new_thread(false);
     }
 
     promise
