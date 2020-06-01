@@ -24,7 +24,28 @@ pub struct Snapshot {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageState {
-    Present { base: (Lsn, DiskPtr, u64), frags: Vec<(Lsn, DiskPtr, u64)> },
+    /// Present signifies a page that has some data.
+    ///
+    /// It has two parts. The base and the fragments.
+    /// `base` is separated to guarantee that it will
+    /// always have at least one because it is
+    /// correct by construction.
+    /// The third element in each tuple is the on-log
+    /// size for the corresponding write. If things
+    /// are pretty large, they spill into the blobs
+    /// directory, but still get a small pointer that
+    /// gets written into the log. The sizes are used
+    /// for the garbage collection statistics on
+    /// segments. The lsn and the DiskPtr can be used
+    /// for actually reading the item off the disk,
+    /// and the size tells us how much storage it uses
+    /// on the disk.
+    Present {
+        base: (Lsn, DiskPtr, u64),
+        frags: Vec<(Lsn, DiskPtr, u64)>
+    },
+
+    /// This is a free page.
     Free(Lsn, DiskPtr),
     Uninitialized,
 }

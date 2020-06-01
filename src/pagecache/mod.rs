@@ -432,7 +432,6 @@ pub struct Page {
 }
 
 impl Page {
-    #[allow(unused)]
     pub(crate) fn to_page_state(&self) -> PageState {
         let is_free =
             if let Some(Update::Free) = self.update { true } else { false };
@@ -2075,5 +2074,38 @@ impl PageCache {
         }
 
         Ok(())
+    }
+
+    /// A snapshot is to recover the pageTable at a point in time.
+    ///
+    /// This is called fuzzy snapshot because while
+    /// we are taking a snapshot, the ongoing inserts
+    /// into the database will keep bumping up the Lsn.
+    /// Therefore, the `stable_lsn` gives us the state
+    /// of the world, when the snapshot was taken.
+    #[allow(unused)]
+    fn take_fuzzy_snapshot(self) -> Snapshot {
+        let stable_lsn_now: Lsn = self.log.stable_offset();
+
+        // This is how we determine the number of the pages we will snapshot.
+        let pid_bound = self.next_pid_to_allocate.load(Acquire);
+
+        let pid_bound_usize = assert_usize(pid_bound);
+
+        let mut page_states =
+            Vec::<PageState>::with_capacity(pid_bound_usize);
+        let guard = pin();
+        for pid in 0..pid_bound {
+            if let Some(pg_view) = self.inner.get(pid, &guard) {
+                let page_state = pg_view.to_page_state();
+                page_states.push(page_state);
+            }
+        }
+
+        Snapshot {
+            stable_lsn: Some(stable_lsn_now),
+            active_segment: None,
+            pt: page_states,
+        }
     }
 }
