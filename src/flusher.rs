@@ -150,6 +150,7 @@ fn run(
             sc.wait_for(&mut shutdown, sleep_duration);
         }
     }
+
     *shutdown = ShutdownState::ShutDown;
 
     // having held the mutex makes this linearized
