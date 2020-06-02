@@ -64,18 +64,6 @@ impl Db {
         Config::new().path(path).open()
     }
 
-    #[doc(hidden)]
-    #[deprecated(since = "0.24.2", note = "replaced by `sled::open`")]
-    pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        open(path)
-    }
-
-    #[doc(hidden)]
-    #[deprecated(since = "0.29.0", note = "please use Config::open instead")]
-    pub fn start(config: RunningConfig) -> Result<Self> {
-        Db::start_inner(config)
-    }
-
     pub(crate) fn start_inner(config: RunningConfig) -> Result<Self> {
         let _measure = Measure::new(&M.tree_start);
 
