@@ -24,6 +24,8 @@ static WAITING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static SPAWNS: AtomicUsize = AtomicUsize::new(0);
 static SPAWNING: AtomicBool = AtomicBool::new(false);
+static WORK_ADDED: AtomicUsize = AtomicUsize::new(0);
+static WORK_COMPLETED: AtomicUsize = AtomicUsize::new(0);
 
 macro_rules! once {
     ($args:block) => {
@@ -180,10 +182,12 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
+    WORK_ADDED.fetch_add(1, SeqCst);
     let (promise_filler, promise) = OneShot::pair();
     let task = move || {
         let result = (work)();
         promise_filler.fill(result);
+        WORK_COMPLETED.fetch_add(1, SeqCst);
     };
 
     let depth = QUEUE.send(Box::new(task));
@@ -193,4 +197,13 @@ where
     }
 
     promise
+}
+
+/// Wait until work queued before this call
+/// has completed.
+pub fn barrier() {
+    let added = WORK_ADDED.load(SeqCst);
+    while WORK_COMPLETED.load(SeqCst) < added {
+        std::thread::yield_now();
+    }
 }

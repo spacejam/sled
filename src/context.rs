@@ -40,7 +40,7 @@ impl Drop for Context {
     fn drop(&mut self) {
         loop {
             match self.pagecache.flush() {
-                Ok(0) => return,
+                Ok(0) => break,
                 Ok(_) => continue,
                 Err(e) => {
                     error!(
@@ -48,10 +48,11 @@ impl Drop for Context {
                          pagecache during drop: {:?}",
                         e
                     );
-                    return;
+                    break;
                 }
             }
         }
+        crate::threadpool::barrier();
     }
 }
 
