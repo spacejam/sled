@@ -547,6 +547,7 @@ fn tree_subdir() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_small_keys_iterator() {
     let config = Config::new().temporary(true).flush_every_ms(None);
     let t = config.open().unwrap();
@@ -586,6 +587,7 @@ fn tree_small_keys_iterator() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_big_keys_iterator() {
     fn kv(i: usize) -> Vec<u8> {
         let k = [(i >> 16) as u8, (i >> 8) as u8, i as u8];
@@ -818,6 +820,7 @@ fn create_tree() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tree_import_export() -> Result<()> {
     common::setup_logger();
 
