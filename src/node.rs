@@ -1,15 +1,15 @@
-use std::ops::Bound;
+use std::{num::NonZeroU64, ops::Bound};
 
 use super::*;
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct Node {
-    pub(crate) next: Option<PageId>,
+    pub(crate) prefix_len: u8,
+    pub(crate) next: Option<NonZeroU64>,
+    pub(crate) merging_child: Option<NonZeroU64>,
+    pub(crate) merging: bool,
     pub(crate) lo: IVec,
     pub(crate) hi: IVec,
-    pub(crate) merging_child: Option<PageId>,
-    pub(crate) merging: bool,
-    pub(crate) prefix_len: u8,
     pub(crate) data: Data,
 }
 
@@ -85,15 +85,19 @@ impl Node {
                     link,
                     self
                 );
-                self.merging_child = Some(pid);
+                self.merging_child = Some(NonZeroU64::new(pid).unwrap());
             }
             ParentMergeConfirm => {
                 assert!(self.merging_child.is_some());
-                let merged_child = self.merging_child.take().expect(
-                    "we should have a specific \
+                let merged_child = self
+                    .merging_child
+                    .take()
+                    .expect(
+                        "we should have a specific \
                      child that was merged if this \
                      link appears here",
-                );
+                    )
+                    .get();
                 self.data.parent_merge_confirm(merged_child);
             }
             ChildMergeCap => {
@@ -704,11 +708,7 @@ impl Data {
     }
 
     pub(crate) fn is_index(&self) -> bool {
-        if let Data::Index(..) = self {
-            true
-        } else {
-            false
-        }
+        if let Data::Index(..) = self { true } else { false }
     }
 }
 
@@ -736,7 +736,7 @@ fn merge_uneven_nodes() {
             keys: vec![vec![230, 126, 1, 0].into()],
             values: vec![vec![].into()],
         }),
-        next: Some(1),
+        next: NonZeroU64::new(1),
         lo: vec![230, 125, 1, 0].into(),
         hi: vec![230, 134, 0, 0].into(),
         merging_child: None,

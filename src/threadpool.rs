@@ -144,7 +144,7 @@ fn maybe_spawn_new_thread() {
         return;
     }
 
-    if SPAWNING.compare_and_swap(false, true, SeqCst) == false {
+    if !SPAWNING.compare_and_swap(false, true, SeqCst) {
         spawn_new_thread(false);
     }
 }
