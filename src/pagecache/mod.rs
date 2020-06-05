@@ -1365,7 +1365,7 @@ impl PageCache {
 
             // it's possible the blob file was removed lazily
             // in the background and no longer exists
-            size += blob_file.metadata().map_or(0, |m| m.len());
+            size += blob_file.metadata().map(|m| m.len()).unwrap_or(0);
         }
 
         Ok(size)
