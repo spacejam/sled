@@ -736,7 +736,7 @@ fn merge_uneven_nodes() {
             keys: vec![vec![230, 126, 1, 0].into()],
             values: vec![vec![].into()],
         }),
-        next: Some(1),
+        next: NonZeroU64::new(1),
         lo: vec![230, 125, 1, 0].into(),
         hi: vec![230, 134, 0, 0].into(),
         merging_child: None,

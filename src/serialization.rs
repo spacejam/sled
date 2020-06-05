@@ -884,11 +884,9 @@ mod qc {
 
     impl Arbitrary for Node {
         fn arbitrary<G: Gen>(g: &mut G) -> Node {
-            let next_raw: Option<u64> = Arbitrary::arbitrary(g);
-            let next = next_raw.map(|v| std::cmp::max(v, 1));
+            let next: Option<NonZeroU64> = Arbitrary::arbitrary(g);
 
-            let merging_child_raw: Option<u64> = Arbitrary::arbitrary(g);
-            let merging_child = merging_child_raw.map(|v| std::cmp::max(v, 1));
+            let merging_child: Option<NonZeroU64> = Arbitrary::arbitrary(g);
 
             Node {
                 next,
