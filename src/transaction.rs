@@ -510,7 +510,7 @@ impl<E> Transactional<E> for [Tree] {
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
             inner: self
-                .into_iter()
+                .iter()
                 .map(|t| TransactionalTree::from_tree(t))
                 .collect(),
         }
@@ -527,7 +527,7 @@ impl<E> Transactional<E> for [&Tree] {
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
             inner: self
-                .into_iter()
+                .iter()
                 .map(|&t| TransactionalTree::from_tree(t))
                 .collect(),
         }

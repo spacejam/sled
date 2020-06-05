@@ -414,11 +414,11 @@ impl Serialize for Option<u64> {
 
 impl Serialize for Option<NonZeroU64> {
     fn serialized_size(&self) -> u64 {
-        (self.map(|n| n.get()).unwrap_or(0)).serialized_size()
+        (self.map(NonZeroU64::get).unwrap_or(0)).serialized_size()
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        (self.map(|n| n.get()).unwrap_or(0)).serialize_into(buf)
+        (self.map(NonZeroU64::get).unwrap_or(0)).serialize_into(buf)
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {

@@ -1855,7 +1855,7 @@ impl Tree {
                         return Ok(false);
                     };
 
-                    if new_parent_view.merging_child.map(|m| m.get()) != Some(child_pid) {
+                    if new_parent_view.merging_child.map(NonZeroU64::get) != Some(child_pid) {
                         trace!(
                             "someone else must have already \
                              completed the merge, and now the \
@@ -1947,7 +1947,7 @@ impl Tree {
             };
 
             // This means that `cursor_node` is the node we want to replace
-            if cursor_view.next.map(|m| m.get()) == Some(child_pid) {
+            if cursor_view.next.map(NonZeroU64::get) == Some(child_pid) {
                 trace!(
                     "found left sibling pid {} points to merging node pid {}",
                     cursor_view.pid,
