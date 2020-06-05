@@ -555,7 +555,7 @@ macro_rules! repeat_type {
 
 macro_rules! impl_transactional_tuple_trees {
     ($($indices:tt),+) => {
-        impl Transactional for repeat_type!(&Tree, ($($indices),+)) {
+        impl<E> Transactional<E> for repeat_type!(&Tree, ($($indices),+)) {
             type View = repeat_type!(TransactionalTree, ($($indices),+));
 
             fn make_overlay(&self) -> TransactionalTrees {
