@@ -394,6 +394,10 @@ impl Update {
             panic!("called as_counter on {:?}", self)
         }
     }
+
+    fn is_free(&self) -> bool {
+        if let Update::Free = self { true } else { false }
+    }
 }
 
 /// Ensures that any operations that are written to disk between the
@@ -427,17 +431,14 @@ impl<'a> RecoveryGuard<'a> {
 /// with associated storage parameters like disk pos, lsn, time.
 #[derive(Debug, Clone)]
 pub struct Page {
-    pub(crate) update: Option<Update>,
+    pub(crate) update: Option<Box<Update>>,
     pub(crate) cache_infos: Vec<CacheInfo>,
 }
 
 impl Page {
     pub(crate) fn to_page_state(&self) -> PageState {
-        let is_free =
-            if let Some(Update::Free) = self.update { true } else { false };
-
         let base = &self.cache_infos[0];
-        if is_free {
+        if self.is_free() {
             PageState::Free(base.lsn, base.pointer)
         } else {
             let mut frags: Vec<(Lsn, DiskPtr, u64)> = vec![];
@@ -470,7 +471,8 @@ impl Page {
     }
 
     pub(crate) fn is_free(&self) -> bool {
-        self.update == Some(Update::Free) || self.cache_infos.is_empty()
+        self.update.as_ref().map_or(false, |u| u.is_free())
+            || self.cache_infos.is_empty()
     }
 
     pub(crate) fn last_lsn(&self) -> Lsn {
@@ -782,9 +784,8 @@ impl PageCache {
                 ),
                 Some(p) => p,
             };
-            assert_eq!(
-                Some(Update::Free),
-                page_view.update,
+            assert!(
+                page_view.is_free(),
                 "failed to re-allocate pid {} which \
                  contained unexpected state {:?}",
                 pid,
@@ -994,7 +995,7 @@ impl PageCache {
         }
 
         let mut new_page = Some(Owned::new(Page {
-            update: Some(Update::Node(node)),
+            update: Some(Box::new(Update::Node(node))),
             cache_infos: Vec::default(),
         }));
 
@@ -1296,21 +1297,20 @@ impl PageCache {
                         Some(p) => p,
                     };
 
-                    match &page_view.update {
-                        Some(Update::Free) => (page_view, Update::Free),
-                        other => {
-                            debug!(
-                                "when rewriting pid {} \
+                    if page_view.is_free() {
+                        (page_view, Update::Free)
+                    } else {
+                        debug!(
+                            "when rewriting pid {} \
                              we encountered a rewritten \
                              node with a link {:?} that \
                              we previously witnessed a Free \
                              for (PageCache::get returned None), \
                              assuming we can just return now since \
                              the Free was replace'd",
-                                pid, other
-                            );
-                            return Ok(());
-                        }
+                            pid, page_view.update
+                        );
+                        return Ok(());
                     }
                 };
 
@@ -1365,7 +1365,7 @@ impl PageCache {
 
             // it's possible the blob file was removed lazily
             // in the background and no longer exists
-            size += blob_file.metadata().map(|m| m.len()).unwrap_or(0);
+            size += blob_file.metadata().map_or(0, |m| m.len());
         }
 
         Ok(size)
@@ -1406,19 +1406,21 @@ impl PageCache {
         trace!("cas_page on pid {} has log kind: {:?}", pid, log_kind);
 
         let mut new_page = Some(Owned::new(Page {
-            update: Some(update),
+            update: Some(Box::new(update)),
             cache_infos: Vec::default(),
         }));
 
         loop {
             let mut page_ptr = new_page.take().unwrap();
-            let log_reservation = match page_ptr.update.as_ref().unwrap() {
-                Update::Counter(c) => {
+            let log_reservation = match &**page_ptr.update.as_ref().unwrap() {
+                Update::Counter(ref c) => {
                     self.log.reserve(log_kind, pid, c, guard)?
                 }
-                Update::Meta(m) => self.log.reserve(log_kind, pid, m, guard)?,
+                Update::Meta(ref m) => {
+                    self.log.reserve(log_kind, pid, m, guard)?
+                }
                 Update::Free => self.log.reserve(log_kind, pid, &(), guard)?,
-                Update::Node(node) => {
+                Update::Node(ref node) => {
                     self.log.reserve(log_kind, pid, node, guard)?
                 }
                 other => {
@@ -1512,7 +1514,7 @@ impl PageCache {
                     if actual_ts != old.ts() || is_rewrite {
                         return Ok(Err(Some((
                             PageView { read: current, entry: old.entry },
-                            returned_update.update.take().unwrap(),
+                            *returned_update.update.take().unwrap(),
                         ))));
                     }
                     trace!(
@@ -1679,7 +1681,7 @@ impl PageCache {
         let base = updates.pop().unwrap();
 
         let page = Owned::new(Page {
-            update: Some(base),
+            update: Some(Box::new(base)),
             cache_infos: page_view.cache_infos.clone(),
         });
 
@@ -1873,7 +1875,7 @@ impl PageCache {
             }
             loop {
                 if let Some(page_view) = self.inner.get(pid, guard) {
-                    if page_view.update == Some(Update::Free) {
+                    if page_view.is_free() {
                         // don't page-out Freed suckas
                         break;
                     }
@@ -2062,9 +2064,9 @@ impl PageCache {
             let update = if pid == META_PID || pid == COUNTER_PID {
                 let update =
                     self.pull(pid, cache_infos[0].lsn, cache_infos[0].pointer)?;
-                Some(update)
+                Some(Box::new(update))
             } else if state.is_free() {
-                Some(Update::Free)
+                Some(Box::new(Update::Free))
             } else {
                 None
             };
