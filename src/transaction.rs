@@ -43,7 +43,8 @@
 //! to the processed `Tree`.
 //!
 //! ```
-//! use sled::{Config, Transactional};
+//! # use sled::{transaction::{TransactionResult, Transactional}, Config};
+//! # fn main() -> TransactionResult<()> {
 //!
 //! let config = Config::new().temporary(true);
 //! let db = config.open().unwrap();
@@ -64,11 +65,12 @@
 //!         processed_item.extend_from_slice(&unprocessed_item);
 //!         processed.insert(b"k3", processed_item)?;
 //!         Ok(())
-//!     })
-//!     .unwrap();
+//!     })?;
 //!
 //! assert_eq!(unprocessed.get(b"k3").unwrap(), None);
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
+//! # Ok(())
+//! # }
 //! ```
 #![allow(clippy::module_name_repetitions)]
 use std::{cell::RefCell, fmt, rc::Rc};
