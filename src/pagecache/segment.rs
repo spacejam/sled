@@ -64,7 +64,7 @@ use crate::pagecache::*;
 use crate::*;
 
 /// A operation that can be applied asynchronously.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) enum SegmentOp {
     Link {
         pid: PageId,
@@ -73,7 +73,7 @@ pub(crate) enum SegmentOp {
     Replace {
         pid: PageId,
         lsn: Lsn,
-        old_cache_infos: StackVec,
+        old_cache_infos: Vec<CacheInfo>,
         new_cache_info: CacheInfo,
     },
 }
