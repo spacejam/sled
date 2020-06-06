@@ -4,6 +4,7 @@
 /// turn into a huge overhead.
 use std::{
     alloc::{alloc, dealloc, Layout},
+    convert::TryFrom,
     fmt::{self, Debug},
     mem,
     ops::Deref,
@@ -51,6 +52,7 @@ impl<T> Arc<T> {
             let ptr = alloc(layout);
 
             assert!(!ptr.is_null(), "failed to allocate Arc");
+            #[allow(clippy::cast_ptr_alignment)]
             ptr::write(ptr as _, AtomicUsize::new(1));
 
             let data_ptr = ptr.add(rc_width);
@@ -62,12 +64,12 @@ impl<T> Arc<T> {
         }
     }
 
-    /// https://users.rust-lang.org/t/construct-fat-pointer-to-struct/29198/9
+    /// <https://users.rust-lang.org/t/construct-fat-pointer-to-struct/29198/9>
     #[allow(trivial_casts)]
     fn fatten(data: *const u8, len: usize) -> *const ArcInner<[T]> {
         // Requirements of slice::from_raw_parts.
         assert!(!data.is_null());
-        assert!(len <= isize::max_value() as usize);
+        assert!(isize::try_from(len).is_ok());
 
         let slice =
             unsafe { core::slice::from_raw_parts(data as *const (), len) };
@@ -76,6 +78,7 @@ impl<T> Arc<T> {
 
     pub fn into_raw(arc: Arc<T>) -> *const T {
         let ptr = unsafe { &(*arc.ptr).inner };
+        #[allow(clippy::mem_forget)]
         mem::forget(arc);
         ptr
     }
@@ -86,9 +89,9 @@ impl<T> Arc<T> {
 
         let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
 
-        let ptr = (ptr as *const u8).sub(rc_width) as *mut ArcInner<T>;
+        let sub_ptr = (ptr as *const u8).sub(rc_width) as *mut ArcInner<T>;
 
-        Arc { ptr }
+        Arc { ptr: sub_ptr }
     }
 }
 
@@ -146,6 +149,7 @@ impl<T: Copy> From<&[T]> for Arc<[T]> {
     }
 }
 
+#[allow(clippy::fallible_impl_from)]
 impl<T> From<Box<T>> for Arc<T> {
     #[inline]
     fn from(b: Box<T>) -> Arc<T> {
@@ -162,6 +166,7 @@ impl<T> From<Box<T>> for Arc<T> {
             assert!(!dst.is_null(), "failed to allocate Arc");
 
             let data_ptr = dst.add(rc_width);
+            #[allow(clippy::cast_ptr_alignment)]
             ptr::write(dst as _, AtomicUsize::new(1));
             let src = Box::into_raw(b);
             ptr::copy(src, data_ptr as *mut T, 1);
