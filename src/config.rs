@@ -6,7 +6,7 @@ use std::{
     io::{BufRead, BufReader, ErrorKind, Read, Seek, Write},
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::atomic::AtomicUsize,
 };
 
 use crate::pagecache::{arr_to_u32, u32_to_arr, Lsn};

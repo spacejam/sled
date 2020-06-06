@@ -5,15 +5,12 @@ use std::{
     ops::{self, Deref, RangeBounds},
     sync::{
         atomic::{AtomicU64, Ordering::SeqCst},
-        Arc,
     },
 };
 
 use parking_lot::RwLock;
 
-use crate::{concurrency_control, pagecache::NodeView};
-
-use super::*;
+use crate::{pagecache::NodeView, *};
 
 #[derive(Debug, Clone)]
 pub(crate) struct View<'g> {

@@ -178,7 +178,7 @@ fn spawn_new_thread(is_immortal: bool) {
 pub fn spawn<F, R>(work: F) -> OneShot<R>
 where
     F: FnOnce() -> R + Send + 'static,
-    R: Send + 'static,
+    R: Send + 'static + Sized,
 {
     let (promise_filler, promise) = OneShot::pair();
     let task = move || {

@@ -1,11 +1,12 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll, Waker},
 };
 
 use parking_lot::{Condvar, Mutex};
+
+use crate::Arc;
 
 #[derive(Debug)]
 struct OneShotState<T> {
