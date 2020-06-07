@@ -131,9 +131,17 @@ impl<T: Default> Default for Arc<T> {
 
 impl<T: ?Sized> Clone for Arc<T> {
     fn clone(&self) -> Arc<T> {
-        unsafe {
-            (*self.ptr).rc.fetch_add(1, Ordering::Release);
+        // safe to use Relaxed ordering below because
+        // of the required synchronization for passing
+        // any objects to another thread.
+        let last_count =
+            unsafe { (*self.ptr).rc.fetch_add(1, Ordering::Relaxed) };
+
+        if last_count == usize::max_value() {
+            #[cold]
+            std::process::abort();
         }
+
         Arc { ptr: self.ptr }
     }
 }
@@ -143,6 +151,7 @@ impl<T: ?Sized> Drop for Arc<T> {
         unsafe {
             let rc = (*self.ptr).rc.fetch_sub(1, Ordering::Release) - 1;
             if rc == 0 {
+                std::sync::atomic::fence(Ordering::Acquire);
                 Box::from_raw(self.ptr);
             }
         }
@@ -165,10 +174,8 @@ impl<T> From<Box<T>> for Arc<T> {
 
         let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
 
-        let size = rc_width.checked_add(mem::size_of::<T>()).unwrap();
-
         unsafe {
-            let dst_layout = Layout::from_size_align(size, align).unwrap();
+            let dst_layout = Layout::new::<ArcInner<T>>();
             let dst = alloc(dst_layout);
             assert!(!dst.is_null(), "failed to allocate Arc");
 
