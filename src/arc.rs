@@ -139,7 +139,7 @@ impl<T: ?Sized> Drop for Arc<T> {
         unsafe {
             let rc = (*self.ptr).rc.fetch_sub(1, Ordering::Release) - 1;
             if rc == 0 {
-                ptr::drop_in_place(self.ptr);
+                Box::from_raw(self.ptr);
             }
         }
     }
