@@ -50,11 +50,11 @@ impl<T> Arc<T> {
         let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
         let data_width = mem::size_of::<T>().checked_mul(s.len()).unwrap();
 
-        let size = rc_width.checked_add(data_width).unwrap();
+        let size_unpadded = rc_width.checked_add(data_width).unwrap();
         // Pad size out to alignment
-        let size = (size + align - 1) & !(align - 1);
+        let size_padded = (size_unpadded + align - 1) & !(align - 1);
 
-        let layout = Layout::from_size_align(size, align).unwrap();
+        let layout = Layout::from_size_align(size_padded, align).unwrap();
 
         let ptr = alloc(layout);
 
