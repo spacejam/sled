@@ -42,7 +42,7 @@ impl<T> Arc<T> {
             std::cmp::max(mem::align_of::<T>(), mem::align_of::<AtomicUsize>());
 
         let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
-        let data_width = mem::size_of::<T>().checked_add(s.len()).unwrap();
+        let data_width = mem::size_of::<T>().checked_mul(s.len()).unwrap();
 
         let size = rc_width.checked_add(data_width).unwrap();
 
@@ -127,6 +127,9 @@ impl<T: Default> Default for Arc<T> {
 
 impl<T: ?Sized> Clone for Arc<T> {
     fn clone(&self) -> Arc<T> {
+        unsafe {
+            (*self.ptr).rc.fetch_add(1, Ordering::Release);
+        }
         Arc { ptr: self.ptr }
     }
 }
