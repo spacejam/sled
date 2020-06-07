@@ -51,9 +51,10 @@ impl<T> Arc<T> {
         let data_width = mem::size_of::<T>().checked_mul(s.len()).unwrap();
 
         let size = rc_width.checked_add(data_width).unwrap();
+        // Pad size out to alignment
+        let size = (size + align - 1) & !(align - 1);
 
         let layout = Layout::from_size_align(size, align).unwrap();
-        let layout = layout.pad_to_align();
 
         let ptr = alloc(layout);
 
