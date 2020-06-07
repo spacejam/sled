@@ -173,6 +173,7 @@ macro_rules! testing_assert {
     };
 }
 
+mod arc;
 mod batch;
 mod binary_search;
 mod concurrency_control;
@@ -303,6 +304,7 @@ pub use self::{
 
 use {
     self::{
+        arc::Arc,
         binary_search::binary_search_lub,
         concurrency_control::Protector,
         context::Context,
@@ -326,12 +328,9 @@ use {
         convert::TryFrom,
         fmt::{self, Debug},
         io::{Read, Write},
-        sync::{
-            atomic::{
-                AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
-                Ordering::{Acquire, Relaxed, Release, SeqCst},
-            },
-            Arc,
+        sync::atomic::{
+            AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
+            Ordering::{Acquire, Relaxed, Release, SeqCst},
         },
     },
 };
