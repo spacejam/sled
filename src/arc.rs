@@ -12,6 +12,10 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+// we make this repr(C) because we do a raw
+// write to the beginning where we expect
+// the rc to be.
+#[repr(C)]
 struct ArcInner<T: ?Sized> {
     rc: AtomicUsize,
     inner: T,
