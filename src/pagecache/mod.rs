@@ -551,7 +551,7 @@ impl Drop for PageCache {
                     .clone(),
             );
 
-            for pid in 0..self.next_pid_to_allocate.load(Acquire) {
+            for pid in 0..*self.next_pid_to_allocate.lock() {
                 let pte = if let Some(pte) = self.inner.get(pid, &guard) {
                     pte
                 } else {
@@ -773,7 +773,7 @@ impl PageCache {
         new: Update,
         guard: &'g Guard,
     ) -> Result<(PageId, PageView<'g>)> {
-        let mut _allocation_serializer;
+        let mut allocation_serializer;
 
         let (pid, page_view) = if let Some(pid) = self.free.lock().pop() {
             trace!("re-allocating pid {}", pid);
@@ -806,9 +806,9 @@ impl PageCache {
             // because it is overly-strict, it allows us
             // to flag corruption and bugs during testing
             // much more easily.
-            _allocation_serializer = self.next_pid_to_allocate.lock();
-            let pid = *_allocation_serializer;
-            *_allocation_serializer += 1;
+            allocation_serializer = self.next_pid_to_allocate.lock();
+            let pid = *allocation_serializer;
+            *allocation_serializer += 1;
 
             trace!("allocating pid {} for the first time", pid);
 
