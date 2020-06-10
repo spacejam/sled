@@ -504,6 +504,7 @@ pub struct PageCache {
     inner: PageTable,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
+    allocation_mutex: Arc<Mutex<()>>,
     #[doc(hidden)]
     pub log: Log,
     lru: Lru,
@@ -645,6 +646,7 @@ impl PageCache {
             inner: PageTable::default(),
             next_pid_to_allocate: AtomicU64::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
+            allocation_mutex: Arc::new(Mutex::new(())),
             log: Log::start(config, &snapshot)?,
             lru,
             idgen_persist_mu: Arc::new(Mutex::new(())),
@@ -773,6 +775,8 @@ impl PageCache {
         new: Update,
         guard: &'g Guard,
     ) -> Result<(PageId, PageView<'g>)> {
+        let _allocation_serializer;
+
         let (pid, page_view) = if let Some(pid) = self.free.lock().pop() {
             trace!("re-allocating pid {}", pid);
 
@@ -793,6 +797,18 @@ impl PageCache {
             );
             (pid, page_view)
         } else {
+            // we need to hold the allocation mutex because
+            // we have to maintain the invariant that our
+            // recoverable allocated pages will be contiguous.
+            // If we did not hold this mutex, it would be
+            // possible (especially under high thread counts)
+            // to persist pages non-monotonically to disk,
+            // which would break our recovery invariants.
+            // While we could just remove that invariant,
+            // because it is overly-strict, it allows us
+            // to flag corruption and bugs during testing
+            // much more easily.
+            _allocation_serializer = self.allocation_mutex.lock();
             let pid = self.next_pid_to_allocate.fetch_add(1, Relaxed);
 
             trace!("allocating pid {} for the first time", pid);

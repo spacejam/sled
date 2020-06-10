@@ -146,7 +146,11 @@ impl Tree {
         mut value: Option<IVec>,
         guard: &mut Guard,
     ) -> Result<Abortable<Option<IVec>>> {
-        let _measure = Measure::new(&M.tree_set);
+        let _measure = if value.is_some() {
+            Measure::new(&M.tree_set)
+        } else {
+            Measure::new(&M.tree_del)
+        };
 
         let View { node_view, pid, .. } =
             self.view_for_key(key.as_ref(), guard)?;
