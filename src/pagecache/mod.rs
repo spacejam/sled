@@ -775,7 +775,9 @@ impl PageCache {
     ) -> Result<(PageId, PageView<'g>)> {
         let mut allocation_serializer;
 
-        let (pid, page_view) = if let Some(pid) = self.free.lock().pop() {
+        let free_opt = self.free.lock().pop();
+
+        let (pid, page_view) = if let Some(pid) = free_opt {
             trace!("re-allocating pid {}", pid);
 
             let page_view = match self.inner.get(pid, guard) {
