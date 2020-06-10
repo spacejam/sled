@@ -502,9 +502,8 @@ impl Page {
 pub struct PageCache {
     pub(crate) config: RunningConfig,
     inner: PageTable,
-    next_pid_to_allocate: AtomicU64,
+    next_pid_to_allocate: Mutex<PageId>,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
-    allocation_mutex: Arc<Mutex<()>>,
     #[doc(hidden)]
     pub log: Log,
     lru: Lru,
@@ -525,7 +524,7 @@ impl Debug for PageCache {
     ) -> std::result::Result<(), fmt::Error> {
         f.write_str(&*format!(
             "PageCache {{ max: {:?} free: {:?} }}\n",
-            self.next_pid_to_allocate.load(Acquire),
+            *self.next_pid_to_allocate.lock(),
             self.free
         ))
     }
@@ -644,9 +643,8 @@ impl PageCache {
         let mut pc = Self {
             config: config.clone(),
             inner: PageTable::default(),
-            next_pid_to_allocate: AtomicU64::new(0),
+            next_pid_to_allocate: Mutex::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
-            allocation_mutex: Arc::new(Mutex::new(())),
             log: Log::start(config, &snapshot)?,
             lru,
             idgen_persist_mu: Arc::new(Mutex::new(())),
@@ -775,7 +773,7 @@ impl PageCache {
         new: Update,
         guard: &'g Guard,
     ) -> Result<(PageId, PageView<'g>)> {
-        let _allocation_serializer;
+        let mut _allocation_serializer;
 
         let (pid, page_view) = if let Some(pid) = self.free.lock().pop() {
             trace!("re-allocating pid {}", pid);
@@ -808,8 +806,9 @@ impl PageCache {
             // because it is overly-strict, it allows us
             // to flag corruption and bugs during testing
             // much more easily.
-            _allocation_serializer = self.allocation_mutex.lock();
-            let pid = self.next_pid_to_allocate.fetch_add(1, Relaxed);
+            _allocation_serializer = self.next_pid_to_allocate.lock();
+            let pid = *_allocation_serializer;
+            *_allocation_serializer += 1;
 
             trace!("allocating pid {} for the first time", pid);
 
@@ -1394,7 +1393,7 @@ impl PageCache {
 
         let mut ret = meta_size + idgen_size;
         let min_pid = COUNTER_PID + 1;
-        let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
+        let next_pid_to_allocate = *self.next_pid_to_allocate.lock();
         for pid in min_pid..next_pid_to_allocate {
             if let Some(node_cell) = self.get(pid, &guard)? {
                 ret += node_cell.rss();
@@ -2019,7 +2018,7 @@ impl PageCache {
     fn load_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let next_pid_to_allocate = snapshot.pt.len() as PageId;
 
-        self.next_pid_to_allocate = AtomicU64::from(next_pid_to_allocate);
+        self.next_pid_to_allocate = Mutex::new(next_pid_to_allocate);
 
         debug!("load_snapshot loading pages from 0..{}", next_pid_to_allocate);
         for pid in 0..next_pid_to_allocate {
@@ -2106,7 +2105,7 @@ impl PageCache {
         let stable_lsn_now: Lsn = self.log.stable_offset();
 
         // This is how we determine the number of the pages we will snapshot.
-        let pid_bound = self.next_pid_to_allocate.load(Acquire);
+        let pid_bound = *self.next_pid_to_allocate.lock();
 
         let pid_bound_usize = assert_usize(pid_bound);
 
