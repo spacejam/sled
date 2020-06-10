@@ -794,6 +794,8 @@ impl Tree {
     /// should measure the performance impact of
     /// using it on realistic sustained workloads
     /// running on realistic hardware.
+    // this clippy check is mis-firing on async code.
+    #[allow(clippy::used_underscore_binding)]
     pub async fn flush_async(&self) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
         if let Some(result) = threadpool::spawn(move || pagecache.flush()).await

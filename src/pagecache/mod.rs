@@ -666,7 +666,7 @@ impl PageCache {
 
             let mut pages_after_restart = HashMap::new();
 
-            for pid in 0..pc.next_pid_to_allocate.load(Acquire) {
+            for pid in 0..*pc.next_pid_to_allocate.lock() {
                 let pte = if let Some(pte) = pc.inner.get(pid, &guard) {
                     pte
                 } else {
