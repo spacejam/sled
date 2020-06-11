@@ -30,8 +30,8 @@ fn main() {
 
     match env::var(TEST_ENV_VAR) {
         Err(VarError::NotPresent) => {
-            //test_crash_recovery();
-            //test_crash_batches();
+            test_crash_recovery();
+            test_crash_batches();
             concurrent_crash_iter();
             concurrent_crash_transactions();
         }
