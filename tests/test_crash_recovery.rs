@@ -376,8 +376,6 @@ fn run_iter() {
         t.insert(*item, *item).unwrap();
     }
 
-    spawn_killah();
-
     let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
     let mut threads = vec![];
 
@@ -498,6 +496,8 @@ fn run_iter() {
         })
         .unwrap();
 
+    spawn_killah();
+
     threads.push(deleter);
 
     for thread in threads.into_iter() {
@@ -530,8 +530,6 @@ fn run_tx() {
 
     db.insert(b"k1", b"cats").unwrap();
     db.insert(b"k2", b"dogs").unwrap();
-
-    spawn_killah();
 
     let mut threads = vec![];
 
@@ -582,6 +580,8 @@ fn run_tx() {
         });
         threads.push(thread);
     }
+
+    spawn_killah();
 
     for thread in threads.into_iter() {
         thread.join().expect("threads should not crash");
