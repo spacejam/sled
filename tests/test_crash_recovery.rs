@@ -349,7 +349,7 @@ fn run_iter() {
     const N_FORWARD: usize = 5;
     const N_REVERSE: usize = 5;
 
-    let config = Config::new().temporary(true).flush_every_ms(None);
+    let config = Config::new().temporary(true).flush_every_ms(Some(1));
 
     let t = config.open().unwrap();
 
@@ -514,7 +514,7 @@ fn concurrent_crash_transactions() {
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(ITER_DIR);
+        let mut child = run_child_process(dir);
 
         child
             .wait()
@@ -530,9 +530,9 @@ fn run_tx() {
     common::setup_logger();
 
     let config = Config::new()
-        .temporary(true)
-        .flush_every_ms(None)
-        .use_compression(true);
+        .flush_every_ms(Some(1))
+        .use_compression(true)
+        .path(TX_DIR);
     let db = config.open().unwrap();
 
     db.insert(b"k1", b"cats").unwrap();
@@ -589,7 +589,7 @@ fn run_tx() {
     }
 
     for thread in threads.into_iter() {
-        thread.join().unwrap();
+        thread.join().expect("threads should not crash");
     }
 
     let v1 = db.get(b"k1").unwrap().unwrap();
