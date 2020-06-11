@@ -173,6 +173,7 @@ macro_rules! testing_assert {
     };
 }
 
+mod arc;
 mod batch;
 mod binary_search;
 mod concurrency_control;
@@ -196,7 +197,6 @@ mod prefix;
 mod result;
 mod serialization;
 mod stack;
-mod stackvec;
 mod subscriber;
 mod sys_limits;
 pub mod transaction;
@@ -304,6 +304,7 @@ pub use self::{
 
 use {
     self::{
+        arc::Arc,
         binary_search::binary_search_lub,
         concurrency_control::Protector,
         context::Context,
@@ -315,7 +316,6 @@ use {
         node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
-        stackvec::StackVec,
         subscriber::Subscribers,
         tree::TreeInner,
     },
@@ -328,12 +328,9 @@ use {
         convert::TryFrom,
         fmt::{self, Debug},
         io::{Read, Write},
-        sync::{
-            atomic::{
-                AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
-                Ordering::{Acquire, Relaxed, Release, SeqCst},
-            },
-            Arc,
+        sync::atomic::{
+            AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
+            Ordering::{Acquire, Relaxed, Release, SeqCst},
         },
     },
 };

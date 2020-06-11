@@ -43,7 +43,8 @@
 //! to the processed `Tree`.
 //!
 //! ```
-//! use sled::{Config, Transactional};
+//! # use sled::{transaction::{TransactionResult, Transactional}, Config};
+//! # fn main() -> TransactionResult<()> {
 //!
 //! let config = Config::new().temporary(true);
 //! let db = config.open().unwrap();
@@ -64,11 +65,12 @@
 //!         processed_item.extend_from_slice(&unprocessed_item);
 //!         processed.insert(b"k3", processed_item)?;
 //!         Ok(())
-//!     })
-//!     .unwrap();
+//!     })?;
 //!
 //! assert_eq!(unprocessed.get(b"k3").unwrap(), None);
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
+//! # Ok(())
+//! # }
 //! ```
 #![allow(clippy::module_name_repetitions)]
 use std::{cell::RefCell, fmt, rc::Rc};
@@ -510,7 +512,7 @@ impl<E> Transactional<E> for [Tree] {
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
             inner: self
-                .into_iter()
+                .iter()
                 .map(|t| TransactionalTree::from_tree(t))
                 .collect(),
         }
@@ -527,7 +529,7 @@ impl<E> Transactional<E> for [&Tree] {
     fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
             inner: self
-                .into_iter()
+                .iter()
                 .map(|&t| TransactionalTree::from_tree(t))
                 .collect(),
         }
@@ -539,7 +541,10 @@ impl<E> Transactional<E> for [&Tree] {
 }
 
 macro_rules! repeat_type {
-    ($t:ty, ($($literals:literal),*)) => {
+    ($t:ty, ($literal:literal)) => {
+        ($t,)
+    };
+    ($t:ty, ($($literals:literal),+)) => {
         repeat_type!(IMPL $t, (), ($($literals),*))
     };
     (IMPL $t:ty, (), ($first:literal, $($rest:literal),*)) => {
@@ -555,7 +560,7 @@ macro_rules! repeat_type {
 
 macro_rules! impl_transactional_tuple_trees {
     ($($indices:tt),+) => {
-        impl Transactional for repeat_type!(&Tree, ($($indices),+)) {
+        impl<E> Transactional<E> for repeat_type!(&Tree, ($($indices),+)) {
             type View = repeat_type!(TransactionalTree, ($($indices),+));
 
             fn make_overlay(&self) -> TransactionalTrees {
@@ -572,13 +577,14 @@ macro_rules! impl_transactional_tuple_trees {
                 (
                     $(
                         overlay.inner[$indices].clone()
-                    ),+
+                    ),+,
                 )
             }
         }
     };
 }
 
+impl_transactional_tuple_trees!(0);
 impl_transactional_tuple_trees!(0, 1);
 impl_transactional_tuple_trees!(0, 1, 2);
 impl_transactional_tuple_trees!(0, 1, 2, 3);

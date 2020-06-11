@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use super::*;
 
 #[derive(Debug, Clone)]
@@ -38,6 +36,21 @@ impl std::ops::Deref for Context {
 
 impl Drop for Context {
     fn drop(&mut self) {
+        #[cfg(any(
+            windows,
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+        ))]
+        {
+            if let Some(flusher) = self.flusher.lock().take() {
+                drop(flusher)
+            }
+        }
+
         loop {
             match self.pagecache.flush() {
                 Ok(0) => return,

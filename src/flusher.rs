@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -150,6 +149,7 @@ fn run(
             sc.wait_for(&mut shutdown, sleep_duration);
         }
     }
+
     *shutdown = ShutdownState::ShutDown;
 
     // having held the mutex makes this linearized

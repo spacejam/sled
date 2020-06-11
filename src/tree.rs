@@ -1,18 +1,16 @@
 use std::{
+    num::NonZeroU64,
     borrow::Cow,
     fmt::{self, Debug},
     ops::{self, Deref, RangeBounds},
     sync::{
         atomic::{AtomicU64, Ordering::SeqCst},
-        Arc,
     },
 };
 
 use parking_lot::RwLock;
 
-use crate::{concurrency_control, pagecache::NodeView};
-
-use super::*;
+use crate::{pagecache::NodeView, *};
 
 #[derive(Debug, Clone)]
 pub(crate) struct View<'g> {
@@ -148,7 +146,11 @@ impl Tree {
         mut value: Option<IVec>,
         guard: &mut Guard,
     ) -> Result<Abortable<Option<IVec>>> {
-        let _measure = Measure::new(&M.tree_set);
+        let _measure = if value.is_some() {
+            Measure::new(&M.tree_set)
+        } else {
+            Measure::new(&M.tree_del)
+        };
 
         let View { node_view, pid, .. } =
             self.view_for_key(key.as_ref(), guard)?;
@@ -792,6 +794,8 @@ impl Tree {
     /// should measure the performance impact of
     /// using it on realistic sustained workloads
     /// running on realistic hardware.
+    // this clippy check is mis-firing on async code.
+    #[allow(clippy::used_underscore_binding)]
     pub async fn flush_async(&self) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
         if let Some(result) = threadpool::spawn(move || pagecache.flush()).await
@@ -1445,7 +1449,7 @@ impl Tree {
         let (rhs_pid, rhs_ptr) = self.context.pagecache.allocate(rhs, guard)?;
 
         // replace node, pointing next to installed right
-        lhs.next = Some(rhs_pid);
+        lhs.next = Some(NonZeroU64::new(rhs_pid).unwrap());
         let replace = self.context.pagecache.replace(
             view.pid,
             view.node_view.0,
@@ -1563,7 +1567,7 @@ impl Tree {
                 let size = node_view.0.log_size();
                 let view = View { node_view: *node_view, pid, size };
                 if view.merging_child.is_some() {
-                    self.merge_node(&view, view.merging_child.unwrap(), guard)?;
+                    self.merge_node(&view, view.merging_child.unwrap().get(), guard)?;
                 } else {
                     return Ok(Some(view));
                 }
@@ -1635,7 +1639,7 @@ impl Tree {
 
             // When we encounter a merge intention, we collaboratively help out
             if view.merging_child.is_some() {
-                self.merge_node(&view, view.merging_child.unwrap(), guard)?;
+                self.merge_node(&view, view.merging_child.unwrap().get(), guard)?;
                 retry!();
             } else if view.merging {
                 // we missed the parent merge intention due to a benign race,
@@ -1662,7 +1666,7 @@ impl Tree {
                 cursor = view.next.expect(
                     "if our hi bound is not Inf (inity), \
                      we should have a right sibling",
-                );
+                ).get();
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
                 } else if parent_view.is_none() && view.lo.is_empty() {
@@ -1671,7 +1675,7 @@ impl Tree {
                     // we have found a partially-split root
                     if self.root_hoist(
                         root_pid,
-                        view.next.unwrap(),
+                        view.next.unwrap().get(),
                         view.hi.clone(),
                         guard,
                     )? {
@@ -1854,7 +1858,7 @@ impl Tree {
                         return Ok(false);
                     };
 
-                    if new_parent_view.merging_child != Some(child_pid) {
+                    if new_parent_view.merging_child.map(NonZeroU64::get) != Some(child_pid) {
                         trace!(
                             "someone else must have already \
                              completed the merge, and now the \
@@ -1946,7 +1950,7 @@ impl Tree {
             };
 
             // This means that `cursor_node` is the node we want to replace
-            if cursor_view.next == Some(child_pid) {
+            if cursor_view.next.map(NonZeroU64::get) == Some(child_pid) {
                 trace!(
                     "found left sibling pid {} points to merging node pid {}",
                     cursor_view.pid,
@@ -2009,7 +2013,7 @@ impl Tree {
                         cursor_pid,
                         next
                     );
-                    cursor_pid = next;
+                    cursor_pid = next.get();
                 } else {
                     trace!(
                         "hit the right side of the tree without finding \
@@ -2098,8 +2102,8 @@ impl Tree {
                     } else {
                         break;
                     };
-                    assert_ne!(pid, next_pid);
-                    pid = next_pid;
+                    assert_ne!(pid, next_pid.get());
+                    pid = next_pid.get();
                 }
             }
         }
@@ -2141,7 +2145,7 @@ impl Debug for Tree {
             f.write_str("\n")?;
 
             if let Some(next_pid) = node.next {
-                pid = next_pid;
+                pid = next_pid.get();
             } else {
                 // we've traversed our level, time to bump down
                 let left_get_res = self.view_for_pid(left_most, &guard);

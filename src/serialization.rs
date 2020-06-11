@@ -3,6 +3,7 @@ use std::{
     convert::{TryFrom, TryInto},
     iter::FromIterator,
     marker::PhantomData,
+    num::NonZeroU64,
 };
 
 use crate::{
@@ -393,22 +394,55 @@ impl Serialize for Link {
     }
 }
 
+fn shift_u64_opt(value: &Option<u64>) -> u64 {
+    value.map(|s| s + 1).unwrap_or(0)
+}
+
+impl Serialize for Option<u64> {
+    fn serialized_size(&self) -> u64 {
+        shift_u64_opt(self).serialized_size()
+    }
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        shift_u64_opt(self).serialize_into(buf)
+    }
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        let shifted = u64::deserialize(buf)?;
+        let unshifted = if shifted == 0 { None } else { Some(shifted - 1) };
+        Ok(unshifted)
+    }
+}
+
+impl Serialize for Option<NonZeroU64> {
+    fn serialized_size(&self) -> u64 {
+        (self.map(NonZeroU64::get).unwrap_or(0)).serialized_size()
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        (self.map(NonZeroU64::get).unwrap_or(0)).serialize_into(buf)
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        let underlying = u64::deserialize(buf)?;
+        Ok(if underlying == 0 {
+            None
+        } else {
+            Some(NonZeroU64::new(underlying).unwrap())
+        })
+    }
+}
+
 impl Serialize for Node {
     fn serialized_size(&self) -> u64 {
-        let next_sz = shift_u64_opt(&self.next).serialized_size();
-        let merging_child_sz =
-            shift_u64_opt(&self.merging_child).serialized_size();
-
-        2 + next_sz
-            + merging_child_sz
+        2 + self.next.serialized_size()
+            + self.merging_child.serialized_size()
             + self.lo.serialized_size()
             + self.hi.serialized_size()
             + self.data.serialized_size()
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        shift_u64_opt(&self.next).serialize_into(buf);
-        shift_u64_opt(&self.merging_child).serialize_into(buf);
+        self.next.serialize_into(buf);
+        self.merging_child.serialize_into(buf);
         self.merging.serialize_into(buf);
         self.prefix_len.serialize_into(buf);
         self.lo.serialize_into(buf);
@@ -417,11 +451,9 @@ impl Serialize for Node {
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
-        let next = u64::deserialize(buf)?;
-        let merging_child = u64::deserialize(buf)?;
         Ok(Node {
-            next: unshift_u64_opt(next),
-            merging_child: unshift_u64_opt(merging_child),
+            next: Serialize::deserialize(buf)?,
+            merging_child: Serialize::deserialize(buf)?,
             merging: bool::deserialize(buf)?,
             prefix_len: u8::deserialize(buf)?,
             lo: IVec::deserialize(buf)?,
@@ -461,26 +493,6 @@ fn unshift_i64_opt(value: i64) -> Option<i64> {
     }
 }
 
-fn shift_u64_opt(value: &Option<u64>) -> u64 {
-    value.map(|s| s + 1).unwrap_or(0)
-}
-
-fn unshift_u64_opt(value: u64) -> Option<u64> {
-    if value == 0 { None } else { Some(value - 1) }
-}
-
-impl Serialize for Option<u64> {
-    fn serialized_size(&self) -> u64 {
-        shift_u64_opt(self).serialized_size()
-    }
-    fn serialize_into(&self, buf: &mut &mut [u8]) {
-        shift_u64_opt(self).serialize_into(buf)
-    }
-    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
-        Ok(unshift_u64_opt(u64::deserialize(buf)?))
-    }
-}
-
 impl Serialize for Snapshot {
     fn serialized_size(&self) -> u64 {
         self.stable_lsn.serialized_size()
@@ -502,14 +514,8 @@ impl Serialize for Snapshot {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         Ok(Snapshot {
-            stable_lsn: {
-                let lsn = i64::deserialize(buf)?;
-                unshift_i64_opt(lsn)
-            },
-            active_segment: {
-                let lid = u64::deserialize(buf)?;
-                unshift_u64_opt(lid)
-            },
+            stable_lsn: Serialize::deserialize(buf)?,
+            active_segment: Serialize::deserialize(buf)?,
             pt: deserialize_sequence(buf)?,
         })
     }
@@ -878,11 +884,9 @@ mod qc {
 
     impl Arbitrary for Node {
         fn arbitrary<G: Gen>(g: &mut G) -> Node {
-            let next_raw: Option<u64> = Arbitrary::arbitrary(g);
-            let next = next_raw.map(|v| std::cmp::max(v, 1));
+            let next: Option<NonZeroU64> = Arbitrary::arbitrary(g);
 
-            let merging_child_raw: Option<u64> = Arbitrary::arbitrary(g);
-            let merging_child = merging_child_raw.map(|v| std::cmp::max(v, 1));
+            let merging_child: Option<NonZeroU64> = Arbitrary::arbitrary(g);
 
             Node {
                 next,
