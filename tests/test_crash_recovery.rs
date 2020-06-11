@@ -331,7 +331,7 @@ fn concurrent_crash_iter() {
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(ITER_DIR);
+        let mut child = run_child_process(dir);
 
         child
             .wait()
@@ -349,7 +349,7 @@ fn run_iter() {
     const N_FORWARD: usize = 5;
     const N_REVERSE: usize = 5;
 
-    let config = Config::new().temporary(true).flush_every_ms(Some(1));
+    let config = Config::new().path(ITER_DIR).flush_every_ms(Some(1));
 
     let t = config.open().unwrap();
 
@@ -373,16 +373,12 @@ fn run_iter() {
     ];
 
     for item in &INDELIBLE {
-        t.compare_and_swap(
-            sled::IVec::from(*item),
-            None as Option<sled::IVec>,
-            Some(sled::IVec::from(*item)),
-        )
-        .unwrap();
+        t.insert(*item, *item).unwrap();
     }
 
-    let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
+    spawn_killah();
 
+    let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
     let mut threads = vec![];
 
     for i in 0..N_FORWARD {
@@ -393,7 +389,7 @@ fn run_iter() {
                 let barrier = barrier.clone();
                 move || {
                     barrier.wait();
-                    for _ in 0..100 {
+                    loop {
                         let expected = INDELIBLE.iter();
                         let mut keys = t.iter().keys();
 
