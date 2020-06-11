@@ -525,14 +525,13 @@ fn concurrent_crash_transactions() {
 fn run_tx() {
     common::setup_logger();
 
-    let config = Config::new()
-        .flush_every_ms(Some(1))
-        .use_compression(true)
-        .path(TX_DIR);
+    let config = Config::new().flush_every_ms(Some(1)).path(TX_DIR);
     let db = config.open().unwrap();
 
     db.insert(b"k1", b"cats").unwrap();
     db.insert(b"k2", b"dogs").unwrap();
+
+    spawn_killah();
 
     let mut threads = vec![];
 
