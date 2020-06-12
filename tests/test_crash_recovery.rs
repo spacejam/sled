@@ -266,15 +266,19 @@ fn run_batches() {
     }
 }
 
-fn run_child_process(test_name: &str) -> Child {
+fn run_child_process(test_name: &str, chance: u32) -> Child {
     let bin = env::current_exe().expect("could not get test binary path");
 
     env::set_var(TEST_ENV_VAR, test_name);
 
-    Command::new(bin).env(TEST_ENV_VAR, test_name).spawn().expect(&format!(
-        "could not spawn child process for {} test",
-        test_name
-    ))
+    Command::new(bin)
+        .env(TEST_ENV_VAR, test_name)
+        .env("SLED_CRASH_CHANCE", chance.to_string())
+        .spawn()
+        .expect(&format!(
+            "could not spawn child process for {} test",
+            test_name
+        ))
 }
 
 fn handle_child_exit_status(dir: &str, status: ExitStatus) {
@@ -297,7 +301,7 @@ fn test_crash_recovery() {
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(RECOVERY_DIR);
+        let mut child = run_child_process(dir, 200);
 
         child
             .wait()
@@ -314,7 +318,7 @@ fn test_crash_batches() {
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(BATCHES_DIR);
+        let mut child = run_child_process(dir, 200);
 
         child
             .wait()
@@ -331,7 +335,24 @@ fn concurrent_crash_iter() {
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(dir);
+        let mut child = run_child_process(dir, 200);
+
+        child
+            .wait()
+            .map(|status| handle_child_exit_status(dir, status))
+            .map_err(|e| handle_child_wait_err(dir, e))
+            .unwrap();
+    }
+
+    cleanup(dir);
+}
+
+fn concurrent_crash_transactions() {
+    let dir = TX_DIR;
+    cleanup(dir);
+
+    for _ in 0..N_TESTS {
+        let mut child = run_child_process(dir, 200);
 
         child
             .wait()
@@ -346,8 +367,8 @@ fn concurrent_crash_iter() {
 fn run_iter() {
     common::setup_logger();
 
-    const N_FORWARD: usize = 5;
-    const N_REVERSE: usize = 5;
+    const N_FORWARD: usize = 50;
+    const N_REVERSE: usize = 50;
 
     let config = Config::new().path(ITER_DIR).flush_every_ms(Some(1));
 
@@ -422,7 +443,7 @@ fn run_iter() {
                 let barrier = barrier.clone();
                 move || {
                     barrier.wait();
-                    for _ in 0..100 {
+                    loop {
                         let expected = INDELIBLE.iter().rev();
                         let mut keys = t.iter().keys().rev();
 
@@ -462,13 +483,15 @@ fn run_iter() {
             move || {
                 barrier.wait();
 
-                for i in 0..(16 * 16 * 8) {
-                    let major = i / (16 * 8);
-                    let minor = i % 16;
+                loop {
+                    for i in 0..(16 * 16 * 8) {
+                        let major = i / (16 * 8);
+                        let minor = i % 16;
 
-                    let mut base = INDELIBLE[major].to_vec();
-                    base.push(minor as u8);
-                    t.insert(base.clone(), base.clone()).unwrap();
+                        let mut base = INDELIBLE[major].to_vec();
+                        base.push(minor as u8);
+                        t.insert(base.clone(), base.clone()).unwrap();
+                    }
                 }
             }
         })
@@ -484,13 +507,15 @@ fn run_iter() {
             move || {
                 barrier.wait();
 
-                for i in 0..(16 * 16 * 8) {
-                    let major = i / (16 * 8);
-                    let minor = i % 16;
+                loop {
+                    for i in 0..(16 * 16 * 8) {
+                        let major = i / (16 * 8);
+                        let minor = i % 16;
 
-                    let mut base = INDELIBLE[major].to_vec();
-                    base.push(minor as u8);
-                    t.remove(&base).unwrap();
+                        let mut base = INDELIBLE[major].to_vec();
+                        base.push(minor as u8);
+                        t.remove(&base).unwrap();
+                    }
                 }
             }
         })
@@ -505,23 +530,6 @@ fn run_iter() {
     }
 }
 
-fn concurrent_crash_transactions() {
-    let dir = TX_DIR;
-    cleanup(dir);
-
-    for _ in 0..N_TESTS {
-        let mut child = run_child_process(dir);
-
-        child
-            .wait()
-            .map(|status| handle_child_exit_status(dir, status))
-            .map_err(|e| handle_child_wait_err(dir, e))
-            .unwrap();
-    }
-
-    cleanup(dir);
-}
-
 fn run_tx() {
     common::setup_logger();
 
@@ -533,7 +541,7 @@ fn run_tx() {
 
     let mut threads = vec![];
 
-    const N_WRITERS: usize = 30;
+    const N_WRITERS: usize = 50;
     const N_READERS: usize = 5;
 
     let barrier = Arc::new(Barrier::new(N_WRITERS + N_READERS));
@@ -543,7 +551,7 @@ fn run_tx() {
         let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
             barrier.wait();
-            for _ in 0..100 {
+            loop {
                 db.transaction::<_, _, ()>(|db| {
                     let v1 = db.remove(b"k1").unwrap().unwrap();
                     let v2 = db.remove(b"k2").unwrap().unwrap();
@@ -563,7 +571,7 @@ fn run_tx() {
         let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
             barrier.wait();
-            for _ in 0..1000 {
+            loop {
                 db.transaction::<_, _, ()>(|db| {
                     let v1 = db.get(b"k1").unwrap().unwrap();
                     let v2 = db.get(b"k2").unwrap().unwrap();
