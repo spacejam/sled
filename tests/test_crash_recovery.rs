@@ -25,6 +25,8 @@ const BATCHES_DIR: &str = "crash_batches";
 const ITER_DIR: &str = "crash_iter";
 const TX_DIR: &str = "crash_tx";
 
+const CRASH_CHANCE: u32 = 250;
+
 fn main() {
     common::setup_logger();
 
@@ -266,14 +268,14 @@ fn run_batches() {
     }
 }
 
-fn run_child_process(test_name: &str, chance: u32) -> Child {
+fn run_child_process(test_name: &str) -> Child {
     let bin = env::current_exe().expect("could not get test binary path");
 
     env::set_var(TEST_ENV_VAR, test_name);
 
     Command::new(bin)
         .env(TEST_ENV_VAR, test_name)
-        .env("SLED_CRASH_CHANCE", chance.to_string())
+        .env("SLED_CRASH_CHANCE", CRASH_CHANCE.to_string())
         .spawn()
         .expect(&format!(
             "could not spawn child process for {} test",
@@ -301,7 +303,7 @@ fn test_crash_recovery() {
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(dir, 200);
+        let mut child = run_child_process(dir);
 
         child
             .wait()
@@ -318,7 +320,7 @@ fn test_crash_batches() {
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(dir, 200);
+        let mut child = run_child_process(dir);
 
         child
             .wait()
@@ -335,7 +337,7 @@ fn concurrent_crash_iter() {
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(dir, 200);
+        let mut child = run_child_process(dir);
 
         child
             .wait()
@@ -352,7 +354,7 @@ fn concurrent_crash_transactions() {
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(dir, 200);
+        let mut child = run_child_process(dir);
 
         child
             .wait()
