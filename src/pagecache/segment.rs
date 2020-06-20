@@ -618,6 +618,12 @@ impl SegmentAccountant {
 
         for segment_base in to_free {
             self.free_segment(segment_base)?;
+            io_fail!(self.config, "zero garbage segment SA");
+            pwrite_all(
+                &self.config.file,
+                &*vec![MessageKind::Corrupted.into(); self.config.segment_size],
+                segment_base,
+            )?;
         }
 
         // we want to complete all truncations because
@@ -1068,6 +1074,7 @@ impl SegmentAccountant {
 
         let config = self.config.clone();
 
+        io_fail!(&config, "file truncation");
         threadpool::spawn(move || {
             debug!("truncating file to length {}", at);
             let res = config
