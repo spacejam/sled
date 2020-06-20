@@ -158,6 +158,7 @@ macro_rules! io_fail {
     ($config:expr, $e:expr) => {
         #[cfg(feature = "failpoints")]
         {
+            debug_delay();
             if fail::is_active($e) {
                 $config.set_global_error(Error::FailPoint);
                 return Err(Error::FailPoint).into();

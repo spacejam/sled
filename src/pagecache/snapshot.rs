@@ -42,7 +42,7 @@ pub enum PageState {
     /// on the disk.
     Present {
         base: (Lsn, DiskPtr, u64),
-        frags: Vec<(Lsn, DiskPtr, u64)>
+        frags: Vec<(Lsn, DiskPtr, u64)>,
     },
 
     /// This is a free page.
@@ -252,9 +252,9 @@ fn advance_snapshot(
     //    in te SA initialization to properly initialize any segment tracking
     //    state despite not having any pages currently residing there.
 
-    let nothing_happened = iter.cur_lsn.is_none()
+    let no_recovery_progress = iter.cur_lsn.is_none()
         || iter.cur_lsn.unwrap() <= snapshot.stable_lsn.unwrap_or(0);
-    let db_is_empty = nothing_happened && snapshot.stable_lsn.is_none();
+    let db_is_empty = no_recovery_progress && snapshot.stable_lsn.is_none();
 
     #[cfg(feature = "testing")]
     let mut shred_point = None;
@@ -263,9 +263,9 @@ fn advance_snapshot(
         trace!("db is empty, returning default snapshot");
         assert_eq!(snapshot, Snapshot::default());
         snapshot
-    } else if nothing_happened {
+    } else if iter.cur_lsn.is_none() {
         trace!(
-            "nothing happened since the last snapshot \
+            "no recovery progress happened since the last snapshot \
             was generated, returning the previous one"
         );
         snapshot

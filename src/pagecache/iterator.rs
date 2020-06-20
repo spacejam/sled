@@ -40,11 +40,7 @@ impl Iterator for LogIter {
 
             if self.segment_base.is_none() {
                 if let Err(e) = self.read_segment() {
-                    debug!(
-                        "hit snap while reading segments in \
-                         iterator: {:?}",
-                        e
-                    );
+                    debug!("unable to load new segment: {:?}", e);
                     return None;
                 }
             }
