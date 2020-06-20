@@ -48,6 +48,7 @@ impl Arbitrary for Op {
             "buffer write",
             "zero garbage segment",
             "zero garbage segment post",
+            "zero garbage segment SA",
             "buffer write post",
             "write_config bytes",
             "write_config crc",
@@ -64,6 +65,7 @@ impl Arbitrary for Op {
             "write_blob write crc",
             "write_blob write kind_byte",
             "write_blob write buf",
+            "file truncation",
         ];
 
         if g.gen_bool(1. / 30.) {
