@@ -1,8 +1,6 @@
-use std::fs::File;
-
 use super::{
     arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, iobuf, lsn_to_arr,
-    maybe_decompress, pread_exact, pread_exact_or_eof, read_blob, roll_iobuf,
+    maybe_decompress, read_blob, roll_iobuf,
     u32_to_arr, Arc, BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind,
     LogOffset, Lsn, MessageKind, Reservation, Serialize, Snapshot,
     BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
@@ -58,8 +56,8 @@ impl Log {
 
         if ptr.is_inline() {
             iobuf::make_durable(&self.iobufs, lsn)?;
-            let f = &self.config.file;
-            read_message(&**f, ptr.lid(), expected_segment_number, &self.config)
+            let f = &*self.config.file;
+            read_message(f, ptr.lid(), expected_segment_number, &self.config)
         } else {
             // we short-circuit the inline read
             // here because it might not still
@@ -612,13 +610,13 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
 }
 
 pub(crate) fn read_segment_header(
-    file: &File,
+    file: &dyn IOFile,
     lid: LogOffset,
 ) -> Result<SegmentHeader> {
     trace!("reading segment header at {}", lid);
 
     let mut seg_header_buf = [0; SEG_HEADER_LEN];
-    pread_exact(file, &mut seg_header_buf, lid)?;
+    file.pread_exact(&mut seg_header_buf, lid)?;
     let segment_header = SegmentHeader::from(seg_header_buf);
 
     if segment_header.lsn < Lsn::try_from(lid).unwrap() {
@@ -642,9 +640,9 @@ pub(crate) trait ReadAt {
     ) -> std::io::Result<usize>;
 }
 
-impl ReadAt for File {
+impl<'a, F: IOFile + ?Sized> ReadAt for F {
     fn pread_exact(&self, dst: &mut [u8], at: u64) -> std::io::Result<()> {
-        pread_exact(self, dst, at)
+        self.pread_exact(dst, at)
     }
 
     fn pread_exact_or_eof(
@@ -652,7 +650,7 @@ impl ReadAt for File {
         dst: &mut [u8],
         at: u64,
     ) -> std::io::Result<usize> {
-        pread_exact_or_eof(self, dst, at)
+        self.pread_exact_or_eof(dst, at)
     }
 }
 
@@ -701,7 +699,7 @@ impl ReadAt for BasedBuf {
 }
 
 /// read a buffer from the disk
-pub(crate) fn read_message<R: ReadAt>(
+pub(crate) fn read_message<R: ReadAt + ?Sized>(
     file: &R,
     lid: LogOffset,
     expected_segment_number: SegmentNumber,

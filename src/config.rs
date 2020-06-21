@@ -1,9 +1,7 @@
 use std::{
     collections::HashMap,
-    fs,
-    fs::File,
     io,
-    io::{BufRead, BufReader, ErrorKind, Read, Seek, Write},
+    io::{BufRead, BufReader, ErrorKind},
     ops::Deref,
     path::{Path, PathBuf},
     sync::atomic::AtomicUsize,
@@ -213,6 +211,7 @@ pub struct Inner {
     pub version: (usize, usize),
     tmp_path: PathBuf,
     pub(crate) global_error: Arc<Atomic<Error>>,
+    pub(crate) io: &'static dyn IO,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
     pub event_log: Arc<event_log::EventLog>,
@@ -220,10 +219,11 @@ pub struct Inner {
 
 impl Default for Inner {
     fn default() -> Self {
+        let io = &RealIO();
         Self {
             // generally useful
             path: PathBuf::from(DEFAULT_PATH),
-            tmp_path: Config::gen_temp_path(),
+            tmp_path: Config::gen_temp_path(io),
             create_new: false,
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             mode: Mode::LowSpace,
@@ -238,6 +238,7 @@ impl Default for Inner {
             flush_every_ms: Some(500),
             idgen_persist_interval: 1_000_000,
             global_error: Arc::new(Atomic::default()),
+            io,
             #[cfg(feature = "event_log")]
             event_log: Arc::new(crate::event_log::EventLog::default()),
         }
@@ -349,7 +350,7 @@ impl Config {
         let file = config.open_file()?;
 
         // seal config in a Config
-        let config = RunningConfig { inner: config, file: Arc::new(file) };
+        let config = RunningConfig { inner: config, file: file.into() };
 
         Db::start_inner(config)
     }
@@ -439,10 +440,10 @@ impl Config {
         });
 
         // seal config in a Config
-        RunningConfig { inner: self, file: Arc::new(file) }
+        RunningConfig { inner: self, file: file.into() }
     }
 
-    fn gen_temp_path() -> PathBuf {
+    fn gen_temp_path(io: &dyn IO) -> PathBuf {
         use std::time::SystemTime;
 
         static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -463,12 +464,12 @@ impl Config {
             // use shared memory for temporary linux files
             format!("/dev/shm/pagecache.tmp.{}", salt).into()
         } else {
-            std::env::temp_dir().join(format!("pagecache.tmp.{}", salt))
+            io.temp_dir().join(format!("pagecache.tmp.{}", salt))
         }
     }
 
     fn limit_cache_max_memory(&mut self) {
-        let limit = sys_limits::get_memory_limit();
+        let limit = self.io.get_memory_limit();
         if limit > 0 && self.cache_capacity > limit {
             let m = Arc::make_mut(&mut self.0);
             m.cache_capacity = limit;
@@ -549,55 +550,35 @@ impl Config {
         Ok(())
     }
 
-    fn open_file(&self) -> Result<File> {
+    fn open_file(&self) -> Result<Box<dyn IOFile>> {
         let blob_dir: PathBuf = self.get_path().join("blobs");
 
-        if !blob_dir.exists() {
-            fs::create_dir_all(blob_dir)?;
+        if !self.io.path_exists(&blob_dir) {
+            self.io.create_dir_all(&blob_dir)?;
         }
 
         self.verify_config()?;
 
-        // open the data file
-        let mut options = fs::OpenOptions::new();
+        let path = self.db_path();
+        let file = if self.create_new {
+            self.io.file_create_new_rw(&path)?
+        } else {
+            self.io.file_open_or_create_rw(&path)?
+        };
 
-        let _ = options.create(true);
-        let _ = options.read(true);
-        let _ = options.write(true);
-
-        if self.create_new {
-            options.create_new(true);
-        }
-
-        self.try_lock(options.open(&self.db_path())?)
+        self.try_lock(file)
     }
 
-    fn try_lock(&self, file: File) -> Result<File> {
-        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-        {
-            use fs2::FileExt;
-
-            let try_lock = if cfg!(feature = "testing") {
-                // we block here because during testing
-                // there are many filesystem race condition
-                // that happen, causing locks to be held
-                // for long periods of time, so we should
-                // block to wait on reopening files.
-                file.lock_exclusive()
-            } else {
-                file.try_lock_exclusive()
-            };
-
-            if let Err(e) = try_lock {
-                return Err(Error::Io(io::Error::new(
-                    ErrorKind::Other,
-                    format!(
-                        "could not acquire lock on {:?}: {:?}",
-                        self.db_path().to_string_lossy(),
-                        e
-                    ),
-                )));
-            }
+    fn try_lock(&self, file: Box<dyn IOFile>) -> Result<Box<dyn IOFile>> {
+        if let Err(e) = file.try_lock() {
+            return Err(Error::Io(io::Error::new(
+                ErrorKind::Other,
+                format!(
+                    "could not acquire lock on {:?}: {:?}",
+                    self.db_path().to_string_lossy(),
+                    e
+                ),
+            )));
         }
 
         Ok(file)
@@ -663,8 +644,7 @@ impl Config {
 
         let path = self.config_path();
 
-        let mut f =
-            fs::OpenOptions::new().write(true).create(true).open(path)?;
+        let mut f = self.io.file_open_or_create_w(&path)?;
 
         io_fail!(self, "write_config bytes");
         f.write_all(&*bytes)?;
@@ -677,7 +657,7 @@ impl Config {
     fn read_config(&self) -> Result<Option<StorageParameters>> {
         let path = self.config_path();
 
-        let f_res = fs::OpenOptions::new().read(true).open(&path);
+        let f_res = self.io.file_open_r(&path);
 
         let mut f = match f_res {
             Err(ref e) if e.kind() == ErrorKind::NotFound => {
@@ -689,7 +669,7 @@ impl Config {
             Ok(f) => f,
         };
 
-        if f.metadata()?.len() <= 8 {
+        if f.len()? <= 8 {
             warn!("empty/corrupt configuration file found");
             return Ok(None);
         }
@@ -767,7 +747,7 @@ impl Config {
     pub fn truncate_corrupt(&self, new_len: u64) {
         self.event_log.reset();
         let path = self.db_path();
-        let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        let f = self.io.file_open_w(&path).unwrap();
         f.set_len(new_len).expect("should be able to truncate");
     }
 }
@@ -775,10 +755,10 @@ impl Config {
 /// A Configuration that has an associated opened
 /// file.
 #[allow(clippy::module_name_repetitions)]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RunningConfig {
     inner: Config,
-    pub(crate) file: Arc<File>,
+    pub(crate) file: Arc<dyn IOFile>,
 }
 
 #[allow(unsafe_code)]
@@ -795,6 +775,15 @@ impl Deref for RunningConfig {
     }
 }
 
+impl Debug for RunningConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunningConfig")
+            .field("inner", &self.inner)
+            .field("file", &self.file)
+            .finish()
+    }
+}
+
 impl Drop for Inner {
     fn drop(&mut self) {
         if self.print_profile_on_drop {
@@ -807,7 +796,7 @@ impl Drop for Inner {
 
         // Our files are temporary, so nuke them.
         debug!("removing temporary storage file {:?}", self.get_path());
-        let _res = fs::remove_dir_all(&self.get_path());
+        let _res = self.io.remove_dir_all(&self.get_path());
     }
 }
 
@@ -823,9 +812,8 @@ impl RunningConfig {
             std::env::current_dir()?.join(path)
         };
 
-        let filter = |dir_entry: io::Result<fs::DirEntry>| {
-            if let Ok(de) = dir_entry {
-                let path_buf = de.path();
+        let filter = |result: io::Result<PathBuf>| {
+            if let Ok(path_buf) = result {
                 let path = path_buf.as_path();
                 let path_str = &*path.to_string_lossy();
                 if path_str.starts_with(&*absolute_path.to_string_lossy())
@@ -843,10 +831,10 @@ impl RunningConfig {
         let snap_dir = Path::new(&absolute_path).parent().unwrap();
 
         if !snap_dir.exists() {
-            fs::create_dir_all(snap_dir)?;
+            self.io.create_dir_all(snap_dir)?;
         }
 
-        Ok(snap_dir.read_dir()?.filter_map(filter).collect())
+        Ok(self.io.read_dir_paths(&snap_dir)?.filter_map(filter).collect())
     }
 }
 

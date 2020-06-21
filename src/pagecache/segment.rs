@@ -498,7 +498,7 @@ impl SegmentAccountant {
 
     fn initial_segments(&self, snapshot: &Snapshot) -> Result<Vec<Segment>> {
         let segment_size = self.config.segment_size;
-        let file_len = self.config.file.metadata()?.len();
+        let file_len = self.config.file.len()?;
         let number_of_segments =
             usize::try_from(file_len / segment_size as u64).unwrap()
                 + if file_len % segment_size as u64 == 0 { 0 } else { 1 };
@@ -619,8 +619,7 @@ impl SegmentAccountant {
         for segment_base in to_free {
             self.free_segment(segment_base)?;
             io_fail!(self.config, "zero garbage segment SA");
-            pwrite_all(
-                &self.config.file,
+            self.config.file.pwrite_all(
                 &*vec![MessageKind::Corrupted.into(); self.config.segment_size],
                 segment_base,
             )?;

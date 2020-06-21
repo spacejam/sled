@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, io};
 
 use super::{
-    pread_exact_or_eof, read_message, read_segment_header, BasedBuf, DiskPtr,
+    read_message, read_segment_header, BasedBuf, DiskPtr,
     LogKind, LogOffset, LogRead, Lsn, SegmentHeader, SegmentNumber,
     MAX_MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
@@ -218,7 +218,7 @@ impl LogIter {
         assert!(
             lsn + self.config.segment_size as Lsn >= self.cur_lsn.unwrap_or(0)
         );
-        let f = &self.config.file;
+        let f = &*self.config.file;
         let segment_header = read_segment_header(f, offset)?;
         if offset % self.config.segment_size as LogOffset != 0 {
             debug!("segment offset not divisible by segment length");
@@ -249,7 +249,7 @@ impl LogIter {
         trace!("read segment header {:?}", segment_header);
 
         let mut buf = vec![0; self.config.segment_size];
-        let size = pread_exact_or_eof(f, &mut buf, offset)?;
+        let size = f.pread_exact_or_eof(&mut buf, offset)?;
 
         trace!("setting stored segment buffer length to {} after read", size);
         buf.truncate(size);
@@ -292,7 +292,7 @@ fn scan_segment_headers_and_tail(
     ) -> Option<(LogOffset, SegmentHeader)> {
         let segment_len = u64::try_from(config.segment_size).unwrap();
         let base_lid = idx * segment_len;
-        let segment = read_segment_header(&config.file, base_lid).ok()?;
+        let segment = read_segment_header(&*config.file, base_lid).ok()?;
         trace!(
             "SA scanned header at lid {} during startup: {:?}",
             base_lid,
@@ -316,7 +316,7 @@ fn scan_segment_headers_and_tail(
     let segment_len = LogOffset::try_from(config.segment_size).unwrap();
 
     let f = &config.file;
-    let file_len = f.metadata()?.len();
+    let file_len = f.len()?;
     let segments = (file_len / segment_len)
         + if file_len % segment_len
             < LogOffset::try_from(SEG_HEADER_LEN).unwrap()

@@ -28,9 +28,9 @@ pub struct Arc<T: ?Sized> {
 unsafe impl<T: Send + Sync + ?Sized> Send for Arc<T> {}
 unsafe impl<T: Send + Sync + ?Sized> Sync for Arc<T> {}
 
-impl<T: Debug> Debug for Arc<T> {
+impl<T: Debug + ?Sized> Debug for Arc<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        f.debug_map().entry(&"inner", unsafe { &(*self.ptr).inner }).finish()
+        Debug::fmt(&**self, f)
     }
 }
 
@@ -168,30 +168,47 @@ impl<T: Copy> From<&[T]> for Arc<[T]> {
 }
 
 #[allow(clippy::fallible_impl_from)]
-impl<T> From<Box<T>> for Arc<T> {
+impl<T: ?Sized> From<Box<T>> for Arc<T> {
     #[inline]
     fn from(b: Box<T>) -> Arc<T> {
-        let align =
-            std::cmp::max(mem::align_of::<T>(), mem::align_of::<AtomicUsize>());
-
-        let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
-
         unsafe {
-            let dst_layout = Layout::new::<ArcInner<T>>();
-            let dst = alloc(dst_layout);
-            assert!(!dst.is_null(), "failed to allocate Arc");
-
-            let data_ptr = dst.add(rc_width);
-            #[allow(clippy::cast_ptr_alignment)]
-            ptr::write(dst as _, AtomicUsize::new(1));
             let src = Box::into_raw(b);
-            ptr::copy(src, data_ptr as *mut T, 1);
+            let value_size = std::mem::size_of_val(&*src);
+            let value_layout = Layout::for_value(&*src);
+
+            let dst_layout = Layout::new::<ArcInner<()>>()
+                .extend(value_layout)
+                .unwrap()
+                .0
+                .pad_to_align();
+            let dst_thin = alloc(dst_layout);
+            assert!(!dst_thin.is_null(), "failed to allocate Arc");
+
+            // If *mut T is a fat pointer, this will copy the slice length
+            // from the source box, and overwrite the pointer to point to the
+            // newly allocated memory. Otherwise, if *mut T is a thin pointer,
+            // this will overwrite the entire pointer, and dst will be
+            // identical to dst_thin, save for its type.
+            let mut dst = src as *mut ArcInner<T>;
+            #[allow(trivial_casts)]
+            ptr::write(
+                &mut dst as *mut _ as *mut *mut u8,
+                dst_thin as *mut u8,
+            );
+
+            #[allow(clippy::cast_ptr_alignment)]
+            ptr::write(dst_thin as _, AtomicUsize::new(1));
+            #[allow(trivial_casts)]
+            ptr::copy_nonoverlapping(
+                src as *const u8,
+                &mut (*dst).inner as *mut T as *mut u8,
+                value_size,
+            );
 
             // free the old box memory without running Drop
-            let src_layout = Layout::new::<T>();
-            dealloc(src as *mut u8, src_layout);
+            dealloc(src as *mut u8, value_layout);
 
-            Arc { ptr: dst as *mut _ }
+            Arc { ptr: dst }
         }
     }
 }

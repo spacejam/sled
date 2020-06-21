@@ -11,11 +11,11 @@ mod iobuf;
 mod iterator;
 mod pagetable;
 #[cfg(all(not(unix), not(windows)))]
-mod parallel_io_polyfill;
+pub(crate) mod parallel_io_polyfill;
 #[cfg(unix)]
-mod parallel_io_unix;
+pub(crate) mod parallel_io_unix;
 #[cfg(windows)]
-mod parallel_io_windows;
+pub(crate) mod parallel_io_windows;
 mod reservation;
 mod segment;
 mod snapshot;
@@ -23,15 +23,6 @@ mod snapshot;
 use std::{collections::BinaryHeap, ops::Deref};
 
 use crate::*;
-
-#[cfg(all(not(unix), not(windows)))]
-use parallel_io_polyfill::{pread_exact, pread_exact_or_eof, pwrite_all};
-
-#[cfg(unix)]
-use parallel_io_unix::{pread_exact, pread_exact_or_eof, pwrite_all};
-
-#[cfg(windows)]
-use parallel_io_windows::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
@@ -1365,24 +1356,22 @@ impl PageCache {
     }
 
     pub(crate) fn size_on_disk(&self) -> Result<u64> {
-        let mut size = self.config.file.metadata()?.len();
+        let mut size = self.config.file.len()?;
 
         let stable = self.config.blob_path(0);
         let blob_dir = stable.parent().expect(
             "should be able to determine the parent for the blob directory",
         );
-        let blob_files = std::fs::read_dir(blob_dir)?;
+        let blob_files = self.config.io.read_dir_sizes(blob_dir)?;
 
-        for blob_file in blob_files {
-            let blob_file = if let Ok(bf) = blob_file {
-                bf
+        for result in blob_files {
+            // it's possible the blob file was removed lazily
+            // in the background and no longer exists
+            if let Ok(blob_size) = result {
+                size += blob_size
             } else {
                 continue;
             };
-
-            // it's possible the blob file was removed lazily
-            // in the background and no longer exists
-            size += blob_file.metadata().map(|m| m.len()).unwrap_or(0);
         }
 
         Ok(size)

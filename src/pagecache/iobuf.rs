@@ -752,34 +752,13 @@ impl IoBufs {
         }
         #[cfg(not(feature = "io_uring"))]
         {
-            let f = &self.config.file;
-            pwrite_all(f, data, log_offset)?;
+            let f = &*self.config.file;
+            f.pwrite_all(data, log_offset)?;
             if !self.config.temporary {
-                #[cfg(target_os = "linux")]
-                {
-                    use std::os::unix::io::AsRawFd;
-                    let ret = unsafe {
-                        libc::sync_file_range(
-                            f.as_raw_fd(),
-                            i64::try_from(log_offset).unwrap(),
-                            i64::try_from(total_len).unwrap(),
-                            libc::SYNC_FILE_RANGE_WAIT_BEFORE
-                                | libc::SYNC_FILE_RANGE_WRITE
-                                | libc::SYNC_FILE_RANGE_WAIT_AFTER,
-                        )
-                    };
-                    if ret < 0 {
-                        let err = std::io::Error::last_os_error();
-                        if let Some(libc::ENOSYS) = err.raw_os_error() {
-                            f.sync_all()?;
-                        } else {
-                            return Err(err.into());
-                        }
-                    }
-                }
-
-                #[cfg(not(target_os = "linux"))]
-                f.sync_all()?;
+                f.sync_file_range_before_write_after(
+                    i64::try_from(log_offset).unwrap(),
+                    i64::try_from(total_len).unwrap(),
+                )?;
             }
         }
         io_fail!(self, "buffer write post");

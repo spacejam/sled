@@ -185,6 +185,7 @@ mod dll;
 mod fastcmp;
 mod fastlock;
 mod histogram;
+mod io;
 mod iter;
 mod ivec;
 mod lazy;
@@ -311,6 +312,7 @@ use {
         context::Context,
         fastcmp::fastcmp,
         histogram::Histogram,
+        io::{IO, IOFile, RealIO},
         lru::Lru,
         meta::Meta,
         metrics::{clock, Measure, M},
@@ -328,7 +330,7 @@ use {
         collections::BTreeMap,
         convert::TryFrom,
         fmt::{self, Debug},
-        io::{Read, Write},
+        io::Write,
         sync::atomic::{
             AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
             Ordering::{Acquire, Relaxed, Release, SeqCst},

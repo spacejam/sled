@@ -6,7 +6,7 @@ pub(crate) fn read_blob(
     config: &Config,
 ) -> Result<(MessageKind, Vec<u8>)> {
     let path = config.blob_path(blob_ptr);
-    let f_res = std::fs::OpenOptions::new().read(true).open(&path);
+    let f_res = config.io.file_open_r(&path);
 
     if let Err(e) = &f_res {
         debug!("failed to open file for blob read at {}: {:?}", blob_ptr, e);
@@ -69,8 +69,7 @@ pub(crate) fn write_blob<T: Serialize>(
     item: &T,
 ) -> Result<()> {
     let path = config.blob_path(id);
-    let mut f =
-        std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
+    let mut f = config.io.file_create_new_w(&path)?;
 
     let kind_buf = &[kind.into()];
 
@@ -102,13 +101,13 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
     let mut base_dir = config.get_path();
     base_dir.push("blobs");
     let blob_dir = base_dir;
-    let blobs = std::fs::read_dir(blob_dir)?;
+    let paths = config.io.read_dir_paths(&blob_dir)?;
 
     debug!("gc_blobs removing any blob with an lsn above {}", stable_lsn);
 
     let mut to_remove = vec![];
-    for blob in blobs {
-        let path = blob?.path();
+    for path_res in paths {
+        let path = path_res?;
         let lsn_str = path.file_name().unwrap().to_str().unwrap();
         let lsn_res: std::result::Result<Lsn, _> = lsn_str.parse();
 
@@ -138,7 +137,7 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
     }
 
     for path in to_remove {
-        std::fs::remove_file(&path)?;
+        config.io.remove_file(&path)?;
     }
 
     Ok(())
@@ -146,7 +145,7 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
 
 pub(crate) fn remove_blob(id: Lsn, config: &Config) -> Result<()> {
     let path = config.blob_path(id);
-    if let Err(e) = std::fs::remove_file(&path) {
+    if let Err(e) = config.io.remove_file(&path) {
         debug!("removing blob at {:?} failed: {}", path, e);
     } else {
         trace!("successfully removed blob at {:?}", path);

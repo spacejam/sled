@@ -4,7 +4,7 @@ use zstd::block::{compress, decompress};
 use crate::*;
 
 use super::{
-    arr_to_u32, gc_blobs, pwrite_all, raw_segment_iter_from, u32_to_arr,
+    arr_to_u32, gc_blobs, raw_segment_iter_from, u32_to_arr,
     u64_to_arr, BasedBuf, DiskPtr, LogIter, LogKind, LogOffset, Lsn,
     MessageKind,
 };
@@ -316,7 +316,7 @@ fn advance_snapshot(
                     shred_base,
                     shred_base + shred_len as LogOffset
                 );
-                pwrite_all(&config.file, &shred_zone, shred_base)?;
+                config.file.pwrite_all(&shred_zone, shred_base)?;
                 config.file.sync_all()?;
             }
             (iterated_lsn, iter.segment_base.map(|bb| bb.offset))
@@ -394,8 +394,7 @@ fn advance_snapshot(
         // from being allocated which would duplicate its LSN, messing
         // up recovery in the future.
         io_fail!(config, "segment initial free zero");
-        pwrite_all(
-            &config.file,
+        config.file.pwrite_all(
             &*vec![MessageKind::Corrupted.into(); config.segment_size],
             *to_zero,
         )?;
@@ -441,7 +440,7 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
 
         let path = candidates.pop().unwrap();
 
-        match std::fs::OpenOptions::new().read(true).open(&path) {
+        match config.io.file_open_r(&path) {
             Ok(f) => break f,
             Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // this can happen if there's a race
@@ -524,9 +523,8 @@ fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
     path_2.push(path_2_suffix);
 
     let parent = path_1.parent().unwrap();
-    std::fs::create_dir_all(parent)?;
-    let mut f =
-        std::fs::OpenOptions::new().write(true).create(true).open(&path_1)?;
+    config.io.create_dir_all(parent)?;
+    let mut f = config.io.file_open_or_create_w(&path_1)?;
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
     io_fail!(config, "snap write");
@@ -541,7 +539,7 @@ fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
 
     io_fail!(config, "snap write mv");
-    std::fs::rename(&path_1, &path_2)?;
+    config.io.rename(&path_1, &path_2)?;
     io_fail!(config, "snap write mv post");
 
     trace!("renamed snapshot to {}", path_2.to_string_lossy());
@@ -555,7 +553,7 @@ fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
 
             io_fail!(config, "snap write rm old");
 
-            if let Err(e) = std::fs::remove_file(&path) {
+            if let Err(e) = config.io.remove_file(&path) {
                 // TODO should this just be a try return?
                 warn!(
                     "failed to remove old snapshot file, maybe snapshot race? {}",
