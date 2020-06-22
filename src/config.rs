@@ -211,7 +211,7 @@ pub struct Inner {
     pub version: (usize, usize),
     tmp_path: PathBuf,
     pub(crate) global_error: Arc<Atomic<Error>>,
-    pub(crate) io: &'static dyn IO,
+    pub(crate) io: Arc<dyn IO>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
     pub event_log: Arc<event_log::EventLog>,
@@ -219,11 +219,12 @@ pub struct Inner {
 
 impl Default for Inner {
     fn default() -> Self {
-        let io = &RealIO();
+        let io: Box<dyn IO + 'static> = Box::new(RealIO());
+        let io: Arc<dyn IO + 'static> = io.into();
         Self {
             // generally useful
             path: PathBuf::from(DEFAULT_PATH),
-            tmp_path: Config::gen_temp_path(io),
+            tmp_path: Config::gen_temp_path(&*io),
             create_new: false,
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             mode: Mode::LowSpace,
@@ -420,7 +421,7 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn mock_io(mut self, io: &'static dyn IO) -> Self {
+    pub fn mock_io(mut self, io: Arc<dyn IO>) -> Self {
         if Arc::strong_count(&self.0) != 1 {
             error!(
                 "config has already been used to start \
