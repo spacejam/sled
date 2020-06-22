@@ -176,11 +176,11 @@ impl<T: ?Sized> From<Box<T>> for Arc<T> {
             let value_size = std::mem::size_of_val(&*src);
             let value_layout = Layout::for_value(&*src);
 
-            let dst_layout = Layout::new::<ArcInner<()>>()
-                .extend(value_layout)
-                .unwrap()
-                .0
-                .pad_to_align();
+            let align = std::cmp::max(value_layout.align(), mem::align_of::<AtomicUsize>());
+            let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
+            let unpadded_size = rc_width.checked_add(value_size).unwrap();
+            let size = (unpadded_size + align - 1) & !(align - 1);
+            let dst_layout = Layout::from_size_align(size, align).unwrap();
             let dst_thin = alloc(dst_layout);
             assert!(!dst_thin.is_null(), "failed to allocate Arc");
 
