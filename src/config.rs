@@ -419,6 +419,20 @@ impl Config {
         self
     }
 
+    #[doc(hidden)]
+    pub fn mock_io(mut self, io: &'static dyn IO) -> Self {
+        if Arc::strong_count(&self.0) != 1 {
+            error!(
+                "config has already been used to start \
+                 the system and probably should not be \
+                 mutated",
+            );
+        }
+        let m = Arc::make_mut(&mut self.0);
+        m.io = io;
+        self
+    }
+
     /// Finalize the configuration.
     ///
     /// # Panics

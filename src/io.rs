@@ -15,7 +15,8 @@ use crate::pagecache::parallel_io_windows::{pread_exact, pread_exact_or_eof, pwr
 type ReadDirPathsIter = Box<dyn Iterator<Item = std::io::Result<PathBuf>>>;
 type ReadDirSizesIter = Box<dyn Iterator<Item = std::io::Result<u64>>>;
 
-pub(crate) trait IO: std::fmt::Debug + Send + Sync {
+#[doc(hidden)]
+pub trait IO: std::fmt::Debug + Send + Sync {
     fn create_dir_all(&self, path: &Path) -> std::io::Result<()>;
     fn file_create_new_rw(&self, path: &Path) -> std::io::Result<Box<dyn IOFile>>;
     fn file_create_new_w(&self, path: &Path) -> std::io::Result<Box<dyn IOFile>>;
@@ -33,7 +34,8 @@ pub(crate) trait IO: std::fmt::Debug + Send + Sync {
     fn temp_dir(&self) -> PathBuf;
 }
 
-pub(crate) trait IOFile: std::fmt::Debug + Send + Sync {
+#[doc(hidden)]
+pub trait IOFile: std::fmt::Debug + Send + Sync {
     fn len(&self) -> std::io::Result<u64>;
     fn pread_exact(&self, buf: &mut [u8], offset: LogOffset) -> std::io::Result<()>;
     fn pread_exact_or_eof(&self, buf: &mut [u8], offset: LogOffset) -> std::io::Result<usize>;
