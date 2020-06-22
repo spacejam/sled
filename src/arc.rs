@@ -206,7 +206,9 @@ impl<T: ?Sized> From<Box<T>> for Arc<T> {
             );
 
             // free the old box memory without running Drop
-            dealloc(src as *mut u8, value_layout);
+            if value_layout.size() != 0 {
+                dealloc(src as *mut u8, value_layout);
+            }
 
             Arc { ptr: dst }
         }
