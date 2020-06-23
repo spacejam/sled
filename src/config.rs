@@ -421,7 +421,7 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn mock_io(mut self, io: Arc<dyn IO>) -> Self {
+    pub fn mock_io(mut self, io: Box<dyn IO>) -> Self {
         if Arc::strong_count(&self.0) != 1 {
             error!(
                 "config has already been used to start \
@@ -430,7 +430,22 @@ impl Config {
             );
         }
         let m = Arc::make_mut(&mut self.0);
-        m.io = io;
+        m.io = io.into();
+        m.tmp_path = Config::gen_temp_path(&*m.io);
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn chain_mocked_io(mut self, other: &Config) -> Self {
+        if Arc::strong_count(&self.0) != 1 {
+            error!(
+                "config has already been used to start \
+                    the system and probably should not be \
+                    mutated",
+            );
+        }
+        let m = Arc::make_mut(&mut self.0);
+        m.io = other.io.clone();
         self
     }
 

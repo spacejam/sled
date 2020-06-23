@@ -276,6 +276,7 @@ const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 pub use {
     self::{
         config::RunningConfig,
+        io::{IO, IOFile},
         lazy::Lazy,
         pagecache::{
             constants::{
@@ -312,7 +313,7 @@ use {
         context::Context,
         fastcmp::fastcmp,
         histogram::Histogram,
-        io::{IO, IOFile, RealIO},
+        io::RealIO,
         lru::Lru,
         meta::Meta,
         metrics::{clock, Measure, M},
