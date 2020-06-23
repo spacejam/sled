@@ -17,6 +17,8 @@ for target in $targets; do
   cargo check --target $target
 done
 
+RUSTFLAGS="--cfg miri" cargo check
+
 rustup toolchain install 1.39.0
 cargo clean
 rm Cargo.lock
