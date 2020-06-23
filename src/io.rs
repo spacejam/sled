@@ -248,7 +248,8 @@ impl IOFile for RealIOFile {
     }
 
     fn try_lock(&self) -> std::io::Result<()> {
-        if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        {
             use fs2::FileExt;
 
             if cfg!(feature = "testing") {
@@ -257,13 +258,13 @@ impl IOFile for RealIOFile {
                 // that happen, causing locks to be held
                 // for long periods of time, so we should
                 // block to wait on reopening files.
-                self.0.lock_exclusive()
+                self.0.lock_exclusive()?;
             } else {
-                self.0.try_lock_exclusive()
+                self.0.try_lock_exclusive()?;
             }
-        } else {
-            Ok(())
         }
+
+        Ok(())
     }
 
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
