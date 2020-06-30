@@ -99,6 +99,8 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
         );
     }
 
+    tree.verify_integrity().unwrap();
+
     (contiguous, highest)
 }
 
@@ -184,6 +186,8 @@ fn verify_batches(tree: &sled::Tree) -> u32 {
             key, first_value, value, tree
         );
     }
+
+    tree.verify_integrity().unwrap();
 
     first_value
 }
@@ -375,6 +379,7 @@ fn run_iter() {
     let config = Config::new().path(ITER_DIR).flush_every_ms(Some(1));
 
     let t = config.open().unwrap();
+    t.verify_integrity().unwrap();
 
     const INDELIBLE: [&[u8]; 16] = [
         &[0u8],
@@ -537,6 +542,7 @@ fn run_tx() {
 
     let config = Config::new().flush_every_ms(Some(1)).path(TX_DIR);
     let db = config.open().unwrap();
+    db.verify_integrity().unwrap();
 
     db.insert(b"k1", b"cats").unwrap();
     db.insert(b"k2", b"dogs").unwrap();
