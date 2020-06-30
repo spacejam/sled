@@ -362,22 +362,8 @@ pub struct TransactionalTrees {
 }
 
 impl TransactionalTrees {
-    fn stage(&self) -> UnabortableTransactionResult<Vec<Protector<'_>>> {
-        // we want to stage our trees in
-        // lexicographic order to guarantee
-        // no deadlocks should they block
-        // on mutexes in their own staging
-        // implementations.
-        let mut tree_idxs: Vec<(&[u8], usize)> = self
-            .inner
-            .iter()
-            .enumerate()
-            .map(|(idx, t)| (&*t.tree.tree_id, idx))
-            .collect();
-        tree_idxs.sort_unstable();
-
-        let all_guards = vec![concurrency_control::write()];
-        Ok(all_guards)
+    fn stage(&self) -> UnabortableTransactionResult<Protector<'_>> {
+        Ok(concurrency_control::write())
     }
 
     fn unstage(&self) {

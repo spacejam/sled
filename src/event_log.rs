@@ -50,7 +50,7 @@ impl EventLog {
     pub(crate) fn reset(&self) {
         self.verify();
         let guard = pin();
-        while let Some(_) = self.inner.pop(&guard) {}
+        while self.inner.pop(&guard).is_some() {}
     }
 
     fn iter<'a>(&self, guard: &'a Guard) -> StackIter<'a, Event> {

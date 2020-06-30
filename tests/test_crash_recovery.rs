@@ -3,6 +3,7 @@ mod common;
 use std::env::{self, VarError};
 use std::mem::size_of;
 use std::process::{exit, Child, Command, ExitStatus};
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
 
@@ -19,8 +20,12 @@ const BATCH_SIZE: u32 = 8;
 const SEGMENT_SIZE: usize = 1024;
 
 // test names, also used as dir names
-const RECOVERY_NO_SNAPSHOT: &str = "crash_recovery_no_runtime_snapshot";
-const BATCHES_NO_SNAPSHOT: &str = "crash_batches_no_runtime_snapshot";
+const RECOVERY_DIR: &str = "crash_recovery";
+const BATCHES_DIR: &str = "crash_batches";
+const ITER_DIR: &str = "crash_iter";
+const TX_DIR: &str = "crash_tx";
+
+const CRASH_CHANCE: u32 = 250;
 
 fn main() {
     // Don't actually run this harness=false test under miri, as it requires spawning and killing
@@ -35,10 +40,14 @@ fn main() {
         Err(VarError::NotPresent) => {
             test_crash_recovery();
             test_crash_batches();
+            concurrent_crash_iter();
+            concurrent_crash_transactions();
         }
 
-        Ok(ref s) if s == RECOVERY_NO_SNAPSHOT => run(s),
-        Ok(ref s) if s == BATCHES_NO_SNAPSHOT => run_batches(s),
+        Ok(ref s) if s == RECOVERY_DIR => run(),
+        Ok(ref s) if s == BATCHES_DIR => run_batches(),
+        Ok(ref s) if s == ITER_DIR => run_iter(),
+        Ok(ref s) if s == TX_DIR => run_tx(),
 
         Ok(_) | Err(_) => panic!("invalid crash test case"),
     }
@@ -95,6 +104,8 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
             tree
         );
     }
+
+    tree.verify_integrity().unwrap();
 
     (contiguous, highest)
 }
@@ -182,6 +193,8 @@ fn verify_batches(tree: &sled::Tree) -> u32 {
         );
     }
 
+    tree.verify_integrity().unwrap();
+
     first_value
 }
 
@@ -217,11 +230,11 @@ fn run_batches_inner(db: sled::Db) {
     }
 }
 
-fn run(dir: &str) {
+fn run() {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(1))
-        .path(dir.to_string())
+        .path(RECOVERY_DIR.to_string())
         .segment_size(SEGMENT_SIZE);
 
     match thread::spawn(|| run_inner(config)).join() {
@@ -233,7 +246,7 @@ fn run(dir: &str) {
     }
 }
 
-fn run_batches(dir: &str) {
+fn run_batches() {
     let crash_during_initialization = rand::thread_rng().gen_ratio(1, 10);
 
     if crash_during_initialization {
@@ -243,7 +256,7 @@ fn run_batches(dir: &str) {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(1))
-        .path(dir.to_string())
+        .path(BATCHES_DIR.to_string())
         .segment_size(SEGMENT_SIZE);
 
     let db = config.open().unwrap();
@@ -270,10 +283,14 @@ fn run_child_process(test_name: &str) -> Child {
 
     env::set_var(TEST_ENV_VAR, test_name);
 
-    Command::new(bin).env(TEST_ENV_VAR, test_name).spawn().expect(&format!(
-        "could not spawn child process for {} test",
-        test_name
-    ))
+    Command::new(bin)
+        .env(TEST_ENV_VAR, test_name)
+        .env("SLED_CRASH_CHANCE", CRASH_CHANCE.to_string())
+        .spawn()
+        .expect(&format!(
+            "could not spawn child process for {} test",
+            test_name
+        ))
 }
 
 fn handle_child_exit_status(dir: &str, status: ExitStatus) {
@@ -292,11 +309,11 @@ fn handle_child_wait_err(dir: &str, e: std::io::Error) {
 }
 
 fn test_crash_recovery() {
-    let dir = RECOVERY_NO_SNAPSHOT;
+    let dir = RECOVERY_DIR;
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(RECOVERY_NO_SNAPSHOT);
+        let mut child = run_child_process(dir);
 
         child
             .wait()
@@ -308,13 +325,12 @@ fn test_crash_recovery() {
     cleanup(dir);
 }
 
-#[allow(dead_code)]
 fn test_crash_batches() {
-    let dir = BATCHES_NO_SNAPSHOT;
+    let dir = BATCHES_DIR;
     cleanup(dir);
 
     for _ in 0..N_TESTS {
-        let mut child = run_child_process(BATCHES_NO_SNAPSHOT);
+        let mut child = run_child_process(dir);
 
         child
             .wait()
@@ -324,4 +340,276 @@ fn test_crash_batches() {
     }
 
     cleanup(dir);
+}
+
+fn concurrent_crash_iter() {
+    let dir = ITER_DIR;
+    cleanup(dir);
+
+    for _ in 0..N_TESTS {
+        let mut child = run_child_process(dir);
+
+        child
+            .wait()
+            .map(|status| handle_child_exit_status(dir, status))
+            .map_err(|e| handle_child_wait_err(dir, e))
+            .unwrap();
+    }
+
+    cleanup(dir);
+}
+
+fn concurrent_crash_transactions() {
+    let dir = TX_DIR;
+    cleanup(dir);
+
+    for _ in 0..N_TESTS {
+        let mut child = run_child_process(dir);
+
+        child
+            .wait()
+            .map(|status| handle_child_exit_status(dir, status))
+            .map_err(|e| handle_child_wait_err(dir, e))
+            .unwrap();
+    }
+
+    cleanup(dir);
+}
+
+fn run_iter() {
+    common::setup_logger();
+
+    const N_FORWARD: usize = 50;
+    const N_REVERSE: usize = 50;
+
+    let config = Config::new().path(ITER_DIR).flush_every_ms(Some(1));
+
+    let t = config.open().unwrap();
+    t.verify_integrity().unwrap();
+
+    const INDELIBLE: [&[u8]; 16] = [
+        &[0u8],
+        &[1u8],
+        &[2u8],
+        &[3u8],
+        &[4u8],
+        &[5u8],
+        &[6u8],
+        &[7u8],
+        &[8u8],
+        &[9u8],
+        &[10u8],
+        &[11u8],
+        &[12u8],
+        &[13u8],
+        &[14u8],
+        &[15u8],
+    ];
+
+    for item in &INDELIBLE {
+        t.insert(*item, *item).unwrap();
+    }
+
+    let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
+    let mut threads = vec![];
+
+    for i in 0..N_FORWARD {
+        let t = thread::Builder::new()
+            .name(format!("forward({})", i))
+            .spawn({
+                let t = t.clone();
+                let barrier = barrier.clone();
+                move || {
+                    barrier.wait();
+                    loop {
+                        let expected = INDELIBLE.iter();
+                        let mut keys = t.iter().keys();
+
+                        for expect in expected {
+                            loop {
+                                let k = keys.next().unwrap().unwrap();
+                                assert!(
+                                    &*k <= *expect,
+                                    "witnessed key is {:?} but we expected \
+                                     one <= {:?}, so we overshot due to a \
+                                     concurrent modification",
+                                    k,
+                                    expect,
+                                );
+                                if &*k == *expect {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .unwrap();
+        threads.push(t);
+    }
+
+    for i in 0..N_REVERSE {
+        let t = thread::Builder::new()
+            .name(format!("reverse({})", i))
+            .spawn({
+                let t = t.clone();
+                let barrier = barrier.clone();
+                move || {
+                    barrier.wait();
+                    loop {
+                        let expected = INDELIBLE.iter().rev();
+                        let mut keys = t.iter().keys().rev();
+
+                        for expect in expected {
+                            loop {
+                                if let Some(Ok(k)) = keys.next() {
+                                    assert!(
+                                        &*k >= *expect,
+                                        "witnessed key is {:?} but we expected \
+                                         one >= {:?}, so we overshot due to a \
+                                         concurrent modification\n{:?}",
+                                        k,
+                                        expect,
+                                        *t,
+                                    );
+                                    if &*k == *expect {
+                                        break;
+                                    }
+                                } else {
+                                    panic!("undershot key on tree: \n{:?}", *t);
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .unwrap();
+
+        threads.push(t);
+    }
+
+    let inserter = thread::Builder::new()
+        .name("inserter".into())
+        .spawn({
+            let t = t.clone();
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
+
+                loop {
+                    for i in 0..(16 * 16 * 8) {
+                        let major = i / (16 * 8);
+                        let minor = i % 16;
+
+                        let mut base = INDELIBLE[major].to_vec();
+                        base.push(minor as u8);
+                        t.insert(base.clone(), base.clone()).unwrap();
+                    }
+                }
+            }
+        })
+        .unwrap();
+
+    threads.push(inserter);
+
+    let deleter = thread::Builder::new()
+        .name("deleter".into())
+        .spawn({
+            let t = t.clone();
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
+
+                loop {
+                    for i in 0..(16 * 16 * 8) {
+                        let major = i / (16 * 8);
+                        let minor = i % 16;
+
+                        let mut base = INDELIBLE[major].to_vec();
+                        base.push(minor as u8);
+                        t.remove(&base).unwrap();
+                    }
+                }
+            }
+        })
+        .unwrap();
+
+    spawn_killah();
+
+    threads.push(deleter);
+
+    for thread in threads.into_iter() {
+        thread.join().expect("thread should not have crashed");
+    }
+}
+
+fn run_tx() {
+    common::setup_logger();
+
+    let config = Config::new().flush_every_ms(Some(1)).path(TX_DIR);
+    let db = config.open().unwrap();
+    db.verify_integrity().unwrap();
+
+    db.insert(b"k1", b"cats").unwrap();
+    db.insert(b"k2", b"dogs").unwrap();
+
+    let mut threads = vec![];
+
+    const N_WRITERS: usize = 50;
+    const N_READERS: usize = 5;
+
+    let barrier = Arc::new(Barrier::new(N_WRITERS + N_READERS));
+
+    for _ in 0..N_WRITERS {
+        let db = db.clone();
+        let barrier = barrier.clone();
+        let thread = std::thread::spawn(move || {
+            barrier.wait();
+            loop {
+                db.transaction::<_, _, ()>(|db| {
+                    let v1 = db.remove(b"k1").unwrap().unwrap();
+                    let v2 = db.remove(b"k2").unwrap().unwrap();
+
+                    db.insert(b"k1", v2).unwrap();
+                    db.insert(b"k2", v1).unwrap();
+                    Ok(())
+                })
+                .unwrap();
+            }
+        });
+        threads.push(thread);
+    }
+
+    for _ in 0..N_READERS {
+        let db = db.clone();
+        let barrier = barrier.clone();
+        let thread = std::thread::spawn(move || {
+            barrier.wait();
+            loop {
+                db.transaction::<_, _, ()>(|db| {
+                    let v1 = db.get(b"k1").unwrap().unwrap();
+                    let v2 = db.get(b"k2").unwrap().unwrap();
+
+                    let mut results = vec![v1, v2];
+                    results.sort();
+
+                    assert_eq!([&results[0], &results[1]], [b"cats", b"dogs"]);
+
+                    Ok(())
+                })
+                .unwrap();
+            }
+        });
+        threads.push(thread);
+    }
+
+    spawn_killah();
+
+    for thread in threads.into_iter() {
+        thread.join().expect("threads should not crash");
+    }
+
+    let v1 = db.get(b"k1").unwrap().unwrap();
+    let v2 = db.get(b"k2").unwrap().unwrap();
+    assert_eq!([v1, v2], [b"cats", b"dogs"]);
 }

@@ -13,7 +13,13 @@ use crate::{
 };
 
 /// The top-level result type for dealing with
-/// the `PageCache`.
+/// fallible operations. The errors tend to
+/// be fail-stop, and nested results are used
+/// in cases where the outer fail-stop error can
+/// have try `?` used on it, exposing the inner
+/// operation that is expected to fail under
+/// normal operation. The philosophy behind this
+/// is detailed [on the sled blog](https://sled.rs/errors).
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// A compare and swap result.  If the CAS is successful,
@@ -24,7 +30,7 @@ pub(crate) type CasResult<'a, R> =
     std::result::Result<PageView<'a>, Option<(PageView<'a>, R)>>;
 
 /// An Error type encapsulating various issues that may come up
-/// in both the expected and unexpected operation of a `PageCache`.
+/// in the operation of a `Db`.
 #[derive(Debug)]
 pub enum Error {
     /// The underlying collection no longer exists.

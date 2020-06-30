@@ -19,7 +19,17 @@ pub fn debug_delay() {
             .parse()
             .expect(
                 "SLED_LOCK_FREE_DELAY_INTENSITY must be set to a \
-                 float (ideally between 1-1,000,000)",
+                 non-negative integer (ideally below 1,000,000)",
+            )
+    });
+
+    static CRASH_CHANCE: Lazy<u32, fn() -> u32> = Lazy::new(|| {
+        std::env::var("SLED_CRASH_CHANCE")
+            .unwrap_or_else(|_| "0".into())
+            .parse()
+            .expect(
+                "SLED_CRASH_CHANCE must be set to a \
+                 non-negative integer (ideally below 50,000)",
             )
     });
 
@@ -40,6 +50,10 @@ pub fn debug_delay() {
         *ld = std::cmp::max(global_delays + 1, *ld + 1);
         old
     });
+
+    if *CRASH_CHANCE > 0 && random(*CRASH_CHANCE) == 0 {
+        std::process::exit(9)
+    }
 
     if global_delays == local_delays {
         // no other threads seem to be

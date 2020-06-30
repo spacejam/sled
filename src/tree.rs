@@ -3,14 +3,12 @@ use std::{
     borrow::Cow,
     fmt::{self, Debug},
     ops::{self, Deref, RangeBounds},
-    sync::{
-        atomic::{AtomicU64, Ordering::SeqCst},
-    },
+    sync::atomic::Ordering::SeqCst,
 };
 
 use parking_lot::RwLock;
 
-use crate::{pagecache::NodeView, *};
+use crate::{atomic_shim::AtomicU64, pagecache::NodeView, *};
 
 #[derive(Debug, Clone)]
 pub(crate) struct View<'g> {
@@ -146,7 +144,11 @@ impl Tree {
         mut value: Option<IVec>,
         guard: &mut Guard,
     ) -> Result<Abortable<Option<IVec>>> {
-        let _measure = Measure::new(&M.tree_set);
+        let _measure = if value.is_some() {
+            Measure::new(&M.tree_set)
+        } else {
+            Measure::new(&M.tree_del)
+        };
 
         let View { node_view, pid, .. } =
             self.view_for_key(key.as_ref(), guard)?;
@@ -790,6 +792,8 @@ impl Tree {
     /// should measure the performance impact of
     /// using it on realistic sustained workloads
     /// running on realistic hardware.
+    // this clippy check is mis-firing on async code.
+    #[allow(clippy::used_underscore_binding)]
     pub async fn flush_async(&self) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
         if let Some(result) = threadpool::spawn(move || pagecache.flush()).await
@@ -2104,6 +2108,13 @@ impl Tree {
 
         Ok(())
     }
+
+    #[doc(hidden)]
+    pub fn verify_integrity(&self) -> Result<()> {
+        // verification happens in Debug impl
+        let _out = format!("{:?}", self);
+        Ok(())
+    }
 }
 
 impl Debug for Tree {
@@ -2116,6 +2127,11 @@ impl Debug for Tree {
         let mut pid = self.root.load(SeqCst);
         let mut left_most = pid;
         let mut level = 0;
+        let mut expected_pids = FastSet8::default();
+        let mut referenced_pids = FastSet8::default();
+        let mut loop_detector = FastSet8::default();
+
+        expected_pids.insert(pid);
 
         f.write_str("Tree: \n\t")?;
         self.context.pagecache.fmt(f)?;
@@ -2124,19 +2140,52 @@ impl Debug for Tree {
         loop {
             let get_res = self.view_for_pid(pid, &guard);
             let node = if let Ok(Some(ref view)) = get_res {
+                expected_pids.remove(&pid);
+                if loop_detector.contains(&pid) {
+                    if cfg!(feature = "testing") {
+                        panic!(
+                            "detected a loop while iterating over the Tree. \
+                            pid {} was encountered multiple times",
+                            pid
+                        );
+                    } else {
+                        error!(
+                            "detected a loop while iterating over the Tree. \
+                            pid {} was encountered multiple times",
+                            pid
+                        );
+                    }
+                } else {
+                    loop_detector.insert(pid);
+                }
+
                 view.deref()
             } else {
-                error!(
-                    "Tree::fmt failed to read node {} \
-                     that has been freed",
-                    pid,
-                );
+                if cfg!(feature = "testing") {
+                    panic!(
+                        "Tree::fmt failed to read node {} \
+                         that has been freed",
+                        pid,
+                    );
+                } else {
+                    error!(
+                        "Tree::fmt failed to read node {} \
+                         that has been freed",
+                        pid,
+                    );
+                }
                 break;
             };
 
             write!(f, "\t\t{}: ", pid)?;
             node.fmt(f)?;
             f.write_str("\n")?;
+
+            if let Data::Index(ref index) = &node.data {
+                for pid in &index.pointers {
+                    referenced_pids.insert(*pid);
+                }
+            }
 
             if let Some(next_pid) = node.next {
                 pid = next_pid.get();
@@ -2159,6 +2208,13 @@ impl Debug for Tree {
                             left_most = *next_pid;
                             level += 1;
                             f.write_str(&*format!("\n\tlevel {}:\n", level))?;
+                            assert!(
+                                expected_pids.is_empty(),
+                                "expected pids {:?} but never \
+                                saw them on this level",
+                                expected_pids
+                            );
+                            std::mem::swap(&mut expected_pids, &mut referenced_pids);
                         } else {
                             panic!("trying to debug print empty index node");
                         }

@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "0.32.0-rc1"
+version = "0.32.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a modern embedded database"
 license = "MIT/Apache-2.0"
@@ -35,19 +35,21 @@ pretty_backtrace = ["color-backtrace"]
 io_uring = ["rio"]
 docs = []
 miri_optimizations = []
+mutex = []
 
 [dependencies]
 crossbeam-epoch = "0.8.2"
 crossbeam-utils = "0.7.2"
 fxhash = "0.2.1"
-libc = "0.2.70"
-zstd = { version = "0.5.2", optional = true }
+libc = "0.2.71"
+zstd = { version = "0.5.3", optional = true }
 crc32fast = "1.2.0"
 log = "0.4.8"
-parking_lot = "0.10.2"
+parking_lot = "0.11.0"
 color-backtrace = { version = "0.4.2", optional = true }
 rio = { version = "0.9.3", optional = true }
-backtrace = "0.3.48"
+backtrace = "0.3.49"
+array-init = "0.1.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os="windows"))'.dependencies]
 fs2 = "0.4.3"

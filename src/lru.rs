@@ -2,13 +2,14 @@
 
 use std::convert::TryFrom;
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::{
     debug_delay,
     dll::{DoublyLinkedList, Node},
     fastlock::FastLock,
     Guard, PageId,
+    atomic_shim::AtomicU64,
 };
 
 #[cfg(any(test, feature = "lock_free_delays"))]
@@ -33,7 +34,7 @@ impl Default for AccessBlock {
     fn default() -> AccessBlock {
         AccessBlock {
             len: AtomicUsize::new(0),
-            block: unsafe { std::mem::transmute([0_u64; MAX_QUEUE_ITEMS]) },
+            block: array_init::array_init(|_| AtomicU64::default()),
             next: AtomicPtr::default(),
         }
     }

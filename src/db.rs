@@ -117,7 +117,12 @@ impl Db {
         drop(tenants);
 
         #[cfg(feature = "event_log")]
-        ret.context.event_log.verify();
+        {
+            for (_name, tree) in ret.tenants.read().iter() {
+                tree.verify_integrity().unwrap();
+            }
+            ret.context.event_log.verify();
+        }
 
         Ok(ret)
     }

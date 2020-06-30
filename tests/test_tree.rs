@@ -40,7 +40,7 @@ fn very_large_reverse_tree_iterator() {
 
     let db = Config::new()
         .temporary(true)
-        .flush_every_ms(None)
+        .flush_every_ms(Some(1))
         .segment_size(256)
         .open()
         .unwrap();
@@ -99,7 +99,7 @@ fn concurrent_tree_ops() {
 
         let config = Config::new()
             .temporary(true)
-            .flush_every_ms(None)
+            .flush_every_ms(Some(1))
             .segment_size(256);
 
         macro_rules! par {
@@ -225,7 +225,7 @@ fn concurrent_tree_iter() -> Result<()> {
     const N_FORWARD: usize = INTENSITY;
     const N_REVERSE: usize = INTENSITY;
 
-    let config = Config::new().temporary(true).flush_every_ms(None);
+    let config = Config::new().temporary(true).flush_every_ms(Some(1));
 
     let t = config.open().unwrap();
 
@@ -399,7 +399,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
 
     let config = Config::new()
         .temporary(true)
-        .flush_every_ms(None)
+        .flush_every_ms(Some(1))
         .use_compression(true);
     let db = config.open().unwrap();
 
@@ -473,7 +473,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
 fn many_tree_transactions() -> TransactionResult<()> {
     common::setup_logger();
 
-    let config = Config::new().temporary(true).flush_every_ms(None);
+    let config = Config::new().temporary(true).flush_every_ms(Some(1));
     let db = Arc::new(config.open().unwrap());
     let t1 = db.open_tree(b"1")?;
     let t2 = db.open_tree(b"2")?;
@@ -496,7 +496,7 @@ fn many_tree_transactions() -> TransactionResult<()> {
 fn batch_outside_of_transaction() -> TransactionResult<()> {
     common::setup_logger();
 
-    let config = Config::new().temporary(true).flush_every_ms(None);
+    let config = Config::new().temporary(true).flush_every_ms(Some(1));
     let db = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
@@ -549,7 +549,7 @@ fn tree_subdir() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_small_keys_iterator() {
-    let config = Config::new().temporary(true).flush_every_ms(None);
+    let config = Config::new().temporary(true).flush_every_ms(Some(1));
     let t = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
@@ -597,7 +597,7 @@ fn tree_big_keys_iterator() {
         base
     }
 
-    let config = Config::new().temporary(true).flush_every_ms(None);
+    let config = Config::new().temporary(true).flush_every_ms(Some(1));
 
     let t = config.open().unwrap();
     for i in 0..N_PER_THREAD {
@@ -637,7 +637,7 @@ fn tree_big_keys_iterator() {
 
 #[test]
 fn tree_subscribers_and_keyspaces() -> Result<()> {
-    let config = Config::new().temporary(true).flush_every_ms(None);
+    let config = Config::new().temporary(true).flush_every_ms(Some(1));
 
     let db = config.open().unwrap();
 
@@ -727,7 +727,7 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
 fn tree_range() {
     common::setup_logger();
 
-    let config = Config::new().temporary(true).flush_every_ms(None);
+    let config = Config::new().temporary(true).flush_every_ms(Some(1));
     let t = config.open().unwrap();
 
     t.insert(b"0", vec![0]).unwrap();
@@ -777,8 +777,10 @@ fn tree_range() {
 fn recover_tree() {
     common::setup_logger();
 
-    let config =
-        Config::new().temporary(true).flush_every_ms(None).segment_size(4096);
+    let config = Config::new()
+        .temporary(true)
+        .flush_every_ms(Some(1))
+        .segment_size(4096);
 
     let t = config.open().unwrap();
     for i in 0..N_PER_THREAD {

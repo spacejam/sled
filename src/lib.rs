@@ -158,6 +158,7 @@ macro_rules! io_fail {
     ($config:expr, $e:expr) => {
         #[cfg(feature = "failpoints")]
         {
+            debug_delay();
             if fail::is_active($e) {
                 $config.set_global_error(Error::FailPoint);
                 return Err(Error::FailPoint).into();
@@ -174,6 +175,7 @@ macro_rules! testing_assert {
 }
 
 mod arc;
+mod atomic_shim;
 mod batch;
 mod binary_search;
 mod concurrency_control;
@@ -305,6 +307,7 @@ pub use self::{
 use {
     self::{
         arc::Arc,
+        atomic_shim::{AtomicI64 as AtomicLsn, AtomicU64},
         binary_search::binary_search_lub,
         concurrency_control::Protector,
         context::Context,
@@ -329,7 +332,7 @@ use {
         fmt::{self, Debug},
         io::{Read, Write},
         sync::atomic::{
-            AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
+            AtomicUsize,
             Ordering::{Acquire, Relaxed, Release, SeqCst},
         },
     },

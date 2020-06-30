@@ -41,31 +41,33 @@ impl<T> Arc<T> {
         Arc { ptr }
     }
 
-    pub fn copy_from_slice(s: &[T]) -> Arc<[T]> {
+    // See std::sync::arc::Arc::copy_from_slice,
+    // "Unsafe because the caller must either take ownership or bind `T: Copy`"
+    unsafe fn copy_from_slice(s: &[T]) -> Arc<[T]> {
         let align =
             std::cmp::max(mem::align_of::<T>(), mem::align_of::<AtomicUsize>());
 
         let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
         let data_width = mem::size_of::<T>().checked_mul(s.len()).unwrap();
 
-        let size = rc_width.checked_add(data_width).unwrap();
+        let size_unpadded = rc_width.checked_add(data_width).unwrap();
+        // Pad size out to alignment
+        let size_padded = (size_unpadded + align - 1) & !(align - 1);
 
-        let layout = Layout::from_size_align(size, align).unwrap();
+        let layout = Layout::from_size_align(size_padded, align).unwrap();
 
-        unsafe {
-            let ptr = alloc(layout);
+        let ptr = alloc(layout);
 
-            assert!(!ptr.is_null(), "failed to allocate Arc");
-            #[allow(clippy::cast_ptr_alignment)]
-            ptr::write(ptr as _, AtomicUsize::new(1));
+        assert!(!ptr.is_null(), "failed to allocate Arc");
+        #[allow(clippy::cast_ptr_alignment)]
+        ptr::write(ptr as _, AtomicUsize::new(1));
 
-            let data_ptr = ptr.add(rc_width);
-            ptr::copy_nonoverlapping(s.as_ptr(), data_ptr as _, s.len());
+        let data_ptr = ptr.add(rc_width);
+        ptr::copy_nonoverlapping(s.as_ptr(), data_ptr as _, s.len());
 
-            let fat_ptr: *const ArcInner<[T]> = Arc::fatten(ptr, s.len());
+        let fat_ptr: *const ArcInner<[T]> = Arc::fatten(ptr, s.len());
 
-            Arc { ptr: fat_ptr as *mut _ }
-        }
+        Arc { ptr: fat_ptr as *mut _ }
     }
 
     /// <https://users.rust-lang.org/t/construct-fat-pointer-to-struct/29198/9>
@@ -161,7 +163,7 @@ impl<T: ?Sized> Drop for Arc<T> {
 impl<T: Copy> From<&[T]> for Arc<[T]> {
     #[inline]
     fn from(s: &[T]) -> Arc<[T]> {
-        Arc::copy_from_slice(s)
+        unsafe { Arc::copy_from_slice(s) }
     }
 }
 
