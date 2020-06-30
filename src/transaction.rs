@@ -43,7 +43,8 @@
 //! to the processed `Tree`.
 //!
 //! ```
-//! use sled::{Config, Transactional};
+//! # use sled::{transaction::{TransactionResult, Transactional}, Config};
+//! # fn main() -> TransactionResult<()> {
 //!
 //! let config = Config::new().temporary(true);
 //! let db = config.open().unwrap();
@@ -64,16 +65,28 @@
 //!         processed_item.extend_from_slice(&unprocessed_item);
 //!         processed.insert(b"k3", processed_item)?;
 //!         Ok(())
-//!     })
-//!     .unwrap();
+//!     })?;
 //!
 //! assert_eq!(unprocessed.get(b"k3").unwrap(), None);
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
+//! # Ok(())
+//! # }
 //! ```
 #![allow(clippy::module_name_repetitions)]
-use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
+use std::{cell::RefCell, fmt, rc::Rc};
 
-use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};
+#[cfg(not(feature = "testing"))]
+use std::collections::HashMap as Map;
+
+// we avoid HashMap while testing because
+// it makes tests non-deterministic
+#[cfg(feature = "testing")]
+use std::collections::BTreeMap as Map;
+
+use crate::{
+    concurrency_control, pin, Batch, Error, Guard, IVec, Protector, Result,
+    Tree,
+};
 
 /// A transaction that will
 /// be applied atomically to the
@@ -81,8 +94,8 @@ use crate::{pin, Batch, Error, Guard, IVec, Protector, Result, Tree};
 #[derive(Clone)]
 pub struct TransactionalTree {
     pub(super) tree: Tree,
-    pub(super) writes: Rc<RefCell<HashMap<IVec, Option<IVec>>>>,
-    pub(super) read_cache: Rc<RefCell<HashMap<IVec, Option<IVec>>>>,
+    pub(super) writes: Rc<RefCell<Map<IVec, Option<IVec>>>>,
+    pub(super) read_cache: Rc<RefCell<Map<IVec, Option<IVec>>>>,
 }
 
 /// An error type that is returned from the closure
@@ -289,8 +302,12 @@ impl TransactionalTree {
         }
 
         // not found in a cache, need to hit the backing db
-        let guard = pin();
-        let get = self.tree.get_inner(key.as_ref(), &guard)?;
+        let mut guard = pin();
+        let get = loop {
+            if let Ok(get) = self.tree.get_inner(key.as_ref(), &mut guard)? {
+                break get;
+            }
+        };
         let last = reads.insert(key.as_ref().into(), get.clone());
         assert!(last.is_none());
 
@@ -312,11 +329,6 @@ impl TransactionalTree {
         Ok(())
     }
 
-    fn stage(&self) -> UnabortableTransactionResult<Vec<Protector<'_>>> {
-        let protector = self.tree.concurrency_control.write();
-        Ok(vec![protector])
-    }
-
     fn unstage(&self) {
         unimplemented!()
     }
@@ -327,15 +339,20 @@ impl TransactionalTree {
 
     fn commit(&self) -> Result<()> {
         let writes = self.writes.borrow();
-        let guard = pin();
+        let mut guard = pin();
         for (k, v_opt) in &*writes {
-            if let Some(v) = v_opt {
-                let _old = self.tree.insert_inner(k, v, &guard)?;
-            } else {
-                let _old = self.tree.remove_inner(k, &guard)?;
+            while self.tree.insert_inner(k, v_opt.clone(), &mut guard)?.is_err()
+            {
             }
         }
         Ok(())
+    }
+    fn from_tree(tree: &Tree) -> Self {
+        Self {
+            tree: tree.clone(),
+            writes: Default::default(),
+            read_cache: Default::default(),
+        }
     }
 }
 
@@ -345,32 +362,8 @@ pub struct TransactionalTrees {
 }
 
 impl TransactionalTrees {
-    fn stage(&self) -> UnabortableTransactionResult<Vec<Protector<'_>>> {
-        // we want to stage our trees in
-        // lexicographic order to guarantee
-        // no deadlocks should they block
-        // on mutexes in their own staging
-        // implementations.
-        let mut tree_idxs: Vec<(&[u8], usize)> = self
-            .inner
-            .iter()
-            .enumerate()
-            .map(|(idx, t)| (&*t.tree.tree_id, idx))
-            .collect();
-        tree_idxs.sort_unstable();
-
-        let mut last_idx = usize::max_value();
-        let mut all_guards = vec![];
-        for (_, idx) in tree_idxs {
-            if idx == last_idx {
-                // prevents us from double-locking
-                continue;
-            }
-            last_idx = idx;
-            let mut guards = self.inner[idx].stage()?;
-            all_guards.append(&mut guards);
-        }
-        Ok(all_guards)
+    fn stage(&self) -> UnabortableTransactionResult<Protector<'_>> {
+        Ok(concurrency_control::write())
     }
 
     fn unstage(&self) {
@@ -397,7 +390,7 @@ impl TransactionalTrees {
         // when the peg drops, it ensures all updates
         // written to the log since its creation are
         // recovered atomically
-        peg.seal_batch(guard)
+        peg.seal_batch()
     }
 }
 
@@ -467,13 +460,7 @@ impl<E> Transactional<E> for &Tree {
     type View = TransactionalTree;
 
     fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
-            inner: vec![TransactionalTree {
-                tree: (*self).clone(),
-                writes: Default::default(),
-                read_cache: Default::default(),
-            }],
-        }
+        TransactionalTrees { inner: vec![TransactionalTree::from_tree(self)] }
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -485,13 +472,7 @@ impl<E> Transactional<E> for &&Tree {
     type View = TransactionalTree;
 
     fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
-            inner: vec![TransactionalTree {
-                tree: (**self).clone(),
-                writes: Default::default(),
-                read_cache: Default::default(),
-            }],
-        }
+        TransactionalTrees { inner: vec![TransactionalTree::from_tree(*self)] }
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -503,13 +484,7 @@ impl<E> Transactional<E> for Tree {
     type View = TransactionalTree;
 
     fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
-            inner: vec![TransactionalTree {
-                tree: self.clone(),
-                writes: Default::default(),
-                read_cache: Default::default(),
-            }],
-        }
+        TransactionalTrees { inner: vec![TransactionalTree::from_tree(self)] }
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -517,8 +492,45 @@ impl<E> Transactional<E> for Tree {
     }
 }
 
+impl<E> Transactional<E> for [Tree] {
+    type View = Vec<TransactionalTree>;
+
+    fn make_overlay(&self) -> TransactionalTrees {
+        TransactionalTrees {
+            inner: self
+                .iter()
+                .map(|t| TransactionalTree::from_tree(t))
+                .collect(),
+        }
+    }
+
+    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+        overlay.inner.clone()
+    }
+}
+
+impl<E> Transactional<E> for [&Tree] {
+    type View = Vec<TransactionalTree>;
+
+    fn make_overlay(&self) -> TransactionalTrees {
+        TransactionalTrees {
+            inner: self
+                .iter()
+                .map(|&t| TransactionalTree::from_tree(t))
+                .collect(),
+        }
+    }
+
+    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+        overlay.inner.clone()
+    }
+}
+
 macro_rules! repeat_type {
-    ($t:ty, ($($literals:literal),*)) => {
+    ($t:ty, ($literal:literal)) => {
+        ($t,)
+    };
+    ($t:ty, ($($literals:literal),+)) => {
         repeat_type!(IMPL $t, (), ($($literals),*))
     };
     (IMPL $t:ty, (), ($first:literal, $($rest:literal),*)) => {
@@ -534,18 +546,14 @@ macro_rules! repeat_type {
 
 macro_rules! impl_transactional_tuple_trees {
     ($($indices:tt),+) => {
-        impl Transactional for repeat_type!(&Tree, ($($indices),+)) {
+        impl<E> Transactional<E> for repeat_type!(&Tree, ($($indices),+)) {
             type View = repeat_type!(TransactionalTree, ($($indices),+));
 
             fn make_overlay(&self) -> TransactionalTrees {
                 TransactionalTrees {
                     inner: vec![
                         $(
-                            TransactionalTree {
-                                tree: self.$indices.clone(),
-                                writes: Default::default(),
-                                read_cache: Default::default(),
-                            }
+                            TransactionalTree::from_tree(self.$indices)
                         ),+
                     ],
                 }
@@ -555,13 +563,14 @@ macro_rules! impl_transactional_tuple_trees {
                 (
                     $(
                         overlay.inner[$indices].clone()
-                    ),+
+                    ),+,
                 )
             }
         }
     };
 }
 
+impl_transactional_tuple_trees!(0);
 impl_transactional_tuple_trees!(0, 1);
 impl_transactional_tuple_trees!(0, 1, 2);
 impl_transactional_tuple_trees!(0, 1, 2, 3);

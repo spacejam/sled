@@ -101,7 +101,7 @@ impl Iter {
 
             if !node.contains_upper_bound(&self.lo) {
                 // view too low (maybe merged, maybe exhausted?)
-                let next_pid = node.next?;
+                let next_pid = node.next?.get();
                 assert_ne!(pid, next_pid);
                 let view = if let Some(view) =
                     iter_try!(self.tree.view_for_pid(next_pid, &guard))
@@ -158,8 +158,7 @@ impl Iterator for Iter {
 
     fn next(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
-        let guard = pin();
-        let _ = self.tree.concurrency_control.read(&guard);
+        let _cc = concurrency_control::read();
         self.next_inner()
     }
 
@@ -172,7 +171,7 @@ impl DoubleEndedIterator for Iter {
     fn next_back(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_reverse_scan);
         let guard = pin();
-        let _ = self.tree.concurrency_control.read(&guard);
+        let _cc = concurrency_control::read();
 
         let (mut pid, mut node, guard) =
             if let (false, Some((pid, node, guard))) =
@@ -192,7 +191,7 @@ impl DoubleEndedIterator for Iter {
 
             if !node.contains_upper_bound(&self.hi) {
                 // node too low (maybe merged, maybe exhausted?)
-                let next_pid = node.next?;
+                let next_pid = node.next?.get();
                 assert_ne!(pid, next_pid);
                 let view = if let Some(view) =
                     iter_try!(self.tree.view_for_pid(next_pid, &guard))

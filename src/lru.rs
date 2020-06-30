@@ -2,13 +2,14 @@
 
 use std::convert::TryFrom;
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::{
     debug_delay,
     dll::{DoublyLinkedList, Node},
     fastlock::FastLock,
     Guard, PageId,
+    atomic_shim::AtomicU64,
 };
 
 #[cfg(any(test, feature = "lock_free_delays"))]
@@ -33,7 +34,7 @@ impl Default for AccessBlock {
     fn default() -> AccessBlock {
         AccessBlock {
             len: AtomicUsize::new(0),
-            block: unsafe { std::mem::transmute([0_u64; MAX_QUEUE_ITEMS]) },
+            block: array_init::array_init(|_| AtomicU64::default()),
             next: AtomicPtr::default(),
         }
     }
@@ -90,7 +91,8 @@ impl AccessQueue {
                     continue;
                 }
 
-                // push the now-full item to the full list for future consumption
+                // push the now-full item to the full list for future
+                // consumption
                 let mut ret;
                 let mut full_list_ptr = self.full_list.load(Ordering::Acquire);
                 while {
@@ -210,7 +212,7 @@ unsafe impl Sync for Lru {}
 
 impl Lru {
     /// Instantiates a new `Lru` cache.
-    pub fn new(cache_capacity: u64) -> Self {
+    pub(crate) fn new(cache_capacity: u64) -> Self {
         assert!(
             cache_capacity >= 256,
             "Please configure the cache \
@@ -235,7 +237,7 @@ impl Lru {
     ///   shards:  1 0 1 0 1 0 1 0 1 0
     ///   shard 0:   2   4   6   8   10
     ///   shard 1: 1   3   5   7   9
-    pub fn accessed(
+    pub(crate) fn accessed(
         &self,
         id: PageId,
         item_size: u64,

@@ -3,10 +3,10 @@ set -e
 
 # checks sled's compatibility using several targets
 
-targets="wasm32-unknown-unknown aarch64-fuchsia aarch64-linux-android \
+targets="wasm32-wasi wasm32-unknown-unknown aarch64-fuchsia aarch64-linux-android \
          i686-linux-android i686-unknown-linux-gnu \
          x86_64-linux-android x86_64-fuchsia \
-         aarch64-apple-ios"
+         aarch64-apple-ios mips-unknown-linux-musl"
 
 rustup update
 
@@ -16,3 +16,8 @@ for target in $targets; do
   echo "checking $target..."
   cargo check --target $target
 done
+
+rustup toolchain install 1.39.0
+cargo clean
+rm Cargo.lock
+cargo +1.39.0 check

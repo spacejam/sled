@@ -9,22 +9,26 @@ pub struct Meta {
 
 impl Meta {
     /// Retrieve the `PageId` associated with an identifier
-    pub fn get_root(&self, table: &[u8]) -> Option<PageId> {
+    pub(crate) fn get_root(&self, table: &[u8]) -> Option<PageId> {
         self.inner.get(table).cloned()
     }
 
     /// Set the `PageId` associated with an identifier
-    pub fn set_root(&mut self, name: IVec, pid: PageId) -> Option<PageId> {
+    pub(crate) fn set_root(
+        &mut self,
+        name: IVec,
+        pid: PageId,
+    ) -> Option<PageId> {
         self.inner.insert(name, pid)
     }
 
     /// Remove the page mapping for a given identifier
-    pub fn del_root(&mut self, name: &[u8]) -> Option<PageId> {
+    pub(crate) fn del_root(&mut self, name: &[u8]) -> Option<PageId> {
         self.inner.remove(name)
     }
 
     /// Return the current rooted tenants in Meta
-    pub fn tenants(&self) -> BTreeMap<IVec, PageId> {
+    pub(crate) fn tenants(&self) -> BTreeMap<IVec, PageId> {
         self.inner.clone()
     }
 
@@ -58,9 +62,8 @@ where
                 return Ok(Tree(Arc::new(TreeInner {
                     tree_id: name,
                     context: context.clone(),
-                    subscriptions: Subscriptions::default(),
+                    subscribers: Subscribers::default(),
                     root: AtomicU64::new(root_id),
-                    concurrency_control: ConcurrencyControl::default(),
                     merge_operator: RwLock::new(None),
                 })));
             }
@@ -109,10 +112,9 @@ where
 
         return Ok(Tree(Arc::new(TreeInner {
             tree_id: name,
-            subscriptions: Subscriptions::default(),
+            subscribers: Subscribers::default(),
             context: context.clone(),
             root: AtomicU64::new(root_id),
-            concurrency_control: ConcurrencyControl::default(),
             merge_operator: RwLock::new(None),
         })));
     }

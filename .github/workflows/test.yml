@@ -40,7 +40,7 @@ jobs:
     - name: cargo test
       run: |
         rustup update
-        cargo test --release --features=testing -- --nocapture
+        cargo test --release --no-default-features --features=testing -- --nocapture
   examples:
     name: Example Tests
     runs-on: ubuntu-latest

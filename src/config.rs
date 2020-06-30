@@ -6,7 +6,7 @@ use std::{
     io::{BufRead, BufReader, ErrorKind, Read, Seek, Write},
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::atomic::AtomicUsize,
 };
 
 use crate::pagecache::{arr_to_u32, u32_to_arr, Lsn};
@@ -78,13 +78,13 @@ impl StorageParameters {
                 k
             } else {
                 error!("failed to parse persisted config line: {}", line);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
             let v = if let Some(v) = split.next() {
                 v
             } else {
                 error!("failed to parse persisted config line: {}", line);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
             lines.insert(k, v);
         }
@@ -94,13 +94,13 @@ impl StorageParameters {
                 parsed
             } else {
                 error!("failed to parse segment_size value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             }
         } else {
             error!(
                 "failed to retrieve required configuration parameter: segment_size"
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::corruption(None));
         };
 
         let use_compression: bool = if let Some(raw) =
@@ -110,13 +110,13 @@ impl StorageParameters {
                 parsed
             } else {
                 error!("failed to parse use_compression value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             }
         } else {
             error!(
                 "failed to retrieve required configuration parameter: use_compression"
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::corruption(None));
         };
 
         let version: (usize, usize) = if let Some(raw) = lines.get("version") {
@@ -129,11 +129,11 @@ impl StorageParameters {
                         "failed to parse major version value from line: {}",
                         raw
                     );
-                    return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                    return Err(Error::corruption(None));
                 }
             } else {
                 error!("failed to parse major version value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
 
             let minor = if let Some(raw_minor) = split.next() {
@@ -144,11 +144,11 @@ impl StorageParameters {
                         "failed to parse minor version value from line: {}",
                         raw
                     );
-                    return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                    return Err(Error::corruption(None));
                 }
             } else {
                 error!("failed to parse minor version value: {}", raw);
-                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                return Err(Error::corruption(None));
             };
 
             (major, minor)
@@ -156,7 +156,7 @@ impl StorageParameters {
             error!(
                 "failed to retrieve required configuration parameter: version"
             );
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::corruption(None));
         };
 
         Ok(StorageParameters { segment_size, use_compression, version })
@@ -172,13 +172,6 @@ impl StorageParameters {
 ///     .path("/path/to/data".to_owned())
 ///     .cache_capacity(10_000_000_000)
 ///     .flush_every_ms(Some(1000));
-/// ```
-///
-/// ```
-/// // Read-only mode
-/// let _config = sled::Config::default()
-///     .path("/path/to/data".to_owned())
-///     .read_only(true);
 /// ```
 #[derive(Default, Debug, Clone)]
 pub struct Config(Arc<Inner>);
@@ -202,8 +195,6 @@ pub struct Inner {
     pub segment_size: usize,
     #[doc(hidden)]
     pub path: PathBuf,
-    #[doc(hidden)]
-    pub read_only: bool,
     #[doc(hidden)]
     pub create_new: bool,
     #[doc(hidden)]
@@ -233,7 +224,6 @@ impl Default for Inner {
             // generally useful
             path: PathBuf::from(DEFAULT_PATH),
             tmp_path: Config::gen_temp_path(),
-            read_only: false,
             create_new: false,
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             mode: Mode::LowSpace,
@@ -266,22 +256,15 @@ impl Inner {
     }
 
     pub(crate) fn blob_path(&self, id: Lsn) -> PathBuf {
-        let mut path = self.get_path();
-        path.push("blobs");
-        path.push(format!("{}", id));
-        path
+        self.get_path().join("blobs").join(format!("{}", id))
     }
 
     fn db_path(&self) -> PathBuf {
-        let mut path = self.get_path();
-        path.push("db");
-        path
+        self.get_path().join("db")
     }
 
     fn config_path(&self) -> PathBuf {
-        let mut path = self.get_path();
-        path.push("conf");
-        path
+        self.get_path().join("conf")
     }
 
     pub(crate) fn normalize<T>(&self, value: T) -> T
@@ -480,9 +463,7 @@ impl Config {
             // use shared memory for temporary linux files
             format!("/dev/shm/pagecache.tmp.{}", salt).into()
         } else {
-            let mut pb = std::env::temp_dir();
-            pb.push(format!("pagecache.tmp.{}", salt));
-            pb
+            std::env::temp_dir().join(format!("pagecache.tmp.{}", salt))
         }
     }
 
@@ -500,14 +481,37 @@ impl Config {
     }
 
     builder!(
-        (cache_capacity, u64, "maximum size in bytes for the system page cache"),
-        (mode, Mode, "specify whether the system should run in \"small\" or \"fast\" mode"),
+        (
+            cache_capacity,
+            u64,
+            "maximum size in bytes for the system page cache"
+        ),
+        (
+            mode,
+            Mode,
+            "specify whether the system should run in \"small\" or \"fast\" mode"
+        ),
         (use_compression, bool, "whether to use zstd compression"),
-        (compression_factor, i32, "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."),
-        (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
-        (create_new, bool, "attempts to exclusively open the database, failing if it already exists"),
-        (read_only, bool, "whether to run in read-only mode"),
-        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped")
+        (
+            compression_factor,
+            i32,
+            "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."
+        ),
+        (
+            temporary,
+            bool,
+            "deletes the database after drop. if no path is set, uses /dev/shm on linux"
+        ),
+        (
+            create_new,
+            bool,
+            "attempts to exclusively open the database, failing if it already exists"
+        ),
+        (
+            print_profile_on_drop,
+            bool,
+            "print a performance profile when the Config is dropped"
+        )
     );
 
     // panics if config options are outside of advised range
@@ -546,30 +550,10 @@ impl Config {
     }
 
     fn open_file(&self) -> Result<File> {
-        let path = self.db_path();
+        let blob_dir: PathBuf = self.get_path().join("blobs");
 
-        // panic if we can't parse the path
-        let dir = match Path::new(&path).parent() {
-            None => {
-                return Err(Error::Unsupported(format!(
-                    "could not determine parent directory of {:?}",
-                    path
-                )));
-            }
-            Some(dir) => dir.join("blobs"),
-        };
-
-        // create data directory if it doesn't exist yet
-        if dir.is_file() {
-            return Err(Error::Unsupported(format!(
-                "provided parent directory is a file, \
-                 not a directory: {:?}",
-                dir
-            )));
-        }
-
-        if !dir.exists() {
-            fs::create_dir_all(dir)?;
+        if !blob_dir.exists() {
+            fs::create_dir_all(blob_dir)?;
         }
 
         self.verify_config()?;
@@ -579,16 +563,13 @@ impl Config {
 
         let _ = options.create(true);
         let _ = options.read(true);
-
-        if !self.read_only {
-            let _ = options.write(true);
-        }
+        let _ = options.write(true);
 
         if self.create_new {
             options.create_new(true);
         }
 
-        self.try_lock(options.open(&path)?)
+        self.try_lock(options.open(&self.db_path())?)
     }
 
     fn try_lock(&self, file: File) -> Result<File> {
@@ -596,9 +577,7 @@ impl Config {
         {
             use fs2::FileExt;
 
-            let try_lock = if self.read_only {
-                file.try_lock_shared()
-            } else if cfg!(feature = "testing") {
+            let try_lock = if cfg!(feature = "testing") {
                 // we block here because during testing
                 // there are many filesystem race condition
                 // that happen, causing locks to be held
@@ -743,7 +722,7 @@ impl Config {
     #[doc(hidden)]
     pub fn global_error(&self) -> Result<()> {
         let guard = pin();
-        let ge = self.global_error.load(Relaxed, &guard);
+        let ge = self.global_error.load(SeqCst, &guard);
         if ge.is_null() {
             Ok(())
         } else {
@@ -836,16 +815,12 @@ impl RunningConfig {
     // returns the snapshot file paths for this system
     #[doc(hidden)]
     pub fn get_snapshot_files(&self) -> io::Result<Vec<PathBuf>> {
-        let mut path = self.get_path();
-
-        path.push("snap.");
+        let path = self.get_path().join("snap.");
 
         let absolute_path: PathBuf = if Path::new(&path).is_absolute() {
             path
         } else {
-            let mut abs_path = std::env::current_dir()?;
-            abs_path.push(path);
-            abs_path
+            std::env::current_dir()?.join(path)
         };
 
         let filter = |dir_entry: io::Result<fs::DirEntry>| {

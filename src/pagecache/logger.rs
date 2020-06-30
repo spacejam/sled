@@ -1,13 +1,12 @@
 use std::fs::File;
-use std::sync::Arc;
 
 use super::{
     arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, iobuf, lsn_to_arr,
-    maybe_decompress, pread_exact, pread_exact_or_eof, read_blob, u32_to_arr,
-    BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
-    MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
-    COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
-    SEG_HEADER_LEN,
+    maybe_decompress, pread_exact, pread_exact_or_eof, read_blob, roll_iobuf,
+    u32_to_arr, Arc, BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind,
+    LogOffset, Lsn, MessageKind, Reservation, Serialize, Snapshot,
+    BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
+    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -19,7 +18,7 @@ use crate::*;
 #[derive(Debug)]
 pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
-    pub(super) iobufs: Arc<IoBufs>,
+    pub(crate) iobufs: Arc<IoBufs>,
     pub(crate) config: RunningConfig,
 }
 
@@ -44,17 +43,21 @@ impl Log {
         self.iobufs.iter_from(lsn)
     }
 
+    pub(crate) fn roll_iobuf(&self) -> Result<usize> {
+        roll_iobuf(&self.iobufs)
+    }
+
     /// read a buffer from the disk
     pub fn read(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<LogRead> {
         trace!("reading log lsn {} ptr {}", lsn, ptr);
 
-        let _wrote = self.make_stable(lsn)?;
         let expected_segment_number = SegmentNumber(
             u64::try_from(lsn).unwrap()
                 / u64::try_from(self.config.segment_size).unwrap(),
         );
 
         if ptr.is_inline() {
+            iobuf::make_durable(&self.iobufs, lsn)?;
             let f = &self.config.file;
             read_message(&**f, ptr.lid(), expected_segment_number, &self.config)
         } else {
@@ -62,6 +65,7 @@ impl Log {
             // here because it might not still
             // exist in the inline log.
             let (_, blob_ptr) = ptr.blob();
+            iobuf::make_durable(&self.iobufs, blob_ptr)?;
             read_blob(blob_ptr, &self.config).map(|(kind, buf)| {
                 let header = MessageHeader {
                     kind,
@@ -82,7 +86,9 @@ impl Log {
 
     /// blocks until the specified log sequence number has
     /// been made stable on disk. Returns the number of
-    /// bytes written during this call.
+    /// bytes written during this call. this is appropriate
+    /// as a full consistency-barrier for all data written
+    /// up until this point.
     pub fn make_stable(&self, lsn: Lsn) -> Result<usize> {
         iobuf::make_stable(&self.iobufs, lsn)
     }
@@ -272,9 +278,10 @@ impl Log {
 
             // try to claim space
             let prospective_size = buf_offset + inline_buf_len;
-            // we don't reserve anything if we're within the last MAX_MSG_HEADER_LEN
-            // bytes of the buffer. during recovery, we assume that nothing
-            // can begin here, because headers are dynamically sized.
+            // we don't reserve anything if we're within the last
+            // MAX_MSG_HEADER_LEN bytes of the buffer. during
+            // recovery, we assume that nothing can begin here,
+            // because headers are dynamically sized.
             let red_zone = iobuf.capacity - buf_offset < MAX_MSG_HEADER_LEN;
             let would_overflow = prospective_size > iobuf.capacity || red_zone;
             if would_overflow {
@@ -346,7 +353,10 @@ impl Log {
                 reservation_lid,
             );
 
-            bump_atomic_lsn(&self.iobufs.max_reserved_lsn, reservation_lsn);
+            bump_atomic_lsn(
+                &self.iobufs.max_reserved_lsn,
+                reservation_lsn + inline_buf_len as Lsn - 1,
+            );
 
             let blob_id =
                 if over_blob_threshold { Some(reservation_lsn) } else { None };
@@ -425,7 +435,7 @@ impl Log {
             );
             let iobufs = self.iobufs.clone();
             let iobuf = iobuf.clone();
-            let _result = threadpool::spawn(move || {
+            threadpool::spawn(move || {
                 if let Err(e) = iobufs.write_to_log(&iobuf) {
                     error!(
                         "hit error while writing iobuf with lsn {}: {:?}",
@@ -434,9 +444,6 @@ impl Log {
                     iobufs.config.set_global_error(e);
                 }
             });
-
-            #[cfg(test)]
-            _result.unwrap();
 
             Ok(())
         } else {
@@ -651,19 +658,19 @@ impl ReadAt for File {
 
 impl ReadAt for BasedBuf {
     fn pread_exact(&self, dst: &mut [u8], mut at: u64) -> std::io::Result<()> {
-        if at < self.1
+        if at < self.offset
             || u64::try_from(dst.len()).unwrap() + at
-                > u64::try_from(self.0.len()).unwrap() + self.1
+                > u64::try_from(self.buf.len()).unwrap() + self.offset
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "failed to fill buffer",
             ));
         }
-        at -= self.1;
+        at -= self.offset;
         let at_usize = usize::try_from(at).unwrap();
         let to_usize = at_usize + dst.len();
-        dst.copy_from_slice(self.0[at_usize..to_usize].as_ref());
+        dst.copy_from_slice(self.buf[at_usize..to_usize].as_ref());
         Ok(())
     }
 
@@ -672,21 +679,23 @@ impl ReadAt for BasedBuf {
         dst: &mut [u8],
         mut at: u64,
     ) -> std::io::Result<usize> {
-        if at < self.1 || u64::try_from(self.0.len()).unwrap() < at - self.1 {
+        if at < self.offset
+            || u64::try_from(self.buf.len()).unwrap() < at - self.offset
+        {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "failed to fill buffer",
             ));
         }
-        at -= self.1;
+        at -= self.offset;
 
         let at_usize = usize::try_from(at).unwrap();
 
-        let len = std::cmp::min(dst.len(), self.0.len() - at_usize);
+        let len = std::cmp::min(dst.len(), self.buf.len() - at_usize);
 
         let start = at_usize;
         let end = start + len;
-        dst[..len].copy_from_slice(self.0[start..end].as_ref());
+        dst[..len].copy_from_slice(self.buf[start..end].as_ref());
         Ok(len)
     }
 }
@@ -703,6 +712,11 @@ pub(crate) fn read_message<R: ReadAt>(
     let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;
     trace!("reading message from segment: {} at lid: {}", seg_start, lid);
     assert!(seg_start + SEG_HEADER_LEN as LogOffset <= lid);
+    assert!(
+        (seg_start + segment_len as LogOffset) - lid
+            >= MAX_MSG_HEADER_LEN as LogOffset,
+        "tried to read a message from the red zone"
+    );
 
     let msg_header_buf = &mut [0; 128];
     let _read_bytes = file.pread_exact_or_eof(msg_header_buf, lid)?;
@@ -716,14 +730,6 @@ pub(crate) fn read_message<R: ReadAt>(
     let ceiling = seg_start + segment_len as LogOffset;
 
     assert!(lid + message_offset as LogOffset <= ceiling);
-
-    if header.segment_number != expected_segment_number {
-        debug!(
-            "header {:?} does not contain expected segment_number {:?}",
-            header, expected_segment_number
-        );
-        return Ok(LogRead::Corrupted);
-    }
 
     let max_possible_len =
         assert_usize(ceiling - lid - message_offset as LogOffset);
@@ -770,6 +776,14 @@ pub(crate) fn read_message<R: ReadAt>(
     let inline_len = u32::try_from(message_offset).unwrap()
         + u32::try_from(header.len).unwrap();
 
+    if header.segment_number != expected_segment_number {
+        debug!(
+            "header {:?} does not contain expected segment_number {:?}",
+            header, expected_segment_number
+        );
+        return Ok(LogRead::Corrupted);
+    }
+
     match header.kind {
         MessageKind::Canceled => {
             trace!("read failed of len {}", header.len);
@@ -800,8 +814,7 @@ pub(crate) fn read_message<R: ReadAt>(
                 {
                     debug!(
                         "underlying blob file not found for blob {} in segment number {:?}",
-                        id,
-                        header.segment_number,
+                        id, header.segment_number,
                     );
                     Ok(LogRead::DanglingBlob(header, id, inline_len))
                 }

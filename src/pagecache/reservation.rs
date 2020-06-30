@@ -52,11 +52,6 @@ impl<'a> Reservation<'a> {
         self.flush(true)
     }
 
-    /// Get the log file offset for reading this buffer in the future.
-    pub fn lid(&self) -> LogOffset {
-        self.pointer.lid()
-    }
-
     /// Get the log sequence number for this update.
     pub const fn lsn(&self) -> Lsn {
         self.lsn
@@ -70,7 +65,7 @@ impl<'a> Reservation<'a> {
     }
 
     /// Returns the length of the on-log reservation.
-    pub const fn reservation_len(&self) -> usize {
+    pub(crate) fn reservation_len(&self) -> usize {
         self.buf.len()
     }
 
@@ -84,7 +79,7 @@ impl<'a> Reservation<'a> {
     /// Will panic if the reservation is not the correct
     /// size to hold a serialized Lsn.
     #[doc(hidden)]
-    pub fn mark_writebatch(&mut self, peg_lsn: Lsn, guard: &Guard) {
+    pub fn mark_writebatch(self, peg_lsn: Lsn) -> Result<(Lsn, DiskPtr)> {
         trace!(
             "writing batch required stable lsn {} into \
              BatchManifest at lid {} peg_lsn {}",
@@ -93,15 +88,25 @@ impl<'a> Reservation<'a> {
             self.lsn
         );
 
-        self.buf[4] = MessageKind::BatchManifest.into();
+        if self.lsn == peg_lsn {
+            // this can happen because high-level tree updates
+            // may result in no work happening.
+            self.abort()
+        } else {
+            self.buf[4] = MessageKind::BatchManifest.into();
 
-        let buf = lsn_to_arr(peg_lsn);
+            let buf = lsn_to_arr(peg_lsn);
 
-        let dst = &mut self.buf[self.header_len..];
+            let dst = &mut self.buf[self.header_len..];
 
-        dst.copy_from_slice(&buf);
+            dst.copy_from_slice(&buf);
 
-        self.log.iobufs.sa_mark_peg(self.lsn, peg_lsn, guard);
+            let mut intervals = self.log.iobufs.intervals.lock();
+            intervals.mark_batch((self.lsn, peg_lsn));
+            drop(intervals);
+
+            self.complete()
+        }
     }
 
     fn flush(&mut self, valid: bool) -> Result<(Lsn, DiskPtr)> {

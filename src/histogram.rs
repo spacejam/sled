@@ -171,11 +171,11 @@ fn decompress(compressed: u16) -> f64 {
 #[test]
 fn it_works() {
     let c = Histogram::default();
-    assert_eq!(c.measure(2), 1);
-    assert_eq!(c.measure(2), 2);
-    assert_eq!(c.measure(3), 1);
-    assert_eq!(c.measure(3), 2);
-    assert_eq!(c.measure(4), 1);
+    c.measure(2);
+    c.measure(2);
+    c.measure(3);
+    c.measure(3);
+    c.measure(4);
     assert_eq!(c.percentile(0.).round() as usize, 2);
     assert_eq!(c.percentile(40.).round() as usize, 2);
     assert_eq!(c.percentile(40.1).round() as usize, 3);

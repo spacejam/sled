@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -15,19 +14,11 @@ pub(crate) enum ShutdownState {
 
 impl ShutdownState {
     fn is_running(self) -> bool {
-        if let ShutdownState::Running = self {
-            true
-        } else {
-            false
-        }
+        if let ShutdownState::Running = self { true } else { false }
     }
 
     fn is_shutdown(self) -> bool {
-        if let ShutdownState::ShutDown = self {
-            true
-        } else {
-            false
-        }
+        if let ShutdownState::ShutDown = self { true } else { false }
     }
 }
 
@@ -73,7 +64,8 @@ fn run(
     let mut wrote_data = false;
     while shutdown.is_running() || wrote_data {
         let before = std::time::Instant::now();
-        match pagecache.flush() {
+        let cc = concurrency_control::read();
+        match pagecache.log.roll_iobuf() {
             Ok(0) => {
                 wrote_data = false;
                 if !shutdown.is_running() {
@@ -105,6 +97,7 @@ fn run(
                 return;
             }
         }
+        drop(cc);
 
         // so we can spend a little effort
         // cleaning up the segments. try not to
@@ -156,6 +149,7 @@ fn run(
             sc.wait_for(&mut shutdown, sleep_duration);
         }
     }
+
     *shutdown = ShutdownState::ShutDown;
 
     // having held the mutex makes this linearized

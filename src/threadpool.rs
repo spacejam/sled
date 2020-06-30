@@ -18,10 +18,12 @@ const MAX_THREADS: usize = 16;
 #[cfg(not(windows))]
 const MAX_THREADS: usize = 128;
 
-const MIN_THREADS: usize = 2;
+const DESIRED_WAITING_THREADS: usize = 7;
 
-static STANDBY_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+static WAITING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+static SPAWNS: AtomicUsize = AtomicUsize::new(0);
+static SPAWNING: AtomicBool = AtomicBool::new(false);
 
 macro_rules! once {
     ($args:block) => {
@@ -47,7 +49,9 @@ impl Queue {
         let cutoff = Instant::now() + duration;
 
         while queue.is_empty() {
+            WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
             let res = self.cv.wait_until(&mut queue, cutoff);
+            WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
             if res.timed_out() {
                 break;
             }
@@ -61,51 +65,67 @@ impl Queue {
         queue.pop_front()
     }
 
-    fn send(&self, work: Work) {
+    fn send(&self, work: Work) -> usize {
         let mut queue = self.mu.lock();
         queue.push_back(work);
+
+        let len = queue.len();
 
         // having held the mutex makes this linearized
         // with the notify below.
         drop(queue);
 
-        self.cv.notify_one();
+        self.cv.notify_all();
+
+        len
     }
 }
 
 static QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(init_queue);
 
 fn init_queue() -> Queue {
-    maybe_spawn_new_thread();
+    debug_delay();
+    for _ in 0..DESIRED_WAITING_THREADS {
+        debug_delay();
+        spawn_new_thread(true);
+    }
     Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
 }
 
-fn perform_work() {
+fn perform_work(is_immortal: bool) {
     let wait_limit = Duration::from_secs(1);
 
-    while STANDBY_THREAD_COUNT.load(SeqCst) < MIN_THREADS {
-        debug_delay();
-        STANDBY_THREAD_COUNT.fetch_add(1, SeqCst);
+    let mut performed = 0;
+    let mut contiguous_overshoots = 0;
 
+    while is_immortal || performed < 5 || contiguous_overshoots < 3 {
         debug_delay();
         let task_res = QUEUE.recv_timeout(wait_limit);
 
-        debug_delay();
-        if STANDBY_THREAD_COUNT.fetch_sub(1, SeqCst) <= MIN_THREADS {
-            maybe_spawn_new_thread();
-        }
-
         if let Some(task) = task_res {
+            WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
             (task)();
+            WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
+            performed += 1;
         }
 
-        debug_delay();
         while let Some(task) = QUEUE.try_recv() {
-            (task)();
             debug_delay();
+            WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
+            (task)();
+            WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
+            performed += 1;
         }
 
         debug_delay();
+
+        let waiting = WAITING_THREAD_COUNT.load(SeqCst);
+
+        if waiting > DESIRED_WAITING_THREADS {
+            contiguous_overshoots += 1;
+        } else {
+            contiguous_overshoots = 0;
+        }
     }
 }
 
@@ -116,25 +136,39 @@ fn maybe_spawn_new_thread() {
     debug_delay();
     let total_workers = TOTAL_THREAD_COUNT.load(SeqCst);
     debug_delay();
-    let standby_workers = STANDBY_THREAD_COUNT.load(SeqCst);
-    if standby_workers >= MIN_THREADS || total_workers >= MAX_THREADS {
+    let waiting_threads = WAITING_THREAD_COUNT.load(SeqCst);
+
+    if waiting_threads >= DESIRED_WAITING_THREADS
+        || total_workers >= MAX_THREADS
+    {
         return;
     }
 
-    let spawn_res =
-        thread::Builder::new().name("sled-io".to_string()).spawn(|| {
+    if !SPAWNING.compare_and_swap(false, true, SeqCst) {
+        spawn_new_thread(false);
+    }
+}
+
+fn spawn_new_thread(is_immortal: bool) {
+    let spawn_id = SPAWNS.fetch_add(1, SeqCst);
+
+    TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
+    let spawn_res = thread::Builder::new()
+        .name(format!("sled-io-{}", spawn_id))
+        .spawn(move || {
+            SPAWNING.store(false, SeqCst);
             debug_delay();
-            TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
-            perform_work();
+            perform_work(is_immortal);
             TOTAL_THREAD_COUNT.fetch_sub(1, SeqCst);
+            assert!(!is_immortal);
         });
 
     if let Err(e) = spawn_res {
+        SPAWNING.store(false, SeqCst);
         once!({
             warn!(
-                "Failed to dynamically increase the threadpool size: {:?}. \
-                 Currently have {} running IO threads",
-                e, total_workers
+                "Failed to dynamically increase the threadpool size: {:?}.",
+                e,
             )
         });
     }
@@ -144,7 +178,7 @@ fn maybe_spawn_new_thread() {
 pub fn spawn<F, R>(work: F) -> OneShot<R>
 where
     F: FnOnce() -> R + Send + 'static,
-    R: Send + 'static,
+    R: Send + 'static + Sized,
 {
     let (promise_filler, promise) = OneShot::pair();
     let task = move || {
@@ -152,9 +186,11 @@ where
         promise_filler.fill(result);
     };
 
-    QUEUE.send(Box::new(task));
+    let depth = QUEUE.send(Box::new(task));
 
-    maybe_spawn_new_thread();
+    if depth > DESIRED_WAITING_THREADS {
+        maybe_spawn_new_thread();
+    }
 
     promise
 }

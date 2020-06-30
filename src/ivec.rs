@@ -4,8 +4,9 @@ use std::{
     hash::{Hash, Hasher},
     iter::FromIterator,
     ops::{Deref, DerefMut},
-    sync::Arc,
 };
+
+use crate::Arc;
 
 const CUTOFF: usize = 22;
 
@@ -75,21 +76,8 @@ impl FromIterator<u8> for IVec {
     where
         T: IntoIterator<Item = u8>,
     {
-        let bs: Box<[u8]> = iter.into_iter().collect();
+        let bs: Vec<u8> = iter.into_iter().collect();
         bs.into()
-    }
-}
-
-impl From<Box<[u8]>> for IVec {
-    fn from(b: Box<[u8]>) -> Self {
-        if is_inline_candidate(b.len()) {
-            Self::inline(&b)
-        } else {
-            // rely on the Arc From specialization
-            // for Box<T>, which may improve
-            // over time
-            Self::remote(Arc::from(b))
-        }
     }
 }
 

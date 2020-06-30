@@ -58,7 +58,7 @@ pub(crate) fn read_blob(
     } else {
         warn!("blob {} failed crc check!", blob_ptr);
 
-        Err(Error::Corruption { at: DiskPtr::Blob(0, blob_ptr) })
+        Err(Error::corruption(Some(DiskPtr::Blob(0, blob_ptr))))
     }
 }
 
@@ -99,8 +99,9 @@ pub(crate) fn write_blob<T: Serialize>(
 }
 
 pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
-    let stable = config.blob_path(stable_lsn);
-    let blob_dir = stable.parent().unwrap();
+    let mut base_dir = config.get_path();
+    base_dir.push("blobs");
+    let blob_dir = base_dir;
     let blobs = std::fs::read_dir(blob_dir)?;
 
     debug!("gc_blobs removing any blob with an lsn above {}", stable_lsn);
@@ -112,16 +113,17 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
         let lsn_res: std::result::Result<Lsn, _> = lsn_str.parse();
 
         if let Err(e) = lsn_res {
-            return Err(Error::Unsupported(format!(
+            warn!(
                 "blobs directory contains \
                  unparsable path ({:?}): {}",
                 path, e
-            )));
+            );
+            continue;
         }
 
         let lsn = lsn_res.unwrap();
 
-        if lsn > stable_lsn {
+        if lsn >= stable_lsn {
             to_remove.push(path);
         }
     }
@@ -131,7 +133,7 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
             "removing {} blobs that have \
              a higher lsn than our stable log: {:?}",
             to_remove.len(),
-            stable
+            stable_lsn
         );
     }
 

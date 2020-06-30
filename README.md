@@ -35,20 +35,20 @@
 A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
 
 ```rust
-let tree = sled::open(path)?;
+let tree = sled::open("/tmp/welcome-to-sled").expect("open");
 
 // insert and get, similar to std's BTreeMap
-tree.insert(k, v1);
-assert_eq!(tree.get(&k), Ok(Some(v1)));
+tree.insert("KEY1", "VAL1");
+assert_eq!(tree.get(&"KEY1"), Ok(Some(sled::IVec::from("VAL1"))));
 
 // range queries
-for kv in tree.range(k..) {}
+for kv in tree.range("KEY1".."KEY9") {}
 
 // deletion
-tree.remove(&k);
+tree.remove(&"KEY1");
 
 // atomic compare and swap
-tree.compare_and_swap(k, Some(v1), Some(v2));
+tree.compare_and_swap("KEY1", Some("VAL1"), Some("VAL2"));
 
 // block until all operations are stable on disk
 // (flush_async also available to get a Future)
@@ -71,7 +71,7 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 * fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.compare_and_swap)
 * zero-copy reads
 * [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.apply_batch)
-* [subscription/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
+* [subscriber/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
 * [multiple keyspace/Tree support](https://docs.rs/sled/latest/sled/struct.Db.html#method.open_tree)
 * [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)
 * forward and reverse iterators
@@ -101,6 +101,29 @@ high durability guarantees and you are willing to pay the latency costs of fsync
 Note that sled automatically tries to sync all data to disk several times per second
 in the background without blocking user threads.
 
+We support async subscription to events that happen on key prefixes, because the
+`Subscriber` struct implements `Future<Output=Option<Event>>`:
+
+```rust
+let sled = sled::open("my_db").unwrap();
+let mut sub = sled.watch_prefix("");
+
+sled.insert(b"a", b"a").unwrap();
+sled.insert(b"a", b"a").unwrap();
+
+drop(sled);
+
+extreme::run(async move {
+    while let Some(event) = (&mut sub).await {
+        println!("got event {:?}", event);
+    }
+});
+```
+
+# minimum supported Rust version (MSRV)
+
+We support Rust 1.39.0 and up.
+
 # architecture
 
 lock-free tree on a lock-free pagecache on a lock-free log. the pagecache scatters
@@ -123,7 +146,6 @@ for a more detailed overview of where we're at and where we see things going!
 * if storage price performance is your primary constraint, use RocksDB. sled uses too much space sometimes.
 * quite young, should be considered unstable for the time being.
 * the on-disk format is going to change in ways that require [manual migrations](https://docs.rs/sled/latest/sled/struct.Db.html#method.export) before the `1.0.0` release!
-* until `1.0.0`, sled targets the *current* stable version of rust. after `1.0.0`, we will aim to trail current by at least one version. If this is an issue for your business, please consider helping us reach `1.0.0` sooner by financially supporting our efforts to get there.
 
 # plans
 

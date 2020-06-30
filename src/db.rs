@@ -64,36 +64,30 @@ impl Db {
         Config::new().path(path).open()
     }
 
-    #[doc(hidden)]
-    #[deprecated(since = "0.24.2", note = "replaced by `sled::open`")]
-    pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        open(path)
-    }
-
-    #[doc(hidden)]
-    #[deprecated(since = "0.29.0", note = "please use Config::open instead")]
-    pub fn start(config: RunningConfig) -> Result<Self> {
-        Db::start_inner(config)
-    }
-
     pub(crate) fn start_inner(config: RunningConfig) -> Result<Self> {
         let _measure = Measure::new(&M.tree_start);
 
         let context = Context::start(config)?;
 
-        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        #[cfg(any(
+            windows,
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+        ))]
         {
-            if !context.read_only {
-                let flusher_pagecache = context.pagecache.clone();
-                let flusher = context.flush_every_ms.map(move |fem| {
-                    flusher::Flusher::new(
-                        "log flusher".to_owned(),
-                        flusher_pagecache,
-                        fem,
-                    )
-                });
-                *context.flusher.lock() = flusher;
-            }
+            let flusher_pagecache = context.pagecache.clone();
+            let flusher = context.flush_every_ms.map(move |fem| {
+                flusher::Flusher::new(
+                    "log flusher".to_owned(),
+                    flusher_pagecache,
+                    fem,
+                )
+            });
+            *context.flusher.lock() = flusher;
         }
 
         // create or open the default tree
@@ -112,10 +106,9 @@ impl Db {
         for (id, root) in context.pagecache.get_meta(&guard)?.tenants() {
             let tree = Tree(Arc::new(TreeInner {
                 tree_id: id.clone(),
-                subscriptions: Subscriptions::default(),
+                subscribers: Subscribers::default(),
                 context: context.clone(),
                 root: AtomicU64::new(root),
-                concurrency_control: ConcurrencyControl::default(),
                 merge_operator: RwLock::new(None),
             }));
             assert!(tenants.insert(id, tree).is_none());
@@ -124,7 +117,12 @@ impl Db {
         drop(tenants);
 
         #[cfg(feature = "event_log")]
-        ret.context.event_log.verify();
+        {
+            for (_name, tree) in ret.tenants.read().iter() {
+                tree.verify_integrity().unwrap();
+            }
+            ret.context.event_log.verify();
+        }
 
         Ok(ret)
     }
@@ -276,16 +274,16 @@ impl Db {
     /// than the current `sled::open` method:
     ///
     /// ```compile_fail
-    /// let old = old_sled::Db::open("my_old_db").unwrap();
+    /// let old = old_sled::Db::open("my_old_db")?;
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
-    /// let new = sled::open("my_new_db").unwrap();
+    /// let new = sled::open("my_new_db")?;
     ///
     /// let export = old.export();
     /// new.import(export);
     ///
-    /// assert_eq!(old.checksum().unwrap(), new.checksum().unwrap());
+    /// assert_eq!(old.checksum()?, new.checksum()?);
     /// ```
     pub fn export(
         &self,
@@ -335,16 +333,16 @@ impl Db {
     /// than the current `sled::open` method:
     ///
     /// ```compile_fail
-    /// let old = old_sled::Db::open("my_old_db").unwrap();
+    /// let old = old_sled::Db::open("my_old_db")?;
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
-    /// let new = sled::open("my_new_db").unwrap();
+    /// let new = sled::open("my_new_db")?;
     ///
     /// let export = old.export();
     /// new.import(export);
     ///
-    /// assert_eq!(old.checksum().unwrap(), new.checksum().unwrap());
+    /// assert_eq!(old.checksum()?, new.checksum()?);
     /// ```
     pub fn import(
         &self,
@@ -397,15 +395,12 @@ impl Db {
         let mut hasher = crc32fast::Hasher::new();
         let mut locks = vec![];
 
-        for tree in tenants.values() {
-            locks.push(tree.concurrency_control.write());
-        }
+        locks.push(concurrency_control::write());
 
         for (name, tree) in &tenants {
             hasher.update(name);
 
             let mut iter = tree.iter();
-            let _ = self.concurrency_control.write();
             while let Some(kv_res) = iter.next_inner() {
                 let (k, v) = kv_res?;
                 hasher.update(&k);

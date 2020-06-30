@@ -45,16 +45,6 @@ pub unsafe extern "C" fn sled_config_set_path(
     Box::into_raw(Box::from(config.path(value)))
 }
 
-/// Configure read-only mode.
-#[no_mangle]
-pub unsafe extern "C" fn sled_config_read_only(
-    config: *mut Config,
-    read_only: c_uchar,
-) -> *mut Config {
-    let config = Box::from_raw(config);
-    Box::into_raw(Box::from(config.read_only(read_only == 1)))
-}
-
 /// Set the configured cache capacity in bytes.
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_set_cache_capacity(

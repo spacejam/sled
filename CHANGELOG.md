@@ -1,28 +1,55 @@
-# Unreleased
+# 0.32
+
+## New Features
+
+* #1079 `Transactional` is now implemented for
+  `[&Tree]` and `[Tree]` so you can avoid the
+  previous friction of using tuples, as was
+  necessary previously.
+* #1058 The minimum supported Rust version (MSRV)
+  is now 1.39.0.
+* #1037 `Subscriber` now implements `Future` (non-fused)
+  so prefix watching may now be iterated over via
+  `while let Some(event) = (&mut subscriber).await {}`
 
 ## Improvements
 
-* Added a config `Mode` which over time will be
-  the main performance-related tunable, with only
-  2 options: Fast or Small.
+* #965 concurrency control is now dynamically enabled
+  for atomic point operations, so that it may be
+  avoided unless transactional functionality is
+  being used in the system. This significantly
+  increases performance for workloads that do not
+  use transactions.
 * A number of memory optimizations have been implemented.
-* On 64-bit systems, we can now store 1-2 trillion items.
-* Added DerefMut and AsMut<[u8]> for `IVec` where it
+* Disk usage has been significantly reduced for many
+  workloads.
+* #1016 On 64-bit systems, we can now store 1-2 trillion items.
+* #993 Added DerefMut and AsMut<[u8]> for `IVec` where it
   works similarly to a `Cow`, making a private copy
   if the backing `Arc`'s strong count is not 1.
+* #1020 The sled wiki has been moved into the documentation
+  itself, and is accessible through the `doc` module
+  exported in lib.
 
 ## Breaking Changes
 
-* Minimum supported Rust version is now 1.40.
-* Changed the default `segment_size` from 8m to 512k.
-  This will result in far smaller database files.
-* deprecated several `Config` options that will be
+* #975 Changed the default `segment_size` from 8m to 512k.
+  This will result in far smaller database files due
+  to better file garbage collection granularity.
+* #975 deprecated several `Config` options that will be
   removed over time.
-* rearranged some transaction-related imports, and
+* #1000 rearranged some transaction-related imports, and
   moved them to the `transaction` module away from
   the library root to keep the top level docs clean.
 * #1015 `TransactionalTree::apply_batch` now accepts
   its argument by reference instead of by value.
+* `Event` has been changed to make the inner fields
+  named instead of anonymous.
+* #1057 read-only mode has been removed due to not having
+  the resources to properly keep it tested while
+  making progress on high priority issues. This may
+  be correctly implemented in the future if resources
+  permit.
 
 # 0.31
 
