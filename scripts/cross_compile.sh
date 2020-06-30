@@ -6,7 +6,7 @@ set -e
 targets="wasm32-wasi wasm32-unknown-unknown aarch64-fuchsia aarch64-linux-android \
          i686-linux-android i686-unknown-linux-gnu \
          x86_64-linux-android x86_64-fuchsia \
-         aarch64-apple-ios"
+         aarch64-apple-ios mips-unknown-linux-musl"
 
 rustup update
 
