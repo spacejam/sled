@@ -221,6 +221,7 @@ where
 }
 
 #[test]
+#[cfg(not(miri))] // can't create threads
 fn basic_functionality() {
     use crossbeam_epoch::pin;
     use crossbeam_utils::CachePadded;

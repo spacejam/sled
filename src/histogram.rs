@@ -45,11 +45,32 @@ pub struct Histogram {
 }
 
 impl Default for Histogram {
+    #[allow(unsafe_code)]
     fn default() -> Histogram {
-        let mut vals = Vec::with_capacity(BUCKETS);
-        vals.resize_with(BUCKETS, Default::default);
+        #[cfg(not(feature = "miri_optimizations"))]
+        {
+            let mut vals = Vec::with_capacity(BUCKETS);
+            vals.resize_with(BUCKETS, Default::default);
 
-        Histogram { vals, sum: AtomicUsize::new(0), count: AtomicUsize::new(0) }
+            Histogram { vals, sum: AtomicUsize::new(0), count: AtomicUsize::new(0) }
+        }
+
+        #[cfg(feature = "miri_optimizations")]
+        {
+            // Avoid calling Vec::resize_with with a large length because its
+            // internals cause stacked borrows tracking information to add an
+            // item for each element of the vector.
+            let mut vals = std::mem::ManuallyDrop::new(vec![0_usize; BUCKETS]);
+            let ptr: *mut usize = vals.as_mut_ptr();
+            let len = vals.len();
+            let capacity = vals.capacity();
+
+            let vals: Vec<AtomicUsize> = unsafe {
+                Vec::from_raw_parts(ptr as *mut AtomicUsize, len, capacity)
+            };
+
+            Histogram { vals, sum: AtomicUsize::new(0), count: AtomicUsize::new(0) }
+        }
     }
 }
 

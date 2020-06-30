@@ -1043,50 +1043,62 @@ mod qc {
     }
 
     quickcheck::quickcheck! {
+        #[cfg_attr(miri, ignore)]
         fn bool(item: bool) -> bool {
             prop_serialize(item)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn u8(item: u8) -> bool {
             prop_serialize(item)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn i64(item: SpreadI64) -> bool {
             prop_serialize(item.0)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn u64(item: SpreadU64) -> bool {
             prop_serialize(item.0)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn disk_ptr(item: DiskPtr) -> bool {
             prop_serialize(item)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn page_state(item: PageState) -> bool {
             prop_serialize(item)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn meta(item: Meta) -> bool {
             prop_serialize(item)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn snapshot(item: Snapshot) -> bool {
             prop_serialize(item)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn node(item: Node) -> bool {
             prop_serialize(item)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn data(item: Data) -> bool {
             prop_serialize(item)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn link(item: Link) -> bool {
             prop_serialize(item)
         }
 
+        #[cfg_attr(miri, ignore)]
         fn msg_header(item: MessageHeader) -> bool {
             prop_serialize(item)
         }

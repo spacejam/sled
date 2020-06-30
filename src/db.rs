@@ -69,7 +69,7 @@ impl Db {
 
         let context = Context::start(config)?;
 
-        #[cfg(any(
+        #[cfg(all(not(miri), any(
             windows,
             target_os = "linux",
             target_os = "macos",
@@ -77,7 +77,7 @@ impl Db {
             target_os = "freebsd",
             target_os = "openbsd",
             target_os = "netbsd",
-        ))]
+        )))]
         {
             let flusher_pagecache = context.pagecache.clone();
             let flusher = context.flush_every_ms.map(move |fem| {

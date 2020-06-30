@@ -502,7 +502,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 }
 
 #[test]
-#[cfg(not(target_os = "fuchsia"))]
+#[cfg_attr(any(target_os = "fuchsia", miri), ignore)]
 fn quickcheck_tree_with_failpoints() {
     // use fewer tests for travis OSX builds that stall out all the time
     let mut n_tests = 50;
@@ -520,6 +520,7 @@ fn quickcheck_tree_with_failpoints() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_01() {
     // postmortem 1: model did not account for proper reasons to fail to start
     assert!(prop_tree_crashes_nicely(
@@ -529,6 +530,7 @@ fn failpoints_bug_01() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_02() {
     // postmortem 1: the system was assuming the happy path across failpoints
     assert!(prop_tree_crashes_nicely(
@@ -543,6 +545,7 @@ fn failpoints_bug_02() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_03() {
     // postmortem 1: this was a regression that happened because we
     // chose to eat errors about advancing snapshots, which trigger
@@ -556,6 +559,7 @@ fn failpoints_bug_03() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_04() {
     // postmortem 1: the test model was not properly accounting for
     // writes that may-or-may-not be present due to an error.
@@ -572,6 +576,7 @@ fn failpoints_bug_04() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_05() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -595,6 +600,7 @@ fn failpoints_bug_05() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_06() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -616,6 +622,7 @@ fn failpoints_bug_06() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_07() {
     // postmortem 1: We were crashing because a Segment was
     // in the SegmentAccountant's to_clean Vec, but it had
@@ -651,6 +658,7 @@ fn failpoints_bug_07() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_08() {
     // postmortem 1: we were assuming that deletes would fail if buffer writes
     // are disabled, but that's not true, because deletes might not cause any
@@ -683,6 +691,7 @@ fn failpoints_bug_08() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_09() {
     // postmortem 1: recovery was not properly accounting for
     // ordering issues around allocation and freeing of pages.
@@ -737,6 +746,7 @@ fn failpoints_bug_09() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_10() {
     // expected to iterate over 50 but got 49 instead
     // postmortem 1:
@@ -948,6 +958,7 @@ fn failpoints_bug_10() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_11() {
     // dupe lsn detected
     // postmortem 1:
@@ -988,6 +999,7 @@ fn failpoints_bug_11() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_12() {
     // postmortem 1: we were not sorting the recovery state, which
     // led to divergent state across recoveries. TODO wut
@@ -1012,6 +1024,7 @@ fn failpoints_bug_12() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_13() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -1055,6 +1068,7 @@ fn failpoints_bug_13() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_14() {
     // postmortem 1: improper bounds on splits caused a loop to happen
     assert!(prop_tree_crashes_nicely(
@@ -1086,6 +1100,7 @@ fn failpoints_bug_14() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_15() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -1095,6 +1110,7 @@ fn failpoints_bug_15() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_16() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -1104,6 +1120,7 @@ fn failpoints_bug_16() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_17() {
     // postmortem 1: during recovery we were not properly
     // filtering replaced pages in segments by the source
@@ -1140,6 +1157,7 @@ fn failpoints_bug_17() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_18() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -1149,6 +1167,7 @@ fn failpoints_bug_18() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_19() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -1192,6 +1211,7 @@ fn failpoints_bug_19() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_20() {
     // postmortem 1: failed to filter out segments with
     // uninitialized segment ID's when creating a segment
@@ -1203,6 +1223,7 @@ fn failpoints_bug_20() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_21() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -1277,6 +1298,7 @@ fn failpoints_bug_21() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_22() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -1286,6 +1308,7 @@ fn failpoints_bug_22() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_23() {
     // postmortem 1: failed to handle allocation failures
     assert!(prop_tree_crashes_nicely(
@@ -1301,6 +1324,7 @@ fn failpoints_bug_23() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_24() {
     // postmortem 1: was incorrectly setting global
     // errors, and they were being used-after-free
@@ -1311,6 +1335,7 @@ fn failpoints_bug_24() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_25() {
     // postmortem 1: after removing segment trailers, we
     // no longer have the invariant that a write
@@ -1373,6 +1398,7 @@ fn failpoints_bug_25() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_26() {
     // postmortem 1: after removing segment trailers, we
     // no longer handled maxed segment recovery properly
@@ -1445,6 +1471,7 @@ fn failpoints_bug_26() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_27() {
     // postmortem 1: a segment is recovered as empty at recovery,
     // which prevented its lsn from being known, and when the SA
@@ -1485,6 +1512,7 @@ fn failpoints_bug_27() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_28() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -1521,6 +1549,7 @@ fn failpoints_bug_28() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_29() {
     // postmortem 1: the test model was turning uncertain entries
     // into certain entries even when there was an intervening crash
@@ -1549,6 +1578,7 @@ fn failpoints_bug_29() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_30() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -1564,6 +1594,7 @@ fn failpoints_bug_30() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_31() {
     // postmortem 1: apply_batch_inner drops a RecoveryGuard, which in turn
     // drops a Reservation, and Reservation's drop implementation flushes
@@ -1582,6 +1613,7 @@ fn failpoints_bug_31() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_32() {
     // postmortem 1:
     for _ in 0..10 {
@@ -1593,6 +1625,7 @@ fn failpoints_bug_32() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_33() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -1662,6 +1695,7 @@ fn failpoints_bug_33() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_34() {
     // postmortem 1: the implementation of make_durable was not properly
     // exiting the function when local durability was detected
@@ -1699,6 +1733,7 @@ fn failpoints_bug_34() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failpoints_bug_35() {
     // postmortem 1:
     use BatchOp::*;

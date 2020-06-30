@@ -34,6 +34,7 @@ measure_allocs = []
 pretty_backtrace = ["color-backtrace"]
 io_uring = ["rio"]
 docs = []
+miri_optimizations = []
 mutex = []
 
 [dependencies]

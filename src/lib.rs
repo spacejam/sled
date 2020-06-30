@@ -211,7 +211,7 @@ pub mod fail;
 #[cfg(feature = "docs")]
 pub mod doc;
 
-#[cfg(not(any(
+#[cfg(any(miri, not(any(
     windows,
     target_os = "linux",
     target_os = "macos",
@@ -219,7 +219,7 @@ pub mod doc;
     target_os = "freebsd",
     target_os = "openbsd",
     target_os = "netbsd",
-)))]
+))))]
 mod threadpool {
     use super::OneShot;
 
@@ -235,7 +235,7 @@ mod threadpool {
     }
 }
 
-#[cfg(any(
+#[cfg(all(not(miri), any(
     windows,
     target_os = "linux",
     target_os = "macos",
@@ -243,10 +243,10 @@ mod threadpool {
     target_os = "freebsd",
     target_os = "openbsd",
     target_os = "netbsd",
-))]
+)))]
 mod threadpool;
 
-#[cfg(any(
+#[cfg(all(not(miri), any(
     windows,
     target_os = "linux",
     target_os = "macos",
@@ -254,7 +254,7 @@ mod threadpool;
     target_os = "freebsd",
     target_os = "openbsd",
     target_os = "netbsd",
-))]
+)))]
 mod flusher;
 
 #[cfg(feature = "event_log")]

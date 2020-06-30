@@ -455,7 +455,11 @@ impl Config {
             .as_nanos()
             << 48;
 
+        #[cfg(not(miri))]
         let pid = u128::from(std::process::id());
+
+        #[cfg(miri)]
+        let pid = 0;
 
         let salt = (pid << 16) + now + seed;
 
@@ -573,7 +577,7 @@ impl Config {
     }
 
     fn try_lock(&self, file: File) -> Result<File> {
-        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        #[cfg(all(not(miri), any(windows, target_os = "linux", target_os = "macos")))]
         {
             use fs2::FileExt;
 

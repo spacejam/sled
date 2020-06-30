@@ -10,11 +10,11 @@ mod disk_pointer;
 mod iobuf;
 mod iterator;
 mod pagetable;
-#[cfg(all(not(unix), not(windows)))]
+#[cfg(any(all(not(unix), not(windows)), miri))]
 mod parallel_io_polyfill;
-#[cfg(unix)]
+#[cfg(all(unix, not(miri)))]
 mod parallel_io_unix;
-#[cfg(windows)]
+#[cfg(all(windows, not(miri)))]
 mod parallel_io_windows;
 mod reservation;
 mod segment;
@@ -24,13 +24,13 @@ use std::{collections::BinaryHeap, ops::Deref};
 
 use crate::*;
 
-#[cfg(all(not(unix), not(windows)))]
+#[cfg(any(all(not(unix), not(windows)), miri))]
 use parallel_io_polyfill::{pread_exact, pread_exact_or_eof, pwrite_all};
 
-#[cfg(unix)]
+#[cfg(all(unix, not(miri)))]
 use parallel_io_unix::{pread_exact, pread_exact_or_eof, pwrite_all};
 
-#[cfg(windows)]
+#[cfg(all(windows, not(miri)))]
 use parallel_io_windows::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 use self::{
@@ -841,6 +841,15 @@ impl PageCache {
     /// move a page. Returns Ok(false) if there were no pages
     /// to GC. Returns an Err if we encountered an IO problem
     /// while performing this GC.
+    #[cfg(all(not(miri), any(
+        windows,
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+    )))]
     pub(crate) fn attempt_gc(&self) -> Result<bool> {
         let guard = pin();
         let cc = concurrency_control::read();
@@ -898,6 +907,15 @@ impl PageCache {
 
     #[doc(hidden)]
     #[cfg(feature = "failpoints")]
+    #[cfg(all(not(miri), any(
+        windows,
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+    )))]
     pub(crate) fn set_failpoint(&self, e: Error) {
         if let Error::FailPoint = e {
             self.config.set_global_error(e);
@@ -1382,7 +1400,16 @@ impl PageCache {
 
             // it's possible the blob file was removed lazily
             // in the background and no longer exists
-            size += blob_file.metadata().map(|m| m.len()).unwrap_or(0);
+            #[cfg(not(miri))]
+            {
+                size += blob_file.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+
+            // workaround to avoid missing `dirfd` shim
+            #[cfg(miri)]
+            {
+                size += std::fs::metadata(blob_file.path()).map(|m| m.len()).unwrap_or(0);
+            }
         }
 
         Ok(size)

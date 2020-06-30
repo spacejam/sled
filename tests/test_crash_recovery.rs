@@ -28,6 +28,12 @@ const TX_DIR: &str = "crash_tx";
 const CRASH_CHANCE: u32 = 250;
 
 fn main() {
+    // Don't actually run this harness=false test under miri, as it requires spawning and killing
+    // child processes.
+    if cfg!(miri) {
+        return;
+    }
+
     common::setup_logger();
 
     match env::var(TEST_ENV_VAR) {

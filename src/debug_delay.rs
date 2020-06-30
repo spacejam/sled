@@ -37,6 +37,12 @@ pub fn debug_delay() {
         static LOCAL_DELAYS: std::cell::RefCell<usize> = std::cell::RefCell::new(0)
     );
 
+    if cfg!(feature = "miri_optimizations") {
+        // Each interaction with LOCAL_DELAYS adds more stacked borrows
+        // tracking information, and Miri is single-threaded anyway.
+        return;
+    }
+
     let global_delays = GLOBAL_DELAYS.fetch_add(1, Relaxed);
     let local_delays = LOCAL_DELAYS.with(|ld| {
         let mut ld = ld.borrow_mut();
