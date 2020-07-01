@@ -81,6 +81,16 @@ impl FromIterator<u8> for IVec {
     }
 }
 
+impl From<Box<[u8]>> for IVec {
+    fn from(b: Box<[u8]>) -> Self {
+        if is_inline_candidate(b.len()) {
+            Self::inline(&b)
+        } else {
+            Self::remote(Arc::from(b))
+        }
+    }
+}
+
 impl From<&[u8]> for IVec {
     fn from(slice: &[u8]) -> Self {
         if is_inline_candidate(slice.len()) {
@@ -245,5 +255,15 @@ fn ivec_usage() {
     let iv1 = IVec::from(vec![1, 2, 3]);
     assert_eq!(iv1, vec![1, 2, 3]);
     let iv2 = IVec::from(&[4; 128][..]);
+    assert_eq!(iv2, vec![4; 128]);
+}
+
+#[test]
+fn boxed_slice_conversion() {
+    let boite1: Box<[u8]> = Box::new([1, 2, 3]);
+    let iv1: IVec = boite1.into();
+    assert_eq!(iv1, vec![1, 2, 3]);
+    let boite2: Box<[u8]> = Box::new([4; 128]);
+    let iv2: IVec = boite2.into();
     assert_eq!(iv2, vec![4; 128]);
 }
