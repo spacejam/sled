@@ -186,16 +186,31 @@ impl<T> From<Box<[T]>> for Arc<[T]> {
             #[allow(clippy::cast_ptr_alignment)]
             ptr::write(dst as _, AtomicUsize::new(1));
             let data_ptr = dst.add(rc_width);
-            ptr::copy_nonoverlapping(src as *const u8, data_ptr, len);
+            ptr::copy_nonoverlapping(src as *const u8, data_ptr, value_layout.size());
 
             // free the old box memory without running Drop
-            dealloc(src as *mut u8, value_layout);
+            if value_layout.size() != 0 {
+                dealloc(src as *mut u8, value_layout);
+            }
 
             let fat_ptr: *const ArcInner<[T]> = Arc::fatten(dst, len);
 
             Arc { ptr: fat_ptr as *mut _ }
         }
     }
+}
+
+#[test]
+fn boxed_slice_to_arc_slice() {
+    let box1: Box<[u8]> = Box::new([1, 2, 3]);
+    let arc1: Arc<[u8]> = box1.into();
+    assert_eq!(&*arc1, &*vec![1, 2, 3]);
+    let box2: Box<[u8]> = Box::new([]);
+    let arc2: Arc<[u8]> = box2.into();
+    assert_eq!(&*arc2, &*vec![]);
+    let box3: Box<[u64]> = Box::new([1, 2, 3]);
+    let arc3: Arc<[u64]> = box3.into();
+    assert_eq!(&*arc3, &*vec![1, 2, 3]);
 }
 
 impl<T> From<Vec<T>> for Arc<[T]> {
