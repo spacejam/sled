@@ -50,6 +50,7 @@ impl IVec {
     ///
     /// # Examples
     /// ```
+    /// # use sled::IVec;
     /// let iv = IVec::from(vec![1]);
     /// let subslice = iv.subslice(0, 1);
     /// assert_eq!(&subslice, &[1]);
