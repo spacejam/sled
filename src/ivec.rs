@@ -27,6 +27,7 @@ impl Default for IVec {
 enum IVecInner {
     Inline(u8, Inner),
     Remote(Arc<[u8]>),
+    Subslice { base: Arc<[u8]>, offset: usize, len: usize },
 }
 
 impl Hash for IVec {
@@ -40,6 +41,72 @@ const fn is_inline_candidate(length: usize) -> bool {
 }
 
 impl IVec {
+    /// Create a subslice of this `IVec` that shares
+    /// the same backing data and reference counter.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self.len() - offset >= len`.
+    ///
+    /// # Examples
+    /// ```
+    /// # use sled::IVec;
+    /// let iv = IVec::from(vec![1]);
+    /// let subslice = iv.subslice(0, 1);
+    /// assert_eq!(&subslice, &[1]);
+    /// let subslice = subslice.subslice(0, 1);
+    /// assert_eq!(&subslice, &[1]);
+    /// let subslice = subslice.subslice(1, 0);
+    /// assert_eq!(&subslice, &[]);
+    /// let subslice = subslice.subslice(0, 0);
+    /// assert_eq!(&subslice, &[]);
+    ///
+    /// let iv2 = IVec::from(vec![1, 2, 3]);
+    /// let subslice = iv2.subslice(3, 0);
+    /// assert_eq!(&subslice, &[]);
+    /// let subslice = iv2.subslice(2, 1);
+    /// assert_eq!(&subslice, &[3]);
+    /// let subslice = iv2.subslice(1, 2);
+    /// assert_eq!(&subslice, &[2, 3]);
+    /// let subslice = iv2.subslice(0, 3);
+    /// assert_eq!(&subslice, &[1, 2, 3]);
+    /// let subslice = subslice.subslice(1, 2);
+    /// assert_eq!(&subslice, &[2, 3]);
+    /// let subslice = subslice.subslice(1, 1);
+    /// assert_eq!(&subslice, &[3]);
+    /// let subslice = subslice.subslice(1, 0);
+    /// assert_eq!(&subslice, &[]);
+    /// ```
+    pub fn subslice(&self, slice_offset: usize, len: usize) -> Self {
+        assert!(self.len().checked_sub(slice_offset).unwrap() >= len);
+
+        let inner = match self.0 {
+            IVecInner::Remote(ref base) => IVecInner::Subslice {
+                base: base.clone(),
+                offset: slice_offset,
+                len,
+            },
+            IVecInner::Inline(_, old_inner) => {
+                // old length already checked above in assertion
+                let mut new_inner = Inner::default();
+                new_inner[..len].copy_from_slice(
+                    &old_inner[slice_offset..slice_offset + len],
+                );
+
+                IVecInner::Inline(u8::try_from(len).unwrap(), new_inner)
+            }
+            IVecInner::Subslice { ref base, ref offset, .. } => {
+                IVecInner::Subslice {
+                    base: base.clone(),
+                    offset: offset + slice_offset,
+                    len,
+                }
+            }
+        };
+
+        IVec(inner)
+    }
+
     fn inline(slice: &[u8]) -> Self {
         assert!(is_inline_candidate(slice.len()));
 
@@ -65,6 +132,13 @@ impl IVec {
         match self.0 {
             IVecInner::Remote(ref mut buf) if Arc::strong_count(buf) != 1 => {
                 self.0 = IVecInner::Remote(buf.to_vec().into());
+            }
+            IVecInner::Subslice { ref mut base, offset, len }
+                if Arc::strong_count(base) != 1 =>
+            {
+                self.0 = IVecInner::Remote(
+                    base[offset..offset + len].to_vec().into(),
+                );
             }
             _ => {}
         }
@@ -170,6 +244,7 @@ impl Into<Arc<[u8]>> for IVec {
         match self.0 {
             IVecInner::Inline(..) => Arc::from(self.as_ref()),
             IVecInner::Remote(arc) => arc,
+            IVecInner::Subslice { .. } => self.deref().into(),
         }
     }
 }
@@ -192,6 +267,9 @@ impl AsRef<[u8]> for IVec {
                 buf.get_unchecked(..*sz as usize)
             },
             IVecInner::Remote(buf) => buf,
+            IVecInner::Subslice { base, offset, len } => {
+                &base[*offset..*offset + *len]
+            }
         }
     }
 }
@@ -214,6 +292,9 @@ impl AsMut<[u8]> for IVec {
                 std::slice::from_raw_parts_mut(buf.as_mut_ptr(), *sz as usize)
             },
             IVecInner::Remote(ref mut buf) => Arc::get_mut(buf).unwrap(),
+            IVecInner::Subslice { ref mut base, offset, len } => {
+                &mut Arc::get_mut(base).unwrap()[offset..offset + len]
+            }
         }
     }
 }
@@ -266,4 +347,18 @@ fn boxed_slice_conversion() {
     let boite2: Box<[u8]> = Box::new([4; 128]);
     let iv2: IVec = boite2.into();
     assert_eq!(iv2, vec![4; 128]);
+}
+
+#[test]
+#[should_panic]
+fn subslice_usage_00() {
+    let iv1 = IVec::from(vec![1, 2, 3]);
+    let _subslice = iv1.subslice(0, 4);
+}
+
+#[test]
+#[should_panic]
+fn subslice_usage_01() {
+    let iv1 = IVec::from(vec![1, 2, 3]);
+    let _subslice = iv1.subslice(3, 1);
 }

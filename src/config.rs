@@ -577,7 +577,10 @@ impl Config {
     }
 
     fn try_lock(&self, file: File) -> Result<File> {
-        #[cfg(all(not(miri), any(windows, target_os = "linux", target_os = "macos")))]
+        #[cfg(all(
+            not(miri),
+            any(windows, target_os = "linux", target_os = "macos")
+        ))]
         {
             use fs2::FileExt;
 

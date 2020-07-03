@@ -1,3 +1,12 @@
+# 0.32.1
+
+## New Features
+
+* #1116 `IVec::subslice` has been added to facilitate
+  creating zero-copy subsliced `IVec`s that are backed
+  by the same data.
+* #1108 conversions from `Box<[u8]>` to `IVec` are fixed.
+
 # 0.32
 
 ## New Features
@@ -50,6 +59,8 @@
   making progress on high priority issues. This may
   be correctly implemented in the future if resources
   permit.
+* The conversion between `Box<[u8]>` and `IVec` has
+  been temporarily removed. This is re-added in 0.32.1.
 
 # 0.31
 

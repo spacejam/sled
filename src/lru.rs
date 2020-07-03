@@ -115,7 +115,7 @@ impl AccessQueue {
 
     fn take<'a>(&self, guard: &'a Guard) -> CacheAccessIter<'a> {
         debug_delay();
-        let ptr = self.full_list.swap(std::ptr::null_mut(), Ordering::Release);
+        let ptr = self.full_list.swap(std::ptr::null_mut(), Ordering::AcqRel);
 
         CacheAccessIter { guard, current_offset: 0, current_block: ptr }
     }

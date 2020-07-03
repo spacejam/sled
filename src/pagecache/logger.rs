@@ -787,7 +787,7 @@ pub(crate) fn read_message<R: ReadAt>(
     match header.kind {
         MessageKind::Canceled => {
             trace!("read failed of len {}", header.len);
-            Ok(LogRead::Canceled(u32::try_from(inline_len).unwrap()))
+            Ok(LogRead::Canceled(inline_len))
         }
         MessageKind::Cap => {
             trace!("read pad in segment number {:?}", header.segment_number);

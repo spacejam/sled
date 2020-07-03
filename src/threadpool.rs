@@ -2,16 +2,14 @@
 
 use std::{
     collections::VecDeque,
-    sync::atomic::AtomicBool,
+    sync::atomic::{AtomicBool, Ordering::Relaxed},
     thread,
     time::{Duration, Instant},
 };
 
 use parking_lot::{Condvar, Mutex};
 
-use crate::{
-    debug_delay, warn, Acquire, AtomicUsize, Lazy, OneShot, Relaxed, SeqCst,
-};
+use crate::{debug_delay, warn, Acquire, AtomicUsize, Lazy, OneShot, SeqCst};
 
 // This is lower for CI reasons.
 #[cfg(windows)]

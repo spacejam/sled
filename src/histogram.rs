@@ -52,7 +52,11 @@ impl Default for Histogram {
             let mut vals = Vec::with_capacity(BUCKETS);
             vals.resize_with(BUCKETS, Default::default);
 
-            Histogram { vals, sum: AtomicUsize::new(0), count: AtomicUsize::new(0) }
+            Histogram {
+                vals,
+                sum: AtomicUsize::new(0),
+                count: AtomicUsize::new(0),
+            }
         }
 
         #[cfg(feature = "miri_optimizations")]
@@ -69,7 +73,11 @@ impl Default for Histogram {
                 Vec::from_raw_parts(ptr as *mut AtomicUsize, len, capacity)
             };
 
-            Histogram { vals, sum: AtomicUsize::new(0), count: AtomicUsize::new(0) }
+            Histogram {
+                vals,
+                sum: AtomicUsize::new(0),
+                count: AtomicUsize::new(0),
+            }
         }
     }
 }
