@@ -159,17 +159,17 @@ impl Db {
 
     /// Remove a disk-backed collection.
     pub fn drop_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<bool> {
-        let name = name.as_ref();
-        if name == DEFAULT_TREE_ID {
+        let name_ref = name.as_ref();
+        if name_ref == DEFAULT_TREE_ID {
             return Err(Error::Unsupported(
                 "cannot remove the core structures".into(),
             ));
         }
-        trace!("dropping tree {:?}", name,);
+        trace!("dropping tree {:?}", name_ref,);
 
         let mut tenants = self.tenants.write();
 
-        let tree = if let Some(tree) = tenants.remove(&*name) {
+        let tree = if let Some(tree) = tenants.remove(&*name_ref) {
             tree
         } else {
             return Ok(false);
@@ -178,7 +178,7 @@ impl Db {
         let guard = pin();
 
         let mut root_id =
-            Some(self.context.pagecache.meta_pid_for_name(name, &guard)?);
+            Some(self.context.pagecache.meta_pid_for_name(name_ref, &guard)?);
 
         let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
         let mut cursor = root_id.unwrap();
@@ -196,7 +196,7 @@ impl Db {
             let res = self
                 .context
                 .pagecache
-                .cas_root_in_meta(name, root_id, None, &guard)?;
+                .cas_root_in_meta(name_ref, root_id, None, &guard)?;
 
             if let Err(actual_root) = res {
                 root_id = actual_root;
