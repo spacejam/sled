@@ -1599,7 +1599,7 @@ impl Tree {
 
         let _measure = Measure::new(&M.tree_traverse);
 
-        let mut cursor = self.root.load(SeqCst);
+        let mut cursor = self.root.load(Acquire);
         let mut root_pid = cursor;
         let mut parent_view = None;
         let mut unsplit_parent = None;
@@ -1612,7 +1612,7 @@ impl Tree {
                     line!(),
                     cursor
                 );
-                cursor = self.root.load(SeqCst);
+                cursor = self.root.load(Acquire);
                 root_pid = cursor;
                 parent_view = None;
                 unsplit_parent = None;
@@ -2124,7 +2124,7 @@ impl Debug for Tree {
     ) -> std::result::Result<(), fmt::Error> {
         let guard = pin();
 
-        let mut pid = self.root.load(SeqCst);
+        let mut pid = self.root.load(Acquire);
         let mut left_most = pid;
         let mut level = 0;
         let mut expected_pids = FastSet8::default();

@@ -59,6 +59,8 @@ If you would like to work with structured data without paying expensive deserial
 
 # performance
 
+* [LSM tree](https://en.wikipedia.org/wiki/Log-structured_merge-tree)-like write performance
+  with [traditional B+ tree](https://en.wikipedia.org/wiki/B%2B_tree)-like read performance
 * over a billion operations in under a minute at 95% read 5% writes on 16 cores on a small dataset
 * measure your own workloads rather than relying on some marketing for contrived workloads
 
@@ -67,7 +69,7 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 # features
 
 * [API](https://docs.rs/sled) similar to a threadsafe `BTreeMap<[u8], [u8]>`
-* serializable multi-key and multi-Tree interactive [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction) involving up to 69 separate Trees!
+* serializable multi-key and multi-Tree interactive [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction)
 * fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.compare_and_swap)
 * zero-copy reads
 * [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.apply_batch)
@@ -78,8 +80,8 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 * a crash-safe monotonic [ID generator](https://docs.rs/sled/latest/sled/struct.Db.html#method.generate_id) capable of generating 75-125 million unique ID's per second
 * [zstd](https://github.com/facebook/zstd) compression (use the `compression` build feature)
 * cpu-scalable lock-free implementation
-* SSD-optimized log-structured storage
-* prefix encoded keys reducing the storage cost of complex keys
+* flash-optimized log-structured storage
+* uses modern b-tree techniques such as prefix encoding and suffix truncation for reducing the storage costs of long keys
 
 # a note on lexicographic ordering and endianness
 
@@ -149,10 +151,9 @@ for a more detailed overview of where we're at and where we see things going!
 
 # plans
 
+* 1.0.0 release date will be on January 19, 2021. This is sled's 5th birthday.
 * Typed Trees that support working directly with serde-friendly types instead of raw bytes,
   and also allow the deserialized form to be stored in the shared cache for speedy access.
-* [LSM tree](https://en.wikipedia.org/wiki/Log-structured_merge-tree)-like write performance
-  with [traditional B+ tree](https://en.wikipedia.org/wiki/B%2B_tree)-like read performance
 * MVCC and snapshots
 * forward-compatible binary format
 * concurrent snapshot delta generation and recovery
