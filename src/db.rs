@@ -69,15 +69,18 @@ impl Db {
 
         let context = Context::start(config)?;
 
-        #[cfg(all(not(miri), any(
-            windows,
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "netbsd",
-        )))]
+        #[cfg(all(
+            not(miri),
+            any(
+                windows,
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd",
+            )
+        ))]
         {
             let flusher_pagecache = context.pagecache.clone();
             let flusher = context.flush_every_ms.map(move |fem| {
@@ -265,16 +268,18 @@ impl Db {
     ///
     /// ```toml
     /// [dependencies]
-    /// sled = "0.30"
-    /// old_sled = { version = "0.29", package = "sled" }
+    /// sled = "0.32"
+    /// old_sled = { version = "0.31", package = "sled" }
     /// ```
     ///
     /// and in your code, remember that old versions of
     /// sled might have a different way to open them
     /// than the current `sled::open` method:
     ///
-    /// ```compile_fail
-    /// let old = old_sled::Db::open("my_old_db")?;
+    /// ```
+    /// # use sled as old_sled;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let old = old_sled::open("my_old_db")?;
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
@@ -284,6 +289,7 @@ impl Db {
     /// new.import(export);
     ///
     /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # Ok(()) }
     /// ```
     pub fn export(
         &self,
@@ -324,16 +330,18 @@ impl Db {
     ///
     /// ```toml
     /// [dependencies]
-    /// sled = "0.30"
-    /// old_sled = { version = "0.29", package = "sled" }
+    /// sled = "0.32"
+    /// old_sled = { version = "0.31", package = "sled" }
     /// ```
     ///
     /// and in your code, remember that old versions of
     /// sled might have a different way to open them
     /// than the current `sled::open` method:
     ///
-    /// ```compile_fail
-    /// let old = old_sled::Db::open("my_old_db")?;
+    /// ```
+    /// # use sled as old_sled;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let old = old_sled::open("my_old_db")?;
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
@@ -343,6 +351,7 @@ impl Db {
     /// new.import(export);
     ///
     /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # Ok(()) }
     /// ```
     pub fn import(
         &self,
