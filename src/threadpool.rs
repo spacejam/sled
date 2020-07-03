@@ -9,7 +9,9 @@ use std::{
 
 use parking_lot::{Condvar, Mutex};
 
-use crate::{debug_delay, warn, AtomicUsize, Lazy, OneShot, Relaxed, SeqCst};
+use crate::{
+    debug_delay, warn, Acquire, AtomicUsize, Lazy, OneShot, Relaxed, SeqCst,
+};
 
 // This is lower for CI reasons.
 #[cfg(windows)]
@@ -119,7 +121,7 @@ fn perform_work(is_immortal: bool) {
 
         debug_delay();
 
-        let waiting = WAITING_THREAD_COUNT.load(SeqCst);
+        let waiting = WAITING_THREAD_COUNT.load(Acquire);
 
         if waiting > DESIRED_WAITING_THREADS {
             contiguous_overshoots += 1;
@@ -134,9 +136,9 @@ fn perform_work(is_immortal: bool) {
 // receive any work after one second.
 fn maybe_spawn_new_thread() {
     debug_delay();
-    let total_workers = TOTAL_THREAD_COUNT.load(SeqCst);
+    let total_workers = TOTAL_THREAD_COUNT.load(Acquire);
     debug_delay();
-    let waiting_threads = WAITING_THREAD_COUNT.load(SeqCst);
+    let waiting_threads = WAITING_THREAD_COUNT.load(Acquire);
 
     if waiting_threads >= DESIRED_WAITING_THREADS
         || total_workers >= MAX_THREADS

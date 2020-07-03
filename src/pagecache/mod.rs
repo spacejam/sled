@@ -216,7 +216,7 @@ where
 
 // TODO remove this when atomic fetch_max stabilizes in #48655
 fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
-    let mut current = atomic_lsn.load(SeqCst);
+    let mut current = atomic_lsn.load(Acquire);
     loop {
         if current >= to {
             return;

@@ -190,7 +190,11 @@ fn run(args: Args, tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     };
 
     let valgen = |len| -> sled::IVec {
-        let i: usize = thread_rng().gen::<usize>() % len;
+        if len == 0 {
+            return vec![].into();
+        }
+
+        let i: usize = thread_rng().gen::<usize>() % (len * 8);
 
         let i_keygen = i.to_be_bytes();
 

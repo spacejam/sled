@@ -726,7 +726,7 @@ impl Config {
     #[doc(hidden)]
     pub fn global_error(&self) -> Result<()> {
         let guard = pin();
-        let ge = self.global_error.load(SeqCst, &guard);
+        let ge = self.global_error.load(Acquire, &guard);
         if ge.is_null() {
             Ok(())
         } else {

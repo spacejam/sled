@@ -167,22 +167,22 @@ impl IoBuf {
 
     pub(crate) fn set_maxed(&self, maxed: bool) {
         debug_delay();
-        self.maxed.store(maxed, SeqCst);
+        self.maxed.store(maxed, Release);
     }
 
     pub(crate) fn get_maxed(&self) -> bool {
         debug_delay();
-        self.maxed.load(SeqCst)
+        self.maxed.load(Acquire)
     }
 
     pub(crate) fn get_header(&self) -> Header {
         debug_delay();
-        self.header.load(SeqCst)
+        self.header.load(Acquire)
     }
 
     pub(crate) fn set_header(&self, new: Header) {
         debug_delay();
-        self.header.store(new, SeqCst);
+        self.header.store(new, Release);
     }
 
     pub(crate) fn cas_header(
@@ -544,7 +544,7 @@ impl IoBufs {
     /// Returns the last stable offset in storage.
     pub(in crate::pagecache) fn stable(&self) -> Lsn {
         debug_delay();
-        self.stable_lsn.load(SeqCst)
+        self.stable_lsn.load(Acquire)
     }
 
     // Adds a header to the front of the buffer
@@ -821,7 +821,7 @@ impl IoBufs {
         guard.flush();
 
         let current_max_header_stable_lsn =
-            self.max_header_stable_lsn.load(SeqCst);
+            self.max_header_stable_lsn.load(Acquire);
 
         self.sa_stabilize(current_max_header_stable_lsn, &guard)
     }
@@ -872,7 +872,7 @@ impl IoBufs {
         // If we didn't forget it, it would then go back down again,
         // even though we just created a new reference to it, leading
         // to double-frees.
-        let arc = unsafe { Arc::from_raw(self.iobuf.load(SeqCst)) };
+        let arc = unsafe { Arc::from_raw(self.iobuf.load(Acquire)) };
         #[allow(clippy::mem_forget)]
         std::mem::forget(arc.clone());
         arc
@@ -1033,7 +1033,7 @@ pub(in crate::pagecache) fn make_stable_inner(
 /// of bytes written during this call.
 pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
     let _cc = concurrency_control::read();
-    let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst);
+    let max_reserved_lsn = iobufs.max_reserved_lsn.load(Acquire);
     make_stable(iobufs, max_reserved_lsn)
 }
 

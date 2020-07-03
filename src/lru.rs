@@ -5,11 +5,11 @@ use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::{
+    atomic_shim::AtomicU64,
     debug_delay,
     dll::{DoublyLinkedList, Node},
     fastlock::FastLock,
     Guard, PageId,
-    atomic_shim::AtomicU64,
 };
 
 #[cfg(any(test, feature = "lock_free_delays"))]
@@ -65,7 +65,7 @@ impl AccessQueue {
             let block = unsafe { &*head };
 
             debug_delay();
-            let offset = block.len.fetch_add(1, Ordering::SeqCst);
+            let offset = block.len.fetch_add(1, Ordering::Release);
 
             if offset < MAX_QUEUE_ITEMS {
                 debug_delay();
@@ -73,7 +73,7 @@ impl AccessQueue {
                     block
                         .block
                         .get_unchecked(offset)
-                        .store(item.0, Ordering::SeqCst);
+                        .store(item.0, Ordering::Release);
                 }
                 return filled;
             } else {
@@ -81,7 +81,7 @@ impl AccessQueue {
                 let new = Box::into_raw(Box::new(AccessBlock::default()));
                 debug_delay();
                 let prev =
-                    self.writing.compare_and_swap(head, new, Ordering::SeqCst);
+                    self.writing.compare_and_swap(head, new, Ordering::Release);
                 if prev != head {
                     // we lost the CAS, free the new item that was
                     // never published to other threads
@@ -97,12 +97,12 @@ impl AccessQueue {
                 let mut full_list_ptr = self.full_list.load(Ordering::Acquire);
                 while {
                     // we loop because maybe other threads are pushing stuff too
-                    block.next.store(full_list_ptr, Ordering::SeqCst);
+                    block.next.store(full_list_ptr, Ordering::Release);
                     debug_delay();
                     ret = self.full_list.compare_and_swap(
                         full_list_ptr,
                         head,
-                        Ordering::SeqCst,
+                        Ordering::Release,
                     );
                     ret != full_list_ptr
                 } {
@@ -115,7 +115,7 @@ impl AccessQueue {
 
     fn take<'a>(&self, guard: &'a Guard) -> CacheAccessIter<'a> {
         debug_delay();
-        let ptr = self.full_list.swap(std::ptr::null_mut(), Ordering::SeqCst);
+        let ptr = self.full_list.swap(std::ptr::null_mut(), Ordering::Release);
 
         CacheAccessIter { guard, current_offset: 0, current_block: ptr }
     }
@@ -134,7 +134,7 @@ impl Drop for AccessQueue {
             unsafe {
                 debug_delay();
                 let next =
-                    (*head).next.swap(std::ptr::null_mut(), Ordering::SeqCst);
+                    (*head).next.swap(std::ptr::null_mut(), Ordering::Release);
                 Box::from_raw(head);
                 head = next;
             }
