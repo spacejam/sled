@@ -341,7 +341,7 @@ use {
         io::{Read, Write},
         sync::atomic::{
             AtomicUsize,
-            Ordering::{Acquire, Relaxed, Release, SeqCst},
+            Ordering::{Acquire, Release, SeqCst},
         },
     },
 };
