@@ -28,9 +28,9 @@ pub struct Arc<T: ?Sized> {
 unsafe impl<T: Send + Sync + ?Sized> Send for Arc<T> {}
 unsafe impl<T: Send + Sync + ?Sized> Sync for Arc<T> {}
 
-impl<T: Debug> Debug for Arc<T> {
+impl<T: Debug + ?Sized> Debug for Arc<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        f.debug_map().entry(&"inner", unsafe { &(*self.ptr).inner }).finish()
+        Debug::fmt(&**self, f)
     }
 }
 
@@ -168,32 +168,50 @@ impl<T: Copy> From<&[T]> for Arc<[T]> {
 }
 
 #[allow(clippy::fallible_impl_from)]
-impl<T> From<Box<T>> for Arc<T> {
+impl<T> From<Box<[T]>> for Arc<[T]> {
     #[inline]
-    fn from(b: Box<T>) -> Arc<T> {
-        let align =
-            std::cmp::max(mem::align_of::<T>(), mem::align_of::<AtomicUsize>());
-
-        let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
-
+    fn from(b: Box<[T]>) -> Arc<[T]> {
+        let len = b.len();
         unsafe {
-            let dst_layout = Layout::new::<ArcInner<T>>();
+            let src = Box::into_raw(b);
+            let value_layout = Layout::for_value(&*src);
+            let align = std::cmp::max(value_layout.align(), mem::align_of::<AtomicUsize>());
+            let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
+            let unpadded_size = rc_width.checked_add(value_layout.size()).unwrap();
+            // pad the total `Arc` allocation size to the alignment of `max(value, AtomicUsize)`
+            let size = (unpadded_size + align - 1) & !(align - 1);
+            let dst_layout = Layout::from_size_align(size, align).unwrap();
             let dst = alloc(dst_layout);
             assert!(!dst.is_null(), "failed to allocate Arc");
 
-            let data_ptr = dst.add(rc_width);
             #[allow(clippy::cast_ptr_alignment)]
             ptr::write(dst as _, AtomicUsize::new(1));
-            let src = Box::into_raw(b);
-            ptr::copy(src, data_ptr as *mut T, 1);
+            let data_ptr = dst.add(rc_width);
+            ptr::copy_nonoverlapping(src as *const u8, data_ptr, value_layout.size());
 
             // free the old box memory without running Drop
-            let src_layout = Layout::new::<T>();
-            dealloc(src as *mut u8, src_layout);
+            if value_layout.size() != 0 {
+                dealloc(src as *mut u8, value_layout);
+            }
 
-            Arc { ptr: dst as *mut _ }
+            let fat_ptr: *const ArcInner<[T]> = Arc::fatten(dst, len);
+
+            Arc { ptr: fat_ptr as *mut _ }
         }
     }
+}
+
+#[test]
+fn boxed_slice_to_arc_slice() {
+    let box1: Box<[u8]> = Box::new([1, 2, 3]);
+    let arc1: Arc<[u8]> = box1.into();
+    assert_eq!(&*arc1, &*vec![1, 2, 3]);
+    let box2: Box<[u8]> = Box::new([]);
+    let arc2: Arc<[u8]> = box2.into();
+    assert_eq!(&*arc2, &*vec![]);
+    let box3: Box<[u64]> = Box::new([1, 2, 3]);
+    let arc3: Arc<[u64]> = box3.into();
+    assert_eq!(&*arc3, &*vec![1, 2, 3]);
 }
 
 impl<T> From<Vec<T>> for Arc<[T]> {
