@@ -12,15 +12,18 @@ pub struct Context {
     /// When the last high-level reference is dropped, it
     /// should trigger all background threads to clean
     /// up synchronously.
-    #[cfg(all(not(miri), any(
-        windows,
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
-    )))]
+    #[cfg(all(
+        not(miri),
+        any(
+            windows,
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+        )
+    ))]
     pub(crate) flusher: Arc<Mutex<Option<flusher::Flusher>>>,
     #[doc(hidden)]
     pub pagecache: Arc<PageCache>,
@@ -36,15 +39,18 @@ impl std::ops::Deref for Context {
 
 impl Drop for Context {
     fn drop(&mut self) {
-        #[cfg(all(not(miri), any(
-            windows,
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "netbsd",
-        )))]
+        #[cfg(all(
+            not(miri),
+            any(
+                windows,
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd",
+            )
+        ))]
         {
             if let Some(flusher) = self.flusher.lock().take() {
                 drop(flusher)
@@ -77,15 +83,18 @@ impl Context {
         Ok(Self {
             config,
             pagecache,
-            #[cfg(all(not(miri), any(
-                windows,
-                target_os = "linux",
-                target_os = "macos",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "openbsd",
-                target_os = "netbsd",
-            )))]
+            #[cfg(all(
+                not(miri),
+                any(
+                    windows,
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "dragonfly",
+                    target_os = "freebsd",
+                    target_os = "openbsd",
+                    target_os = "netbsd",
+                )
+            ))]
             flusher: Arc::new(parking_lot::Mutex::new(None)),
         })
     }

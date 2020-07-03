@@ -175,10 +175,15 @@ impl<T> From<Box<[T]>> for Arc<[T]> {
         unsafe {
             let src = Box::into_raw(b);
             let value_layout = Layout::for_value(&*src);
-            let align = std::cmp::max(value_layout.align(), mem::align_of::<AtomicUsize>());
+            let align = std::cmp::max(
+                value_layout.align(),
+                mem::align_of::<AtomicUsize>(),
+            );
             let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
-            let unpadded_size = rc_width.checked_add(value_layout.size()).unwrap();
-            // pad the total `Arc` allocation size to the alignment of `max(value, AtomicUsize)`
+            let unpadded_size =
+                rc_width.checked_add(value_layout.size()).unwrap();
+            // pad the total `Arc` allocation size to the alignment of
+            // `max(value, AtomicUsize)`
             let size = (unpadded_size + align - 1) & !(align - 1);
             let dst_layout = Layout::from_size_align(size, align).unwrap();
             let dst = alloc(dst_layout);
@@ -187,7 +192,11 @@ impl<T> From<Box<[T]>> for Arc<[T]> {
             #[allow(clippy::cast_ptr_alignment)]
             ptr::write(dst as _, AtomicUsize::new(1));
             let data_ptr = dst.add(rc_width);
-            ptr::copy_nonoverlapping(src as *const u8, data_ptr, value_layout.size());
+            ptr::copy_nonoverlapping(
+                src as *const u8,
+                data_ptr,
+                value_layout.size(),
+            );
 
             // free the old box memory without running Drop
             if value_layout.size() != 0 {

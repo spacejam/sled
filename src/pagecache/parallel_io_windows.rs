@@ -43,7 +43,7 @@ fn seek_write_all<F: FileExt>(
                 return Err(io::Error::new(
                     io::ErrorKind::WriteZero,
                     "failed to write whole buffer",
-                ))
+                ));
             }
             Ok(n) => {
                 buf = &buf[n..];

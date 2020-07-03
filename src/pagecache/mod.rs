@@ -841,15 +841,18 @@ impl PageCache {
     /// move a page. Returns Ok(false) if there were no pages
     /// to GC. Returns an Err if we encountered an IO problem
     /// while performing this GC.
-    #[cfg(all(not(miri), any(
-        windows,
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
-    )))]
+    #[cfg(all(
+        not(miri),
+        any(
+            windows,
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+        )
+    ))]
     pub(crate) fn attempt_gc(&self) -> Result<bool> {
         let guard = pin();
         let cc = concurrency_control::read();
@@ -907,15 +910,18 @@ impl PageCache {
 
     #[doc(hidden)]
     #[cfg(feature = "failpoints")]
-    #[cfg(all(not(miri), any(
-        windows,
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
-    )))]
+    #[cfg(all(
+        not(miri),
+        any(
+            windows,
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+        )
+    ))]
     pub(crate) fn set_failpoint(&self, e: Error) {
         if let Error::FailPoint = e {
             self.config.set_global_error(e);
@@ -1408,7 +1414,9 @@ impl PageCache {
             // workaround to avoid missing `dirfd` shim
             #[cfg(miri)]
             {
-                size += std::fs::metadata(blob_file.path()).map(|m| m.len()).unwrap_or(0);
+                size += std::fs::metadata(blob_file.path())
+                    .map(|m| m.len())
+                    .unwrap_or(0);
             }
         }
 

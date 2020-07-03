@@ -35,11 +35,7 @@ pub fn binary_search<'a>(key: &[u8], s: &'a [IVec]) -> Result<usize, usize> {
     #[allow(unsafe_code)]
     let l = unsafe { s.get_unchecked(base).as_ref() };
     let cmp = fastcmp(l, key);
-    if cmp == Equal {
-        Ok(base)
-    } else {
-        Err(base + (cmp == Less) as usize)
-    }
+    if cmp == Equal { Ok(base) } else { Err(base + (cmp == Less) as usize) }
 }
 
 #[test]
