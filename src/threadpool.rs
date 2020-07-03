@@ -10,8 +10,7 @@ use std::{
 use parking_lot::{Condvar, Mutex};
 
 use crate::{
-    debug_delay, warn, Acquire, Acquire, AtomicUsize, Lazy, OneShot, Relaxed,
-    SeqCst,
+    debug_delay, warn, Acquire, AtomicUsize, Lazy, OneShot, Relaxed, SeqCst,
 };
 
 // This is lower for CI reasons.
