@@ -76,30 +76,29 @@ impl IVec {
     /// let subslice = subslice.subslice(1, 0);
     /// assert_eq!(&subslice, &[]);
     /// ```
-    pub fn subslice(&self, offset: usize, len: usize) -> Self {
-        assert!(self.len().checked_sub(offset).unwrap() >= len);
-
-        let new_offset = offset;
-        let new_len = len;
+    pub fn subslice(&self, slice_offset: usize, len: usize) -> Self {
+        assert!(self.len().checked_sub(slice_offset).unwrap() >= len);
 
         let inner = match self.0 {
-            IVecInner::Remote(ref base) => {
-                IVecInner::Subslice { base: base.clone(), offset, len }
-            }
+            IVecInner::Remote(ref base) => IVecInner::Subslice {
+                base: base.clone(),
+                offset: slice_offset,
+                len,
+            },
             IVecInner::Inline(_, old_inner) => {
                 // old length already checked above in assertion
                 let mut new_inner = Inner::default();
-                new_inner[..new_len].copy_from_slice(
-                    &old_inner[new_offset..new_offset + new_len],
+                new_inner[..len].copy_from_slice(
+                    &old_inner[slice_offset..slice_offset + len],
                 );
 
-                IVecInner::Inline(u8::try_from(new_len).unwrap(), new_inner)
+                IVecInner::Inline(u8::try_from(len).unwrap(), new_inner)
             }
             IVecInner::Subslice { ref base, ref offset, .. } => {
                 IVecInner::Subslice {
                     base: base.clone(),
-                    offset: offset + new_offset,
-                    len: new_len,
+                    offset: offset + slice_offset,
+                    len,
                 }
             }
         };

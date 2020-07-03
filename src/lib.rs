@@ -129,13 +129,12 @@
     clippy::needless_continue,
     clippy::needless_pass_by_value,
     clippy::non_ascii_literal,
-    clippy::option_map_unwrap_or,
-    clippy::option_map_unwrap_or_else,
+    clippy::map_entry,
     clippy::path_buf_push_overwrite,
     clippy::print_stdout,
     clippy::pub_enum_variant_names,
     clippy::redundant_closure_for_method_calls,
-    clippy::result_map_unwrap_or_else,
+    clippy::map_unwrap_or,
     clippy::shadow_reuse,
     clippy::shadow_same,
     clippy::shadow_unrelated,
@@ -211,15 +210,18 @@ pub mod fail;
 #[cfg(feature = "docs")]
 pub mod doc;
 
-#[cfg(any(miri, not(any(
-    windows,
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "netbsd",
-))))]
+#[cfg(any(
+    miri,
+    not(any(
+        windows,
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+    ))
+))]
 mod threadpool {
     use super::OneShot;
 
@@ -235,26 +237,32 @@ mod threadpool {
     }
 }
 
-#[cfg(all(not(miri), any(
-    windows,
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "netbsd",
-)))]
+#[cfg(all(
+    not(miri),
+    any(
+        windows,
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+    )
+))]
 mod threadpool;
 
-#[cfg(all(not(miri), any(
-    windows,
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "netbsd",
-)))]
+#[cfg(all(
+    not(miri),
+    any(
+        windows,
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+    )
+))]
 mod flusher;
 
 #[cfg(feature = "event_log")]
