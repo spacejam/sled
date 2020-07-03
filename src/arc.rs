@@ -178,6 +178,7 @@ impl<T> From<Box<[T]>> for Arc<[T]> {
             let align = std::cmp::max(value_layout.align(), mem::align_of::<AtomicUsize>());
             let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
             let unpadded_size = rc_width.checked_add(value_layout.size()).unwrap();
+            // pad the total `Arc` allocation size to the alignment of `max(value, AtomicUsize)`
             let size = (unpadded_size + align - 1) & !(align - 1);
             let dst_layout = Layout::from_size_align(size, align).unwrap();
             let dst = alloc(dst_layout);
