@@ -374,9 +374,6 @@ fn ivec_as_mut_identity() {
 
 #[cfg(test)]
 mod qc {
-    use quickcheck::{Arbitrary, Gen};
-    use rand::Rng;
-
     use super::IVec;
 
     fn prop_identity(ivec: IVec) -> bool {
