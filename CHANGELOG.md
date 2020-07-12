@@ -5,12 +5,12 @@
 * #1116 `IVec::subslice` has been added to facilitate
   creating zero-copy subsliced `IVec`s that are backed
   by the same data.
-* #1108 conversions from `Box<[u8]>` to `IVec` are fixed.
 
 ## Bug Fixes
 
 * #1120 Fixed a use-after-free caused by missing `ref` keyword
   on a `Copy` type in a pattern match in `IVec::as_mut`.
+* #1108 conversions from `Box<[u8]>` to `IVec` are fixed.
 
 # 0.32
 
