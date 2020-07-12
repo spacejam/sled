@@ -292,7 +292,7 @@ impl AsMut<[u8]> for IVec {
                 std::slice::from_raw_parts_mut(buf.as_mut_ptr(), *sz as usize)
             },
             IVecInner::Remote(ref mut buf) => Arc::get_mut(buf).unwrap(),
-            IVecInner::Subslice { ref mut base, ref offset, ref len } => {
+            IVecInner::Subslice { ref mut base, offset, len } => {
                 &mut Arc::get_mut(base).unwrap()[*offset..*offset + *len]
             }
         }
