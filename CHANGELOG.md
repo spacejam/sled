@@ -7,6 +7,11 @@
   by the same data.
 * #1108 conversions from `Box<[u8]>` to `IVec` are fixed.
 
+## Bug Fixes
+
+* Fixed a use-after-free caused by missing `ref` keyword
+  on a `Copy` type in a pattern match in `IVec::as_mut`.
+
 # 0.32
 
 ## New Features

@@ -267,7 +267,7 @@ impl AsRef<[u8]> for IVec {
                 buf.get_unchecked(..*sz as usize)
             },
             IVecInner::Remote(buf) => buf,
-            IVecInner::Subslice { base, offset, len } => {
+            IVecInner::Subslice { ref base, offset, len } => {
                 &base[*offset..*offset + *len]
             }
         }
@@ -287,13 +287,13 @@ impl AsMut<[u8]> for IVec {
     fn as_mut(&mut self) -> &mut [u8] {
         self.make_mut();
 
-        match self.0 {
-            IVecInner::Inline(ref sz, mut buf) => unsafe {
+        match &mut self.0 {
+            IVecInner::Inline(ref sz, ref mut buf) => unsafe {
                 std::slice::from_raw_parts_mut(buf.as_mut_ptr(), *sz as usize)
             },
             IVecInner::Remote(ref mut buf) => Arc::get_mut(buf).unwrap(),
-            IVecInner::Subslice { ref mut base, offset, len } => {
-                &mut Arc::get_mut(base).unwrap()[offset..offset + len]
+            IVecInner::Subslice { ref mut base, ref offset, ref len } => {
+                &mut Arc::get_mut(base).unwrap()[*offset..*offset + *len]
             }
         }
     }
@@ -361,4 +361,49 @@ fn subslice_usage_00() {
 fn subslice_usage_01() {
     let iv1 = IVec::from(vec![1, 2, 3]);
     let _subslice = iv1.subslice(3, 1);
+}
+
+#[test]
+fn ivec_as_mut_identity() {
+    let initial = &[1];
+    let mut iv = IVec::from(initial);
+    assert_eq!(&*initial, &*iv);
+    assert_eq!(&*initial, &mut *iv);
+    assert_eq!(&*initial, iv.as_mut());
+}
+
+#[cfg(test)]
+mod qc {
+    use quickcheck::{Arbitrary, Gen};
+    use rand::Rng;
+
+    use super::IVec;
+
+    fn prop_identity(ivec: IVec) -> bool {
+        let mut iv2 = ivec.clone();
+
+        if iv2 != ivec {
+            println!("expected clone to equal original");
+            return false;
+        }
+
+        if &*ivec != &mut *iv2 {
+            println!("expected AsMut to equal original");
+            return false;
+        }
+
+        if &*ivec != iv2.as_mut() {
+            println!("expected AsMut to equal original");
+            return false;
+        }
+
+        true
+    }
+
+    quickcheck::quickcheck! {
+        #[cfg_attr(miri, ignore)]
+        fn bool(item: IVec) -> bool {
+            prop_identity(item)
+        }
+    }
 }
