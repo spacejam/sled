@@ -1,3 +1,12 @@
+# Unreleased
+
+## Breaking Changes
+
+* the backtrace crate has been made optional, which cuts
+  several seconds off compilation time, but may cause
+  breakage if you interacted with the backtrace field
+  of corruption-related errors.
+
 # 0.32.1
 
 ## New Features

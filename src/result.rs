@@ -5,6 +5,7 @@ use std::{
     io,
 };
 
+#[cfg(feature = "testing")]
 use backtrace::Backtrace;
 
 use crate::{
@@ -47,7 +48,11 @@ pub enum Error {
         /// The file location that corrupted data was found at.
         at: Option<DiskPtr>,
         /// A backtrace for where the corruption was encountered.
+        #[cfg(feature = "testing")]
         bt: Backtrace,
+        /// A backtrace for where the corruption was encountered.
+        #[cfg(not(feature = "testing"))]
+        bt: (),
     },
     // a failpoint has been triggered for testing purposes
     #[doc(hidden)]
@@ -57,7 +62,13 @@ pub enum Error {
 
 impl Error {
     pub(crate) fn corruption(at: Option<DiskPtr>) -> Error {
-        Error::Corruption { at, bt: Backtrace::new() }
+        Error::Corruption {
+            at,
+            #[cfg(feature = "testing")]
+            bt: Backtrace::new(),
+            #[cfg(not(feature = "testing"))]
+            bt: (),
+        }
     }
 }
 
