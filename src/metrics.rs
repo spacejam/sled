@@ -321,7 +321,7 @@ impl Metrics {
         let log_reservations =
             std::cmp::max(1, self.log_reservations.load(Acquire));
         let log_reservation_attempts =
-            self.log_reservation_attempts.load(Acquire);
+            std::cmp::max(1, self.log_reservation_attempts.load(Acquire));
         let log_reservation_retry_rate =
             (log_reservation_attempts - log_reservations) * 100
                 / (log_reservations + 1);
