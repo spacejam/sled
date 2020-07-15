@@ -2,14 +2,14 @@
 
 ## Breaking Changes
 
-* the backtrace crate has been made optional, which cuts
-  several seconds off compilation time, but may cause
+* #1125 the backtrace crate has been made optional, which
+  cuts several seconds off compilation time, but may cause
   breakage if you interacted with the backtrace field
   of corruption-related errors.
 
 ## Bug Fixes
 
-* `Tree::pop_min` and `Tree::pop_max` had a bug where
+* #1128 `Tree::pop_min` and `Tree::pop_max` had a bug where
   they were not atomic.
 
 # 0.32.1
