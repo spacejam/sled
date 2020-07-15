@@ -1315,7 +1315,7 @@ impl Tree {
                         &first.0,
                         Some(&first.1),
                         None,
-                    )
+                    )?
                     .is_ok()
                 {
                     return Ok(Some(first));
@@ -1362,7 +1362,7 @@ impl Tree {
                         &first.0,
                         Some(&first.1),
                         None,
-                    )
+                    )?
                     .is_ok()
                 {
                     return Ok(Some(first));

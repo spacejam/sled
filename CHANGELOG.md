@@ -1,4 +1,4 @@
-# Unreleased
+# 0.33
 
 ## Breaking Changes
 
@@ -6,6 +6,11 @@
   several seconds off compilation time, but may cause
   breakage if you interacted with the backtrace field
   of corruption-related errors.
+
+## Bug Fixes
+
+* `Tree::pop_min` and `Tree::pop_max` had a bug where
+  they were not atomic.
 
 # 0.32.1
 
