@@ -90,7 +90,6 @@ fn test_varied_compression_ratios() {
 #[test]
 #[cfg(not(miri))] // can't create threads
 fn concurrent_tree_pops() -> sled::Result<()> {
-    use std::convert::TryInto;
     use std::thread;
 
     let db = sled::open("db")?;
@@ -100,13 +99,18 @@ fn concurrent_tree_pops() -> sled::Result<()> {
         db.insert(x.to_be_bytes(), &[])?;
     }
 
+    let mut threads = vec![];
+
     // Pop 5 values using multiple threads
     for _ in 0..5 {
         let db = db.clone();
-        thread::spawn(move || {
-            let (key, _) = db.pop_min().unwrap().unwrap();
-            let x = u32::from_be_bytes((&*key).try_into().unwrap());
-        });
+        threads.push(thread::spawn(move || {
+            db.pop_min().unwrap().unwrap();
+        }));
+    }
+
+    for thread in threads.into_iter() {
+        thread.join().unwrap();
     }
 
     assert!(
