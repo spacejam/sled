@@ -40,7 +40,7 @@ jobs:
           ${{ runner.os }}-
     - name: cargo test
       run: |
-        rustup update
+        rustup update --no-self-update
         cargo test --release --no-default-features --features=testing -- --nocapture
   examples:
     name: Example Tests
@@ -58,7 +58,7 @@ jobs:
           ${{ runner.os }}-
     - name: example tests
       run: |
-        rustup update
+        rustup update --no-self-update
         cargo run --example playground
         cargo run --example structured
   cross-compile:

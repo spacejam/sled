@@ -8,11 +8,11 @@ targets="wasm32-wasi wasm32-unknown-unknown aarch64-fuchsia aarch64-linux-androi
          x86_64-linux-android x86_64-fuchsia \
          mips-unknown-linux-musl aarch64-apple-ios"
 
-rustup update
+rustup update --no-self-update
 
 RUSTFLAGS="--cfg miri" cargo check
 
-rustup toolchain install 1.39.0
+rustup toolchain install 1.39.0 --no-self-update
 cargo clean
 rm Cargo.lock
 cargo +1.39.0 check
