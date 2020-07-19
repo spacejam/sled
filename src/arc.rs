@@ -3,7 +3,7 @@
 /// `Arc`, but we use a LOT of `Arc`'s, so the extra 8 bytes
 /// turn into a huge overhead.
 use std::{
-    alloc::{alloc, dealloc, Layout},
+    alloc::{alloc, alloc_zeroed, dealloc, Layout},
     convert::TryFrom,
     fmt::{self, Debug},
     mem,
@@ -98,6 +98,33 @@ impl<T> Arc<T> {
         let sub_ptr = (ptr as *const u8).sub(rc_width) as *mut ArcInner<T>;
 
         Arc { ptr: sub_ptr }
+    }
+}
+
+impl Arc<[u8]> {
+    pub fn zeroed(len: usize) -> Arc<[u8]> {
+        let fat_ptr: *const ArcInner<[u8]> = unsafe {
+            let align =
+                std::cmp::max(mem::align_of::<u8>(), mem::align_of::<AtomicUsize>());
+
+            let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
+            let data_width = mem::size_of::<u8>().checked_mul(len).unwrap();
+
+            let size_unpadded = rc_width.checked_add(data_width).unwrap();
+            // Pad size out to alignment
+            let size_padded = (size_unpadded + align - 1) & !(align - 1);
+
+            let layout = Layout::from_size_align(size_padded, align).unwrap();
+
+            let ptr = alloc_zeroed(layout);
+            assert!(!ptr.is_null(), "failed to allocate Arc");
+
+            #[allow(clippy::cast_ptr_alignment)]
+            ptr::write(ptr as _, AtomicUsize::new(1));
+
+            Arc::fatten(ptr, len)
+        };
+        Arc { ptr: fat_ptr as *mut _ }
     }
 }
 

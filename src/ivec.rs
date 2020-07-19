@@ -107,6 +107,15 @@ impl IVec {
         IVec(inner)
     }
 
+    /// Creates a new `IVec` of a given length filled with zeroes.
+    pub fn zeroed(len: usize) -> Self {
+        if is_inline_candidate(len) {
+            Self::from(vec![0; len])
+        } else {
+            Self::remote(Arc::zeroed(len))
+        }
+    }
+
     fn inline(slice: &[u8]) -> Self {
         assert!(is_inline_candidate(slice.len()));
 
@@ -370,6 +379,29 @@ fn ivec_as_mut_identity() {
     assert_eq!(&*initial, &*iv);
     assert_eq!(&*initial, &mut *iv);
     assert_eq!(&*initial, iv.as_mut());
+}
+
+#[test]
+fn ivec_zeroed() {
+    let iv_small = IVec::zeroed(1);
+    assert_eq!(iv_small.as_ref().len(), 1);
+    assert_eq!(iv_small.as_ref().get(0).unwrap(), &0x00);
+    drop(iv_small);
+
+    let iv_medium = IVec::zeroed(CUTOFF - 1);
+    assert_eq!(iv_medium.as_ref().len(), CUTOFF - 1);
+    assert!(iv_medium.as_ref().iter().all(|&x| x == 0));
+    drop(iv_medium);
+
+    let iv_large = IVec::zeroed(128);
+    assert_eq!(iv_large.as_ref().len(), 128);
+    assert!(iv_large.as_ref().iter().all(|&x| x == 0));
+    drop(iv_large);
+
+    let iv_huge = IVec::zeroed(2048);
+    assert_eq!(iv_huge.as_ref().len(), 2048);
+    assert!(iv_huge.as_ref().iter().all(|&x| x == 0));
+    drop(iv_huge);
 }
 
 #[cfg(test)]
