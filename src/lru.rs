@@ -1,6 +1,7 @@
 #![allow(unsafe_code)]
 
 use std::convert::TryFrom;
+use std::mem::MaybeUninit;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
@@ -34,7 +35,7 @@ impl Default for AccessBlock {
     fn default() -> AccessBlock {
         AccessBlock {
             len: AtomicUsize::new(0),
-            block: array_init::array_init(|_| AtomicU64::default()),
+            block: unsafe { MaybeUninit::zeroed().assume_init() },
             next: AtomicPtr::default(),
         }
     }
