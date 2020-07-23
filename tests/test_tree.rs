@@ -505,6 +505,23 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
 }
 
 #[test]
+fn incorrect_multiple_db_transactions() -> TransactionResult<()> {
+    common::setup_logger();
+
+    let db1 =
+        Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
+    let db2 =
+        Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
+
+    let result: TransactionResult<()> =
+        (&*db1, &*db2).transaction::<_, ()>(|_| Ok(()));
+
+    assert!(result.is_err());
+
+    Ok(())
+}
+
+#[test]
 fn many_tree_transactions() -> TransactionResult<()> {
     common::setup_logger();
 
