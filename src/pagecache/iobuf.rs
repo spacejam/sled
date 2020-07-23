@@ -192,14 +192,18 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old { Ok(new) } else { Err(res) }
+        if res == old {
+            Ok(new)
+        } else {
+            Err(res)
+        }
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct StabilityIntervals {
     fsynced_ranges: Vec<(Lsn, Lsn)>,
-    batches: Vec<(Lsn, Lsn)>,
+    batches: BTreeMap<Lsn, Lsn>,
     stable_lsn: Lsn,
 }
 
@@ -208,15 +212,13 @@ impl StabilityIntervals {
         StabilityIntervals {
             stable_lsn: lsn,
             fsynced_ranges: vec![],
-            batches: vec![],
+            batches: BTreeMap::default(),
         }
     }
 
     pub(crate) fn mark_batch(&mut self, interval: (Lsn, Lsn)) {
         assert!(interval.0 > self.stable_lsn);
-        self.batches.push(interval);
-        // reverse sort
-        self.batches.sort_unstable_by(|a, b| b.cmp(a));
+        self.batches.insert(interval.0, interval.1);
     }
 
     fn mark_fsync(&mut self, interval: (Lsn, Lsn)) -> Option<Lsn> {
@@ -274,7 +276,9 @@ impl StabilityIntervals {
         // batch has been stabilized before any parts
         // of the batch are allowed to be reused
         // due to having marked them as stable.
-        while let Some(&(low, high)) = self.batches.last() {
+        while let Some((low, high)) =
+            self.batches.iter().map(|(l, h)| (*l, *h)).next()
+        {
             assert!(
                 low < high,
                 "expected batch low mark {} to be below high mark {}",
@@ -290,7 +294,7 @@ impl StabilityIntervals {
                     assert!(bsl < high);
                 }
                 batch_stable_lsn = Some(high);
-                self.batches.pop().unwrap();
+                self.batches.remove(&low).unwrap();
             } else {
                 if low <= self.stable_lsn {
                     // the batch has not been fully written
