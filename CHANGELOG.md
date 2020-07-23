@@ -2,8 +2,11 @@
 
 ## Breaking Changes
 
-* transactions performed on `Tree`s from different
+* #1131 transactions performed on `Tree`s from different
   `Db`s will now safely fail.
+* #1131 transactions may now only be performed on tuples
+  of up to 14 elements. For higher numbers, please use
+  slices.
 
 # 0.33
 
