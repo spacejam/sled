@@ -143,6 +143,38 @@ impl From<io::Error> for Error {
     }
 }
 
+impl From<Error> for io::Error {
+    fn from(error: Error) -> io::Error {
+        use self::Error::*;
+        use std::io::ErrorKind;
+        match error {
+            Io(ioe) => ioe,
+            CollectionNotFound(name) =>
+                io::Error::new(
+                ErrorKind::NotFound,
+                format!("collection not found: {:?}", name),
+            ),
+            Unsupported(why) => io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("operation not supported: {:?}", why),
+            ),
+            ReportableBug(what) => io::Error::new(
+                ErrorKind::Other,
+                format!("unexpected bug! please report this bug at <github.rs/spacejam/sled>: {:?}", what),
+            ),
+            Corruption { .. } => io::Error::new(
+                ErrorKind::InvalidData,
+                format!("corruption encountered: {:?}", error),
+            ),
+            #[cfg(feature = "failpoints")]
+            FailPoint => io::Error::new(
+                ErrorKind::Other,
+                "failpoint"
+            ),
+        }
+    }
+}
+
 impl StdError for Error {}
 
 impl Display for Error {
