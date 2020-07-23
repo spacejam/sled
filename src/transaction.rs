@@ -407,7 +407,7 @@ pub trait Transactional<E = ()> {
 
     /// An internal function for creating a top-level
     /// transactional structure.
-    fn make_overlay(&self) -> TransactionalTrees;
+    fn make_overlay(&self) -> Result<TransactionalTrees>;
 
     /// An internal function for viewing the transactional
     /// subcomponents based on the top-level transactional
@@ -423,7 +423,7 @@ pub trait Transactional<E = ()> {
         F: Fn(&Self::View) -> ConflictableTransactionResult<A, E>,
     {
         loop {
-            let tt = self.make_overlay();
+            let tt = self.make_overlay()?;
             let view = Self::view_overlay(&tt);
 
             // NB locks must exist until this function returns.
@@ -459,8 +459,10 @@ pub trait Transactional<E = ()> {
 impl<E> Transactional<E> for &Tree {
     type View = TransactionalTree;
 
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees { inner: vec![TransactionalTree::from_tree(self)] }
+    fn make_overlay(&self) -> Result<TransactionalTrees> {
+        Ok(TransactionalTrees {
+            inner: vec![TransactionalTree::from_tree(self)],
+        })
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -471,8 +473,10 @@ impl<E> Transactional<E> for &Tree {
 impl<E> Transactional<E> for &&Tree {
     type View = TransactionalTree;
 
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees { inner: vec![TransactionalTree::from_tree(*self)] }
+    fn make_overlay(&self) -> Result<TransactionalTrees> {
+        Ok(TransactionalTrees {
+            inner: vec![TransactionalTree::from_tree(*self)],
+        })
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -483,8 +487,10 @@ impl<E> Transactional<E> for &&Tree {
 impl<E> Transactional<E> for Tree {
     type View = TransactionalTree;
 
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees { inner: vec![TransactionalTree::from_tree(self)] }
+    fn make_overlay(&self) -> Result<TransactionalTrees> {
+        Ok(TransactionalTrees {
+            inner: vec![TransactionalTree::from_tree(self)],
+        })
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -495,13 +501,22 @@ impl<E> Transactional<E> for Tree {
 impl<E> Transactional<E> for [Tree] {
     type View = Vec<TransactionalTree>;
 
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
+    fn make_overlay(&self) -> Result<TransactionalTrees> {
+        if !self.windows(2).all(|w| {
+            let path_1 = w[0].context.get_path();
+            let path_2 = w[1].context.get_path();
+            path_1 == path_2
+        }) {
+            return Err(Error::Unsupported(
+                        "cannot use trees from multiple databases in the same transaction".into(),
+                    ));
+        }
+        Ok(TransactionalTrees {
             inner: self
                 .iter()
                 .map(|t| TransactionalTree::from_tree(t))
                 .collect(),
-        }
+        })
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -512,13 +527,22 @@ impl<E> Transactional<E> for [Tree] {
 impl<E> Transactional<E> for [&Tree] {
     type View = Vec<TransactionalTree>;
 
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
+    fn make_overlay(&self) -> Result<TransactionalTrees> {
+        if !self.windows(2).all(|w| {
+            let path_1 = w[0].context.get_path();
+            let path_2 = w[1].context.get_path();
+            path_1 == path_2
+        }) {
+            return Err(Error::Unsupported(
+                        "cannot use trees from multiple databases in the same transaction".into(),
+                    ));
+        }
+        Ok(TransactionalTrees {
             inner: self
                 .iter()
                 .map(|&t| TransactionalTree::from_tree(t))
                 .collect(),
-        }
+        })
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -549,14 +573,14 @@ macro_rules! impl_transactional_tuple_trees {
         impl<E> Transactional<E> for repeat_type!(&Tree, ($($indices),+)) {
             type View = repeat_type!(TransactionalTree, ($($indices),+));
 
-            fn make_overlay(&self) -> TransactionalTrees {
-                TransactionalTrees {
+            fn make_overlay(&self) -> Result<TransactionalTrees> {
+                Ok(TransactionalTrees {
                     inner: vec![
                         $(
                             TransactionalTree::from_tree(self.$indices)
                         ),+
                     ],
-                }
+                })
             }
 
             fn view_overlay(overlay: &TransactionalTrees) -> Self::View {

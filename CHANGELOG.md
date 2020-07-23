@@ -1,3 +1,10 @@
+# Unreleased
+
+## Breaking Changes
+
+* transactions performed on `Tree`s from different
+  `Db`s will now safely fail.
+
 # 0.33
 
 ## Breaking Changes
