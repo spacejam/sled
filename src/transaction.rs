@@ -407,7 +407,7 @@ pub trait Transactional<E = ()> {
 
     /// An internal function for creating a top-level
     /// transactional structure.
-    fn make_overlay(&self) -> TransactionalTrees;
+    fn make_overlay(&self) -> Result<TransactionalTrees>;
 
     /// An internal function for viewing the transactional
     /// subcomponents based on the top-level transactional
@@ -423,7 +423,7 @@ pub trait Transactional<E = ()> {
         F: Fn(&Self::View) -> ConflictableTransactionResult<A, E>,
     {
         loop {
-            let tt = self.make_overlay();
+            let tt = self.make_overlay()?;
             let view = Self::view_overlay(&tt);
 
             // NB locks must exist until this function returns.
@@ -459,8 +459,10 @@ pub trait Transactional<E = ()> {
 impl<E> Transactional<E> for &Tree {
     type View = TransactionalTree;
 
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees { inner: vec![TransactionalTree::from_tree(self)] }
+    fn make_overlay(&self) -> Result<TransactionalTrees> {
+        Ok(TransactionalTrees {
+            inner: vec![TransactionalTree::from_tree(self)],
+        })
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -471,8 +473,10 @@ impl<E> Transactional<E> for &Tree {
 impl<E> Transactional<E> for &&Tree {
     type View = TransactionalTree;
 
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees { inner: vec![TransactionalTree::from_tree(*self)] }
+    fn make_overlay(&self) -> Result<TransactionalTrees> {
+        Ok(TransactionalTrees {
+            inner: vec![TransactionalTree::from_tree(*self)],
+        })
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -483,8 +487,10 @@ impl<E> Transactional<E> for &&Tree {
 impl<E> Transactional<E> for Tree {
     type View = TransactionalTree;
 
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees { inner: vec![TransactionalTree::from_tree(self)] }
+    fn make_overlay(&self) -> Result<TransactionalTrees> {
+        Ok(TransactionalTrees {
+            inner: vec![TransactionalTree::from_tree(self)],
+        })
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -495,13 +501,22 @@ impl<E> Transactional<E> for Tree {
 impl<E> Transactional<E> for [Tree] {
     type View = Vec<TransactionalTree>;
 
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
+    fn make_overlay(&self) -> Result<TransactionalTrees> {
+        if !self.windows(2).all(|w| {
+            let path_1 = w[0].context.get_path();
+            let path_2 = w[1].context.get_path();
+            path_1 == path_2
+        }) {
+            return Err(Error::Unsupported(
+                        "cannot use trees from multiple databases in the same transaction".into(),
+                    ));
+        }
+        Ok(TransactionalTrees {
             inner: self
                 .iter()
                 .map(|t| TransactionalTree::from_tree(t))
                 .collect(),
-        }
+        })
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -512,13 +527,22 @@ impl<E> Transactional<E> for [Tree] {
 impl<E> Transactional<E> for [&Tree] {
     type View = Vec<TransactionalTree>;
 
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
+    fn make_overlay(&self) -> Result<TransactionalTrees> {
+        if !self.windows(2).all(|w| {
+            let path_1 = w[0].context.get_path();
+            let path_2 = w[1].context.get_path();
+            path_1 == path_2
+        }) {
+            return Err(Error::Unsupported(
+                        "cannot use trees from multiple databases in the same transaction".into(),
+                    ));
+        }
+        Ok(TransactionalTrees {
             inner: self
                 .iter()
                 .map(|&t| TransactionalTree::from_tree(t))
                 .collect(),
-        }
+        })
     }
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -549,14 +573,26 @@ macro_rules! impl_transactional_tuple_trees {
         impl<E> Transactional<E> for repeat_type!(&Tree, ($($indices),+)) {
             type View = repeat_type!(TransactionalTree, ($($indices),+));
 
-            fn make_overlay(&self) -> TransactionalTrees {
-                TransactionalTrees {
+            fn make_overlay(&self) -> Result<TransactionalTrees> {
+                let mut paths = vec![];
+                $(
+                    paths.push(self.$indices.context.get_path());
+                )+
+                if !paths.windows(2).all(|w| {
+                    w[0] == w[1]
+                }) {
+                    return Err(Error::Unsupported(
+                        "cannot use trees from multiple databases in the same transaction".into(),
+                    ));
+                }
+
+                Ok(TransactionalTrees {
                     inner: vec![
                         $(
                             TransactionalTree::from_tree(self.$indices)
                         ),+
                     ],
-                }
+                })
             }
 
             fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
@@ -584,255 +620,3 @@ impl_transactional_tuple_trees!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
 impl_transactional_tuple_trees!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
 impl_transactional_tuple_trees!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
 impl_transactional_tuple_trees!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-    59
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-    59, 60
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-    59, 60, 61
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-    59, 60, 61, 62
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-    59, 60, 61, 62, 63
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-    59, 60, 61, 62, 63, 64
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-    59, 60, 61, 62, 63, 64, 65
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-    59, 60, 61, 62, 63, 64, 65, 66
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-    59, 60, 61, 62, 63, 64, 65, 66, 67
-);
-impl_transactional_tuple_trees!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-    59, 60, 61, 62, 63, 64, 65, 66, 67, 68
-);
