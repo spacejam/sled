@@ -1,4 +1,9 @@
-# Unreleased
+# 0.34
+
+## Improvements
+
+* #1132 implemented From<sled::Error> for io::Error to
+  reduce friction in some situations.
 
 ## Breaking Changes
 
