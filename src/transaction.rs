@@ -96,6 +96,7 @@ pub struct TransactionalTree {
     pub(super) tree: Tree,
     pub(super) writes: Rc<RefCell<Map<IVec, Option<IVec>>>>,
     pub(super) read_cache: Rc<RefCell<Map<IVec, Option<IVec>>>>,
+    pub(super) flush_on_commit: Rc<RefCell<bool>>,
 }
 
 /// An error type that is returned from the closure
@@ -329,6 +330,11 @@ impl TransactionalTree {
         Ok(())
     }
 
+    /// Flush the database before returning from the transaction.
+    pub fn flush(&self) {
+        *self.flush_on_commit.borrow_mut() = true;
+    }
+
     fn unstage(&self) {
         unimplemented!()
     }
@@ -352,6 +358,7 @@ impl TransactionalTree {
             tree: tree.clone(),
             writes: Default::default(),
             read_cache: Default::default(),
+            flush_on_commit: Default::default(),
         }
     }
 }
@@ -390,7 +397,25 @@ impl TransactionalTrees {
         // when the peg drops, it ensures all updates
         // written to the log since its creation are
         // recovered atomically
-        peg.seal_batch()
+        let ret = peg.seal_batch();
+
+        ret
+    }
+
+    fn flush_if_configured(&self) -> Result<()> {
+        let mut should_flush = None;
+
+        for tree in &self.inner {
+            if *tree.flush_on_commit.borrow() {
+                should_flush = Some(tree);
+                break;
+            }
+        }
+
+        if let Some(tree) = should_flush {
+            tree.tree.flush()?;
+        }
+        Ok(())
     }
 }
 
@@ -442,6 +467,8 @@ pub trait Transactional<E = ()> {
                 Ok(r) => {
                     let guard = pin();
                     tt.commit(&guard)?;
+                    drop(_locks);
+                    tt.flush_if_configured()?;
                     return Ok(r);
                 }
                 Err(ConflictableTransactionError::Abort(e)) => {
