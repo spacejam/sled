@@ -397,9 +397,7 @@ impl TransactionalTrees {
         // when the peg drops, it ensures all updates
         // written to the log since its creation are
         // recovered atomically
-        let ret = peg.seal_batch();
-
-        ret
+        peg.seal_batch()
     }
 
     fn flush_if_configured(&self) -> Result<()> {
@@ -452,7 +450,7 @@ pub trait Transactional<E = ()> {
             let view = Self::view_overlay(&tt);
 
             // NB locks must exist until this function returns.
-            let _locks = if let Ok(l) = tt.stage() {
+            let locks = if let Ok(l) = tt.stage() {
                 l
             } else {
                 tt.unstage();
@@ -467,7 +465,7 @@ pub trait Transactional<E = ()> {
                 Ok(r) => {
                     let guard = pin();
                     tt.commit(&guard)?;
-                    drop(_locks);
+                    drop(locks);
                     tt.flush_if_configured()?;
                     return Ok(r);
                 }
