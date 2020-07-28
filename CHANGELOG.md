@@ -1,3 +1,10 @@
+# Unreleased
+
+## Breaking Changes
+
+* The "no_metrics" anti-feature has been replaced with
+  the "metrics" positive feature.
+
 # 0.34
 
 ## Improvements

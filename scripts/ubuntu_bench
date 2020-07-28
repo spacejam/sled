@@ -18,4 +18,4 @@ cargo build --release --bin=stress2 --features=stress
 
 # we use sudo here to get access to symbols
 pushd benchmarks/stress2
-cargo flamegraph --release --features=no_metrics -- --get=$readers --set=$writers
+cargo flamegraph --release -- --get=$readers --set=$writers

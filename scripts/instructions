@@ -8,7 +8,6 @@ rm -rf default.sled || true
 
 cargo build \
   --bin=stress2 \
-  --features="no_metrics" \
   --release
 
 

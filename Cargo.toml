@@ -24,13 +24,13 @@ debug = true
 opt-level = 3
 
 [features]
-default = ["no_metrics"]
+default = []
 testing = ["event_log", "lock_free_delays", "compression", "failpoints", "backtrace"]
 compression = ["zstd"]
 lock_free_delays = []
 failpoints = []
 event_log = []
-no_metrics = []
+metrics = []
 no_logs = ["log/max_level_off"]
 no_inline = []
 measure_allocs = []
