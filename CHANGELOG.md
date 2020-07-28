@@ -2,7 +2,7 @@
 
 ## New Features
 
-* Added the `TransactionalTree::flush` method to
+* #1136 Added the `TransactionalTree::flush` method to
   flush the underlying database after the transaction
   commits and before the transaction returns.
 
