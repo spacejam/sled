@@ -92,7 +92,7 @@ fn test_varied_compression_ratios() {
 fn concurrent_tree_pops() -> sled::Result<()> {
     use std::thread;
 
-    let db = sled::open("db")?;
+    let db = sled::Config::new().temporary(true).open()?;
 
     // Insert values 0..5
     for x in 0u32..5 {
