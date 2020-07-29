@@ -5,6 +5,14 @@
 * The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.
 
+# 0.34.1
+
+## New Features
+
+* #1136 Added the `TransactionalTree::flush` method to
+  flush the underlying database after the transaction
+  commits and before the transaction returns.
+
 # 0.34
 
 ## Improvements
