@@ -505,6 +505,21 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
 }
 
 #[test]
+fn tree_flush_in_transaction() {
+    let config = sled::Config::new().temporary(true);
+    let db = config.open().unwrap();
+    let tree = db.open_tree(b"a").unwrap();
+
+    tree.transaction::<_, _, sled::transaction::TransactionError>(|tree| {
+        tree.insert(b"k1", b"cats")?;
+        tree.insert(b"k2", b"dogs")?;
+        tree.flush();
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
 fn incorrect_multiple_db_transactions() -> TransactionResult<()> {
     common::setup_logger();
 
