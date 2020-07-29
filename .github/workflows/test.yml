@@ -16,7 +16,7 @@ jobs:
             components: clippy
             override: true
       - run: rustup component add clippy
-      - uses: actions-rs/clippy-check@v1.0.5
+      - uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           args: --all-features
