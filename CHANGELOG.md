@@ -1,3 +1,11 @@
+# 0.34.2
+
+## Improvements
+
+* #1133 transactions and writebatch performance has been
+  significantly improved by removing a bottleneck in
+  the atomic batch stability tracking code.
+
 # 0.34.1
 
 ## New Features
