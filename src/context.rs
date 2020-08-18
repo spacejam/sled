@@ -122,7 +122,8 @@ impl Context {
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
     pub fn generate_id(&self) -> Result<u64> {
-        self.pagecache.generate_id()
+        let _cc = concurrency_control::read();
+        self.pagecache.generate_id_inner()
     }
 
     pub(crate) fn pin_log(&self, guard: &Guard) -> Result<RecoveryGuard<'_>> {
