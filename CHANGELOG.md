@@ -1,3 +1,9 @@
+# 0.34.4
+
+## New Features
+
+* #1151 Send is implemented for Iter
+
 # 0.34.3
 
 ## New Features
