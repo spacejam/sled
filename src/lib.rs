@@ -494,3 +494,27 @@ impl<F> MergeOperator for F where
     F: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
 {
 }
+
+mod compile_time_assertions {
+    use crate::*;
+
+    #[allow(unreachable_code)]
+    fn _assert_public_types_send_sync() {
+        _assert_send::<Subscriber>(unreachable!());
+
+        _assert_send_sync::<Iter>(unreachable!());
+        _assert_send_sync::<Tree>(unreachable!());
+        _assert_send_sync::<Db>(unreachable!());
+        _assert_send_sync::<Batch>(unreachable!());
+        _assert_send_sync::<IVec>(unreachable!());
+        _assert_send_sync::<Config>(unreachable!());
+        _assert_send_sync::<CompareAndSwapError>(unreachable!());
+        _assert_send_sync::<Error>(unreachable!());
+        _assert_send_sync::<Event>(unreachable!());
+        _assert_send_sync::<Mode>(unreachable!());
+    }
+
+    fn _assert_send<S: Send>(_: &S) {}
+
+    fn _assert_send_sync<S: Send + Sync>(_: &S) {}
+}
