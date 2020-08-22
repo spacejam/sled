@@ -1,5 +1,6 @@
 mod common;
 
+use std::convert::TryFrom;
 use std::env::{self, VarError};
 use std::mem::size_of;
 use std::process::{exit, Child, Command, ExitStatus};
@@ -552,6 +553,7 @@ fn run_tx() {
 
     db.insert(b"k1", b"cats").unwrap();
     db.insert(b"k2", b"dogs").unwrap();
+    db.insert(b"id", &0_u64.to_le_bytes()).unwrap();
 
     let mut threads = vec![];
 
@@ -570,6 +572,9 @@ fn run_tx() {
                     let v1 = db.remove(b"k1").unwrap().unwrap();
                     let v2 = db.remove(b"k2").unwrap().unwrap();
 
+                    db.insert(b"id", &db.generate_id().unwrap().to_le_bytes())
+                        .unwrap();
+
                     db.insert(b"k1", v2).unwrap();
                     db.insert(b"k2", v1).unwrap();
                     Ok(())
@@ -585,19 +590,32 @@ fn run_tx() {
         let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
             barrier.wait();
+            let mut last_id = 0;
             loop {
-                db.transaction::<_, _, ()>(|db| {
-                    let v1 = db.get(b"k1").unwrap().unwrap();
-                    let v2 = db.get(b"k2").unwrap().unwrap();
+                let read_id = db
+                    .transaction::<_, _, ()>(|db| {
+                        let v1 = db.get(b"k1").unwrap().unwrap();
+                        let v2 = db.get(b"k2").unwrap().unwrap();
+                        let id = u64::from_le_bytes(
+                            TryFrom::try_from(
+                                &*db.get(b"id").unwrap().unwrap(),
+                            )
+                            .unwrap(),
+                        );
 
-                    let mut results = vec![v1, v2];
-                    results.sort();
+                        let mut results = vec![v1, v2];
+                        results.sort();
 
-                    assert_eq!([&results[0], &results[1]], [b"cats", b"dogs"]);
+                        assert_eq!(
+                            [&results[0], &results[1]],
+                            [b"cats", b"dogs"]
+                        );
 
-                    Ok(())
-                })
-                .unwrap();
+                        Ok(id)
+                    })
+                    .unwrap();
+                assert!(read_id >= last_id);
+                last_id = read_id;
             }
         });
         threads.push(thread);
