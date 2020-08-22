@@ -1,3 +1,9 @@
+# 0.34.3
+
+## New Features
+
+* #1146 added TransactionalTree::generate_id
+
 # 0.34.2
 
 ## Improvements
