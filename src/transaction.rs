@@ -335,6 +335,20 @@ impl TransactionalTree {
         *self.flush_on_commit.borrow_mut() = true;
     }
 
+    /// Generate a monotonic ID. Not guaranteed to be
+    /// contiguous or idempotent, can produce different values in the
+    /// same transaction in case of conflicts.
+    /// Written to disk every `idgen_persist_interval`
+    /// operations, followed by a blocking flush. During recovery, we
+    /// take the last recovered generated ID and add 2x
+    /// the `idgen_persist_interval` to it. While persisting, if the
+    /// previous persisted counter wasn't synced to disk yet, we will do
+    /// a blocking flush to fsync the latest counter, ensuring
+    /// that we will never give out the same counter twice.
+    pub fn generate_id(&self) -> Result<u64> {
+        self.tree.context.pagecache.generate_id_inner()
+    }
+
     fn unstage(&self) {
         unimplemented!()
     }
