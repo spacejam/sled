@@ -145,9 +145,9 @@ pub(crate) fn ensure_arc_buffer_alloc<F>(arc: &mut Arc<[u8]>, len: usize, more: 
     where F: FnOnce(&mut [u8]),
 {
     let old_cap = arc.len();
-    assert!(more > 0 && len <= old_cap && Arc::strong_count(arc) > 0);
+    assert!(more > 0 && len <= old_cap);
     let need_len = len + more;
-    if need_len > old_cap {
+    if Arc::strong_count(arc) != 1 || need_len > old_cap {
         // need to re-allocate and copy
         let cap = need_len.next_power_of_two();
         unsafe {

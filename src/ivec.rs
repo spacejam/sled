@@ -210,7 +210,7 @@ impl IVec {
             },
             IVecInner::Subslice { ref mut base, offset, len } => {
                 let slice = &base[*offset..*offset + *len];
-                //println!("subslice push, len={}, more={}", *len, more);
+                // always detach from slice
                 self.0 = IVecInner::Remote {
                     base: arc::arc_buffer_from_slice(more, slice, f),
                     len: *len + more,
