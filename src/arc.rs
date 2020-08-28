@@ -41,14 +41,16 @@ impl<T> Arc<T> {
         Arc { ptr }
     }
 
-    // See std::sync::arc::Arc::copy_from_slice,
-    // "Unsafe because the caller must either take ownership or bind `T: Copy`"
-    unsafe fn copy_from_slice(s: &[T]) -> Arc<[T]> {
+    // Unsafe because the caller must deal with uninitialized data via raw u8 pointer
+    // `init` closure is called once with pointer to raw data for initialization
+    unsafe fn new_owned_slice<F>(cap: usize, init: F) -> Arc<[T]>
+        where F: FnOnce(*mut u8)
+    {
         let align =
             std::cmp::max(mem::align_of::<T>(), mem::align_of::<AtomicUsize>());
 
         let rc_width = std::cmp::max(align, mem::size_of::<AtomicUsize>());
-        let data_width = mem::size_of::<T>().checked_mul(s.len()).unwrap();
+        let data_width = mem::size_of::<T>().checked_mul(cap).unwrap();
 
         let size_unpadded = rc_width.checked_add(data_width).unwrap();
         // Pad size out to alignment
@@ -60,14 +62,30 @@ impl<T> Arc<T> {
 
         assert!(!ptr.is_null(), "failed to allocate Arc");
         #[allow(clippy::cast_ptr_alignment)]
-        ptr::write(ptr as _, AtomicUsize::new(1));
+            ptr::write(ptr as _, AtomicUsize::new(1));
 
         let data_ptr = ptr.add(rc_width);
-        ptr::copy_nonoverlapping(s.as_ptr(), data_ptr as _, s.len());
+        init(data_ptr);
 
-        let fat_ptr: *const ArcInner<[T]> = Arc::fatten(ptr, s.len());
+        let fat_ptr: *const ArcInner<[T]> = Arc::fatten(ptr, cap);
 
         Arc { ptr: fat_ptr as *mut _ }
+    }
+
+    // Allocate slice with given capacity and copy source slice to the beginning
+    // unsafe because resulting slice may be partially initialized when capacity exceeds slice len
+    unsafe fn copy_from_slice_with_capacity(cap: usize, s: &[T]) -> Arc<[T]> where T: Copy {
+        Self::new_owned_slice(cap, |data_ptr| {
+            ptr::copy_nonoverlapping(s.as_ptr(), data_ptr as _, s.len())
+        })
+    }
+
+    // See std::sync::arc::Arc::copy_from_slice
+    fn copy_from_slice(s: &[T]) -> Arc<[T]> where T: Copy {
+        unsafe {
+            // OK because T: Copy and capacity == length
+            Self::copy_from_slice_with_capacity(s.len(), s)
+        }
     }
 
     /// <https://users.rust-lang.org/t/construct-fat-pointer-to-struct/29198/9>
@@ -98,6 +116,46 @@ impl<T> Arc<T> {
         let sub_ptr = (ptr as *const u8).sub(rc_width) as *mut ArcInner<T>;
 
         Arc { ptr: sub_ptr }
+    }
+}
+
+// create Arc buffer with owned, uninitialized u8 slice of specified capacity; used by IVec
+pub(crate) fn new_arc_buffer(cap: usize) -> Arc<[u8]> {
+    unsafe {
+        Arc::<u8>::new_owned_slice(cap, |_| {})
+    }
+}
+
+// create Arc buffer with owned slice; differs from Arc::from() that it allocates extra
+// space for future writes. `f` is called with mut slice pointing to free space right after copied slice.
+pub(crate) fn arc_buffer_from_slice<F>(more: usize, slice: &[u8], f: F) -> Arc<[u8]>
+    where F: FnOnce(&mut [u8]),
+{
+    let cap = (slice.len() + more).next_power_of_two();
+    unsafe {
+        let arc = Arc::<u8>::copy_from_slice_with_capacity(cap, slice);
+        f(&mut (*arc.ptr).inner[slice.len()..]);
+        arc
+    }
+}
+
+// Ensure that owned slice capacity is enough to hold cap bytes; if not enough, reallocate
+// to next power of two and copy old data. f is called with mut slice pointing to free space
+pub(crate) fn ensure_arc_buffer_alloc<F>(arc: &mut Arc<[u8]>, len: usize, more: usize, f: F)
+    where F: FnOnce(&mut [u8]),
+{
+    let old_cap = arc.len();
+    assert!(more > 0 && len <= old_cap && Arc::strong_count(arc) > 0);
+    let need_len = len + more;
+    if need_len > old_cap {
+        // need to re-allocate and copy
+        let cap = need_len.next_power_of_two();
+        unsafe {
+            *arc = Arc::<u8>::copy_from_slice_with_capacity(cap, &(*arc.ptr).inner);
+        }
+    }
+    unsafe {
+        f(&mut (*arc.ptr).inner[len..]);
     }
 }
 
@@ -163,12 +221,12 @@ impl<T: ?Sized> Drop for Arc<T> {
 impl<T: Copy> From<&[T]> for Arc<[T]> {
     #[inline]
     fn from(s: &[T]) -> Arc<[T]> {
-        unsafe { Arc::copy_from_slice(s) }
+        Arc::copy_from_slice(s)
     }
 }
 
 #[allow(clippy::fallible_impl_from)]
-impl<T> From<Box<[T]>> for Arc<[T]> {
+impl<T: Copy> From<Box<[T]>> for Arc<[T]> {
     #[inline]
     fn from(b: Box<[T]>) -> Arc<[T]> {
         let len = b.len();
@@ -223,17 +281,11 @@ fn boxed_slice_to_arc_slice() {
     assert_eq!(&*arc3, &*vec![1, 2, 3]);
 }
 
-impl<T> From<Vec<T>> for Arc<[T]> {
+impl<T: Copy> From<Vec<T>> for Arc<[T]> {
     #[inline]
-    fn from(mut v: Vec<T>) -> Arc<[T]> {
-        unsafe {
-            let arc = Arc::copy_from_slice(&v);
-
-            // Allow the Vec to free its memory, but not destroy its contents
-            v.set_len(0);
-
-            arc
-        }
+    fn from(v: Vec<T>) -> Arc<[T]> {
+        Arc::copy_from_slice(&v)
+        // OK to drop vector because T: Copy
     }
 }
 
