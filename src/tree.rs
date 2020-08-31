@@ -143,7 +143,7 @@ impl Tree {
         key: &[u8],
         mut value: Option<IVec>,
         guard: &mut Guard,
-    ) -> Result<Abortable<Option<IVec>>> {
+    ) -> Result<Conflictable<Option<IVec>>> {
         let _measure = if value.is_some() {
             Measure::new(&M.tree_set)
         } else {
@@ -175,7 +175,7 @@ impl Tree {
             guard,
         )?;
 
-        if let Ok(_new_cas_key) = link {
+        if link.is_ok() {
             // success
             if let Some(res) = subscriber_reservation.take() {
                 let event = if let Some(value) = value.take() {
@@ -192,11 +192,11 @@ impl Tree {
 
             guard.writeset.push(pid);
 
-            return Ok(Ok(last_value));
+            Ok(Ok(last_value))
+        } else {
+            M.tree_looped();
+            Ok(Err(Conflict))
         }
-
-        M.tree_looped();
-        Ok(Err(Abort))
     }
 
     /// Perform a multi-key serializable transaction.
@@ -406,7 +406,7 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &mut Guard,
-    ) -> Result<Abortable<Option<IVec>>> {
+    ) -> Result<Conflictable<Option<IVec>>> {
         let _measure = Measure::new(&M.tree_get);
 
         trace!("getting key {:?}", key);
@@ -1003,7 +1003,7 @@ impl Tree {
         &self,
         key: &[u8],
         value: &[u8],
-    ) -> Result<Abortable<Option<IVec>>> {
+    ) -> Result<Conflictable<Option<IVec>>> {
         trace!("merging key {:?}", key);
         let _measure = Measure::new(&M.tree_merge);
 

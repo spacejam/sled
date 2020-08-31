@@ -365,9 +365,9 @@ impl std::ops::Deref for Guard {
 }
 
 #[derive(Debug)]
-struct Abort;
+struct Conflict;
 
-type Abortable<T> = std::result::Result<T, Abort>;
+type Conflictable<T> = std::result::Result<T, Conflict>;
 
 fn crc32(buf: &[u8]) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
