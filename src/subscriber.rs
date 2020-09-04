@@ -1,6 +1,7 @@
 use std::{
     future::Future,
     pin::Pin,
+    mem::ManuallyDrop,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         mpsc::{sync_channel, Receiver, SyncSender, TryRecvError},
@@ -91,12 +92,16 @@ type Senders = Map<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 /// `while let Some(event) = (&mut subscriber).await { /* use it */ }`
 pub struct Subscriber {
     id: usize,
-    rx: Receiver<OneShot<Option<Event>>>,
+    rx: ManuallyDrop<Receiver<OneShot<Option<Event>>>>,
     home: Arc<RwLock<Senders>>,
 }
 
 impl Drop for Subscriber {
+    #[allow(unsafe_code)]
     fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.rx);
+        }
         let mut w_senders = self.home.write();
         w_senders.remove(&self.id);
     }
@@ -237,7 +242,7 @@ impl Subscribers {
 
         w_senders.insert(id, (None, tx));
 
-        Subscriber { id, rx, home: arc_senders.clone() }
+        Subscriber { id, rx: ManuallyDrop::new(rx), home: arc_senders.clone() }
     }
 
     pub(crate) fn reserve<R: AsRef<[u8]>>(
