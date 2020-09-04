@@ -247,7 +247,8 @@ impl StabilityIntervals {
         );
 
         // reverse sort
-        self.fsynced_ranges.sort_unstable_by(|a, b| b.cmp(a));
+        self.fsynced_ranges
+            .sort_unstable_by_key(|&range| std::cmp::Reverse(range));
 
         while let Some(&(low, high)) = self.fsynced_ranges.last() {
             assert!(low <= high);
