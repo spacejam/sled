@@ -88,7 +88,10 @@ impl Drop for TreeInner {
             match self.context.pagecache.flush() {
                 Ok(0) => return,
                 Ok(_) => continue,
-                Err(e) => error!("failed to flush data to disk: {:?}", e),
+                Err(e) => {
+                    error!("failed to flush data to disk: {:?}", e);
+                    return
+                },
             }
         }
     }
