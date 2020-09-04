@@ -1,3 +1,11 @@
+# Unreleased
+
+## Bug Fixes
+
+* #1159 dropping a `Db` instance will no-longer
+  prematurely shut-down the background fsync
+  thread.
+
 # 0.34.3
 
 ## New Features

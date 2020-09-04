@@ -396,7 +396,11 @@ impl Update {
     }
 
     fn is_free(&self) -> bool {
-        if let Update::Free = self { true } else { false }
+        if let Update::Free = self {
+            true
+        } else {
+            false
+        }
     }
 }
 
