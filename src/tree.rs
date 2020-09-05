@@ -100,7 +100,7 @@ impl Tree {
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         self.insert(key, value)
     }
@@ -123,9 +123,9 @@ impl Tree {
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
-        let value = IVec::from(value);
+        let value = value.into();
         let mut guard = pin();
         let _cc = concurrency_control::read();
         loop {
@@ -513,7 +513,7 @@ impl Tree {
     where
         K: AsRef<[u8]>,
         OV: AsRef<[u8]>,
-        IVec: From<NV>,
+        NV: Into<IVec>,
     {
         trace!("cas'ing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
@@ -521,7 +521,7 @@ impl Tree {
         let guard = pin();
         let _cc = concurrency_control::read();
 
-        let new = new.map(IVec::from);
+        let new = new.map(Into::into);
 
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -627,14 +627,14 @@ impl Tree {
     where
         K: AsRef<[u8]>,
         F: FnMut(Option<&[u8]>) -> Option<V>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         let key_ref = key.as_ref();
         let mut current = self.get(key_ref)?;
 
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
-            let next = f(tmp).map(IVec::from);
+            let next = f(tmp).map(Into::into);
             match self.compare_and_swap::<_, _, IVec>(
                 key_ref,
                 tmp,
@@ -700,7 +700,7 @@ impl Tree {
     where
         K: AsRef<[u8]>,
         F: FnMut(Option<&[u8]>) -> Option<V>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         let key_ref = key.as_ref();
         let mut current = self.get(key_ref)?;
