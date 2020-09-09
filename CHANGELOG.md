@@ -1,10 +1,17 @@
 # Unreleased
 
-## Bug Fixes
+## New Features
 
+* #1167 added `Tree::first` and `Tree::last` functions
+  to retrieve the first or last items in a `Tree`, unless
+  the `Tree` is empty.
+
+## Bug Fixes
 * #1159 dropping a `Db` instance will no-longer
   prematurely shut-down the background fsync
   thread.
+* #1168 fixed an issue that was causing panics during
+  recovery in 32-bit code.
 
 # 0.34.3
 

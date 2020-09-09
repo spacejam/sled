@@ -50,14 +50,14 @@
 //!
 //! ```
 //! # let _ = std::fs::remove_dir_all("my_db");
-//! let t = sled::open("my_db").unwrap();
+//! let db: sled::Db = sled::open("my_db").unwrap();
 //!
 //! // insert and get
-//! t.insert(b"yo!", b"v1");
-//! assert_eq!(&t.get(b"yo!").unwrap().unwrap(), b"v1");
+//! db.insert(b"yo!", b"v1");
+//! assert_eq!(&db.get(b"yo!").unwrap().unwrap(), b"v1");
 //!
 //! // Atomic compare-and-swap.
-//! t.compare_and_swap(
+//! db.compare_and_swap(
 //!     b"yo!",      // key
 //!     Some(b"v1"), // old value, None for not present
 //!     Some(b"v2"), // new value, None for delete
@@ -66,12 +66,18 @@
 //!
 //! // Iterates over key-value pairs, starting at the given key.
 //! let scan_key: &[u8] = b"a non-present key before yo!";
-//! let mut iter = t.range(scan_key..);
+//! let mut iter = db.range(scan_key..);
 //! assert_eq!(&iter.next().unwrap().unwrap().0, b"yo!");
 //! assert_eq!(iter.next(), None);
 //!
-//! t.remove(b"yo!");
-//! assert_eq!(t.get(b"yo!"), Ok(None));
+//! db.remove(b"yo!");
+//! assert_eq!(db.get(b"yo!"), Ok(None));
+//!
+//! let other_tree: sled::Tree = db.open_tree(b"cool db facts").unwrap();
+//! other_tree.insert(
+//!     b"k1",
+//!     &b"a Db acts like a Tree due to implementing Deref<Target = Tree>"[..]
+//! ).unwrap();
 //! # let _ = std::fs::remove_dir_all("my_db");
 //! ```
 #![doc(
