@@ -36,12 +36,6 @@ macro_rules! io_fail {
 
 struct AlignedBuf(*mut u8, usize);
 
-#[allow(unsafe_code)]
-unsafe impl Send for AlignedBuf {}
-
-#[allow(unsafe_code)]
-unsafe impl Sync for AlignedBuf {}
-
 impl AlignedBuf {
     fn new(len: usize) -> AlignedBuf {
         let layout = Layout::from_size_align(len, 8192).unwrap();

@@ -82,9 +82,6 @@ impl Default for Histogram {
     }
 }
 
-#[allow(unsafe_code)]
-unsafe impl Send for Histogram {}
-
 impl Debug for Histogram {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         const PS: [f64; 10] =
