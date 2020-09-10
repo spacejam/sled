@@ -14,6 +14,8 @@
   thread.
 * #1168 fixed an issue that was causing panics during
   recovery in 32-bit code.
+* #1170 when encountering corrupted storage data,
+  the recovery process will panic less often.
 
 # 0.34.3
 

@@ -202,7 +202,7 @@ impl Log {
             (_, LogKind::Replace, false) => MessageKind::InlineNode,
             (_, LogKind::Link, true) => MessageKind::BlobLink,
             (_, LogKind::Link, false) => MessageKind::InlineLink,
-            other => panic!(
+            other => unreachable!(
                 "unexpected combination of PageId, \
                  LogKind, and blob status: {:?}",
                 other
@@ -843,7 +843,7 @@ pub(crate) fn read_message<R: ReadAt>(
             let max_lsn = arr_to_lsn(&buf);
             Ok(LogRead::BatchManifest(max_lsn, inline_len))
         }
-        MessageKind::Corrupted => panic!(
+        MessageKind::Corrupted => unreachable!(
             "corrupted should have been handled \
              before reading message length above"
         ),
