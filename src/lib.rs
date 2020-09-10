@@ -50,14 +50,14 @@
 //!
 //! ```
 //! # let _ = std::fs::remove_dir_all("my_db");
-//! let t = sled::open("my_db").unwrap();
+//! let db: sled::Db = sled::open("my_db").unwrap();
 //!
 //! // insert and get
-//! t.insert(b"yo!", b"v1");
-//! assert_eq!(&t.get(b"yo!").unwrap().unwrap(), b"v1");
+//! db.insert(b"yo!", b"v1");
+//! assert_eq!(&db.get(b"yo!").unwrap().unwrap(), b"v1");
 //!
 //! // Atomic compare-and-swap.
-//! t.compare_and_swap(
+//! db.compare_and_swap(
 //!     b"yo!",      // key
 //!     Some(b"v1"), // old value, None for not present
 //!     Some(b"v2"), // new value, None for delete
@@ -66,12 +66,18 @@
 //!
 //! // Iterates over key-value pairs, starting at the given key.
 //! let scan_key: &[u8] = b"a non-present key before yo!";
-//! let mut iter = t.range(scan_key..);
+//! let mut iter = db.range(scan_key..);
 //! assert_eq!(&iter.next().unwrap().unwrap().0, b"yo!");
 //! assert_eq!(iter.next(), None);
 //!
-//! t.remove(b"yo!");
-//! assert_eq!(t.get(b"yo!"), Ok(None));
+//! db.remove(b"yo!");
+//! assert_eq!(db.get(b"yo!"), Ok(None));
+//!
+//! let other_tree: sled::Tree = db.open_tree(b"cool db facts").unwrap();
+//! other_tree.insert(
+//!     b"k1",
+//!     &b"a Db acts like a Tree due to implementing Deref<Target = Tree>"[..]
+//! ).unwrap();
 //! # let _ = std::fs::remove_dir_all("my_db");
 //! ```
 #![doc(
@@ -149,7 +155,8 @@
     // clippy::wildcard_enum_match_arm,
     clippy::wrong_pub_self_convention,
 )]
-#![allow(clippy::mem_replace_with_default)] // Not using std::mem::take() due to MSRV of 1.37
+#![allow(clippy::mem_replace_with_default)] // Not using std::mem::take() due to MSRV of 1.37 (intro'd in 1.40)
+#![allow(clippy::match_like_matches_macro)] // Not using std::matches! due to MSRV of 1.37 (intro'd in 1.42)
 
 macro_rules! io_fail {
     ($config:expr, $e:expr) => {
@@ -365,9 +372,9 @@ impl std::ops::Deref for Guard {
 }
 
 #[derive(Debug)]
-struct Abort;
+struct Conflict;
 
-type Abortable<T> = std::result::Result<T, Abort>;
+type Conflictable<T> = std::result::Result<T, Conflict>;
 
 fn crc32(buf: &[u8]) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
@@ -493,4 +500,28 @@ pub trait MergeOperator:
 impl<F> MergeOperator for F where
     F: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
 {
+}
+
+mod compile_time_assertions {
+    use crate::*;
+
+    #[allow(unreachable_code)]
+    fn _assert_public_types_send_sync() {
+        _assert_send::<Subscriber>(unreachable!());
+
+        _assert_send_sync::<Iter>(unreachable!());
+        _assert_send_sync::<Tree>(unreachable!());
+        _assert_send_sync::<Db>(unreachable!());
+        _assert_send_sync::<Batch>(unreachable!());
+        _assert_send_sync::<IVec>(unreachable!());
+        _assert_send_sync::<Config>(unreachable!());
+        _assert_send_sync::<CompareAndSwapError>(unreachable!());
+        _assert_send_sync::<Error>(unreachable!());
+        _assert_send_sync::<Event>(unreachable!());
+        _assert_send_sync::<Mode>(unreachable!());
+    }
+
+    fn _assert_send<S: Send>(_: &S) {}
+
+    fn _assert_send_sync<S: Send + Sync>(_: &S) {}
 }

@@ -396,7 +396,11 @@ impl Update {
     }
 
     fn is_free(&self) -> bool {
-        if let Update::Free = self { true } else { false }
+        if let Update::Free = self {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -1793,8 +1797,7 @@ impl PageCache {
     /// previous persisted counter wasn't synced to disk yet, we will do
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
-    pub(crate) fn generate_id(&self) -> Result<u64> {
-        let _cc = concurrency_control::read();
+    pub(crate) fn generate_id_inner(&self) -> Result<u64> {
         let ret = self.idgen.fetch_add(1, Release);
 
         trace!("generating ID {}", ret);

@@ -499,7 +499,7 @@ impl Config {
         (
             compression_factor,
             i32,
-            "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."
+            "the compression factor to use with zstd compression. Ranges from 1 up to 22. Levels >= 20 are 'ultra'."
         ),
         (
             temporary,
@@ -525,8 +525,8 @@ impl Config {
             "segment_size should be a power of 2"
         );
         supported!(
-            self.segment_size >= 100,
-            "segment_size should be hundreds of kb at minimum, and we won't start if below 100"
+            self.segment_size >= 256,
+            "segment_size should be hundreds of kb at minimum, and we won't start if below 256"
         );
         supported!(
             self.segment_size <= 1 << 24,

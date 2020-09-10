@@ -5,6 +5,31 @@
 * The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.
 
+# 0.34.4
+
+## New Features
+
+* #1151 `Send` is implemented for `Iter`
+* #1167 added `Tree::first` and `Tree::last` functions
+  to retrieve the first or last items in a `Tree`, unless
+  the `Tree` is empty.
+
+## Bug Fixes
+
+* #1159 dropping a `Db` instance will no-longer
+  prematurely shut-down the background flusher
+  thread.
+* #1168 fixed an issue that was causing panics during
+  recovery in 32-bit code.
+* #1170 when encountering corrupted storage data,
+  the recovery process will panic less often.
+
+# 0.34.3
+
+## New Features
+
+* #1146 added `TransactionalTree::generate_id`
+
 # 0.34.2
 
 ## Improvements

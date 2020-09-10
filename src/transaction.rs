@@ -263,13 +263,13 @@ impl TransactionalTree {
         value: V,
     ) -> UnabortableTransactionResult<Option<IVec>>
     where
-        IVec: From<K> + From<V>,
-        K: AsRef<[u8]>,
+        K: AsRef<[u8]> + Into<IVec>,
+        V: Into<IVec>,
     {
         let old = self.get(key.as_ref())?;
         let mut writes = self.writes.borrow_mut();
         let _last_write =
-            writes.insert(IVec::from(key), Some(IVec::from(value)));
+            writes.insert(key.into(), Some(value.into()));
         Ok(old)
     }
 
@@ -279,12 +279,11 @@ impl TransactionalTree {
         key: K,
     ) -> UnabortableTransactionResult<Option<IVec>>
     where
-        IVec: From<K>,
-        K: AsRef<[u8]>,
+        K: AsRef<[u8]> + Into<IVec>,
     {
         let old = self.get(key.as_ref());
         let mut writes = self.writes.borrow_mut();
-        let _last_write = writes.insert(IVec::from(key), None);
+        let _last_write = writes.insert(key.into(), None);
         old
     }
 
@@ -333,6 +332,20 @@ impl TransactionalTree {
     /// Flush the database before returning from the transaction.
     pub fn flush(&self) {
         *self.flush_on_commit.borrow_mut() = true;
+    }
+
+    /// Generate a monotonic ID. Not guaranteed to be
+    /// contiguous or idempotent, can produce different values in the
+    /// same transaction in case of conflicts.
+    /// Written to disk every `idgen_persist_interval`
+    /// operations, followed by a blocking flush. During recovery, we
+    /// take the last recovered generated ID and add 2x
+    /// the `idgen_persist_interval` to it. While persisting, if the
+    /// previous persisted counter wasn't synced to disk yet, we will do
+    /// a blocking flush to fsync the latest counter, ensuring
+    /// that we will never give out the same counter twice.
+    pub fn generate_id(&self) -> Result<u64> {
+        self.tree.context.pagecache.generate_id_inner()
     }
 
     fn unstage(&self) {
@@ -527,15 +540,17 @@ impl<E> Transactional<E> for [Tree] {
     type View = Vec<TransactionalTree>;
 
     fn make_overlay(&self) -> Result<TransactionalTrees> {
-        if !self.windows(2).all(|w| {
+        let same_db = self.windows(2).all(|w| {
             let path_1 = w[0].context.get_path();
             let path_2 = w[1].context.get_path();
             path_1 == path_2
-        }) {
+        });
+        if !same_db {
             return Err(Error::Unsupported(
-                        "cannot use trees from multiple databases in the same transaction".into(),
-                    ));
+                "cannot use trees from multiple databases in the same transaction".into(),
+            ));
         }
+
         Ok(TransactionalTrees {
             inner: self
                 .iter()
@@ -553,15 +568,17 @@ impl<E> Transactional<E> for [&Tree] {
     type View = Vec<TransactionalTree>;
 
     fn make_overlay(&self) -> Result<TransactionalTrees> {
-        if !self.windows(2).all(|w| {
+        let same_db = self.windows(2).all(|w| {
             let path_1 = w[0].context.get_path();
             let path_2 = w[1].context.get_path();
             path_1 == path_2
-        }) {
+        });
+        if !same_db {
             return Err(Error::Unsupported(
-                        "cannot use trees from multiple databases in the same transaction".into(),
-                    ));
+                "cannot use trees from multiple databases in the same transaction".into(),
+            ));
         }
+
         Ok(TransactionalTrees {
             inner: self
                 .iter()

@@ -1,7 +1,7 @@
 mod common;
 mod tree;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 #[allow(unused_imports)]
 use log::{debug, warn};
@@ -446,8 +446,9 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
 
     const N_WRITERS: usize = 30;
     const N_READERS: usize = 5;
+    const N_SUBSCRIBERS: usize = 5;
 
-    let barrier = Arc::new(Barrier::new(N_WRITERS + N_READERS));
+    let barrier = Arc::new(Barrier::new(N_WRITERS + N_READERS + N_SUBSCRIBERS));
 
     for _ in 0..N_WRITERS {
         let db = db.clone();
@@ -488,6 +489,22 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
                     Ok(())
                 })?;
             }
+            Ok(())
+        });
+        threads.push(thread);
+    }
+
+    for _ in 0..N_SUBSCRIBERS {
+        let db = db.clone();
+        let barrier = barrier.clone();
+        let thread = std::thread::spawn(move || {
+            barrier.wait();
+            let sub = db.watch_prefix(b"k1");
+            drop(db);
+
+            while let Ok(_) = sub.next_timeout(Duration::from_millis(100)) {}
+            drop(sub);
+
             Ok(())
         });
         threads.push(thread);

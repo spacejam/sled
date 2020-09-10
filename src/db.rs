@@ -4,7 +4,7 @@ use crate::*;
 
 /// The `sled` embedded database! Implements
 /// `Deref<Target = sled::Tree>` to refer to
-/// a default keyspace.
+/// a default keyspace / namespace / bucket.
 #[derive(Clone)]
 pub struct Db {
     #[doc(hidden)]

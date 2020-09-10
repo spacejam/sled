@@ -34,21 +34,30 @@ impl IntoIterator for &'_ Tree {
     }
 }
 
-/// A flash-sympathetic persistent lock-free B+ tree
+/// A flash-sympathetic persistent lock-free B+ tree.
+///
+/// A `Tree` represents a single logical keyspace / namespace / bucket.
+///
+/// Separate `Trees` may be opened to separate concerns using
+/// `Db::open_tree`.
+///
+/// `Db` implements `Deref<Target = Tree>` such that a `Db` acts
+/// like the "default" `Tree`. This is the only `Tree` that cannot
+/// be deleted via `Db::drop_tree`.
 ///
 /// # Examples
 ///
 /// ```
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use sled::{open, IVec};
+/// use sled::IVec;
 ///
 /// # let _ = std::fs::remove_dir_all("db");
-/// let t = open("db")?;
-/// t.insert(b"yo!", b"v1".to_vec());
-/// assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
+/// let db: sled::Db = sled::open("db")?;
+/// db.insert(b"yo!", b"v1".to_vec());
+/// assert_eq!(db.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 ///
 /// // Atomic compare-and-swap.
-/// t.compare_and_swap(
+/// db.compare_and_swap(
 ///     b"yo!",      // key
 ///     Some(b"v1"), // old value, None for not present
 ///     Some(b"v2"), // new value, None for delete
@@ -56,15 +65,21 @@ impl IntoIterator for &'_ Tree {
 ///
 /// // Iterates over key-value pairs, starting at the given key.
 /// let scan_key: &[u8] = b"a non-present key before yo!";
-/// let mut iter = t.range(scan_key..);
+/// let mut iter = db.range(scan_key..);
 /// assert_eq!(
 ///     iter.next().unwrap(),
 ///     Ok((IVec::from(b"yo!"), IVec::from(b"v2")))
 /// );
 /// assert_eq!(iter.next(), None);
 ///
-/// t.remove(b"yo!");
-/// assert_eq!(t.get(b"yo!"), Ok(None));
+/// db.remove(b"yo!");
+/// assert_eq!(db.get(b"yo!"), Ok(None));
+///
+/// let other_tree: sled::Tree = db.open_tree(b"cool db facts")?;
+/// other_tree.insert(
+///     b"k1",
+///     &b"a Db acts like a Tree due to implementing Deref<Target = Tree>"[..]
+/// )?;
 /// # let _ = std::fs::remove_dir_all("db");
 /// # Ok(()) }
 /// ```
@@ -78,6 +93,23 @@ pub struct TreeInner {
     pub(crate) subscribers: Subscribers,
     pub(crate) root: AtomicU64,
     pub(crate) merge_operator: RwLock<Option<Box<dyn MergeOperator>>>,
+}
+
+impl Drop for TreeInner {
+    fn drop(&mut self) {
+        // Flush the underlying system in a loop until we
+        // have flushed all dirty data.
+        loop {
+            match self.context.pagecache.flush() {
+                Ok(0) => return,
+                Ok(_) => continue,
+                Err(e) => {
+                    error!("failed to flush data to disk: {:?}", e);
+                    return
+                },
+            }
+        }
+    }
 }
 
 impl Deref for Tree {
@@ -100,7 +132,7 @@ impl Tree {
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         self.insert(key, value)
     }
@@ -112,20 +144,18 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
-    /// let config = Config::new().temporary(true);
-    /// let t = config.open()?;
-    ///
-    /// assert_eq!(t.insert(&[1, 2, 3], vec![0]), Ok(None));
-    /// assert_eq!(t.insert(&[1, 2, 3], vec![1]), Ok(Some(IVec::from(&[0]))));
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// assert_eq!(db.insert(&[1, 2, 3], vec![0]), Ok(None));
+    /// assert_eq!(db.insert(&[1, 2, 3], vec![1]), Ok(Some(sled::IVec::from(&[0]))));
     /// # Ok(()) }
     /// ```
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
-        let value = IVec::from(value);
+        let value = value.into();
         let mut guard = pin();
         let _cc = concurrency_control::read();
         loop {
@@ -143,7 +173,7 @@ impl Tree {
         key: &[u8],
         mut value: Option<IVec>,
         guard: &mut Guard,
-    ) -> Result<Abortable<Option<IVec>>> {
+    ) -> Result<Conflictable<Option<IVec>>> {
         let _measure = if value.is_some() {
             Measure::new(&M.tree_set)
         } else {
@@ -175,7 +205,7 @@ impl Tree {
             guard,
         )?;
 
-        if let Ok(_new_cas_key) = link {
+        if link.is_ok() {
             // success
             if let Some(res) = subscriber_reservation.take() {
                 let event = if let Some(value) = value.take() {
@@ -192,11 +222,11 @@ impl Tree {
 
             guard.writeset.push(pid);
 
-            return Ok(Ok(last_value));
+            Ok(Ok(last_value))
+        } else {
+            M.tree_looped();
+            Ok(Err(Conflict))
         }
-
-        M.tree_looped();
-        Ok(Err(Abort))
     }
 
     /// Perform a multi-key serializable transaction.
@@ -205,28 +235,25 @@ impl Tree {
     ///
     /// ```
     /// # use sled::{transaction::TransactionResult, Config};
-    ///
     /// # fn main() -> TransactionResult<()> {
-    ///
-    /// let config = Config::new().temporary(true);
-    /// let db = config.open()?;
-    ///
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
     /// // Use write-only transactions as a writebatch:
-    /// db.transaction(|db| {
-    ///     db.insert(b"k1", b"cats")?;
-    ///     db.insert(b"k2", b"dogs")?;
+    /// db.transaction(|tx_db| {
+    ///     tx_db.insert(b"k1", b"cats")?;
+    ///     tx_db.insert(b"k2", b"dogs")?;
     ///     Ok(())
     /// })?;
     ///
     /// // Atomically swap two items:
-    /// db.transaction(|db| {
-    ///     let v1_option = db.remove(b"k1")?;
+    /// db.transaction(|tx_db| {
+    ///     let v1_option = tx_db.remove(b"k1")?;
     ///     let v1 = v1_option.unwrap();
-    ///     let v2_option = db.remove(b"k2")?;
+    ///     let v2_option = tx_db.remove(b"k2")?;
     ///     let v2 = v2_option.unwrap();
     ///
-    ///     db.insert(b"k1", v2)?;
-    ///     db.insert(b"k2", v1)?;
+    ///     tx_db.insert(b"k1", v2)?;
+    ///     tx_db.insert(b"k2", v1)?;
     ///
     ///     Ok(())
     /// })?;
@@ -253,9 +280,9 @@ impl Tree {
     ///     let db = config.open()?;
     ///
     ///     // Use write-only transactions as a writebatch:
-    ///     let res = db.transaction(|db| {
-    ///         db.insert(b"k1", b"cats")?;
-    ///         db.insert(b"k2", b"dogs")?;
+    ///     let res = db.transaction(|tx_db| {
+    ///         tx_db.insert(b"k1", b"cats")?;
+    ///         tx_db.insert(b"k2", b"dogs")?;
     ///         // aborting will cause all writes to roll-back.
     ///         if true {
     ///             abort(MyBullshitError)?;
@@ -282,10 +309,9 @@ impl Tree {
     /// ```
     /// # use sled::transaction::TransactionResult;
     /// # fn main() -> TransactionResult<()> {
-    /// use sled::{Config, Transactional};
-    ///
-    /// let config = Config::new().temporary(true);
-    /// let db = config.open()?;
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// use sled::Transactional;
     ///
     /// let unprocessed = db.open_tree(b"unprocessed items")?;
     /// let processed = db.open_tree(b"processed items")?;
@@ -297,11 +323,11 @@ impl Tree {
     /// // Atomically process the new item and move it
     /// // between `Tree`s.
     /// (&unprocessed, &processed)
-    ///     .transaction(|(unprocessed, processed)| {
-    ///         let unprocessed_item = unprocessed.remove(b"k3")?.unwrap();
+    ///     .transaction(|(tx_unprocessed, tx_processed)| {
+    ///         let unprocessed_item = tx_unprocessed.remove(b"k3")?.unwrap();
     ///         let mut processed_item = b"yappin' ".to_vec();
     ///         processed_item.extend_from_slice(&unprocessed_item);
-    ///         processed.insert(b"k3", processed_item)?;
+    ///         tx_processed.insert(b"k3", processed_item)?;
     ///         Ok(())
     ///     })?;
     ///
@@ -331,14 +357,12 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{Batch, open};
-    ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let _ = std::fs::remove_dir_all("batch_db");
-    /// let db = open("batch_db")?;
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
     /// db.insert("key_0", "val_0")?;
     ///
-    /// let mut batch = Batch::default();
+    /// let mut batch = sled::Batch::default();
     /// batch.insert("key_a", "val_a");
     /// batch.insert("key_b", "val_b");
     /// batch.insert("key_c", "val_c");
@@ -347,7 +371,6 @@ impl Tree {
     /// db.apply_batch(batch)?;
     /// // key_0 no longer exists, and key_a, key_b, and key_c
     /// // now do exist.
-    /// # let _ = std::fs::remove_dir_all("batch_db");
     /// # Ok(()) }
     /// ```
     pub fn apply_batch(&self, batch: Batch) -> Result<()> {
@@ -383,13 +406,11 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
-    /// let config = Config::new().temporary(true);
-    /// let t = config.open()?;
-    ///
-    /// t.insert(&[0], vec![0])?;
-    /// assert_eq!(t.get(&[0]), Ok(Some(IVec::from(vec![0]))));
-    /// assert_eq!(t.get(&[1]), Ok(None));
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[0], vec![0])?;
+    /// assert_eq!(db.get(&[0]), Ok(Some(sled::IVec::from(vec![0]))));
+    /// assert_eq!(db.get(&[1]), Ok(None));
     /// # Ok(()) }
     /// ```
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
@@ -406,7 +427,7 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &mut Guard,
-    ) -> Result<Abortable<Option<IVec>>> {
+    ) -> Result<Conflictable<Option<IVec>>> {
         let _measure = Measure::new(&M.tree_get);
 
         trace!("getting key {:?}", key);
@@ -433,11 +454,11 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = sled::Config::new().temporary(true);
-    /// let t = config.open()?;
-    /// t.insert(&[1], vec![1]);
-    /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
-    /// assert_eq!(t.remove(&[1]), Ok(None));
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[1], vec![1]);
+    /// assert_eq!(db.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
+    /// assert_eq!(db.remove(&[1]), Ok(None));
     /// # Ok(()) }
     /// ```
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
@@ -471,24 +492,23 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = sled::Config::new().temporary(true);
-    /// let t = config.open()?;
-    ///
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
     /// // unique creation
     /// assert_eq!(
-    ///     t.compare_and_swap(&[1], None as Option<&[u8]>, Some(&[10])),
+    ///     db.compare_and_swap(&[1], None as Option<&[u8]>, Some(&[10])),
     ///     Ok(Ok(()))
     /// );
     ///
     /// // conditional modification
     /// assert_eq!(
-    ///     t.compare_and_swap(&[1], Some(&[10]), Some(&[20])),
+    ///     db.compare_and_swap(&[1], Some(&[10]), Some(&[20])),
     ///     Ok(Ok(()))
     /// );
     ///
     /// // failed conditional modification -- the current value is returned in
     /// // the error variant
-    /// let operation = t.compare_and_swap(&[1], Some(&[30]), Some(&[40]));
+    /// let operation = db.compare_and_swap(&[1], Some(&[30]), Some(&[40]));
     /// assert!(operation.is_ok()); // the operation succeeded
     /// let modification = operation.unwrap();
     /// assert!(modification.is_err());
@@ -497,10 +517,10 @@ impl Tree {
     ///
     /// // conditional deletion
     /// assert_eq!(
-    ///     t.compare_and_swap(&[1], Some(&[20]), None as Option<&[u8]>),
+    ///     db.compare_and_swap(&[1], Some(&[20]), None as Option<&[u8]>),
     ///     Ok(Ok(()))
     /// );
-    /// assert_eq!(t.get(&[1]), Ok(None));
+    /// assert_eq!(db.get(&[1]), Ok(None));
     /// # Ok(()) }
     /// ```
     #[allow(clippy::needless_pass_by_value)]
@@ -513,7 +533,7 @@ impl Tree {
     where
         K: AsRef<[u8]>,
         OV: AsRef<[u8]>,
-        IVec: From<NV>,
+        NV: Into<IVec>,
     {
         trace!("cas'ing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
@@ -521,7 +541,7 @@ impl Tree {
         let guard = pin();
         let _cc = concurrency_control::read();
 
-        let new = new.map(IVec::from);
+        let new = new.map(Into::into);
 
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -589,7 +609,7 @@ impl Tree {
     /// use std::convert::TryInto;
     ///
     /// let config = Config::new().temporary(true);
-    /// let tree = config.open()?;
+    /// let db = config.open()?;
     ///
     /// fn u64_to_ivec(number: u64) -> IVec {
     ///     IVec::from(number.to_be_bytes().to_vec())
@@ -613,10 +633,10 @@ impl Tree {
     ///     Some(number.to_be_bytes().to_vec())
     /// }
     ///
-    /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(zero)));
-    /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(one)));
-    /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(two)));
-    /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(three)));
+    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(zero)));
+    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(one)));
+    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(two)));
+    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(three)));
     /// # Ok(()) }
     /// ```
     pub fn update_and_fetch<K, V, F>(
@@ -627,14 +647,14 @@ impl Tree {
     where
         K: AsRef<[u8]>,
         F: FnMut(Option<&[u8]>) -> Option<V>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         let key_ref = key.as_ref();
         let mut current = self.get(key_ref)?;
 
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
-            let next = f(tmp).map(IVec::from);
+            let next = f(tmp).map(Into::into);
             match self.compare_and_swap::<_, _, IVec>(
                 key_ref,
                 tmp,
@@ -663,7 +683,7 @@ impl Tree {
     /// use std::convert::TryInto;
     ///
     /// let config = Config::new().temporary(true);
-    /// let tree = config.open()?;
+    /// let db = config.open()?;
     ///
     /// fn u64_to_ivec(number: u64) -> IVec {
     ///     IVec::from(number.to_be_bytes().to_vec())
@@ -686,10 +706,10 @@ impl Tree {
     ///     Some(number.to_be_bytes().to_vec())
     /// }
     ///
-    /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(None));
-    /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(Some(zero)));
-    /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(Some(one)));
-    /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(Some(two)));
+    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(None));
+    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(Some(zero)));
+    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(Some(one)));
+    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(Some(two)));
     /// # Ok(()) }
     /// ```
     pub fn fetch_and_update<K, V, F>(
@@ -700,7 +720,7 @@ impl Tree {
     where
         K: AsRef<[u8]>,
         F: FnMut(Option<&[u8]>) -> Option<V>,
-        IVec: From<V>,
+        V: Into<IVec>,
     {
         let key_ref = key.as_ref();
         let mut current = self.get(key_ref)?;
@@ -735,24 +755,21 @@ impl Tree {
     /// Synchronous, blocking subscriber:
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, Event};
-    /// let config = Config::new().temporary(true);
-    ///
-    /// let tree = config.open()?;
-    ///
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
     /// // watch all events by subscribing to the empty prefix
-    /// let mut subscriber = tree.watch_prefix(vec![]);
+    /// let mut subscriber = db.watch_prefix(vec![]);
     ///
-    /// let tree_2 = tree.clone();
+    /// let tree_2 = db.clone();
     /// let thread = std::thread::spawn(move || {
-    ///     tree.insert(vec![0], vec![1])
+    ///     db.insert(vec![0], vec![1])
     /// });
     ///
     /// // `Subscription` implements `Iterator<Item=Event>`
     /// for event in subscriber.take(1) {
     ///     match event {
-    ///         Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
-    ///         Event::Remove {key } => {}
+    ///         sled::Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
+    ///         sled::Event::Remove {key } => {}
     ///     }
     /// }
     ///
@@ -815,12 +832,11 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = sled::Config::new().temporary(true);
-    /// let t = config.open()?;
-    ///
-    /// t.insert(&[0], vec![0])?;
-    /// assert!(t.contains_key(&[0])?);
-    /// assert!(!t.contains_key(&[1])?);
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[0], vec![0])?;
+    /// assert!(db.contains_key(&[0])?);
+    /// assert!(!db.contains_key(&[1])?);
     /// # Ok(()) }
     /// ```
     pub fn contains_key<K: AsRef<[u8]>>(&self, key: K) -> Result<bool> {
@@ -834,31 +850,30 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
-    /// let config = Config::new().temporary(true);
-    /// let tree = config.open()?;
-    ///
+    /// use sled::IVec;
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
     /// for i in 0..10 {
-    ///     tree.insert(&[i], vec![i])
+    ///     db.insert(&[i], vec![i])
     ///         .expect("should write successfully");
     /// }
     ///
-    /// assert_eq!(tree.get_lt(&[]), Ok(None));
-    /// assert_eq!(tree.get_lt(&[0]), Ok(None));
+    /// assert_eq!(db.get_lt(&[]), Ok(None));
+    /// assert_eq!(db.get_lt(&[0]), Ok(None));
     /// assert_eq!(
-    ///     tree.get_lt(&[1]),
+    ///     db.get_lt(&[1]),
     ///     Ok(Some((IVec::from(&[0]), IVec::from(&[0]))))
     /// );
     /// assert_eq!(
-    ///     tree.get_lt(&[9]),
+    ///     db.get_lt(&[9]),
     ///     Ok(Some((IVec::from(&[8]), IVec::from(&[8]))))
     /// );
     /// assert_eq!(
-    ///     tree.get_lt(&[10]),
+    ///     db.get_lt(&[10]),
     ///     Ok(Some((IVec::from(&[9]), IVec::from(&[9]))))
     /// );
     /// assert_eq!(
-    ///     tree.get_lt(&[255]),
+    ///     db.get_lt(&[255]),
     ///     Ok(Some((IVec::from(&[9]), IVec::from(&[9]))))
     /// );
     /// # Ok(()) }
@@ -885,35 +900,34 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
-    /// let config = Config::new().temporary(true);
-    /// let tree = config.open()?;
-    ///
+    /// use sled::IVec;
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
     /// for i in 0..10 {
-    ///     tree.insert(&[i], vec![i])?;
+    ///     db.insert(&[i], vec![i])?;
     /// }
     ///
     /// assert_eq!(
-    ///     tree.get_gt(&[]),
+    ///     db.get_gt(&[]),
     ///     Ok(Some((IVec::from(&[0]), IVec::from(&[0]))))
     /// );
     /// assert_eq!(
-    ///     tree.get_gt(&[0]),
+    ///     db.get_gt(&[0]),
     ///     Ok(Some((IVec::from(&[1]), IVec::from(&[1]))))
     /// );
     /// assert_eq!(
-    ///     tree.get_gt(&[1]),
+    ///     db.get_gt(&[1]),
     ///     Ok(Some((IVec::from(&[2]), IVec::from(&[2]))))
     /// );
     /// assert_eq!(
-    ///     tree.get_gt(&[8]),
+    ///     db.get_gt(&[8]),
     ///     Ok(Some((IVec::from(&[9]), IVec::from(&[9]))))
     /// );
-    /// assert_eq!(tree.get_gt(&[9]), Ok(None));
+    /// assert_eq!(db.get_gt(&[9]), Ok(None));
     ///
-    /// tree.insert(500u16.to_be_bytes(), vec![10]);
+    /// db.insert(500u16.to_be_bytes(), vec![10]);
     /// assert_eq!(
-    ///     tree.get_gt(&499u16.to_be_bytes()),
+    ///     db.get_gt(&499u16.to_be_bytes()),
     ///     Ok(Some((IVec::from(&500u16.to_be_bytes()), IVec::from(&[10]))))
     /// );
     /// # Ok(()) }
@@ -945,7 +959,9 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// use sled::IVec;
     ///
     /// fn concatenate_merge(
     ///   _key: &[u8],               // the key being merged
@@ -961,29 +977,25 @@ impl Tree {
     ///   Some(ret)
     /// }
     ///
-    /// let config = Config::new()
-    ///   .temporary(true);
-    ///
-    /// let tree = config.open()?;
-    /// tree.set_merge_operator(concatenate_merge);
+    /// db.set_merge_operator(concatenate_merge);
     ///
     /// let k = b"k1";
     ///
-    /// tree.insert(k, vec![0]);
-    /// tree.merge(k, vec![1]);
-    /// tree.merge(k, vec![2]);
-    /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![0, 1, 2]))));
+    /// db.insert(k, vec![0]);
+    /// db.merge(k, vec![1]);
+    /// db.merge(k, vec![2]);
+    /// assert_eq!(db.get(k), Ok(Some(IVec::from(vec![0, 1, 2]))));
     ///
     /// // Replace previously merged data. The merge function will not be called.
-    /// tree.insert(k, vec![3]);
-    /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![3]))));
+    /// db.insert(k, vec![3]);
+    /// assert_eq!(db.get(k), Ok(Some(IVec::from(vec![3]))));
     ///
     /// // Merges on non-present values will cause the merge function to be called
     /// // with `old_value == None`. If the merge function returns something (which it
     /// // does, in this case) a new value will be inserted.
-    /// tree.remove(k);
-    /// tree.merge(k, vec![4]);
-    /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
+    /// db.remove(k);
+    /// db.merge(k, vec![4]);
+    /// assert_eq!(db.get(k), Ok(Some(IVec::from(vec![4]))));
     /// # Ok(()) }
     /// ```
     pub fn merge<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
@@ -1003,7 +1015,7 @@ impl Tree {
         &self,
         key: &[u8],
         value: &[u8],
-    ) -> Result<Abortable<Option<IVec>>> {
+    ) -> Result<Conflictable<Option<IVec>>> {
         trace!("merging key {:?}", key);
         let _measure = Measure::new(&M.tree_merge);
 
@@ -1077,7 +1089,9 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// use sled::IVec;
     ///
     /// fn concatenate_merge(
     ///   _key: &[u8],               // the key being merged
@@ -1093,29 +1107,25 @@ impl Tree {
     ///   Some(ret)
     /// }
     ///
-    /// let config = Config::new()
-    ///   .temporary(true);
-    ///
-    /// let tree = config.open()?;
-    /// tree.set_merge_operator(concatenate_merge);
+    /// db.set_merge_operator(concatenate_merge);
     ///
     /// let k = b"k1";
     ///
-    /// tree.insert(k, vec![0]);
-    /// tree.merge(k, vec![1]);
-    /// tree.merge(k, vec![2]);
-    /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![0, 1, 2]))));
+    /// db.insert(k, vec![0]);
+    /// db.merge(k, vec![1]);
+    /// db.merge(k, vec![2]);
+    /// assert_eq!(db.get(k), Ok(Some(IVec::from(vec![0, 1, 2]))));
     ///
     /// // Replace previously merged data. The merge function will not be called.
-    /// tree.insert(k, vec![3]);
-    /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![3]))));
+    /// db.insert(k, vec![3]);
+    /// assert_eq!(db.get(k), Ok(Some(IVec::from(vec![3]))));
     ///
     /// // Merges on non-present values will cause the merge function to be called
     /// // with `old_value == None`. If the merge function returns something (which it
     /// // does, in this case) a new value will be inserted.
-    /// tree.remove(k);
-    /// tree.merge(k, vec![4]);
-    /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
+    /// db.remove(k);
+    /// db.merge(k, vec![4]);
+    /// assert_eq!(db.get(k), Ok(Some(IVec::from(vec![4]))));
     /// # Ok(()) }
     /// ```
     pub fn set_merge_operator(
@@ -1133,13 +1143,13 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
-    /// let config = Config::new().temporary(true);
-    /// let t = config.open()?;
-    /// t.insert(&[1], vec![10]);
-    /// t.insert(&[2], vec![20]);
-    /// t.insert(&[3], vec![30]);
-    /// let mut iter = t.iter();
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// use sled::IVec;
+    /// db.insert(&[1], vec![10]);
+    /// db.insert(&[2], vec![20]);
+    /// db.insert(&[3], vec![30]);
+    /// let mut iter = db.iter();
     /// assert_eq!(
     ///     iter.next().unwrap(),
     ///     Ok((IVec::from(&[1]), IVec::from(&[10])))
@@ -1166,25 +1176,24 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
-    /// let config = Config::new().temporary(true);
-    /// let t = config.open()?;
-    ///
-    /// t.insert(&[0], vec![0])?;
-    /// t.insert(&[1], vec![10])?;
-    /// t.insert(&[2], vec![20])?;
-    /// t.insert(&[3], vec![30])?;
-    /// t.insert(&[4], vec![40])?;
-    /// t.insert(&[5], vec![50])?;
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// use sled::IVec;
+    /// db.insert(&[0], vec![0])?;
+    /// db.insert(&[1], vec![10])?;
+    /// db.insert(&[2], vec![20])?;
+    /// db.insert(&[3], vec![30])?;
+    /// db.insert(&[4], vec![40])?;
+    /// db.insert(&[5], vec![50])?;
     ///
     /// let start: &[u8] = &[2];
     /// let end: &[u8] = &[4];
-    /// let mut r = t.range(start..end);
+    /// let mut r = db.range(start..end);
     /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
     /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
     /// assert_eq!(r.next(), None);
     ///
-    /// let mut r = t.range(start..end).rev();
+    /// let mut r = db.range(start..end).rev();
     /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
     /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
     /// assert_eq!(r.next(), None);
@@ -1231,19 +1240,18 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
-    /// let config = Config::new().temporary(true);
-    /// let t = config.open()?;
-    ///
-    /// t.insert(&[0, 0, 0], vec![0, 0, 0])?;
-    /// t.insert(&[0, 0, 1], vec![0, 0, 1])?;
-    /// t.insert(&[0, 0, 2], vec![0, 0, 2])?;
-    /// t.insert(&[0, 0, 3], vec![0, 0, 3])?;
-    /// t.insert(&[0, 1, 0], vec![0, 1, 0])?;
-    /// t.insert(&[0, 1, 1], vec![0, 1, 1])?;
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// use sled::IVec;
+    /// db.insert(&[0, 0, 0], vec![0, 0, 0])?;
+    /// db.insert(&[0, 0, 1], vec![0, 0, 1])?;
+    /// db.insert(&[0, 0, 2], vec![0, 0, 2])?;
+    /// db.insert(&[0, 0, 3], vec![0, 0, 3])?;
+    /// db.insert(&[0, 1, 0], vec![0, 1, 0])?;
+    /// db.insert(&[0, 1, 1], vec![0, 1, 1])?;
     ///
     /// let prefix: &[u8] = &[0, 0];
-    /// let mut r = t.scan_prefix(prefix);
+    /// let mut r = db.scan_prefix(prefix);
     /// assert_eq!(
     ///     r.next(),
     ///     Some(Ok((IVec::from(&[0, 0, 0]), IVec::from(&[0, 0, 0]))))
@@ -1280,30 +1288,40 @@ impl Tree {
         self.range(prefix..)
     }
 
+    /// Returns the first key and value in the `Tree`, or
+    /// `None` if the `Tree` is empty.
+    pub fn first(&self) -> Result<Option<(IVec, IVec)>> {
+        self.iter().next().transpose()
+    }
+
+    /// Returns the last key and value in the `Tree`, or
+    /// `None` if the `Tree` is empty.
+    pub fn last(&self) -> Result<Option<(IVec, IVec)>> {
+        self.iter().next_back().transpose()
+    }
+
     /// Atomically removes the maximum item in the `Tree` instance.
     ///
     /// # Examples
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
-    /// let config = Config::new().temporary(true);
-    /// let t = config.open()?;
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[0], vec![0])?;
+    /// db.insert(&[1], vec![10])?;
+    /// db.insert(&[2], vec![20])?;
+    /// db.insert(&[3], vec![30])?;
+    /// db.insert(&[4], vec![40])?;
+    /// db.insert(&[5], vec![50])?;
     ///
-    /// t.insert(&[0], vec![0])?;
-    /// t.insert(&[1], vec![10])?;
-    /// t.insert(&[2], vec![20])?;
-    /// t.insert(&[3], vec![30])?;
-    /// t.insert(&[4], vec![40])?;
-    /// t.insert(&[5], vec![50])?;
-    ///
-    /// assert_eq!(&t.pop_max()?.unwrap().0, &[5]);
-    /// assert_eq!(&t.pop_max()?.unwrap().0, &[4]);
-    /// assert_eq!(&t.pop_max()?.unwrap().0, &[3]);
-    /// assert_eq!(&t.pop_max()?.unwrap().0, &[2]);
-    /// assert_eq!(&t.pop_max()?.unwrap().0, &[1]);
-    /// assert_eq!(&t.pop_max()?.unwrap().0, &[0]);
-    /// assert_eq!(t.pop_max()?, None);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[5]);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[4]);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[3]);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[2]);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[1]);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[0]);
+    /// assert_eq!(db.pop_max()?, None);
     /// # Ok(()) }
     /// ```
     pub fn pop_max(&self) -> Result<Option<(IVec, IVec)>> {
@@ -1333,24 +1351,22 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, IVec};
-    /// let config = Config::new().temporary(true);
-    /// let t = config.open()?;
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[0], vec![0])?;
+    /// db.insert(&[1], vec![10])?;
+    /// db.insert(&[2], vec![20])?;
+    /// db.insert(&[3], vec![30])?;
+    /// db.insert(&[4], vec![40])?;
+    /// db.insert(&[5], vec![50])?;
     ///
-    /// t.insert(&[0], vec![0])?;
-    /// t.insert(&[1], vec![10])?;
-    /// t.insert(&[2], vec![20])?;
-    /// t.insert(&[3], vec![30])?;
-    /// t.insert(&[4], vec![40])?;
-    /// t.insert(&[5], vec![50])?;
-    ///
-    /// assert_eq!(&t.pop_min()?.unwrap().0, &[0]);
-    /// assert_eq!(&t.pop_min()?.unwrap().0, &[1]);
-    /// assert_eq!(&t.pop_min()?.unwrap().0, &[2]);
-    /// assert_eq!(&t.pop_min()?.unwrap().0, &[3]);
-    /// assert_eq!(&t.pop_min()?.unwrap().0, &[4]);
-    /// assert_eq!(&t.pop_min()?.unwrap().0, &[5]);
-    /// assert_eq!(t.pop_min()?, None);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[0]);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[1]);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[2]);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[3]);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[4]);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[5]);
+    /// assert_eq!(db.pop_min()?, None);
     /// # Ok(()) }
     /// ```
     pub fn pop_min(&self) -> Result<Option<(IVec, IVec)>> {
@@ -1382,11 +1398,11 @@ impl Tree {
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = sled::Config::new().temporary(true);
-    /// let t = config.open()?;
-    /// t.insert(b"a", vec![0]);
-    /// t.insert(b"b", vec![1]);
-    /// assert_eq!(t.len(), 2);
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(b"a", vec![0]);
+    /// db.insert(b"b", vec![1]);
+    /// assert_eq!(db.len(), 2);
     /// # Ok(()) }
     /// ```
     pub fn len(&self) -> usize {
