@@ -7,6 +7,7 @@
   the `Tree` is empty.
 
 ## Bug Fixes
+
 * #1159 dropping a `Db` instance will no-longer
   prematurely shut-down the background fsync
   thread.
