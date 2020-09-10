@@ -499,7 +499,7 @@ impl Config {
         (
             compression_factor,
             i32,
-            "the compression factor to use with zstd compression. Ranges from 1 up to 22. 0 is 'default'. Levels >= 20 are 'ultra'."
+            "the compression factor to use with zstd compression. Ranges from 1 up to 22. Levels >= 20 are 'ultra'."
         ),
         (
             temporary,
