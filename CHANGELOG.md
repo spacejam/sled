@@ -6,6 +6,11 @@
   to retrieve the first or last items in a `Tree`, unless
   the `Tree` is empty.
 
+## Bug Fixes
+
+* #1168 fixed an issue that was causing panics during
+  recovery in 32-bit code.
+
 # 0.34.3
 
 ## New Features

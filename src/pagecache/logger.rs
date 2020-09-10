@@ -734,15 +734,15 @@ pub(crate) fn read_message<R: ReadAt>(
     let max_possible_len =
         assert_usize(ceiling - lid - message_offset as LogOffset);
 
-    let header_len = usize::try_from(header.len).unwrap();
-
-    if header_len > max_possible_len {
+    if header.len > max_possible_len as u64 {
         trace!(
             "read a corrupted message with impossibly long length {:?}",
             header
         );
         return Ok(LogRead::Corrupted);
     }
+
+    let header_len = usize::try_from(header.len).unwrap();
 
     if header.kind == MessageKind::Corrupted {
         trace!(
