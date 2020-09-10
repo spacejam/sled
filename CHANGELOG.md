@@ -1,8 +1,16 @@
-# 0.34.4
+# Unreleased
 
 ## New Features
 
 * #1151 Send is implemented for Iter
+* #1167 added `Tree::first` and `Tree::last` functions
+  to retrieve the first or last items in a `Tree`, unless
+  the `Tree` is empty.
+
+## Bug Fixes
+
+* #1168 fixed an issue that was causing panics during
+  recovery in 32-bit code.
 
 # 0.34.3
 
