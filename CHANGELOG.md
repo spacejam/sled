@@ -1,3 +1,11 @@
+# Unreleased
+
+## New Features
+
+* #1167 added `Tree::first` and `Tree::last` functions
+  to retrieve the first or last items in a `Tree`, unless
+  the `Tree` is empty.
+
 # 0.34.3
 
 ## New Features
