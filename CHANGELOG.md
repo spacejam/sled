@@ -8,6 +8,9 @@
 
 ## Bug Fixes
 
+* #1159 dropping a `Db` instance will no-longer
+  prematurely shut-down the background fsync
+  thread.
 * #1168 fixed an issue that was causing panics during
   recovery in 32-bit code.
 

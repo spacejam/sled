@@ -541,15 +541,17 @@ impl<E> Transactional<E> for [Tree] {
     type View = Vec<TransactionalTree>;
 
     fn make_overlay(&self) -> Result<TransactionalTrees> {
-        if !self.windows(2).all(|w| {
+        let same_db = self.windows(2).all(|w| {
             let path_1 = w[0].context.get_path();
             let path_2 = w[1].context.get_path();
             path_1 == path_2
-        }) {
+        });
+        if !same_db {
             return Err(Error::Unsupported(
-                        "cannot use trees from multiple databases in the same transaction".into(),
-                    ));
+                "cannot use trees from multiple databases in the same transaction".into(),
+            ));
         }
+
         Ok(TransactionalTrees {
             inner: self
                 .iter()
@@ -567,15 +569,17 @@ impl<E> Transactional<E> for [&Tree] {
     type View = Vec<TransactionalTree>;
 
     fn make_overlay(&self) -> Result<TransactionalTrees> {
-        if !self.windows(2).all(|w| {
+        let same_db = self.windows(2).all(|w| {
             let path_1 = w[0].context.get_path();
             let path_2 = w[1].context.get_path();
             path_1 == path_2
-        }) {
+        });
+        if !same_db {
             return Err(Error::Unsupported(
-                        "cannot use trees from multiple databases in the same transaction".into(),
-                    ));
+                "cannot use trees from multiple databases in the same transaction".into(),
+            ));
         }
+
         Ok(TransactionalTrees {
             inner: self
                 .iter()

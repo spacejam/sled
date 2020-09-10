@@ -525,8 +525,8 @@ impl Config {
             "segment_size should be a power of 2"
         );
         supported!(
-            self.segment_size >= 100,
-            "segment_size should be hundreds of kb at minimum, and we won't start if below 100"
+            self.segment_size >= 256,
+            "segment_size should be hundreds of kb at minimum, and we won't start if below 256"
         );
         supported!(
             self.segment_size <= 1 << 24,

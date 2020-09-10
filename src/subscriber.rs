@@ -6,6 +6,7 @@ use std::{
         mpsc::{sync_channel, Receiver, SyncSender, TryRecvError},
     },
     task::{Context, Poll, Waker},
+    time::{Duration, Instant},
 };
 
 #[cfg(not(feature = "testing"))]
@@ -98,6 +99,38 @@ impl Drop for Subscriber {
     fn drop(&mut self) {
         let mut w_senders = self.home.write();
         w_senders.remove(&self.id);
+    }
+}
+
+impl Subscriber {
+    /// Attempts to wait for a value on this `Subscriber`, returning
+    /// an error if no event arrives within the provided `Duration`
+    /// or if the backing `Db` shuts down.
+    pub fn next_timeout(
+        &self,
+        mut timeout: Duration,
+    ) -> std::result::Result<Event, std::sync::mpsc::RecvTimeoutError> {
+        loop {
+            let start = Instant::now();
+            let future_rx = self.rx.recv_timeout(timeout)?;
+            timeout =
+                if let Some(timeout) = timeout.checked_sub(start.elapsed()) {
+                    timeout
+                } else {
+                    Duration::from_nanos(0)
+                };
+
+            let start = Instant::now();
+            if let Some(event) = future_rx.wait_timeout(timeout)? {
+                return Ok(event);
+            }
+            timeout =
+                if let Some(timeout) = timeout.checked_sub(start.elapsed()) {
+                    timeout
+                } else {
+                    Duration::from_nanos(0)
+                };
+        }
     }
 }
 

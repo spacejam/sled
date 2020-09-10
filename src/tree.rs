@@ -95,6 +95,23 @@ pub struct TreeInner {
     pub(crate) merge_operator: RwLock<Option<Box<dyn MergeOperator>>>,
 }
 
+impl Drop for TreeInner {
+    fn drop(&mut self) {
+        // Flush the underlying system in a loop until we
+        // have flushed all dirty data.
+        loop {
+            match self.context.pagecache.flush() {
+                Ok(0) => return,
+                Ok(_) => continue,
+                Err(e) => {
+                    error!("failed to flush data to disk: {:?}", e);
+                    return
+                },
+            }
+        }
+    }
+}
+
 impl Deref for Tree {
     type Target = TreeInner;
 

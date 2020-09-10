@@ -57,7 +57,7 @@ fn log_writebatch() -> crate::Result<()> {
 
 #[test]
 fn more_log_reservations_than_buffers() -> Result<()> {
-    let config = Config::new().temporary(true).segment_size(128);
+    let config = Config::new().temporary(true).segment_size(256);
 
     let db = config.open()?;
     let log = &db.context.pagecache.log;
@@ -67,7 +67,7 @@ fn more_log_reservations_than_buffers() -> Result<()> {
     let big_msg_overhead = MAX_MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = config.segment_size - big_msg_overhead;
 
-    for _ in 0..=30 {
+    for _ in 0..256 * 30 {
         let guard = pin();
         reservations.push(
             log.reserve(REPLACE, PID, &IVec::from(vec![0; big_msg_sz]), &guard)
@@ -284,7 +284,7 @@ fn log_aborts() {
 fn log_chunky_iterator() {
     common::setup_logger();
     let config =
-        Config::new().flush_every_ms(None).temporary(true).segment_size(128);
+        Config::new().flush_every_ms(None).temporary(true).segment_size(256);
 
     let db = config.open().unwrap();
     let log = &db.context.pagecache.log;

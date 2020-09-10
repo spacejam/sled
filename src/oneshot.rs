@@ -2,6 +2,7 @@ use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll, Waker},
+    time::{Duration, Instant},
 };
 
 use parking_lot::{Condvar, Mutex};
@@ -55,6 +56,36 @@ impl<T> OneShot<T> {
             self.cv.wait(&mut inner);
         }
         inner.item.take()
+    }
+
+    /// Block on the `OneShot`'s completion
+    /// or dropping of the `OneShotFiller`,
+    /// returning an error if not filled
+    /// before a given timeout or if the
+    /// system shuts down before then.
+    pub fn wait_timeout(
+        self,
+        mut timeout: Duration,
+    ) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
+        let mut inner = self.mu.lock();
+        while !inner.filled {
+            let start = Instant::now();
+            let res = self.cv.wait_for(&mut inner, timeout);
+            if res.timed_out() {
+                return Err(std::sync::mpsc::RecvTimeoutError::Disconnected);
+            }
+            timeout =
+                if let Some(timeout) = timeout.checked_sub(start.elapsed()) {
+                    timeout
+                } else {
+                    Duration::from_nanos(0)
+                };
+        }
+        if let Some(item) = inner.item.take() {
+            Ok(item)
+        } else {
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+        }
     }
 }
 
