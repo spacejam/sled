@@ -211,15 +211,27 @@ impl Default for Segment {
 
 impl Segment {
     fn is_free(&self) -> bool {
-        if let Segment::Free(_) = self { true } else { false }
+        if let Segment::Free(_) = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn is_active(&self) -> bool {
-        if let Segment::Active { .. } = self { true } else { false }
+        if let Segment::Active { .. } = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn is_inactive(&self) -> bool {
-        if let Segment::Inactive { .. } = self { true } else { false }
+        if let Segment::Inactive { .. } = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
@@ -1055,7 +1067,11 @@ impl SegmentAccountant {
         self.ordering
             .iter()
             .filter_map(move |(l, r)| {
-                if *l >= normalized_lsn { Some((*l, *r)) } else { None }
+                if *l >= normalized_lsn {
+                    Some((*l, *r))
+                } else {
+                    None
+                }
             })
             .collect()
     }
