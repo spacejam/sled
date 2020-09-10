@@ -2,6 +2,7 @@
 
 ## New Features
 
+* #1151 Send is implemented for Iter
 * #1167 added `Tree::first` and `Tree::last` functions
   to retrieve the first or last items in a `Tree`, unless
   the `Tree` is empty.
