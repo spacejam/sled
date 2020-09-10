@@ -514,6 +514,10 @@ impl SegmentAccountant {
             if tip_idx == number_of_segments {
                 segments.push(Segment::default());
             }
+            if segments.len() <= tip_idx {
+                error!("failed to properly initialize segments, suspected disk corruption");
+                return Err(Error::corruption(None));
+            }
             trace!(
                 "setting segment for tip_lid {} to stable_lsn {}",
                 tip_lid,

@@ -928,7 +928,7 @@ mod qc {
                 2 => Link::ParentMergeIntention(u64::arbitrary(g)),
                 3 => Link::ParentMergeConfirm,
                 4 => Link::ChildMergeCap,
-                _ => panic!("invalid choice"),
+                _ => unreachable!("invalid choice"),
             }
         }
     }
