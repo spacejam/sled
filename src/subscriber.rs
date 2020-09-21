@@ -479,19 +479,19 @@ fn basic_subscriber() {
         value: IVec::from(k8.clone()),
     });
 
-    assert_eq!(s1.next().unwrap().key(), &*k2);
-    assert_eq!(s1.next().unwrap().key(), &*k3);
-    assert_eq!(s1.next().unwrap().key(), &*k4);
-    assert_eq!(s1.next().unwrap().key(), &*k5);
-    assert_eq!(s1.next().unwrap().key(), &*k6);
-    assert_eq!(s1.next().unwrap().key(), &*k8);
+    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k2);
+    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k3);
+    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k4);
+    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k5);
+    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k6);
+    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k8);
 
-    assert_eq!(s2.next().unwrap().key(), &*k3);
-    assert_eq!(s2.next().unwrap().key(), &*k4);
-    assert_eq!(s2.next().unwrap().key(), &*k5);
+    assert_eq!(s2.next().unwrap().keys().next().unwrap(), &*k3);
+    assert_eq!(s2.next().unwrap().keys().next().unwrap(), &*k4);
+    assert_eq!(s2.next().unwrap().keys().next().unwrap(), &*k5);
 
-    assert_eq!(s3.next().unwrap().key(), &*k4);
-    assert_eq!(s3.next().unwrap().key(), &*k5);
+    assert_eq!(s3.next().unwrap().keys().next().unwrap(), &*k4);
+    assert_eq!(s3.next().unwrap().keys().next().unwrap(), &*k5);
 
-    assert_eq!(s4.next().unwrap().key(), &*k8);
+    assert_eq!(s4.next().unwrap().keys().next().unwrap(), &*k8);
 }
