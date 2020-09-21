@@ -397,7 +397,7 @@ impl Tree {
 
         for (k, v_opt) in &batch.writes {
             loop {
-                if self.insert_inner(&k, v_opt.clone(), true, guard)?.is_ok() {
+                if self.insert_inner(k, v_opt.clone(), true, guard)?.is_ok() {
                     break;
                 }
             }
