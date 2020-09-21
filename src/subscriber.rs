@@ -50,7 +50,7 @@ pub enum Event {
 
 impl Event {
     /// Return the key associated with the `Event`
-    pub fn keys<'a>(&'a self) -> Keys<'a> {
+    pub fn keys(&self) -> Keys<'_> {
         match self {
             Event::Insert { ref key, .. } | Event::Remove { ref key } => {
                 Keys::Single(std::iter::once(key))

@@ -733,7 +733,6 @@ impl Config {
         if ge.is_null() {
             Ok(())
         } else {
-            #[cold]
             #[allow(unsafe_code)]
             unsafe {
                 Err(ge.deref().clone())
