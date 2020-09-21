@@ -161,7 +161,7 @@ impl Tree {
         loop {
             trace!("setting key {:?}", key.as_ref());
             if let Ok(res) =
-                self.insert_inner(key.as_ref(), Some(value.clone()), &mut guard)?
+                self.insert_inner(key.as_ref(), Some(value.clone()), false, &mut guard)?
             {
                 return Ok(res);
             }
@@ -172,6 +172,7 @@ impl Tree {
         &self,
         key: &[u8],
         mut value: Option<IVec>,
+        is_batch: bool,
         guard: &mut Guard,
     ) -> Result<Conflictable<Option<IVec>>> {
         let _measure = if value.is_some() {
@@ -183,7 +184,12 @@ impl Tree {
         let View { node_view, pid, .. } =
             self.view_for_key(key.as_ref(), guard)?;
 
-        let mut subscriber_reservation = self.subscribers.reserve(&key);
+        let mut subscriber_reservation = if is_batch {
+            // batch subscription events are handled in the apply_batch_inner method.
+            None
+        } else {
+            self.subscribers.reserve(&key)
+        };
 
         let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
 
@@ -386,12 +392,18 @@ impl Tree {
     ) -> Result<()> {
         let peg = self.context.pin_log(guard)?;
         trace!("applying batch {:?}", batch);
-        for (k, v_opt) in batch.writes {
+
+        let mut subscriber_reservation = self.subscribers.reserve_batch(&batch);
+
+        for (k, v_opt) in &batch.writes {
             loop {
-                if self.insert_inner(&k, v_opt.clone(), guard)?.is_ok() {
+                if self.insert_inner(&k, v_opt.clone(), true, guard)?.is_ok() {
                     break;
                 }
             }
+        }
+        if let Some(res) = subscriber_reservation.take() {
+            res.complete(&Event::Batch(batch));
         }
 
         // when the peg drops, it ensures all updates
@@ -467,7 +479,7 @@ impl Tree {
         loop {
             trace!("removing key {:?}", key.as_ref());
 
-            if let Ok(res) = self.insert_inner(key.as_ref(), None, &mut guard)? {
+            if let Ok(res) = self.insert_inner(key.as_ref(), None, false, &mut guard)? {
                 return Ok(res);
             }
         }

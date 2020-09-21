@@ -94,7 +94,7 @@ use crate::{
 #[derive(Clone)]
 pub struct TransactionalTree {
     pub(super) tree: Tree,
-    pub(super) writes: Rc<RefCell<Map<IVec, Option<IVec>>>>,
+    pub(super) writes: Rc<RefCell<Batch>>,
     pub(super) read_cache: Rc<RefCell<Map<IVec, Option<IVec>>>>,
     pub(super) flush_on_commit: Rc<RefCell<bool>>,
 }
@@ -268,8 +268,7 @@ impl TransactionalTree {
     {
         let old = self.get(key.as_ref())?;
         let mut writes = self.writes.borrow_mut();
-        let _last_write =
-            writes.insert(key.into(), Some(value.into()));
+        let _last_write = writes.insert(key, value);
         Ok(old)
     }
 
@@ -283,7 +282,7 @@ impl TransactionalTree {
     {
         let old = self.get(key.as_ref());
         let mut writes = self.writes.borrow_mut();
-        let _last_write = writes.insert(key.into(), None);
+        let _last_write = writes.remove(key);
         old
     }
 
@@ -294,7 +293,7 @@ impl TransactionalTree {
     ) -> UnabortableTransactionResult<Option<IVec>> {
         let writes = self.writes.borrow();
         if let Some(first_try) = writes.get(key.as_ref()) {
-            return Ok(first_try.clone());
+            return Ok(first_try.cloned());
         }
         let mut reads = self.read_cache.borrow_mut();
         if let Some(second_try) = reads.get(key.as_ref()) {
@@ -357,15 +356,14 @@ impl TransactionalTree {
     }
 
     fn commit(&self) -> Result<()> {
-        let writes = self.writes.borrow();
+        let writes = std::mem::replace(
+            &mut *self.writes.borrow_mut(),
+            Default::default(),
+        );
         let mut guard = pin();
-        for (k, v_opt) in &*writes {
-            while self.tree.insert_inner(k, v_opt.clone(), &mut guard)?.is_err()
-            {
-            }
-        }
-        Ok(())
+        self.tree.apply_batch_inner(writes, &mut guard)
     }
+
     fn from_tree(tree: &Tree) -> Self {
         Self {
             tree: tree.clone(),

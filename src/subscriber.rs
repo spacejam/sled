@@ -40,7 +40,11 @@ pub enum Event {
         /// The key that has been removed
         key: IVec,
     },
-    /// A batch of updates from a transaction or batch write
+    /// A batch of updates from a transaction or batch write.
+    ///
+    /// IMPORTANT NOTE: the batch will contain the full writeset
+    /// for a transaction or batch with at least one key that
+    /// is prefixed by the `Subscriber`'s watched prefix.
     Batch(Batch),
 }
 
@@ -333,6 +337,43 @@ impl Subscribers {
         w_senders.insert(id, (None, tx));
 
         Subscriber { id, rx, home: arc_senders.clone() }
+    }
+
+    pub(crate) fn reserve_batch(
+        &self,
+        batch: &Batch,
+    ) -> Option<ReservedBroadcast> {
+        if !self.ever_used.load(Relaxed) {
+            return None;
+        }
+
+        let r_mu = self.watched.read();
+
+        let mut skip_indices = std::collections::HashSet::new();
+        let mut subscribers = vec![];
+
+        for key in batch.writes.keys() {
+            for (idx, (prefix, subs_rwl)) in r_mu.iter().enumerate() {
+                if key.starts_with(prefix) && !skip_indices.contains(&idx) {
+                    skip_indices.insert(idx);
+                    let subs = subs_rwl.read();
+
+                    for (_id, (waker, sender)) in subs.iter() {
+                        let (tx, rx) = OneShot::pair();
+                        if sender.send(rx).is_err() {
+                            continue;
+                        }
+                        subscribers.push((waker.clone(), tx));
+                    }
+                }
+            }
+        }
+
+        if subscribers.is_empty() {
+            None
+        } else {
+            Some(ReservedBroadcast { subscribers })
+        }
     }
 
     pub(crate) fn reserve<R: AsRef<[u8]>>(

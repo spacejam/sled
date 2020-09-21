@@ -58,4 +58,11 @@ impl Batch {
     {
         self.writes.insert(key.into(), None);
     }
+
+    /// Get a value if it is present in the `Batch`.
+    /// `Some(None)` means it's present as a deletion.
+    pub fn get<K: AsRef<[u8]>>(&self, k: K) -> Option<Option<&IVec>> {
+        let inner = self.writes.get(k.as_ref())?;
+        Some(inner.as_ref())
+    }
 }
