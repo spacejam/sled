@@ -1,3 +1,14 @@
+# Unreleased
+
+## Breaking Changes
+
+* #1178 the `Event::Batch` variant has been added which
+  contains the entire atomic batch that is written by a
+  transaction or a write batch.
+* #1178 the `Event::key` method has been replaced by
+  `Event::keys` which iterates over all keys that are
+  present.
+
 # 0.34.4
 
 ## New Features
