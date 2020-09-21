@@ -10,19 +10,23 @@ use std::{
 };
 
 #[cfg(not(feature = "testing"))]
-use std::collections::HashMap as Map;
+use std::collections::hash_map::{
+    HashMap as Map, IntoIter as MapIntoIter, Iter as MapIter, Keys as MapKeys,
+};
 
 // we avoid HashMap while testing because
 // it makes tests non-deterministic
 #[cfg(feature = "testing")]
-use std::collections::BTreeMap as Map;
+use std::collections::btree_map::{
+    BTreeMap as Map, IntoIter as MapIntoIter, Iter as MapIter, Keys as MapKeys,
+};
 
 use crate::*;
 
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 
 /// An event that happened to a key that a subscriber is interested in.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// A new complete (key, value) pair
     Insert {
@@ -36,13 +40,104 @@ pub enum Event {
         /// The key that has been removed
         key: IVec,
     },
+    /// A batch of updates from a transaction or batch write
+    Batch(Batch),
 }
 
 impl Event {
     /// Return the key associated with the `Event`
-    pub fn key(&self) -> &IVec {
+    pub fn keys<'a>(&'a self) -> Keys<'a> {
         match self {
-            Event::Insert { key, .. } | Event::Remove { key } => key,
+            Event::Insert { ref key, .. } | Event::Remove { ref key } => {
+                Keys::Single(std::iter::once(key))
+            }
+            Event::Batch(ref batch) => Keys::Batch(batch.writes.keys()),
+        }
+    }
+}
+
+/// An iterator over the keys contained in an `Event`. There
+/// may be multiple keys if the `Event` is a `Batch` which
+/// was written atomically from a transaction or batch write.
+pub enum Keys<'a> {
+    Single(std::iter::Once<&'a IVec>),
+    Batch(MapKeys<'a, IVec, Option<IVec>>),
+}
+
+impl<'a> Iterator for Keys<'a> {
+    type Item = &'a IVec;
+
+    fn next(&mut self) -> Option<&'a IVec> {
+        match self {
+            Keys::Single(s) => s.next(),
+            Keys::Batch(b) => b.next(),
+        }
+    }
+}
+
+impl IntoIterator for Event {
+    type IntoIter = IntoIter;
+    type Item = (IVec, Option<IVec>);
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Event::Insert { key, value } => {
+                IntoIter::Single(std::iter::once((key, Some(value))))
+            }
+            Event::Remove { key } => {
+                IntoIter::Single(std::iter::once((key, None)))
+            }
+            Event::Batch(batch) => IntoIter::Batch(batch.writes.into_iter()),
+        }
+    }
+}
+
+pub enum IntoIter {
+    Single(std::iter::Once<(IVec, Option<IVec>)>),
+    Batch(MapIntoIter<IVec, Option<IVec>>),
+}
+
+impl Iterator for IntoIter {
+    type Item = (IVec, Option<IVec>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            IntoIter::Single(s) => s.next(),
+            IntoIter::Batch(b) => b.next(),
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Event {
+    type IntoIter = Iter<'a>;
+    type Item = (&'a IVec, Option<&'a IVec>);
+
+    fn into_iter(self) -> Iter<'a> {
+        match self {
+            Event::Insert { key, value } => {
+                Iter::Single(Some((key, Some(value))))
+            }
+            Event::Remove { key } => Iter::Single(Some((key, None))),
+            Event::Batch(batch) => Iter::Batch(batch.writes.iter()),
+        }
+    }
+}
+
+pub enum Iter<'a> {
+    Single(Option<(&'a IVec, Option<&'a IVec>)>),
+    Batch(MapIter<'a, IVec, Option<IVec>>),
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = (&'a IVec, Option<&'a IVec>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Iter::Single(s) => s.take(),
+            Iter::Batch(b) => {
+                let (k, v) = b.next()?;
+                Some((k, v.as_ref()))
+            }
         }
     }
 }

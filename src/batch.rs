@@ -36,7 +36,7 @@ use super::*;
 /// # let _ = std::fs::remove_dir_all("batch_db_2");
 /// # Ok(()) }
 /// ```
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Batch {
     pub(crate) writes: Map<IVec, Option<IVec>>,
 }
