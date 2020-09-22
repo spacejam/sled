@@ -1103,7 +1103,7 @@ impl SegmentAccountant {
                 .and_then(|_| config.file.sync_all())
                 .map_err(|e| e.into());
             completer.fill(res);
-        });
+        })?;
 
         if self.async_truncations.insert(at, promise).is_some() {
             panic!(

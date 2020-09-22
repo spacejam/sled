@@ -1243,7 +1243,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
 
                 let _notified = iobufs.interval_updated.notify_all();
             }
-        });
+        })?;
 
         #[cfg(feature = "event_log")]
         _result.wait();

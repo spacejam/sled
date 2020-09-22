@@ -228,17 +228,17 @@ pub mod doc;
     ))
 ))]
 mod threadpool {
-    use super::OneShot;
+    use super::{OneShot, Result};
 
     /// Just execute a task without involving threads.
-    pub fn spawn<F, R>(work: F) -> OneShot<R>
+    pub fn spawn<F, R>(work: F) -> Result<OneShot<R>>
     where
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
         let (promise_filler, promise) = OneShot::pair();
         promise_filler.fill((work)());
-        return promise;
+        Ok(promise)
     }
 }
 
