@@ -443,7 +443,7 @@ impl Log {
                     );
                     iobufs.config.set_global_error(e);
                 }
-            });
+            })?;
 
             Ok(())
         } else {

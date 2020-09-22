@@ -9,7 +9,10 @@ use std::{
 
 use parking_lot::{Condvar, Mutex};
 
-use crate::{debug_delay, warn, Acquire, AtomicUsize, Lazy, OneShot, SeqCst};
+use crate::{
+    debug_delay, warn, Acquire, AtomicUsize, Error, Lazy, OneShot, Result,
+    SeqCst,
+};
 
 // This is lower for CI reasons.
 #[cfg(windows)]
@@ -82,12 +85,15 @@ impl Queue {
 }
 
 static QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(init_queue);
+static BROKEN: AtomicBool = AtomicBool::new(false);
 
 fn init_queue() -> Queue {
     debug_delay();
     for _ in 0..DESIRED_WAITING_THREADS {
         debug_delay();
-        spawn_new_thread(true);
+        if let Err(e) = spawn_new_thread(true) {
+            log::error!("failed to initialize threadpool: {:?}", e);
+        }
     }
     Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
 }
@@ -132,7 +138,7 @@ fn perform_work(is_immortal: bool) {
 // Create up to MAX_THREADS dynamic blocking task worker threads.
 // Dynamic threads will terminate themselves if they don't
 // receive any work after one second.
-fn maybe_spawn_new_thread() {
+fn maybe_spawn_new_thread() -> Result<()> {
     debug_delay();
     let total_workers = TOTAL_THREAD_COUNT.load(Acquire);
     debug_delay();
@@ -141,15 +147,25 @@ fn maybe_spawn_new_thread() {
     if waiting_threads >= DESIRED_WAITING_THREADS
         || total_workers >= MAX_THREADS
     {
-        return;
+        return Ok(());
     }
 
     if !SPAWNING.compare_and_swap(false, true, SeqCst) {
-        spawn_new_thread(false);
+        spawn_new_thread(false)?;
     }
+
+    Ok(())
 }
 
-fn spawn_new_thread(is_immortal: bool) {
+fn spawn_new_thread(is_immortal: bool) -> Result<()> {
+    if BROKEN.load(Relaxed) {
+        return Err(Error::ReportableBug(
+            "IO thread unexpectedly panicked. please report \
+            this bug on the sled github repo."
+                .to_string(),
+        ));
+    }
+
     let spawn_id = SPAWNS.fetch_add(1, SeqCst);
 
     TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
@@ -158,9 +174,17 @@ fn spawn_new_thread(is_immortal: bool) {
         .spawn(move || {
             SPAWNING.store(false, SeqCst);
             debug_delay();
-            perform_work(is_immortal);
+            let res = std::panic::catch_unwind(|| perform_work(is_immortal));
             TOTAL_THREAD_COUNT.fetch_sub(1, SeqCst);
-            assert!(!is_immortal);
+            if is_immortal || res.is_err() {
+                // IO thread panicked, shut down the system
+                log::error!(
+                    "IO thread unexpectedly terminated.
+                    please report this error at the sled github repo. {:?}",
+                    res
+                );
+                BROKEN.store(true, SeqCst);
+            }
         });
 
     if let Err(e) = spawn_res {
@@ -172,10 +196,12 @@ fn spawn_new_thread(is_immortal: bool) {
             )
         });
     }
+
+    Ok(())
 }
 
 /// Spawn a function on the threadpool.
-pub fn spawn<F, R>(work: F) -> OneShot<R>
+pub fn spawn<F, R>(work: F) -> Result<OneShot<R>>
 where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static + Sized,
@@ -189,8 +215,8 @@ where
     let depth = QUEUE.send(Box::new(task));
 
     if depth > DESIRED_WAITING_THREADS {
-        maybe_spawn_new_thread();
+        maybe_spawn_new_thread()?;
     }
 
-    promise
+    Ok(promise)
 }
