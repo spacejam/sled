@@ -42,7 +42,7 @@ mutex = []
 
 [dependencies]
 crossbeam-epoch = "0.8.2"
-crossbeam-utils = "0.7.2"
+crossbeam-utils = "0.8.0"
 fxhash = "0.2.1"
 libc = "0.2.72"
 zstd = { version = "0.5.3", optional = true }
