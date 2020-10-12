@@ -41,7 +41,7 @@ miri_optimizations = []
 mutex = []
 
 [dependencies]
-crossbeam-epoch = "0.8.2"
+crossbeam-epoch = "0.9.0"
 crossbeam-utils = "0.7.2"
 fxhash = "0.2.1"
 libc = "0.2.72"
