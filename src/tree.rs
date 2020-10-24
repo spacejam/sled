@@ -1517,12 +1517,12 @@ impl Tree {
         Ok(())
     }
 
-    fn root_hoist<'g>(
+    fn root_hoist(
         &self,
         from: PageId,
         to: PageId,
         at: IVec,
-        guard: &'g Guard,
+        guard: &Guard,
     ) -> Result<bool> {
         M.tree_root_split_attempt();
         // hoist new root, pointing to lhs & rhs
