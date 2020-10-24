@@ -140,7 +140,6 @@ impl<T: ?Sized> Clone for Arc<T> {
             unsafe { (*self.ptr).rc.fetch_add(1, Ordering::Relaxed) };
 
         if last_count == usize::max_value() {
-            #[cold]
             std::process::abort();
         }
 
