@@ -214,7 +214,7 @@ fn concurrent_tree_ops() {
         debug!("========== CAS test in test {} ==========", i);
         par! {t, |tree: &Tree, k: Vec<u8>| {
             let k1 = k.clone();
-            let mut k2 = k.clone();
+            let mut k2 = k;
             k2.reverse();
             tree.compare_and_swap(&k1, Some(&*k1), Some(k2)).unwrap().unwrap();
         }};
@@ -225,7 +225,7 @@ fn concurrent_tree_ops() {
 
         par! {t, |tree: &Tree, k: Vec<u8>| {
             let k1 = k.clone();
-            let mut k2 = k.clone();
+            let mut k2 = k;
             k2.reverse();
             assert_eq!(tree.get(&*k1).unwrap().unwrap().to_vec(), k2);
         }};
@@ -397,8 +397,6 @@ fn concurrent_tree_iter() -> Result<()> {
     let deleter = thread::Builder::new()
         .name("deleter".into())
         .spawn({
-            let t = t.clone();
-            let barrier = barrier.clone();
             move || {
                 barrier.wait();
 
@@ -502,7 +500,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
             let sub = db.watch_prefix(b"k1");
             drop(db);
 
-            while let Ok(_) = sub.next_timeout(Duration::from_millis(100)) {}
+            while sub.next_timeout(Duration::from_millis(100)).is_ok() {}
             drop(sub);
 
             Ok(())

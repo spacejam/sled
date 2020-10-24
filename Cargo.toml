@@ -46,7 +46,7 @@ crossbeam-utils = "0.8.0"
 fxhash = "0.2.1"
 libc = "0.2.79"
 zstd = { version = "0.5.3", optional = true }
-crc32fast = "1.2.0"
+crc32fast = "1.2.1"
 log = "0.4.11"
 parking_lot = "0.11.0"
 color-backtrace = { version = "0.4.2", optional = true }
