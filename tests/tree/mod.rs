@@ -11,7 +11,7 @@ pub struct Key(pub Vec<u8>);
 
 impl fmt::Debug for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.len() > 0 {
+        if !self.0.is_empty() {
             write!(
                 f,
                 "Key(vec![{}; {}])",
@@ -57,8 +57,9 @@ impl RngCore for SledGen {
 }
 
 pub fn fuzz_then_shrink(buf: &[u8]) {
-    let use_compression =
-        cfg!(feature = "compression") && !cfg!(miri) && buf.get(0).unwrap_or(&0) % 2 == 0;
+    let use_compression = cfg!(feature = "compression")
+        && !cfg!(miri)
+        && buf.get(0).unwrap_or(&0) % 2 == 0;
 
     let ops: Vec<Op> = buf
         .chunks(2)
@@ -169,9 +170,10 @@ impl Arbitrary for Op {
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         match *self {
             Set(ref k, v) => Box::new(k.shrink().map(move |sk| Set(sk, v))),
-            Merge(ref k, v) => Box::new(k.shrink().flat_map(move |k| {
-                vec![Set(k.clone(), v.clone()), Merge(k, v)]
-            })),
+            Merge(ref k, v) => Box::new(
+                k.shrink()
+                    .flat_map(move |k| vec![Set(k.clone(), v), Merge(k, v)]),
+            ),
             Get(ref k) => Box::new(k.shrink().map(Get)),
             GetLt(ref k) => Box::new(k.shrink().map(GetLt)),
             GetGt(ref k) => Box::new(k.shrink().map(GetGt)),
@@ -283,8 +285,7 @@ fn prop_tree_matches_btreemap_inner(
                 let res2 = reference
                     .iter()
                     .rev()
-                    .filter(|(key, _)| **key < k)
-                    .nth(0)
+                    .find(|(key, _)| **key < k)
                     .map(|(k, _v)| IVec::from(&*k.0));
                 assert_eq!(
                     res1, res2,
@@ -298,8 +299,7 @@ fn prop_tree_matches_btreemap_inner(
                 let res1 = tree.get_gt(&*k.0).unwrap().map(|v| v.0);
                 let res2 = reference
                     .iter()
-                    .filter(|(key, _)| **key > k)
-                    .nth(0)
+                    .find(|(key, _)| **key > k)
                     .map(|(k, _v)| IVec::from(&*k.0));
                 assert_eq!(
                     res1, res2,

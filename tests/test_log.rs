@@ -319,7 +319,7 @@ fn log_chunky_iterator() {
         }
     }
 
-    for (_, pid, lsn, ptr) in reference.clone().into_iter() {
+    for (_, pid, lsn, ptr) in reference.into_iter() {
         assert!(log.read(pid, lsn, ptr).is_ok());
     }
 }

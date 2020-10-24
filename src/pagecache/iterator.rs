@@ -334,9 +334,7 @@ fn scan_segment_headers_and_tail(
     );
 
     // scatter
-    let header_promises_res: Result<
-        Vec<OneShot<Option<(LogOffset, SegmentHeader)>>>,
-    > = (0..segments)
+    let header_promises_res: Result<Vec<_>> = (0..segments)
         .map({
             // let config = config.clone();
             move |idx| {

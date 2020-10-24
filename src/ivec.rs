@@ -376,7 +376,7 @@ fn ivec_as_mut_identity() {
 mod qc {
     use super::IVec;
 
-    fn prop_identity(ivec: IVec) -> bool {
+    fn prop_identity(ivec: &IVec) -> bool {
         let mut iv2 = ivec.clone();
 
         if iv2 != ivec {
@@ -384,12 +384,12 @@ mod qc {
             return false;
         }
 
-        if &*ivec != &mut *iv2 {
+        if *ivec != *iv2 {
             println!("expected AsMut to equal original");
             return false;
         }
 
-        if &*ivec != iv2.as_mut() {
+        if *ivec != iv2.as_mut() {
             println!("expected AsMut to equal original");
             return false;
         }
@@ -400,7 +400,7 @@ mod qc {
     quickcheck::quickcheck! {
         #[cfg_attr(miri, ignore)]
         fn bool(item: IVec) -> bool {
-            prop_identity(item)
+            prop_identity(&item)
         }
     }
 }
