@@ -30,6 +30,7 @@ static SPAWNING: AtomicBool = AtomicBool::new(false);
 
 macro_rules! once {
     ($args:block) => {
+        #[allow(clippy::items_after_statements)]
         static __E: AtomicBool = AtomicBool::new(false);
         if !__E.compare_and_swap(false, true, Relaxed) {
             // only execute this once
