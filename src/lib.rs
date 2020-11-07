@@ -357,6 +357,7 @@ pub fn pin() -> Guard {
 }
 
 #[doc(hidden)]
+#[derive(Debug)]
 pub struct Guard {
     inner: CrossbeamGuard,
     readset: Vec<PageId>,
@@ -524,4 +525,96 @@ mod compile_time_assertions {
     fn _assert_send<S: Send>(_: &S) {}
 
     fn _assert_send_sync<S: Send + Sync>(_: &S) {}
+}
+
+use std::cell::RefCell;
+
+#[derive(Debug)]
+struct WriteSet {
+    batches: std::collections::HashMap<Tree, Batch>,
+    initiating_db_config: Config,
+    guard: Guard,
+}
+
+thread_local! {
+    static TX: RefCell<Option<WriteSet>> = RefCell::new(None);
+}
+
+fn using_tx() -> bool {
+    TX.try_with(|tx| tx.borrow().is_some()).unwrap_or(false)
+}
+
+/// Fully serializable (ACID) multi-`Tree` transactions.
+/// This will throw an error if Tree's from different
+/// databases are used in the same transaction.
+///
+/// # Examples
+/// ```
+/// # fn main() -> sled::Result<()> {
+///
+/// # let db = sled::Config::new().temporary(true).open()?;
+/// # let db_2 = sled::Config::new().temporary(true).open()?;
+///
+/// // Use write-only transactions as a writebatch:
+/// sled::transaction(|| {
+///     db.insert(b"k1", b"cats")?;
+///     db.insert(b"k2", b"dogs")?;
+///     Ok(())
+/// })?;
+///
+/// // Atomically swap two items:
+/// sled::transaction(|| {
+///     let v1_option = db.remove(b"k1")?;
+///     let v1 = v1_option.unwrap();
+///     let v2_option = db.remove(b"k2")?;
+///     let v2 = v2_option.unwrap();
+///
+///     db.insert(b"k1", v2)?;
+///     db.insert(b"k2", v1)?;
+///
+///     Ok(())
+/// })?;
+///
+/// assert_eq!(&db.get(b"k1")?.unwrap(), b"dogs");
+/// assert_eq!(&db.get(b"k2")?.unwrap(), b"cats");
+/// # Ok(())
+/// # }
+/// ```
+pub fn transaction<T, R>(tx: T) -> Result<R>
+where
+    T: Fn() -> Result<R>,
+{
+    let _cc = concurrency_control::write();
+    let mut tx_res = Err(Error::RetryTx);
+
+    while let Err(Error::RetryTx) = tx_res {
+        let tls_res =
+            TX.try_with(|tx| *tx.borrow_mut() = Some(Default::default()));
+        if tls_res.is_err() {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "the thread-local storage required for using \
+            transactions has already been destroyed",
+            )));
+        }
+
+        tx_res = tx();
+    }
+
+    let write_set = TX.with(|tx| tx.borrow_mut().take().unwrap());
+        let peg = self.inner[0].tree.context.pin_log(guard)?;
+        for tree in &self.inner {
+            tree.commit()?;
+        }
+
+        // when the peg drops, it ensures all updates
+        // written to the log since its creation are
+        // recovered atomically
+        peg.seal_batch()
+
+    let ret = tx_res?;
+
+    todo!("apply writebatch");
+
+    Ok(ret)
 }

@@ -54,6 +54,9 @@ pub enum Error {
         #[cfg(not(feature = "testing"))]
         bt: (),
     },
+    /// (internal-use only) a transaction has encountered a conflict
+    /// and the transaction will be retried automatically.
+    RetryTx,
     // a failpoint has been triggered for testing purposes
     #[doc(hidden)]
     #[cfg(feature = "failpoints")]
@@ -82,6 +85,7 @@ impl Clone for Error {
             Unsupported(why) => Unsupported(why.clone()),
             ReportableBug(what) => ReportableBug(what.clone()),
             Corruption { at, bt } => Corruption { at: *at, bt: bt.clone() },
+            RetryTx => RetryTx,
             #[cfg(feature = "failpoints")]
             FailPoint => FailPoint,
         }
@@ -132,6 +136,13 @@ impl PartialEq for Error {
                 }
             }
             Io(_) => false,
+            RetryTx => {
+                if let RetryTx = *other {
+                    true
+                } else {
+                    false
+                }
+            }
         }
     }
 }
@@ -149,8 +160,7 @@ impl From<Error> for io::Error {
         use std::io::ErrorKind;
         match error {
             Io(ioe) => ioe,
-            CollectionNotFound(name) =>
-                io::Error::new(
+            CollectionNotFound(name) => io::Error::new(
                 ErrorKind::NotFound,
                 format!("collection not found: {:?}", name),
             ),
@@ -160,17 +170,21 @@ impl From<Error> for io::Error {
             ),
             ReportableBug(what) => io::Error::new(
                 ErrorKind::Other,
-                format!("unexpected bug! please report this bug at <github.rs/spacejam/sled>: {:?}", what),
+                format!(
+                    "unexpected bug! please report this bug at <github.rs/spacejam/sled>: {:?}",
+                    what
+                ),
             ),
             Corruption { .. } => io::Error::new(
                 ErrorKind::InvalidData,
                 format!("corruption encountered: {:?}", error),
             ),
-            #[cfg(feature = "failpoints")]
-            FailPoint => io::Error::new(
-                ErrorKind::Other,
-                "failpoint"
+            RetryTx => io::Error::new(
+                ErrorKind::Interrupted,
+                "internal transaction encountered conflict and will retry",
             ),
+            #[cfg(feature = "failpoints")]
+            FailPoint => io::Error::new(ErrorKind::Other, "failpoint"),
         }
     }
 }
@@ -188,6 +202,11 @@ impl Display for Error {
             CollectionNotFound(ref name) => {
                 write!(f, "Collection {:?} does not exist", name,)
             }
+            RetryTx => write!(
+                f,
+                "internal transaction encountered conflict and will retry"
+            ),
+
             Unsupported(ref e) => write!(f, "Unsupported: {}", e),
             ReportableBug(ref e) => write!(
                 f,
