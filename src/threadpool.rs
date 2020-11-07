@@ -30,8 +30,8 @@ static SPAWNING: AtomicBool = AtomicBool::new(false);
 
 macro_rules! once {
     ($args:block) => {
-        static E: AtomicBool = AtomicBool::new(false);
-        if !E.compare_and_swap(false, true, Relaxed) {
+        static __E: AtomicBool = AtomicBool::new(false);
+        if !__E.compare_and_swap(false, true, Relaxed) {
             // only execute this once
             $args;
         }
