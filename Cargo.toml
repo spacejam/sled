@@ -44,14 +44,14 @@ mutex = []
 crossbeam-epoch = "0.9.0"
 crossbeam-utils = "0.8.0"
 fxhash = "0.2.1"
-libc = "0.2.79"
+libc = "0.2.80"
 zstd = { version = "0.5.3", optional = true }
 crc32fast = "1.2.1"
 log = "0.4.11"
 parking_lot = "0.11.0"
 color-backtrace = { version = "0.4.2", optional = true }
 rio = { version = "0.9.4", optional = true }
-backtrace = { version = "0.3.53", optional = true }
+backtrace = { version = "0.3.54", optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os="windows"))'.dependencies]
 fs2 = "0.4.3"
