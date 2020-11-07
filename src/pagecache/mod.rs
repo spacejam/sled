@@ -7,6 +7,7 @@ pub mod logger;
 
 mod blob_io;
 mod disk_pointer;
+mod header;
 mod iobuf;
 mod iterator;
 mod pagetable;
@@ -39,6 +40,7 @@ use self::{
         BATCH_MANIFEST_PID, COUNTER_PID, META_PID,
         PAGE_CONSOLIDATION_THRESHOLD, SEGMENT_CLEANUP_THRESHOLD,
     },
+    header::Header,
     iobuf::{roll_iobuf, IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,

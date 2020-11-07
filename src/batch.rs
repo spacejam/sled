@@ -45,16 +45,17 @@ impl Batch {
     /// Set a key to a new value
     pub fn insert<K, V>(&mut self, key: K, value: V)
     where
-        IVec: From<K> + From<V>,
+        K: Into<IVec>,
+        V: Into<IVec>,
     {
-        self.writes.insert(IVec::from(key), Some(IVec::from(value)));
+        self.writes.insert(key.into(), Some(value.into()));
     }
 
     /// Remove a key
     pub fn remove<K>(&mut self, key: K)
     where
-        IVec: From<K>,
+        K: Into<IVec>,
     {
-        self.writes.insert(IVec::from(key), None);
+        self.writes.insert(key.into(), None);
     }
 }

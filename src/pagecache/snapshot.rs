@@ -124,7 +124,7 @@ impl Snapshot {
         lsn: Lsn,
         disk_ptr: DiskPtr,
         sz: u64,
-    ) {
+    ) -> Result<()> {
         trace!(
             "trying to deserialize buf for pid {} ptr {} lsn {}",
             pid,
@@ -183,7 +183,10 @@ impl Snapshot {
                     );
                     if pushed {
                         let old = self.pt.pop().unwrap();
-                        assert_eq!(old, PageState::Uninitialized);
+                        if old != PageState::Uninitialized {
+                            error!("expected previous page state to be uninitialized");
+                            return Err(Error::corruption(None));
+                        }
                     }
                 }
             }
@@ -192,11 +195,16 @@ impl Snapshot {
                 self.pt[usize::try_from(pid).unwrap()] =
                     PageState::Free(lsn, disk_ptr);
             }
-            LogKind::Corrupted | LogKind::Skip => panic!(
-                "unexppected messagekind in snapshot application for pid {}: {:?}",
-                pid, log_kind
-            ),
+            LogKind::Corrupted | LogKind::Skip => {
+                error!(
+                    "unexpected messagekind in snapshot application for pid {}: {:?}",
+                    pid, log_kind
+                );
+                return Err(Error::corruption(None));
+            }
         }
+
+        Ok(())
     }
 }
 
@@ -231,9 +239,12 @@ fn advance_snapshot(
             continue;
         }
 
-        assert!(lsn < iter.max_lsn.unwrap());
+        if lsn >= iter.max_lsn.unwrap() {
+            error!("lsn {} >= iter max_lsn {}", lsn, iter.max_lsn.unwrap());
+            return Err(Error::corruption(None));
+        }
 
-        snapshot.apply(log_kind, pid, lsn, ptr, sz);
+        snapshot.apply(log_kind, pid, lsn, ptr, sz)?;
     }
 
     // `snapshot.tip_lid` can be set based on 4 possibilities for the tip of the
@@ -261,7 +272,10 @@ fn advance_snapshot(
 
     let snapshot = if db_is_empty {
         trace!("db is empty, returning default snapshot");
-        assert_eq!(snapshot, Snapshot::default());
+        if snapshot != Snapshot::default() {
+            error!("expected snapshot to be Snapshot::default");
+            return Err(Error::corruption(None));
+        }
         snapshot
     } else if iter.cur_lsn.is_none() {
         trace!(
@@ -278,13 +292,15 @@ fn advance_snapshot(
         // is set. progress can only be 0 if we've maxed out the
         // previous segment, unsetting the iterator segment_base in the
         // process.
-        assert!(
-            segment_progress >= SEG_HEADER_LEN as Lsn
-                || (segment_progress == 0 && iter.segment_base.is_none()),
-            "expected segment progress {} to be above SEG_HEADER_LEN or == 0, cur_lsn: {}",
-            segment_progress,
-            iterated_lsn,
-        );
+        let monotonic = segment_progress >= SEG_HEADER_LEN as Lsn
+            || (segment_progress == 0 && iter.segment_base.is_none());
+        if !monotonic {
+            error!("expected segment progress {} to be above SEG_HEADER_LEN or == 0, cur_lsn: {}",
+                segment_progress,
+                iterated_lsn,
+            );
+            return Err(Error::corruption(None));
+        }
 
         let (stable_lsn, active_segment) = if segment_progress
             + MAX_MSG_HEADER_LEN as Lsn
@@ -322,12 +338,15 @@ fn advance_snapshot(
             (iterated_lsn, iter.segment_base.map(|bb| bb.offset))
         };
 
-        assert!(
-            stable_lsn >= snapshot.stable_lsn.unwrap_or(0),
-            "{} >= {}",
-            stable_lsn,
-            snapshot.stable_lsn.unwrap_or(0),
-        );
+        if stable_lsn < snapshot.stable_lsn.unwrap_or(0) {
+            error!(
+                "unexpected corruption encountered in storage snapshot file. \
+                stable lsn {} should be >= snapshot.stable_lsn {}",
+                stable_lsn,
+                snapshot.stable_lsn.unwrap_or(0),
+            );
+            return Err(Error::corruption(None));
+        }
 
         snapshot.stable_lsn = Some(stable_lsn);
         snapshot.active_segment = active_segment;
@@ -337,7 +356,10 @@ fn advance_snapshot(
 
     trace!("generated snapshot: {:?}", snapshot);
 
-    assert!(snapshot.stable_lsn >= old_stable_lsn);
+    if snapshot.stable_lsn < old_stable_lsn {
+        error!("unexpected corruption encountered in storage snapshot file");
+        return Err(Error::corruption(None));
+    }
 
     if snapshot.stable_lsn > old_stable_lsn {
         write_snapshot(config, &snapshot)?;
@@ -418,6 +440,8 @@ fn advance_snapshot(
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
 pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
+    // NB we want to error out if the read snapshot was corrupted.
+    // We only use a default Snapshot when there is no snapshot found.
     let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
     let log_iter =
@@ -429,34 +453,26 @@ pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
 }
 
 /// Read a `Snapshot` from disk.
-fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
-    let mut f = loop {
-        let mut candidates = config.get_snapshot_files()?;
-        if candidates.is_empty() {
-            debug!("no previous snapshot found");
-            return Ok(None);
-        }
+/// Returns an error if the read snapshot was corrupted.
+/// Returns `Ok(Some(snapshot))` if there was nothing written.
+fn read_snapshot(config: &RunningConfig) -> Result<Option<Snapshot>> {
+    let mut candidates = config.get_snapshot_files()?;
+    if candidates.is_empty() {
+        debug!("no previous snapshot found");
+        return Ok(None);
+    }
 
-        candidates.sort();
+    candidates.sort();
+    let path = candidates.pop().unwrap();
 
-        let path = candidates.pop().unwrap();
-
-        match std::fs::OpenOptions::new().read(true).open(&path) {
-            Ok(f) => break f,
-            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // this can happen if there's a race
-                continue;
-            }
-            Err(other) => return Err(other),
-        }
-    };
+    let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
 
     let mut buf = vec![];
     let _read = f.read_to_end(&mut buf)?;
     let len = buf.len();
     if len <= 12 {
         warn!("empty/corrupt snapshot file found");
-        return Ok(None);
+        return Err(Error::corruption(None));
     }
 
     let mut len_expected_bytes = [0; 8];
@@ -471,7 +487,8 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
     let crc_actual = crc32(&buf);
 
     if crc_expected != crc_actual {
-        return Ok(None);
+        warn!("corrupt snapshot file found, crc does not match expected");
+        return Err(Error::corruption(None));
     }
 
     #[cfg(feature = "zstd")]
@@ -489,7 +506,7 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
     #[cfg(not(feature = "zstd"))]
     let bytes = buf;
 
-    Ok(Snapshot::deserialize(&mut bytes.as_slice()).ok())
+    Snapshot::deserialize(&mut bytes.as_slice()).map(Some)
 }
 
 fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {

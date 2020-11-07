@@ -2,10 +2,7 @@ use std::cmp::Ordering::{Equal, Greater, Less};
 
 use crate::{fastcmp, IVec};
 
-pub(crate) fn binary_search_lub<'a>(
-    key: &[u8],
-    s: &'a [IVec],
-) -> Option<usize> {
+pub(crate) fn binary_search_lub(key: &[u8], s: &[IVec]) -> Option<usize> {
     match binary_search(key, s) {
         Ok(i) => Some(i),
         Err(i) if i == 0 => None,
@@ -13,7 +10,7 @@ pub(crate) fn binary_search_lub<'a>(
     }
 }
 
-pub fn binary_search<'a>(key: &[u8], s: &'a [IVec]) -> Result<usize, usize> {
+pub fn binary_search(key: &[u8], s: &[IVec]) -> Result<usize, usize> {
     let mut size = s.len();
     if size == 0 || *key < *s[0] {
         return Err(0);
@@ -35,7 +32,11 @@ pub fn binary_search<'a>(key: &[u8], s: &'a [IVec]) -> Result<usize, usize> {
     #[allow(unsafe_code)]
     let l = unsafe { s.get_unchecked(base).as_ref() };
     let cmp = fastcmp(l, key);
-    if cmp == Equal { Ok(base) } else { Err(base + (cmp == Less) as usize) }
+    if cmp == Equal {
+        Ok(base)
+    } else {
+        Err(base + (cmp == Less) as usize)
+    }
 }
 
 #[test]
