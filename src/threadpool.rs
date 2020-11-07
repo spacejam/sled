@@ -28,17 +28,6 @@ static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static SPAWNS: AtomicUsize = AtomicUsize::new(0);
 static SPAWNING: AtomicBool = AtomicBool::new(false);
 
-macro_rules! once {
-    ($args:block) => {
-        #[allow(clippy::items_after_statements)]
-        static __E: AtomicBool = AtomicBool::new(false);
-        if !__E.compare_and_swap(false, true, Relaxed) {
-            // only execute this once
-            $args;
-        }
-    };
-}
-
 type Work = Box<dyn FnOnce() + Send + 'static>;
 
 struct Queue {
@@ -189,13 +178,17 @@ fn spawn_new_thread(is_immortal: bool) -> Result<()> {
         });
 
     if let Err(e) = spawn_res {
+        static E: AtomicBool = AtomicBool::new(false);
+
         SPAWNING.store(false, SeqCst);
-        once!({
+
+        if !E.compare_and_swap(false, true, Relaxed) {
+            // only execute this once
             warn!(
                 "Failed to dynamically increase the threadpool size: {:?}.",
                 e,
             )
-        });
+        }
     }
 
     Ok(())
