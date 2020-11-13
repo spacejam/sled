@@ -1,12 +1,12 @@
 [package]
 name = "sled"
-version = "0.34.5"
+version = "0.34.6"
 authors = ["Tyler Neely <t@jujit.su>"]
-description = "a modern embedded database"
+description = "Lightweight high-performance pure-rust transactional embedded database."
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/spacejam/sled"
 repository = "https://github.com/spacejam/sled"
-keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
+keywords = ["redis", "mongo", "sqlite", "lmdb", "rocksdb"]
 categories = ["database-implementations", "concurrency", "data-structures", "algorithms", "caching"]
 documentation = "https://docs.rs/sled/"
 readme = "README.md"

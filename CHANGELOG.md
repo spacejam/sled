@@ -1,3 +1,9 @@
+# 0.34.6
+
+## Improvements
+
+* documentation improved
+
 # 0.34.5
 
 ## Improvements
