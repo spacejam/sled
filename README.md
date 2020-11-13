@@ -32,7 +32,7 @@
 
 # sled - ~~it's all downhill from here!!!~~
 
-A lightweight pure-rust transactional embedded database providing world class performance and reliability.
+A lightweight pure-rust high-performance transactional embedded database.
 
 ```rust
 let tree = sled::open("/tmp/welcome-to-sled").expect("open");

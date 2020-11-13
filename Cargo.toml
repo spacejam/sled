@@ -2,7 +2,7 @@
 name = "sled"
 version = "0.34.6"
 authors = ["Tyler Neely <t@jujit.su>"]
-description = "Lightweight pure-rust transactional embedded database. World class performance and reliability."
+description = "Lightweight high-performance pure-rust transactional embedded database."
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/spacejam/sled"
 repository = "https://github.com/spacejam/sled"
