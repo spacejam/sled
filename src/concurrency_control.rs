@@ -78,7 +78,7 @@ impl ConcurrencyControl {
             assert_eq!(*c, 1);
         });
 
-        let active = self.active.fetch_add(1, Release);
+        let active = self.active.fetch_add(1, Acquire);
 
         if active >= RW_REQUIRED_BIT {
             self.active.fetch_sub(1, Release);

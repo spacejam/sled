@@ -10,7 +10,7 @@ pub struct Db {
     #[doc(hidden)]
     pub context: Context,
     pub(crate) default: Tree,
-    tenants: Arc<RwLock<FastMap8<IVec, Tree>>>,
+    tenants: Arc<RwLock<FastMap<IVec, Tree>>>,
 }
 
 /// Opens a `Db` with a default configuration at the
@@ -101,7 +101,7 @@ impl Db {
         let ret = Self {
             context: context.clone(),
             default,
-            tenants: Arc::new(RwLock::new(FastMap8::default())),
+            tenants: Arc::new(RwLock::new(FastMap::default())),
         };
 
         let mut tenants = ret.tenants.write();
