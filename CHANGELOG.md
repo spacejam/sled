@@ -1,3 +1,15 @@
+# 0.34.6
+
+## Improvements
+
+* documentation improved
+
+# 0.34.5
+
+## Improvements
+
+* #1164 widen some trait bounds on trees and batches
+
 # 0.34.4
 
 ## New Features

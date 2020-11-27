@@ -58,4 +58,11 @@ impl Batch {
     {
         self.writes.insert(key.into(), None);
     }
+
+    /// Merge another batch into this one, with
+    /// the other's items taking precedence in
+    /// the event of a conflict.
+    pub fn merge(&mut self, other: Batch) {
+        self.writes.extend(&mut other.writes.into_iter());
+    }
 }

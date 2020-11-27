@@ -109,18 +109,8 @@ impl IVec {
 
     fn inline(slice: &[u8]) -> Self {
         assert!(is_inline_candidate(slice.len()));
-
         let mut data = Inner::default();
-
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                slice.as_ptr(),
-                data.as_mut_ptr(),
-                slice.len(),
-            );
-        }
-
+        data[..slice.len()].copy_from_slice(slice);
         Self(IVecInner::Inline(u8::try_from(slice.len()).unwrap(), data))
     }
 

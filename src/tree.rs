@@ -1,6 +1,8 @@
 use std::{
     num::NonZeroU64,
     borrow::Cow,
+    hash::{Hasher, Hash},
+    cmp::{PartialEq, Eq},
     fmt::{self, Debug},
     ops::{self, Deref, RangeBounds},
     sync::atomic::Ordering::SeqCst,
@@ -85,6 +87,20 @@ impl IntoIterator for &'_ Tree {
 /// ```
 #[derive(Clone)]
 pub struct Tree(pub(crate) Arc<TreeInner>);
+
+impl PartialEq for Tree {
+    fn eq(&self, other: &Self) -> bool {
+        other.tree_id == self.tree_id
+    }
+}
+
+impl Eq for Tree {}
+
+impl Hash for Tree {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.tree_id.hash(state);
+    }
+}
 
 #[allow(clippy::module_name_repetitions)]
 pub struct TreeInner {
@@ -227,124 +243,6 @@ impl Tree {
             M.tree_looped();
             Ok(Err(Conflict))
         }
-    }
-
-    /// Perform a multi-key serializable transaction.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use sled::{transaction::TransactionResult, Config};
-    /// # fn main() -> TransactionResult<()> {
-    /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
-    /// // Use write-only transactions as a writebatch:
-    /// db.transaction(|tx_db| {
-    ///     tx_db.insert(b"k1", b"cats")?;
-    ///     tx_db.insert(b"k2", b"dogs")?;
-    ///     Ok(())
-    /// })?;
-    ///
-    /// // Atomically swap two items:
-    /// db.transaction(|tx_db| {
-    ///     let v1_option = tx_db.remove(b"k1")?;
-    ///     let v1 = v1_option.unwrap();
-    ///     let v2_option = tx_db.remove(b"k2")?;
-    ///     let v2 = v2_option.unwrap();
-    ///
-    ///     tx_db.insert(b"k1", v2)?;
-    ///     tx_db.insert(b"k2", v1)?;
-    ///
-    ///     Ok(())
-    /// })?;
-    ///
-    /// assert_eq!(&db.get(b"k1")?.unwrap(), b"dogs");
-    /// assert_eq!(&db.get(b"k2")?.unwrap(), b"cats");
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// A transaction may return information from
-    /// an intentionally-cancelled transaction by using
-    /// the abort function inside the closure in
-    /// combination with the try operator.
-    ///
-    /// ```
-    /// use sled::{transaction::{abort, TransactionError, TransactionResult}, Config};
-    ///
-    /// #[derive(Debug, PartialEq)]
-    /// struct MyBullshitError;
-    ///
-    /// fn main() -> TransactionResult<(), MyBullshitError> {
-    ///     let config = Config::new().temporary(true);
-    ///     let db = config.open()?;
-    ///
-    ///     // Use write-only transactions as a writebatch:
-    ///     let res = db.transaction(|tx_db| {
-    ///         tx_db.insert(b"k1", b"cats")?;
-    ///         tx_db.insert(b"k2", b"dogs")?;
-    ///         // aborting will cause all writes to roll-back.
-    ///         if true {
-    ///             abort(MyBullshitError)?;
-    ///         }
-    ///         Ok(42)
-    ///     }).unwrap_err();
-    ///
-    ///     assert_eq!(res, TransactionError::Abort(MyBullshitError));
-    ///     assert_eq!(db.get(b"k1")?, None);
-    ///     assert_eq!(db.get(b"k2")?, None);
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
-    ///
-    /// Transactions also work on tuples of `Tree`s,
-    /// preserving serializable ACID semantics!
-    /// In this example, we treat two trees like a
-    /// work queue, atomically apply updates to
-    /// data and move them from the unprocessed `Tree`
-    /// to the processed `Tree`.
-    ///
-    /// ```
-    /// # use sled::transaction::TransactionResult;
-    /// # fn main() -> TransactionResult<()> {
-    /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
-    /// use sled::Transactional;
-    ///
-    /// let unprocessed = db.open_tree(b"unprocessed items")?;
-    /// let processed = db.open_tree(b"processed items")?;
-    ///
-    /// // An update somehow gets into the tree, which we
-    /// // later trigger the atomic processing of.
-    /// unprocessed.insert(b"k3", b"ligers")?;
-    ///
-    /// // Atomically process the new item and move it
-    /// // between `Tree`s.
-    /// (&unprocessed, &processed)
-    ///     .transaction(|(tx_unprocessed, tx_processed)| {
-    ///         let unprocessed_item = tx_unprocessed.remove(b"k3")?.unwrap();
-    ///         let mut processed_item = b"yappin' ".to_vec();
-    ///         processed_item.extend_from_slice(&unprocessed_item);
-    ///         tx_processed.insert(b"k3", processed_item)?;
-    ///         Ok(())
-    ///     })?;
-    ///
-    /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
-    /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
-    /// # Ok(()) }
-    /// ```
-    pub fn transaction<F, A, E>(
-        &self,
-        f: F,
-    ) -> transaction::TransactionResult<A, E>
-    where
-        F: Fn(
-            &transaction::TransactionalTree,
-        ) -> transaction::ConflictableTransactionResult<A, E>,
-    {
-        Transactional::transaction(&self, f)
     }
 
     /// Create a new batched update that can be
