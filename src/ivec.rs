@@ -181,6 +181,12 @@ impl From<&str> for IVec {
     }
 }
 
+impl From<&String> for IVec {
+    fn from(s: &String) -> Self {
+        Self::from(s.as_bytes())
+    }
+}
+
 impl From<&IVec> for IVec {
     fn from(v: &Self) -> Self {
         v.clone()
