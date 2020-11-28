@@ -1,6 +1,6 @@
 [package]
 name = "sled-native"
-version = "0.31.0"
+version = "0.34.6"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a C-compatible API for sled"
 license = "Apache-2.0"
@@ -16,4 +16,4 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 libc = "0.2.62"
-sled = {version = "0.31.0", path = "../.."}
+sled = {version = "0.34.6", path = "../.."}
