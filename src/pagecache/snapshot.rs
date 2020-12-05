@@ -391,7 +391,6 @@ fn advance_snapshot(
 
     #[cfg(feature = "testing")]
     let reverse_segments = {
-        use crate::{Map, Set};
         let shred_base = shred_point.unwrap_or(LogOffset::max_value());
         let mut reverse_segments = Map::new();
         for (pid, page) in snapshot.pt.iter().enumerate() {
