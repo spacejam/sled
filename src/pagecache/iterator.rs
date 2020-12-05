@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, io};
+use std::{collections::BTreeMap, io, num::NonZeroU64};
 
 use super::{
     pread_exact_or_eof, read_message, read_segment_header, BasedBuf, DiskPtr,
@@ -88,7 +88,10 @@ impl Iterator for LogIter {
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
-                        DiskPtr::Blob(lid, blob_ptr),
+                        DiskPtr::Blob(
+                            Some(NonZeroU64::new(lid).unwrap()),
+                            blob_ptr,
+                        ),
                         u64::from(inline_len),
                     ));
                 }

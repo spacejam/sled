@@ -59,7 +59,12 @@ impl Log {
         if ptr.is_inline() {
             iobuf::make_durable(&self.iobufs, lsn)?;
             let f = &self.config.file;
-            read_message(&**f, ptr.lid(), expected_segment_number, &self.config)
+            read_message(
+                &**f,
+                ptr.lid().unwrap(),
+                expected_segment_number,
+                &self.config,
+            )
         } else {
             // we short-circuit the inline read
             // here because it might not still

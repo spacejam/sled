@@ -398,11 +398,7 @@ impl Update {
     }
 
     fn is_free(&self) -> bool {
-        if let Update::Free = self {
-            true
-        } else {
-            false
-        }
+        if let Update::Free = self { true } else { false }
     }
 }
 
@@ -493,10 +489,10 @@ impl Page {
         self.cache_infos.last().map_or(0, |ci| ci.ts)
     }
 
-    fn lone_blob(&self) -> Option<DiskPtr> {
+    fn lone_blob(&self) -> Option<CacheInfo> {
         if self.cache_infos.len() == 1 && self.cache_infos[0].pointer.is_blob()
         {
-            Some(self.cache_infos[0].pointer)
+            Some(self.cache_infos[0])
         } else {
             None
         }
@@ -516,6 +512,7 @@ pub struct PageCache {
     idgen: Arc<AtomicU64>,
     idgen_persists: Arc<AtomicU64>,
     idgen_persist_mu: Arc<Mutex<()>>,
+    snapshot_min_lsn: Arc<AtomicLsn>,
     was_recovered: bool,
 }
 
@@ -656,6 +653,9 @@ impl PageCache {
             idgen_persist_mu: Arc::new(Mutex::new(())),
             idgen: Arc::new(AtomicU64::new(0)),
             idgen_persists: Arc::new(AtomicU64::new(0)),
+            snapshot_min_lsn: Arc::new(AtomicLsn::new(
+                snapshot.stable_lsn.unwrap_or(0),
+            )),
             was_recovered: false,
         };
 
@@ -864,7 +864,7 @@ impl PageCache {
         let cc = concurrency_control::read();
         let to_clean = self.log.iobufs.segment_cleaner.pop();
         let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
-            self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
+            self.rewrite_page_in_log(pid_to_clean, segment_to_clean, &guard)
                 .map(|_| true)
         } else {
             Ok(false)
@@ -1206,7 +1206,7 @@ impl PageCache {
         if let Some((pid_to_clean, segment_to_clean)) =
             self.log.iobufs.segment_cleaner.pop()
         {
-            self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
+            self.rewrite_page_in_log(pid_to_clean, segment_to_clean, guard)?;
         }
 
         Ok(result.map_err(|fail| {
@@ -1223,7 +1223,7 @@ impl PageCache {
     // (at least partially) located in. This happens when a
     // segment has had enough resident page replacements moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page(
+    fn rewrite_page_in_log(
         &self,
         pid: PageId,
         segment_to_purge: LogOffset,
@@ -1248,27 +1248,64 @@ impl PageCache {
                 .cache_infos
                 .iter()
                 .any(|ce| {
-                    ce.pointer.lid() / self.config.segment_size as u64
-                        == purge_segment_id
+                    if let Some(lid) = ce.pointer.lid() {
+                        lid / self.config.segment_size as u64
+                            == purge_segment_id
+                    } else {
+                        // the blob has been relocated off-log
+                        true
+                    }
                 });
             if already_moved {
                 return Ok(());
             }
 
             // if the page is just a single blob pointer, rewrite it.
-            if let Some(disk_pointer) = page_view.lone_blob() {
+            if let Some(lone_cache_info) = page_view.lone_blob() {
                 trace!("rewriting blob with pid {}", pid);
-                let blob_pointer = disk_pointer.blob().1;
 
-                let log_reservation =
-                    self.log.rewrite_blob_pointer(pid, blob_pointer, guard)?;
+                let snapshot_min_lsn = self.snapshot_min_lsn.load(Acquire);
+                let original_lsn = lone_cache_info.pointer.original_lsn();
+                let skip_log = original_lsn < snapshot_min_lsn;
 
-                let cache_info = CacheInfo {
-                    ts: page_view.ts(),
-                    lsn: log_reservation.lsn,
-                    pointer: log_reservation.pointer,
-                    log_size: u64::try_from(log_reservation.reservation_len())
+                let blob_pointer = lone_cache_info.pointer.blob().1;
+
+                let (log_reservation, cache_info) = if skip_log {
+                    trace!(
+                        "allowing blob pointer with original lsn of {} \
+                        to be forgotten from the log, as it is contained in the \
+                        snapshot which has a minimum lsn of {}",
+                        original_lsn,
+                        snapshot_min_lsn
+                    );
+
+                    let cache_info = CacheInfo {
+                        pointer: DiskPtr::Blob(
+                            None,
+                            lone_cache_info.pointer.blob().1,
+                        ),
+                        ..lone_cache_info
+                    };
+
+                    (None, cache_info)
+                } else {
+                    let log_reservation = self.log.rewrite_blob_pointer(
+                        pid,
+                        blob_pointer,
+                        guard,
+                    )?;
+
+                    let cache_info = CacheInfo {
+                        ts: page_view.ts(),
+                        lsn: log_reservation.lsn,
+                        pointer: log_reservation.pointer,
+                        log_size: u64::try_from(
+                            log_reservation.reservation_len(),
+                        )
                         .unwrap(),
+                    };
+
+                    (Some(log_reservation), cache_info)
                 };
 
                 let new_page = Owned::new(Page {
@@ -1289,11 +1326,8 @@ impl PageCache {
                         guard.defer_destroy(page_view.read);
                     }
 
-                    let lsn = log_reservation.lsn();
-
                     self.log.iobufs.sa_mark_replace(
                         pid,
-                        lsn,
                         &page_view.cache_infos,
                         cache_info,
                         guard,
@@ -1302,7 +1336,9 @@ impl PageCache {
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
                     // the segment to inactive, resulting in a race otherwise.
-                    let _pointer = log_reservation.complete()?;
+                    if let Some(log_reservation) = log_reservation {
+                        log_reservation.complete()?;
+                    }
 
                     // possibly evict an item now that our cache has grown
                     let total_page_size =
@@ -1322,7 +1358,9 @@ impl PageCache {
 
                     return Ok(());
                 } else {
-                    let _pointer = log_reservation.abort()?;
+                    if let Some(log_reservation) = log_reservation {
+                        log_reservation.abort()?;
+                    }
 
                     trace!("rewriting pid {} failed", pid);
                 }
@@ -1530,7 +1568,6 @@ impl PageCache {
                     trace!("cas_page succeeded on pid {}", pid);
                     self.log.iobufs.sa_mark_replace(
                         pid,
-                        lsn,
                         &old.cache_infos,
                         cache_info,
                         guard,
@@ -2178,7 +2215,12 @@ impl PageCache {
             }
         }
 
+        let max_fuzzy_lsn: Lsn = self.log.stable_offset();
+
+        bump_atomic_lsn(&self.snapshot_min_lsn, stable_lsn_now);
+
         Snapshot {
+            max_fuzzy_lsn: Some(max_fuzzy_lsn),
             stable_lsn: Some(stable_lsn_now),
             active_segment: None,
             pt: page_states,

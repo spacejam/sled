@@ -14,6 +14,8 @@ use super::{
 #[derive(PartialEq, Debug, Default)]
 #[cfg_attr(test, derive(Clone))]
 pub struct Snapshot {
+    /// The maximum possible LSN that may be accounted for in this snapshot
+    pub max_fuzzy_lsn: Option<Lsn>,
     /// The last read message lsn
     pub stable_lsn: Option<Lsn>,
     /// The last read message lid
@@ -76,7 +78,7 @@ impl PageState {
     }
 
     #[cfg(feature = "testing")]
-    fn offsets(&self) -> Vec<LogOffset> {
+    fn offsets(&self) -> Vec<Option<LogOffset>> {
         match *self {
             PageState::Present { base, ref frags } => {
                 let mut offsets = vec![base.1.lid()];
@@ -184,7 +186,9 @@ impl Snapshot {
                     if pushed {
                         let old = self.pt.pop().unwrap();
                         if old != PageState::Uninitialized {
-                            error!("expected previous page state to be uninitialized");
+                            error!(
+                                "expected previous page state to be uninitialized"
+                            );
                             return Err(Error::corruption(None));
                         }
                     }
@@ -295,9 +299,9 @@ fn advance_snapshot(
         let monotonic = segment_progress >= SEG_HEADER_LEN as Lsn
             || (segment_progress == 0 && iter.segment_base.is_none());
         if !monotonic {
-            error!("expected segment progress {} to be above SEG_HEADER_LEN or == 0, cur_lsn: {}",
-                segment_progress,
-                iterated_lsn,
+            error!(
+                "expected segment progress {} to be above SEG_HEADER_LEN or == 0, cur_lsn: {}",
+                segment_progress, iterated_lsn,
             );
             return Err(Error::corruption(None));
         }
@@ -372,7 +376,12 @@ fn advance_snapshot(
         let mut reverse_segments = HashMap::new();
         for (pid, page) in snapshot.pt.iter().enumerate() {
             let offsets = page.offsets();
-            for offset in offsets {
+            for offset_option in offsets {
+                let offset = if let Some(offset) = offset_option {
+                    offset
+                } else {
+                    continue;
+                };
                 let segment = config.normalize(offset);
                 if segment == config.normalize(shred_base) {
                     assert!(

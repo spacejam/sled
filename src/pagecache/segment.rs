@@ -72,7 +72,6 @@ pub(crate) enum SegmentOp {
     },
     Replace {
         pid: PageId,
-        lsn: Lsn,
         old_cache_infos: Vec<CacheInfo>,
         new_cache_info: CacheInfo,
     },
@@ -211,27 +210,15 @@ impl Default for Segment {
 
 impl Segment {
     fn is_free(&self) -> bool {
-        if let Segment::Free(_) = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Free(_) = self { true } else { false }
     }
 
     fn is_active(&self) -> bool {
-        if let Segment::Active { .. } = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Active { .. } = self { true } else { false }
     }
 
     fn is_inactive(&self) -> bool {
-        if let Segment::Inactive { .. } = self {
-            true
-        } else {
-            false
-        }
+        if let Segment::Inactive { .. } = self { true } else { false }
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
@@ -378,7 +365,7 @@ impl Segment {
 
     fn remove_pid(&mut self, pid: PageId, replacement_lsn: Lsn, sz: usize) {
         trace!(
-            "removing pid {} at lsn {} from segment {:?}",
+            "removing pid {} at lsn {:?} from segment {:?}",
             pid,
             replacement_lsn,
             self
@@ -527,7 +514,9 @@ impl SegmentAccountant {
                 segments.push(Segment::default());
             }
             if segments.len() <= tip_idx {
-                error!("failed to properly initialize segments, suspected disk corruption");
+                error!(
+                    "failed to properly initialize segments, suspected disk corruption"
+                );
                 return Err(Error::corruption(None));
             }
             trace!(
@@ -540,26 +529,37 @@ impl SegmentAccountant {
             );
         }
 
-        let add =
-            |pid, lsn: Lsn, sz, lid: LogOffset, segments: &mut Vec<Segment>| {
-                let idx = assert_usize(lid / segment_size as LogOffset);
+        let add = |pid,
+                   lsn: Lsn,
+                   sz,
+                   lid: Option<LogOffset>,
+                   segments: &mut Vec<Segment>| {
+            if lid.is_none() {
                 trace!(
-                    "adding lsn: {} lid: {} sz: {} for \
+                    "skipping segment GC for pid {} with a blob \
+                    ptr already in the snapshot",
+                    pid
+                );
+                return;
+            }
+            let idx = assert_usize(lid.unwrap() / segment_size as LogOffset);
+            trace!(
+                "adding lsn: {} lid: {} sz: {} for \
                      pid {} to segment {} during SA recovery",
-                    lsn,
-                    lid,
-                    sz,
-                    pid,
-                    idx
-                );
-                let segment_lsn = self.config.normalize(lsn);
-                segments[idx].recovery_ensure_initialized(segment_lsn);
-                segments[idx].insert_pid(
-                    pid,
-                    segment_lsn,
-                    usize::try_from(sz).unwrap(),
-                );
-            };
+                lsn,
+                lid.unwrap(),
+                sz,
+                pid,
+                idx
+            );
+            let segment_lsn = self.config.normalize(lsn);
+            segments[idx].recovery_ensure_initialized(segment_lsn);
+            segments[idx].insert_pid(
+                pid,
+                segment_lsn,
+                usize::try_from(sz).unwrap(),
+            );
+        };
 
         for (pid, state) in snapshot.pt.iter().enumerate() {
             match state {
@@ -727,8 +727,8 @@ impl SegmentAccountant {
         use SegmentOp::*;
         match op {
             Link { pid, cache_info } => self.mark_link(*pid, *cache_info),
-            Replace { pid, lsn, old_cache_infos, new_cache_info } => {
-                self.mark_replace(*pid, *lsn, old_cache_infos, *new_cache_info)?
+            Replace { pid, old_cache_infos, new_cache_info } => {
+                self.mark_replace(*pid, old_cache_infos, *new_cache_info)?
             }
         }
         Ok(())
@@ -741,23 +741,23 @@ impl SegmentAccountant {
     pub(super) fn mark_replace(
         &mut self,
         pid: PageId,
-        lsn: Lsn,
         old_cache_infos: &[CacheInfo],
         new_cache_info: CacheInfo,
     ) -> Result<()> {
         let _measure = Measure::new(&M.accountant_mark_replace);
-
         self.mark_link(pid, new_cache_info);
+        let lsn = new_cache_info.lsn;
 
         trace!(
             "mark_replace pid {} from cache infos {:?} to cache info {:?} with lsn {}",
             pid,
             old_cache_infos,
             new_cache_info,
-            self.config.normalize(lsn)
+            lsn
         );
 
-        let new_idx = self.segment_id(new_cache_info.pointer.lid());
+        let new_idx =
+            new_cache_info.pointer.lid().map(|lid| self.segment_id(lid));
 
         // Do we need to schedule any blob cleanups?
         // Not if we just moved the pointer without changing
@@ -767,18 +767,30 @@ impl SegmentAccountant {
             && old_cache_infos[0].pointer.is_blob());
 
         let mut removals = FastMap8::default();
+        dbg!(&old_cache_infos);
 
         for old_cache_info in old_cache_infos {
             let old_ptr = &old_cache_info.pointer;
-            let old_lid = old_ptr.lid();
+            let old_lid = if let Some(old_lid) = old_ptr.lid() {
+                old_lid
+            } else {
+                // the frag had been migrated to the blob store fully
+                continue;
+            };
 
             if schedule_rm_blob && old_ptr.is_blob() {
                 trace!(
                     "queueing blob removal for {} in our own segment",
                     old_ptr
                 );
-                self.segments[new_idx]
-                    .remove_blob(old_ptr.blob().1, &self.config)?;
+                if let Some(new_idx) = new_idx {
+                    self.segments[new_idx]
+                        .remove_blob(old_ptr.blob().1, &self.config)?;
+                } else {
+                    // this was migrated off-log and is present and stabilized
+                    // in the snapshot.
+                    remove_blob(old_ptr.blob().1, &self.config)?;
+                }
             }
 
             let old_idx = self.segment_id(old_lid);
@@ -786,10 +798,12 @@ impl SegmentAccountant {
             *entry += old_cache_info.log_size;
         }
 
+        dbg!(&removals);
         for (old_idx, replaced_size) in removals {
+            dbg!((pid, old_idx));
             self.segments[old_idx].remove_pid(
                 pid,
-                self.config.normalize(lsn),
+                lsn,
                 usize::try_from(replaced_size).unwrap(),
             );
             self.possibly_clean_or_free_segment(old_idx, new_cache_info.lsn)?;
@@ -805,7 +819,14 @@ impl SegmentAccountant {
         let _measure = Measure::new(&M.accountant_mark_link);
 
         trace!("mark_link pid {} at cache info {:?}", pid, cache_info);
-        let idx = self.segment_id(cache_info.pointer.lid());
+        let lid = if let Some(lid) = cache_info.pointer.lid() {
+            lid
+        } else {
+            // item has been migrated off-log to the blob store
+            return;
+        };
+
+        let idx = self.segment_id(lid);
 
         let segment = &mut self.segments[idx];
 
@@ -1067,11 +1088,7 @@ impl SegmentAccountant {
         self.ordering
             .iter()
             .filter_map(move |(l, r)| {
-                if *l >= normalized_lsn {
-                    Some((*l, *r))
-                } else {
-                    None
-                }
+                if *l >= normalized_lsn { Some((*l, *r)) } else { None }
             })
             .collect()
     }

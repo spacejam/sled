@@ -163,11 +163,7 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old {
-            Ok(new)
-        } else {
-            Err(res)
-        }
+        if res == old { Ok(new) } else { Err(res) }
     }
 }
 
@@ -437,7 +433,6 @@ impl IoBufs {
     pub(in crate::pagecache) fn sa_mark_replace(
         &self,
         pid: PageId,
-        lsn: Lsn,
         old_cache_infos: &[CacheInfo],
         new_cache_info: CacheInfo,
         guard: &Guard,
@@ -445,7 +440,7 @@ impl IoBufs {
         debug_delay();
         if let Some(mut sa) = self.segment_accountant.try_lock() {
             let start = clock();
-            sa.mark_replace(pid, lsn, old_cache_infos, new_cache_info)?;
+            sa.mark_replace(pid, old_cache_infos, new_cache_info)?;
             for op in self.deferred_segment_ops.take_iter(guard) {
                 sa.apply_op(op)?;
             }
@@ -453,7 +448,6 @@ impl IoBufs {
         } else {
             let op = SegmentOp::Replace {
                 pid,
-                lsn,
                 old_cache_infos: old_cache_infos.to_vec(),
                 new_cache_info,
             };

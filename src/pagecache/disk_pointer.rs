@@ -1,3 +1,5 @@
+use std::num::NonZeroU64;
+
 use super::{BlobPointer, LogOffset};
 use crate::*;
 
@@ -7,7 +9,7 @@ pub enum DiskPtr {
     /// Points to a value stored in the single-file log.
     Inline(LogOffset),
     /// Points to a value stored off-log in the blob directory.
-    Blob(LogOffset, BlobPointer),
+    Blob(Option<NonZeroU64>, BlobPointer),
 }
 
 impl DiskPtr {
@@ -16,7 +18,7 @@ impl DiskPtr {
     }
 
     pub(crate) fn new_blob(lid: LogOffset, ptr: BlobPointer) -> Self {
-        DiskPtr::Blob(lid, ptr)
+        DiskPtr::Blob(Some(NonZeroU64::new(lid).unwrap()), ptr)
     }
 
     pub(crate) fn is_inline(&self) -> bool {
@@ -33,19 +35,28 @@ impl DiskPtr {
         }
     }
 
-    pub(crate) fn blob(&self) -> (LogOffset, BlobPointer) {
+    pub(crate) fn blob(&self) -> (Option<LogOffset>, BlobPointer) {
         match self {
-            DiskPtr::Blob(lid, ptr) => (*lid, *ptr),
+            DiskPtr::Blob(lid, ptr) => (lid.map(|l| l.get()), *ptr),
             DiskPtr::Inline(_) => {
                 panic!("blob called on Internal disk pointer")
             }
         }
     }
 
+    pub(crate) fn original_lsn(&self) -> Lsn {
+        if let DiskPtr::Blob(_, ptr) = self {
+            *ptr
+        } else {
+            panic!("called original_lsn on non-Blob");
+        }
+    }
+
     #[doc(hidden)]
-    pub fn lid(&self) -> LogOffset {
+    pub fn lid(&self) -> Option<LogOffset> {
         match self {
-            DiskPtr::Blob(lid, _) | DiskPtr::Inline(lid) => *lid,
+            DiskPtr::Blob(lid, _) => lid.map(|l| l.get()),
+            DiskPtr::Inline(lid) => Some(*lid),
         }
     }
 }
