@@ -1264,9 +1264,10 @@ impl PageCache {
 
                 let (log_reservation, cache_info) = if skip_log {
                     trace!(
-                        "allowing blob pointer with original lsn of {} \
+                        "allowing blob pointer for pid {} with original lsn of {} \
                         to be forgotten from the log, as it is contained in the \
                         snapshot which has a minimum lsn of {}",
+                        pid,
                         original_lsn,
                         snapshot_min_lsn
                     );

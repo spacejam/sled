@@ -214,10 +214,12 @@ impl Snapshot {
     fn filter_inner_blob_pointers(&mut self) {
         for page in &mut self.pt {
             match page {
-                PageState::Free(_lsn, ptr) => ptr.forget_blob_log_coordinates(),
-                PageState::Present { base, frags } => {
+                PageState::Free(_lsn, ref mut ptr) => {
+                    ptr.forget_blob_log_coordinates()
+                }
+                PageState::Present { ref mut base, ref mut frags } => {
                     base.1.forget_blob_log_coordinates();
-                    for (_, ptr, _) in frags {
+                    for (_, ref mut ptr, _) in frags {
                         ptr.forget_blob_log_coordinates();
                     }
                 }

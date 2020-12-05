@@ -100,8 +100,27 @@ impl EventLog {
                             .into_iter();
 
                         for pid in pids {
-                            let locations_before_restart = pages.get(&pid);
-                            let locations_after_restart = par.get(&pid);
+                            // we filter out the blob pointer in the log
+                            // because it is expected that upon recovery,
+                            // any blob pointers will be forgotten from
+                            // the log now that they are present in the
+                            // snapshot.
+                            let locations_before_restart: Vec<_> = pages
+                                .get(&pid)
+                                .unwrap()
+                                .iter()
+                                .map(|ptr| {
+                                    let mut ptr = *ptr;
+                                    ptr.forget_blob_log_coordinates();
+                                    ptr
+                                })
+                                .collect();
+                            let locations_after_restart: Vec<_> = par
+                                .get(&pid)
+                                .unwrap()
+                                .iter()
+                                .copied()
+                                .collect();
                             assert_eq!(
                                 locations_before_restart,
                                 locations_after_restart,
@@ -112,8 +131,6 @@ impl EventLog {
                                 locations_after_restart
                             );
                         }
-
-                        assert_eq!(pages, par);
                     }
                 }
                 Event::MetaOnRecovery { meta } => {
