@@ -210,6 +210,23 @@ impl Snapshot {
 
         Ok(())
     }
+
+    fn filter_inner_blob_pointers(&mut self) {
+        for page in &mut self.pt {
+            match page {
+                PageState::Free(_lsn, ptr) => ptr.forget_blob_log_coordinates(),
+                PageState::Present { base, frags } => {
+                    base.1.forget_blob_log_coordinates();
+                    for (_, ptr, _) in frags {
+                        ptr.forget_blob_log_coordinates();
+                    }
+                }
+                PageState::Uninitialized => {
+                    unreachable!()
+                }
+            }
+        }
+    }
 }
 
 fn advance_snapshot(
@@ -354,6 +371,7 @@ fn advance_snapshot(
 
         snapshot.stable_lsn = Some(stable_lsn);
         snapshot.active_segment = active_segment;
+        snapshot.filter_inner_blob_pointers();
 
         snapshot
     };

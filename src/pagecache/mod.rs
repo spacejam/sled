@@ -65,10 +65,6 @@ pub use self::{
     logger::{Log, LogRead},
 };
 
-/// The offset of a segment. This equals its `LogOffset` (or the offset of any
-/// item contained inside it) divided by the configured `segment_size`.
-pub type SegmentId = usize;
-
 /// A file offset in the database log.
 pub type LogOffset = u64;
 
@@ -860,7 +856,7 @@ impl PageCache {
         let cc = concurrency_control::read();
         let to_clean = self.log.iobufs.segment_cleaner.pop();
         let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
-            self.rewrite_page_in_log(pid_to_clean, segment_to_clean, &guard)
+            self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
                 .map(|_| true)
         } else {
             Ok(false)
@@ -1202,7 +1198,7 @@ impl PageCache {
         if let Some((pid_to_clean, segment_to_clean)) =
             self.log.iobufs.segment_cleaner.pop()
         {
-            self.rewrite_page_in_log(pid_to_clean, segment_to_clean, guard)?;
+            self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
         }
 
         Ok(result.map_err(|fail| {
@@ -1219,7 +1215,7 @@ impl PageCache {
     // (at least partially) located in. This happens when a
     // segment has had enough resident page replacements moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page_in_log(
+    fn rewrite_page(
         &self,
         pid: PageId,
         segment_to_purge: LogOffset,

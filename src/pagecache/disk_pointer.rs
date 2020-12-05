@@ -59,6 +59,13 @@ impl DiskPtr {
             DiskPtr::Inline(lid) => Some(*lid),
         }
     }
+
+    pub(crate) fn forget_blob_log_coordinates(&mut self) {
+        match self {
+            DiskPtr::Blob(ref mut opt, _blob_pointer) => *opt = None,
+            DiskPtr::Inline(_) => {}
+        }
+    }
 }
 
 impl fmt::Display for DiskPtr {

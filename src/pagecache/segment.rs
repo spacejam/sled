@@ -767,7 +767,6 @@ impl SegmentAccountant {
             && old_cache_infos[0].pointer.is_blob());
 
         let mut removals = FastMap8::default();
-        dbg!(&old_cache_infos);
 
         for old_cache_info in old_cache_infos {
             let old_ptr = &old_cache_info.pointer;
@@ -798,9 +797,7 @@ impl SegmentAccountant {
             *entry += old_cache_info.log_size;
         }
 
-        dbg!(&removals);
         for (old_idx, replaced_size) in removals {
-            dbg!((pid, old_idx));
             self.segments[old_idx].remove_pid(
                 pid,
                 lsn,
@@ -1133,7 +1130,7 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    fn segment_id(&mut self, lid: LogOffset) -> SegmentId {
+    fn segment_id(&mut self, lid: LogOffset) -> usize {
         let idx = assert_usize(lid / self.config.segment_size as LogOffset);
 
         // TODO never resize like this, make it a single
