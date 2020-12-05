@@ -536,14 +536,12 @@ impl Debug for PageCache {
 #[cfg(feature = "event_log")]
 impl Drop for PageCache {
     fn drop(&mut self) {
-        use std::collections::HashMap;
-
         trace!("dropping pagecache");
 
         // we can't as easily assert recovery
         // invariants across failpoints for now
         if self.log.iobufs.config.global_error().is_ok() {
-            let mut pages_before_restart = HashMap::new();
+            let mut pages_before_restart = Map::default();
 
             let guard = pin();
 
@@ -664,13 +662,11 @@ impl PageCache {
 
         #[cfg(feature = "testing")]
         {
-            use std::collections::HashMap;
-
             // NB this must be before idgen/meta are initialized
             // because they may cas_page on initial page-in.
             let guard = pin();
 
-            let mut pages_after_restart = HashMap::new();
+            let mut pages_after_restart = Map::default();
 
             for pid in 0..*pc.next_pid_to_allocate.lock() {
                 let pte = if let Some(pte) = pc.inner.get(pid, &guard) {

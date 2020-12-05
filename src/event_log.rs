@@ -22,8 +22,6 @@
 //! 4.
 #![allow(missing_docs)]
 
-use std::collections::HashMap;
-
 use crate::pagecache::DiskPtr;
 use crate::*;
 
@@ -32,8 +30,8 @@ use crate::stack::{Iter as StackIter, Stack};
 /// A thing that happens at a certain time.
 #[derive(Debug, Clone)]
 enum Event {
-    PagesOnShutdown { pages: HashMap<PageId, Vec<DiskPtr>> },
-    PagesOnRecovery { pages: HashMap<PageId, Vec<DiskPtr>> },
+    PagesOnShutdown { pages: Map<PageId, Vec<DiskPtr>> },
+    PagesOnRecovery { pages: Map<PageId, Vec<DiskPtr>> },
     MetaOnShutdown { meta: Meta },
     MetaOnRecovery { meta: Meta },
     RecoveredLsn(Lsn),
@@ -98,7 +96,7 @@ impl EventLog {
                             .chain(
                                 pages.iter().map(|(pid, _frag_locations)| *pid),
                             )
-                            .collect::<std::collections::HashSet<_>>()
+                            .collect::<Set<_>>()
                             .into_iter();
 
                         for pid in pids {
@@ -144,16 +142,13 @@ impl EventLog {
 
     pub(crate) fn pages_before_restart(
         &self,
-        pages: HashMap<PageId, Vec<DiskPtr>>,
+        pages: Map<PageId, Vec<DiskPtr>>,
     ) {
         let guard = pin();
         self.inner.push(Event::PagesOnShutdown { pages }, &guard);
     }
 
-    pub(crate) fn pages_after_restart(
-        &self,
-        pages: HashMap<PageId, Vec<DiskPtr>>,
-    ) {
+    pub(crate) fn pages_after_restart(&self, pages: Map<PageId, Vec<DiskPtr>>) {
         let guard = pin();
         self.inner.push(Event::PagesOnRecovery { pages }, &guard);
     }

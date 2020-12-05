@@ -420,18 +420,34 @@ pub(crate) enum Link {
 
 /// A fast map that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
+#[cfg(not(feature = "testing"))]
 pub(crate) type FastMap8<K, V> = std::collections::HashMap<
     K,
     V,
     std::hash::BuildHasherDefault<fxhash::FxHasher64>,
 >;
 
+#[cfg(feature = "testing")]
+pub(crate) type FastMap8<K, V> = BTreeMap<K, V>;
+
 /// A fast set that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
+#[cfg(not(feature = "testing"))]
 pub(crate) type FastSet8<V> = std::collections::HashSet<
     V,
     std::hash::BuildHasherDefault<fxhash::FxHasher64>,
 >;
+
+#[cfg(feature = "testing")]
+pub(crate) type FastSet8<V> = std::collections::BTreeSet<V>;
+
+#[cfg(not(feature = "testing"))]
+use std::collections::HashMap as Map;
+
+// we avoid HashMap while testing because
+// it makes tests non-deterministic
+#[cfg(feature = "testing")]
+use std::collections::{BTreeMap as Map, BTreeSet as Set};
 
 /// A function that may be configured on a particular shared `Tree`
 /// that will be applied as a kind of read-modify-write operator

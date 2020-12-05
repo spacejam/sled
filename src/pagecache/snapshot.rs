@@ -371,9 +371,9 @@ fn advance_snapshot(
 
     #[cfg(feature = "testing")]
     let reverse_segments = {
-        use std::collections::{HashMap, HashSet};
+        use crate::{Map, Set};
         let shred_base = shred_point.unwrap_or(LogOffset::max_value());
-        let mut reverse_segments = HashMap::new();
+        let mut reverse_segments = Map::new();
         for (pid, page) in snapshot.pt.iter().enumerate() {
             let offsets = page.offsets();
             for offset_option in offsets {
@@ -394,9 +394,8 @@ fn advance_snapshot(
                         shred_base
                     );
                 }
-                let entry = reverse_segments
-                    .entry(segment)
-                    .or_insert_with(HashSet::new);
+                let entry =
+                    reverse_segments.entry(segment).or_insert_with(Set::new);
                 entry.insert((pid, offset));
             }
         }

@@ -75,17 +75,9 @@
 #![allow(clippy::module_name_repetitions)]
 use std::{cell::RefCell, fmt, rc::Rc};
 
-#[cfg(not(feature = "testing"))]
-use std::collections::HashMap as Map;
-
-// we avoid HashMap while testing because
-// it makes tests non-deterministic
-#[cfg(feature = "testing")]
-use std::collections::BTreeMap as Map;
-
 use crate::{
-    concurrency_control, pin, Batch, Error, Guard, IVec, Protector, Result,
-    Tree,
+    concurrency_control, pin, Batch, Error, Guard, IVec, Map, Protector,
+    Result, Tree,
 };
 
 /// A transaction that will
@@ -268,8 +260,7 @@ impl TransactionalTree {
     {
         let old = self.get(key.as_ref())?;
         let mut writes = self.writes.borrow_mut();
-        let _last_write =
-            writes.insert(key.into(), Some(value.into()));
+        let _last_write = writes.insert(key.into(), Some(value.into()));
         Ok(old)
     }
 
