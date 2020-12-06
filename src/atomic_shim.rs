@@ -1,4 +1,4 @@
-///! Inline of https://github.com/bltavares/atomic-shim
+///! Inline of `https://github.com/bltavares/atomic-shim`
 
 #[cfg(not(any(
     target_arch = "mips",

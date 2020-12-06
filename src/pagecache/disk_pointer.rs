@@ -40,7 +40,7 @@ impl DiskPtr {
             DiskPtr::Inline(_) => {
                 panic!("blob called on Internal disk pointer")
             }
-            DiskPtr::Blob(lid, ptr) => (lid.map(|l| l.get()), *ptr),
+            DiskPtr::Blob(lid, ptr) => (lid.map(NonZeroU64::get), *ptr),
         }
     }
 
@@ -56,7 +56,7 @@ impl DiskPtr {
     pub fn lid(&self) -> Option<LogOffset> {
         match self {
             DiskPtr::Inline(lid) => Some(*lid),
-            DiskPtr::Blob(lid, _) => lid.map(|l| l.get()),
+            DiskPtr::Blob(lid, _) => lid.map(NonZeroU64::get),
         }
     }
 

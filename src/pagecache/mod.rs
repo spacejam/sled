@@ -256,7 +256,7 @@ pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn maybe_decompress(in_buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
+pub(crate) fn decompress(in_buf: Vec<u8>) -> Vec<u8> {
     #[cfg(feature = "compression")]
     {
         use zstd::stream::decode_all;
@@ -272,11 +272,11 @@ pub(crate) fn maybe_decompress(in_buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
              fix this critical issue ASAP. Thank you :)",
         );
 
-        Ok(out_buf)
+        out_buf
     }
 
     #[cfg(not(feature = "compression"))]
-    Ok(in_buf)
+    in_buf
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1111,7 +1111,7 @@ impl PageCache {
                         to_evict
                     );
                     if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard)?;
+                        self.page_out(to_evict, guard);
                     }
 
                     old.read = new_shared;
@@ -1344,7 +1344,7 @@ impl PageCache {
                         to_evict
                     );
                     if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard)?;
+                        self.page_out(to_evict, guard);
                     }
 
                     trace!("rewriting pid {} succeeded", pid);
@@ -1582,7 +1582,7 @@ impl PageCache {
                         to_evict
                     );
                     if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard)?;
+                        self.page_out(to_evict, guard);
                     }
 
                     return Ok(Ok(PageView {
@@ -1722,7 +1722,7 @@ impl PageCache {
                     to_evict
                 );
                 if !to_evict.is_empty() {
-                    self.page_out(to_evict, guard)?;
+                    self.page_out(to_evict, guard);
                 }
                 return Ok(Some(NodeView(page_view)));
             }
@@ -1793,7 +1793,7 @@ impl PageCache {
             let to_evict = self.lru.accessed(pid, total_page_size, guard);
             trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
             if !to_evict.is_empty() {
-                self.page_out(to_evict, guard)?;
+                self.page_out(to_evict, guard);
             }
 
             let mut page_view = page_view;
@@ -1950,7 +1950,7 @@ impl PageCache {
         }
     }
 
-    fn page_out(&self, to_evict: Vec<PageId>, guard: &Guard) -> Result<()> {
+    fn page_out(&self, to_evict: Vec<PageId>, guard: &Guard) {
         let _measure = Measure::new(&M.page_out);
         for pid in to_evict {
             if pid == COUNTER_PID
@@ -1992,7 +1992,6 @@ impl PageCache {
                 }
             }
         }
-        Ok(())
     }
 
     fn pull(&self, pid: PageId, lsn: Lsn, pointer: DiskPtr) -> Result<Update> {

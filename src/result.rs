@@ -149,8 +149,7 @@ impl From<Error> for io::Error {
         use std::io::ErrorKind;
         match error {
             Io(ioe) => ioe,
-            CollectionNotFound(name) =>
-                io::Error::new(
+            CollectionNotFound(name) => io::Error::new(
                 ErrorKind::NotFound,
                 format!("collection not found: {:?}", name),
             ),
@@ -160,17 +159,17 @@ impl From<Error> for io::Error {
             ),
             ReportableBug(what) => io::Error::new(
                 ErrorKind::Other,
-                format!("unexpected bug! please report this bug at <github.rs/spacejam/sled>: {:?}", what),
+                format!(
+                    "unexpected bug! please report this bug at <github.rs/spacejam/sled>: {:?}",
+                    what
+                ),
             ),
             Corruption { .. } => io::Error::new(
                 ErrorKind::InvalidData,
                 format!("corruption encountered: {:?}", error),
             ),
             #[cfg(feature = "failpoints")]
-            FailPoint => io::Error::new(
-                ErrorKind::Other,
-                "failpoint"
-            ),
+            FailPoint => io::Error::new(ErrorKind::Other, "failpoint"),
         }
     }
 }

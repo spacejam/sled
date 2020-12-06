@@ -393,7 +393,7 @@ fn scan_segment_headers_and_tail(
             max_header_stable_lsn,
             &ordering,
             config,
-        )?;
+        );
 
     Ok((ordering, end_of_last_contiguous_message_in_unstable_tail))
 }
@@ -407,7 +407,7 @@ fn check_contiguity_in_unstable_tail(
     max_header_stable_lsn: Lsn,
     ordering: &BTreeMap<Lsn, LogOffset>,
     config: &RunningConfig,
-) -> Result<Lsn> {
+) -> Lsn {
     let segment_size = config.segment_size as Lsn;
 
     // -1..(2 *  segment_size) - 1 => 0
@@ -463,7 +463,7 @@ fn check_contiguity_in_unstable_tail(
         end_of_last_message,
     );
 
-    Ok(end_of_last_message)
+    end_of_last_message
 }
 
 /// Returns a log iterator, the max stable lsn,

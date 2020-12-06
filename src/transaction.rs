@@ -373,8 +373,8 @@ pub struct TransactionalTrees {
 }
 
 impl TransactionalTrees {
-    fn stage(&self) -> UnabortableTransactionResult<Protector<'_>> {
-        Ok(concurrency_control::write())
+    fn stage(&self) -> Protector<'_> {
+        concurrency_control::write()
     }
 
     fn unstage(&self) {
@@ -454,12 +454,7 @@ pub trait Transactional<E = ()> {
             let view = Self::view_overlay(&tt);
 
             // NB locks must exist until this function returns.
-            let locks = if let Ok(l) = tt.stage() {
-                l
-            } else {
-                tt.unstage();
-                continue;
-            };
+            let locks = tt.stage();
             let ret = f(&view);
             if !tt.validate() {
                 tt.unstage();

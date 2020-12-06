@@ -3,7 +3,7 @@
 use std::{
     collections::VecDeque,
     sync::atomic::{
-        AtomicBool, AtomicU64,
+        AtomicBool,
         Ordering::{Acquire, Relaxed, Release, SeqCst},
     },
     thread,
@@ -12,7 +12,9 @@ use std::{
 
 use parking_lot::{Condvar, Mutex};
 
-use crate::{debug_delay, warn, AtomicUsize, Error, Lazy, OneShot, Result};
+use crate::{
+    debug_delay, warn, AtomicU64, AtomicUsize, Error, Lazy, OneShot, Result,
+};
 
 // This is lower for CI reasons.
 #[cfg(windows)]
@@ -89,7 +91,7 @@ impl Queue {
     }
 }
 
-fn perform_work(is_immortal: bool) -> Result<()> {
+fn perform_work(is_immortal: bool) {
     let wait_limit = Duration::from_secs(1);
 
     let mut performed = 0;
@@ -126,7 +128,6 @@ fn perform_work(is_immortal: bool) -> Result<()> {
             contiguous_overshoots = 0;
         }
     }
-    Ok(())
 }
 
 // Create up to MAX_THREADS dynamic blocking task worker threads.
