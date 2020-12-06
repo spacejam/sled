@@ -32,7 +32,7 @@
 
 # sled - ~~it's all downhill from here!!!~~
 
-A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
+A lightweight pure-rust high-performance transactional embedded database.
 
 ```rust
 let tree = sled::open("/tmp/welcome-to-sled").expect("open");
@@ -108,12 +108,10 @@ We support async subscription to events that happen on key prefixes, because the
 
 ```rust
 let sled = sled::open("my_db").unwrap();
+
 let mut sub = sled.watch_prefix("");
 
 sled.insert(b"a", b"a").unwrap();
-sled.insert(b"a", b"a").unwrap();
-
-drop(sled);
 
 extreme::run(async move {
     while let Some(event) = (&mut sub).await {
@@ -135,7 +133,7 @@ scatter-gather reads across the log to materialize the page from its fragments.
 check out the [architectural outlook](https://github.com/spacejam/sled/wiki/sled-architectural-outlook)
 for a more detailed overview of where we're at and where we see things going!
 
-# goals
+# philosophy
 
 1. don't make the user think. the interface should be obvious.
 1. don't surprise users with performance traps.
@@ -149,21 +147,22 @@ for a more detailed overview of where we're at and where we see things going!
 * quite young, should be considered unstable for the time being.
 * the on-disk format is going to change in ways that require [manual migrations](https://docs.rs/sled/latest/sled/struct.Db.html#method.export) before the `1.0.0` release!
 
-# plans
+# priorities
 
-* 1.0.0 release date will be on January 19, 2021. This is sled's 5th birthday.
-* Typed Trees that support working directly with serde-friendly types instead of raw bytes,
-  and also allow the deserialized form to be stored in the shared cache for speedy access.
-* MVCC and snapshots
-* forward-compatible binary format
-* concurrent snapshot delta generation and recovery
-* consensus protocol for [PC/EC](https://en.wikipedia.org/wiki/PACELC_theorem) systems
-* pluggable conflict detection and resolution strategies for gossip + CRDT-based [PA/EL](https://en.wikipedia.org/wiki/PACELC_theorem) systems
-* first-class programmatic access to replication stream
+* rework the transaction API to eliminate surprises and limitations
+* reduce space and memory usage
+* the 1.0.0 release date is January 19, 2021 (sled's 5th birthday)
+* combine merge operators with subscribers in a way that plays nicely with transactions
+* typed trees for low-friction serialization
+* replication support for both strongly and eventually consistent systems
+* continue to improve testing and make certain bug classes impossible through construction
+* continue to optimize the hell out of everything
+* continue to improve documentation and examples
+* continue to reduce compilation latency
 
 # fund feature development
 
-Want to support development? Help us out via [GitHub Sponsors](https://github.com/sponsors/spacejam)!
+Like what we're doing? Help us out via [GitHub Sponsors](https://github.com/sponsors/spacejam)!
 
 # special thanks
 

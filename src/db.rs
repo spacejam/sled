@@ -25,12 +25,6 @@ pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
     Config::new().path(path).open()
 }
 
-#[allow(unsafe_code)]
-unsafe impl Send for Db {}
-
-#[allow(unsafe_code)]
-unsafe impl Sync for Db {}
-
 impl Deref for Db {
     type Target = Tree;
 

@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs,
     fs::File,
     io,
@@ -56,7 +55,7 @@ impl StorageParameters {
     pub fn deserialize(bytes: &[u8]) -> Result<StorageParameters> {
         let reader = BufReader::new(bytes);
 
-        let mut lines = HashMap::new();
+        let mut lines = Map::new();
 
         for line in reader.lines() {
             let line = if let Ok(l) = line {
@@ -733,7 +732,6 @@ impl Config {
         if ge.is_null() {
             Ok(())
         } else {
-            #[cold]
             #[allow(unsafe_code)]
             unsafe {
                 Err(ge.deref().clone())
@@ -787,12 +785,6 @@ pub struct RunningConfig {
     inner: Config,
     pub(crate) file: Arc<File>,
 }
-
-#[allow(unsafe_code)]
-unsafe impl Send for RunningConfig {}
-
-#[allow(unsafe_code)]
-unsafe impl Sync for RunningConfig {}
 
 impl Deref for RunningConfig {
     type Target = Config;

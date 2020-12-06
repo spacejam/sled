@@ -4,6 +4,26 @@
 
 * The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.
+* #1203 Snapshot files have had their on-disk
+  structure modified to facilitate the handling
+  of fuzzy snapshots.
+
+## Bug Fixes
+
+* #1202 Fix a space leak where blobs were not
+  removed when replaced by another blob.
+
+# 0.34.6
+
+## Improvements
+
+* documentation improved
+
+# 0.34.5
+
+## Improvements
+
+* #1164 widen some trait bounds on trees and batches
 
 # 0.34.4
 

@@ -52,13 +52,12 @@ pub(crate) fn read_blob(
     let crc_actual = hasher.finalize();
 
     if crc_expected == crc_actual {
-        let buf =
-            if config.use_compression { maybe_decompress(buf)? } else { buf };
+        let buf = if config.use_compression { decompress(buf) } else { buf };
         Ok((MessageKind::from(kind_byte[0]), buf))
     } else {
         warn!("blob {} failed crc check!", blob_ptr);
 
-        Err(Error::corruption(Some(DiskPtr::Blob(0, blob_ptr))))
+        Err(Error::corruption(Some(DiskPtr::Blob(None, blob_ptr))))
     }
 }
 
@@ -146,12 +145,13 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
 
 pub(crate) fn remove_blob(id: Lsn, config: &Config) -> Result<()> {
     let path = config.blob_path(id);
-    if let Err(e) = std::fs::remove_file(&path) {
+    let res = std::fs::remove_file(&path);
+    if let Err(e) = res {
         debug!("removing blob at {:?} failed: {}", path, e);
+        return Err(e.into());
     } else {
         trace!("successfully removed blob at {:?}", path);
     }
 
-    // TODO return a future
     Ok(())
 }

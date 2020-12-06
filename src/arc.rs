@@ -1,7 +1,8 @@
 #![allow(unsafe_code)]
-/// We use this because we never use the weak count on the std
-/// `Arc`, but we use a LOT of `Arc`'s, so the extra 8 bytes
-/// turn into a huge overhead.
+
+/// We create our own `Arc` because we never use the weak
+/// count on the std `Arc`, but we use a LOT of `Arc`'s, so
+/// the extra 8 bytes turn into a huge overhead.
 use std::{
     alloc::{alloc, dealloc, Layout},
     convert::TryFrom,
@@ -26,6 +27,7 @@ pub struct Arc<T: ?Sized> {
 }
 
 unsafe impl<T: Send + Sync + ?Sized> Send for Arc<T> {}
+
 unsafe impl<T: Send + Sync + ?Sized> Sync for Arc<T> {}
 
 impl<T: Debug + ?Sized> Debug for Arc<T> {
@@ -140,7 +142,6 @@ impl<T: ?Sized> Clone for Arc<T> {
             unsafe { (*self.ptr).rc.fetch_add(1, Ordering::Relaxed) };
 
         if last_count == usize::max_value() {
-            #[cold]
             std::process::abort();
         }
 

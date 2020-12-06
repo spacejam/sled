@@ -120,12 +120,6 @@ impl Deref for Tree {
     }
 }
 
-#[allow(unsafe_code)]
-unsafe impl Send for Tree {}
-
-#[allow(unsafe_code)]
-unsafe impl Sync for Tree {}
-
 impl Tree {
     #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
@@ -813,7 +807,7 @@ impl Tree {
     #[allow(clippy::used_underscore_binding)]
     pub async fn flush_async(&self) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
-        if let Some(result) = threadpool::spawn(move || pagecache.flush()).await
+        if let Some(result) = threadpool::spawn(move || pagecache.flush())?.await
         {
             result
         } else {
@@ -1517,12 +1511,12 @@ impl Tree {
         Ok(())
     }
 
-    fn root_hoist<'g>(
+    fn root_hoist(
         &self,
         from: PageId,
         to: PageId,
         at: IVec,
-        guard: &'g Guard,
+        guard: &Guard,
     ) -> Result<bool> {
         M.tree_root_split_attempt();
         // hoist new root, pointing to lhs & rhs

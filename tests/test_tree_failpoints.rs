@@ -476,16 +476,16 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // the last crash, keep the value for that key corresponding to
                 // the most recent operation, and toss the rest.
                 for (_key, reference_entry) in reference.iter_mut() {
-                    if reference_entry.versions.len() > 1 {
-                        if reference_entry.crash_epoch == crash_counter {
-                            let last = std::mem::replace(
-                                &mut reference_entry.versions,
-                                Vec::new(),
-                            )
-                            .pop()
-                            .unwrap();
-                            reference_entry.versions.push(last);
-                        }
+                    if reference_entry.versions.len() > 1
+                        && reference_entry.crash_epoch == crash_counter
+                    {
+                        let last = std::mem::replace(
+                            &mut reference_entry.versions,
+                            Vec::new(),
+                        )
+                        .pop()
+                        .unwrap();
+                        reference_entry.versions.push(last);
                     }
                 }
             }
