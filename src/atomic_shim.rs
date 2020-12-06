@@ -8,17 +8,17 @@
 pub use std::sync::atomic::{AtomicI64, AtomicU64};
 #[cfg(any(target_arch = "mips", target_arch = "powerpc", feature = "mutex"))]
 mod shim {
-    use crossbeam_utils::sync::ShardedLock;
+    use parking_lot::RwLock;
     use std::sync::atomic::Ordering;
 
     #[derive(Debug, Default)]
     pub struct AtomicU64 {
-        value: ShardedLock<u64>,
+        value: RwLock<u64>,
     }
 
     impl AtomicU64 {
         pub const fn new(v: u64) -> Self {
-            Self { value: ShardedLock::new(v) }
+            Self { value: RwLock::new(v) }
         }
 
         #[allow(dead_code)]
@@ -151,12 +151,12 @@ mod shim {
 
     #[derive(Debug, Default)]
     pub struct AtomicI64 {
-        value: ShardedLock<i64>,
+        value: RwLock<i64>,
     }
 
     impl AtomicI64 {
         pub fn new(v: i64) -> Self {
-            Self { value: ShardedLock::new(v) }
+            Self { value: RwLock::new(v) }
         }
 
         #[allow(dead_code)]
