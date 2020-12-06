@@ -173,7 +173,7 @@ macro_rules! io_fail {
 
 macro_rules! testing_assert {
     ($($e:expr),*) => {
-        #[cfg(feature = "lock_free_delays")]
+        #[cfg(feature = "testing")]
         assert!($($e),*)
     };
 }
