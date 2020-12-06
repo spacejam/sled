@@ -260,7 +260,7 @@ impl TransactionalTree {
     {
         let old = self.get(key.as_ref())?;
         let mut writes = self.writes.borrow_mut();
-        let _last_write = writes.insert(key.into(), Some(value.into()));
+        let _last_write = writes.insert(key, value.into());
         Ok(old)
     }
 
