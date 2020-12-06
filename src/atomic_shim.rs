@@ -17,7 +17,7 @@ mod shim {
     }
 
     impl AtomicU64 {
-        pub fn new(v: u64) -> Self {
+        pub const fn new(v: u64) -> Self {
             Self { value: ShardedLock::new(v) }
         }
 
