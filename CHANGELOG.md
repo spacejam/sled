@@ -1,5 +1,11 @@
 # Unreleased
 
+## Breaking Changes
+
+* #1203 Snapshot files have had their on-disk
+  structure modified to facilitate the handling
+  of fuzzy snapshots.
+
 ## Bug Fixes
 
 * #1202 Fix a space leak where blobs were not

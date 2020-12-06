@@ -1,10 +1,10 @@
 use std::fs::File;
 
 use super::{
-    arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, header, iobuf,
-    lsn_to_arr, maybe_decompress, pread_exact, pread_exact_or_eof, read_blob,
-    roll_iobuf, u32_to_arr, Arc, BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs,
-    LogKind, LogOffset, Lsn, MessageKind, Reservation, Serialize, Snapshot,
+    arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, decompress, header,
+    iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof, read_blob, roll_iobuf,
+    u32_to_arr, Arc, BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind,
+    LogOffset, Lsn, MessageKind, Reservation, Serialize, Snapshot,
     BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
     MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
 };
@@ -59,7 +59,12 @@ impl Log {
         if ptr.is_inline() {
             iobuf::make_durable(&self.iobufs, lsn)?;
             let f = &self.config.file;
-            read_message(&**f, ptr.lid(), expected_segment_number, &self.config)
+            read_message(
+                &**f,
+                ptr.lid().unwrap(),
+                expected_segment_number,
+                &self.config,
+            )
         } else {
             // we short-circuit the inline read
             // here because it might not still
@@ -830,11 +835,8 @@ pub(crate) fn read_message<R: ReadAt>(
         | MessageKind::Free
         | MessageKind::Counter => {
             trace!("read a successful inline message");
-            let buf = if config.use_compression {
-                maybe_decompress(buf)?
-            } else {
-                buf
-            };
+            let buf =
+                if config.use_compression { decompress(buf) } else { buf };
 
             Ok(LogRead::Inline(header, buf, inline_len))
         }
