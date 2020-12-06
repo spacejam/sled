@@ -1,3 +1,10 @@
+# Unreleased
+
+## Bug Fixes
+
+* #1202 Fix a space leak where blobs were not
+  removed when replaced by another blob.
+
 # 0.34.6
 
 ## Improvements

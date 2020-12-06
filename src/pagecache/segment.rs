@@ -764,7 +764,10 @@ impl SegmentAccountant {
         // the underlying blob, as is the case with a single Blob
         // with nothing else.
         let schedule_rm_blob = !(old_cache_infos.len() == 1
-            && old_cache_infos[0].pointer.is_blob());
+            && old_cache_infos[0].pointer.is_blob()
+            && new_cache_info.pointer.is_blob()
+            && old_cache_infos[0].pointer.blob().1
+                == new_cache_info.pointer.blob().1);
 
         let mut removals = FastMap8::default();
 
