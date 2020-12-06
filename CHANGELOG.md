@@ -2,6 +2,8 @@
 
 ## Breaking Changes
 
+* The "no_metrics" anti-feature has been replaced with
+  the "metrics" positive feature.
 * #1203 Snapshot files have had their on-disk
   structure modified to facilitate the handling
   of fuzzy snapshots.

@@ -1,15 +1,18 @@
 #![allow(unused_results)]
 #![allow(clippy::print_stdout)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::float_arithmetic)]
 
 use std::sync::atomic::AtomicUsize;
 
 #[cfg(not(target_arch = "x86_64"))]
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "no_metrics")]
+#[cfg(not(feature = "metrics"))]
 use std::marker::PhantomData;
 
-#[cfg(not(feature = "no_metrics"))]
+#[cfg(feature = "metrics")]
 use std::sync::atomic::Ordering::{Acquire, Relaxed};
 
 use crate::Lazy;
@@ -22,7 +25,7 @@ pub static M: Lazy<Metrics, fn() -> Metrics> = Lazy::new(Metrics::default);
 
 #[allow(clippy::cast_precision_loss)]
 pub(crate) fn clock() -> u64 {
-    if cfg!(feature = "no_metrics") {
+    if cfg!(not(feature = "metrics")) {
         0
     } else {
         #[cfg(target_arch = "x86_64")]
@@ -45,7 +48,7 @@ pub(crate) fn clock() -> u64 {
 pub(crate) fn uptime() -> Duration {
     static START: Lazy<Instant, fn() -> Instant> = Lazy::new(Instant::now);
 
-    if cfg!(feature = "no_metrics") {
+    if cfg!(not(feature = "metrics")) {
         Duration::new(0, 0)
     } else {
         START.elapsed()
@@ -54,23 +57,26 @@ pub(crate) fn uptime() -> Duration {
 
 /// Measure the duration of an event, and call `Histogram::measure()`.
 pub struct Measure<'h> {
-    _start: u64,
-    #[cfg(not(feature = "no_metrics"))]
+    #[cfg(feature = "metrics")]
+    start: u64,
+    #[cfg(feature = "metrics")]
     histo: &'h Histogram,
-    #[cfg(feature = "no_metrics")]
+    #[cfg(not(feature = "metrics"))]
     _pd: PhantomData<&'h ()>,
 }
 
 impl<'h> Measure<'h> {
     /// The time delta from ctor to dtor is recorded in `histo`.
     #[inline]
-    pub fn new(_histo: &'h Histogram) -> Measure<'h> {
+    #[allow(unused_variables)]
+    pub fn new(histo: &'h Histogram) -> Measure<'h> {
         Measure {
-            #[cfg(feature = "no_metrics")]
+            #[cfg(not(feature = "metrics"))]
             _pd: PhantomData,
-            #[cfg(not(feature = "no_metrics"))]
-            histo: _histo,
-            _start: clock(),
+            #[cfg(feature = "metrics")]
+            histo,
+            #[cfg(feature = "metrics")]
+            start: clock(),
         }
     }
 }
@@ -78,8 +84,8 @@ impl<'h> Measure<'h> {
 impl<'h> Drop for Measure<'h> {
     #[inline]
     fn drop(&mut self) {
-        #[cfg(not(feature = "no_metrics"))]
-        self.histo.measure(clock() - self._start);
+        #[cfg(feature = "metrics")]
+        self.histo.measure(clock() - self.start);
     }
 }
 
@@ -141,7 +147,7 @@ pub struct Metrics {
     pub allocated_bytes: CachePadded<AtomicUsize>,
 }
 
-#[cfg(not(feature = "no_metrics"))]
+#[cfg(feature = "metrics")]
 impl Metrics {
     #[inline]
     pub fn tree_looped(&self) {
@@ -374,7 +380,7 @@ impl Metrics {
     }
 }
 
-#[cfg(feature = "no_metrics")]
+#[cfg(not(feature = "metrics"))]
 impl Metrics {
     pub const fn log_reservation_attempted(&self) {}
 
