@@ -289,9 +289,6 @@ impl<'g> Deref for NodeView<'g> {
     }
 }
 
-unsafe impl<'g> Send for NodeView<'g> {}
-unsafe impl<'g> Sync for NodeView<'g> {}
-
 #[derive(Debug, Clone, Copy)]
 pub struct MetaView<'g>(PageView<'g>);
 
@@ -302,17 +299,11 @@ impl<'g> Deref for MetaView<'g> {
     }
 }
 
-unsafe impl<'g> Send for MetaView<'g> {}
-unsafe impl<'g> Sync for MetaView<'g> {}
-
 #[derive(Debug, Clone, Copy)]
 pub struct PageView<'g> {
     pub(crate) read: Shared<'g, Page>,
     pub(crate) entry: &'g Atomic<Page>,
 }
-
-unsafe impl<'g> Send for PageView<'g> {}
-unsafe impl<'g> Sync for PageView<'g> {}
 
 impl<'g> Deref for PageView<'g> {
     type Target = Page;
@@ -511,10 +502,6 @@ pub struct PageCache {
     snapshot_min_lsn: Arc<AtomicLsn>,
     was_recovered: bool,
 }
-
-unsafe impl Send for PageCache {}
-
-unsafe impl Sync for PageCache {}
 
 impl Debug for PageCache {
     fn fmt(

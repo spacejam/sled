@@ -120,12 +120,6 @@ impl Deref for Tree {
     }
 }
 
-#[allow(unsafe_code)]
-unsafe impl Send for Tree {}
-
-#[allow(unsafe_code)]
-unsafe impl Sync for Tree {}
-
 impl Tree {
     #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]

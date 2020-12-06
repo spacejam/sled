@@ -786,12 +786,6 @@ pub struct RunningConfig {
     pub(crate) file: Arc<File>,
 }
 
-#[allow(unsafe_code)]
-unsafe impl Send for RunningConfig {}
-
-#[allow(unsafe_code)]
-unsafe impl Sync for RunningConfig {}
-
 impl Deref for RunningConfig {
     type Target = Config;
 

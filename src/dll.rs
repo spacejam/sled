@@ -39,6 +39,8 @@ pub struct DoublyLinkedList {
     len: usize,
 }
 
+unsafe impl Send for DoublyLinkedList {}
+
 impl Drop for DoublyLinkedList {
     fn drop(&mut self) {
         let mut cursor = self.head;

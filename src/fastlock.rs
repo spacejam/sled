@@ -42,6 +42,12 @@ pub struct FastLock<T> {
     inner: UnsafeCell<T>,
 }
 
+#[allow(unsafe_code)]
+unsafe impl<T: Send> Sync for FastLock<T> {}
+
+#[allow(unsafe_code)]
+unsafe impl<T: Send> Send for FastLock<T> {}
+
 impl<T> FastLock<T> {
     pub fn new(inner: T) -> FastLock<T> {
         FastLock { lock: AtomicBool::new(false), inner: UnsafeCell::new(inner) }
@@ -54,6 +60,10 @@ impl<T> FastLock<T> {
         // otherwise the current value. If we succeed, it should return false.
         let success = !lock_result;
 
-        if success { Some(FastLockGuard { mu: self }) } else { None }
+        if success {
+            Some(FastLockGuard { mu: self })
+        } else {
+            None
+        }
     }
 }
