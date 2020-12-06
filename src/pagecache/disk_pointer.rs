@@ -30,17 +30,17 @@ impl DiskPtr {
 
     pub(crate) fn is_blob(&self) -> bool {
         match self {
-            DiskPtr::Blob(_, _) => true,
             DiskPtr::Inline(_) => false,
+            DiskPtr::Blob(_, _) => true,
         }
     }
 
     pub(crate) fn blob(&self) -> (Option<LogOffset>, BlobPointer) {
         match self {
-            DiskPtr::Blob(lid, ptr) => (lid.map(|l| l.get()), *ptr),
             DiskPtr::Inline(_) => {
                 panic!("blob called on Internal disk pointer")
             }
+            DiskPtr::Blob(lid, ptr) => (lid.map(|l| l.get()), *ptr),
         }
     }
 
@@ -55,16 +55,20 @@ impl DiskPtr {
     #[doc(hidden)]
     pub fn lid(&self) -> Option<LogOffset> {
         match self {
-            DiskPtr::Blob(lid, _) => lid.map(|l| l.get()),
             DiskPtr::Inline(lid) => Some(*lid),
+            DiskPtr::Blob(lid, _) => lid.map(|l| l.get()),
         }
     }
 
     pub(crate) fn forget_blob_log_coordinates(&mut self) {
         match self {
-            DiskPtr::Blob(ref mut opt, _blob_pointer) => *opt = None,
             DiskPtr::Inline(_) => {}
+            DiskPtr::Blob(ref mut opt, _blob_pointer) => *opt = None,
         }
+    }
+
+    pub(crate) fn blob_pointer_merged_into_snapshot(&self) -> bool {
+        if let DiskPtr::Blob(None, _) = self { true } else { false }
     }
 }
 

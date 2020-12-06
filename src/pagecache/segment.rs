@@ -745,8 +745,12 @@ impl SegmentAccountant {
         new_cache_info: CacheInfo,
     ) -> Result<()> {
         let _measure = Measure::new(&M.accountant_mark_replace);
-        self.mark_link(pid, new_cache_info);
-        let lsn = new_cache_info.lsn;
+
+        if !new_cache_info.pointer.blob_pointer_merged_into_snapshot() {
+            self.mark_link(pid, new_cache_info);
+        }
+
+        let lsn = self.config.normalize(new_cache_info.lsn);
 
         trace!(
             "mark_replace pid {} from cache infos {:?} to cache info {:?} with lsn {}",
@@ -764,7 +768,10 @@ impl SegmentAccountant {
         // the underlying blob, as is the case with a single Blob
         // with nothing else.
         let schedule_rm_blob = !(old_cache_infos.len() == 1
-            && old_cache_infos[0].pointer.is_blob());
+            && old_cache_infos[0].pointer.is_blob()
+            && new_cache_info.pointer.is_blob()
+            && old_cache_infos[0].pointer.original_lsn()
+            == new_cache_info.pointer.original_lsn());
 
         let mut removals = FastMap8::default();
 
@@ -803,7 +810,7 @@ impl SegmentAccountant {
                 lsn,
                 usize::try_from(replaced_size).unwrap(),
             );
-            self.possibly_clean_or_free_segment(old_idx, new_cache_info.lsn)?;
+            self.possibly_clean_or_free_segment(old_idx, lsn)?;
         }
 
         Ok(())
