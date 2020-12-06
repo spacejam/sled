@@ -167,16 +167,11 @@ impl Drop for Flusher {
             let _notified = self.sc.notify_all();
         }
 
-        #[cfg(feature = "testing")]
-        {
-            let mut count = 0;
-        }
+        #[allow(unused_variables)]
+        let mut count = 0;
         while !shutdown.is_shutdown() {
             let _ = self.sc.wait_for(&mut shutdown, Duration::from_millis(100));
-            #[cfg(feature = "testing")]
-            {
-                count += 1;
-            }
+            count += 1;
 
             testing_assert!(count < 5);
         }
