@@ -29,6 +29,9 @@
 #![allow(unused_results)]
 #![allow(clippy::print_stdout)]
 #![allow(clippy::float_arithmetic)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_sign_loss)]
 
 use std::convert::TryFrom;
 use std::fmt::{self, Debug};

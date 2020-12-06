@@ -1,5 +1,8 @@
 #![allow(unused_results)]
 #![allow(clippy::print_stdout)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::float_arithmetic)]
 
 use std::sync::atomic::AtomicUsize;
 
@@ -54,7 +57,8 @@ pub(crate) fn uptime() -> Duration {
 
 /// Measure the duration of an event, and call `Histogram::measure()`.
 pub struct Measure<'h> {
-    _start: u64,
+    #[cfg(feature = "metrics")]
+    start: u64,
     #[cfg(feature = "metrics")]
     histo: &'h Histogram,
     #[cfg(not(feature = "metrics"))]
@@ -64,13 +68,15 @@ pub struct Measure<'h> {
 impl<'h> Measure<'h> {
     /// The time delta from ctor to dtor is recorded in `histo`.
     #[inline]
-    pub fn new(_histo: &'h Histogram) -> Measure<'h> {
+    #[allow(unused_variables)]
+    pub fn new(histo: &'h Histogram) -> Measure<'h> {
         Measure {
             #[cfg(not(feature = "metrics"))]
             _pd: PhantomData,
             #[cfg(feature = "metrics")]
-            histo: _histo,
-            _start: clock(),
+            histo,
+            #[cfg(feature = "metrics")]
+            start: clock(),
         }
     }
 }
@@ -79,7 +85,7 @@ impl<'h> Drop for Measure<'h> {
     #[inline]
     fn drop(&mut self) {
         #[cfg(feature = "metrics")]
-        self.histo.measure(clock() - self._start);
+        self.histo.measure(clock() - self.start);
     }
 }
 
