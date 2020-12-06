@@ -1,13 +1,5 @@
 #![allow(unused_results)]
 
-#[cfg(not(feature = "testing"))]
-use std::collections::HashMap as Map;
-
-// we avoid HashMap while testing because
-// it makes tests non-deterministic
-#[cfg(feature = "testing")]
-use std::collections::BTreeMap as Map;
-
 use super::*;
 
 /// A batch of updates that will

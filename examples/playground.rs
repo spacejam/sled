@@ -13,10 +13,10 @@ fn basic() -> Result<()> {
 
     // set and get
     db.insert(k.clone(), v1.clone())?;
-    assert_eq!(db.get(&k).unwrap().unwrap(), (v1.clone()));
+    assert_eq!(db.get(&k).unwrap().unwrap(), (v1));
 
     // compare and swap
-    match db.compare_and_swap(k.clone(), Some(&v1.clone()), Some(v2.clone()))? {
+    match db.compare_and_swap(k.clone(), Some(&v1), Some(v2.clone()))? {
         Ok(()) => println!("it worked!"),
         Err(sled::CompareAndSwapError { current: cur, proposed: _ }) => {
             println!("the actual current value is {:?}", cur)
@@ -26,8 +26,8 @@ fn basic() -> Result<()> {
     // scan forward
     let mut iter = db.range(k.as_slice()..);
     let (k1, v1) = iter.next().unwrap().unwrap();
-    assert_eq!(v1, v2.clone());
-    assert_eq!(k1, k.clone());
+    assert_eq!(v1, v2);
+    assert_eq!(k1, k);
     assert_eq!(iter.next(), None);
 
     // deletion
@@ -43,7 +43,7 @@ fn merge_operator() -> Result<()> {
         merged_bytes: &[u8],      // the new bytes being merged in
     ) -> Option<Vec<u8>> {
         // set the new value, return None to delete
-        let mut ret = old_value.map_or_else(|| vec![], |ov| ov.to_vec());
+        let mut ret = old_value.map_or_else(Vec::new, |ov| ov.to_vec());
 
         ret.extend_from_slice(merged_bytes);
 

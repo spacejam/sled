@@ -129,7 +129,6 @@
     // clippy::missing_const_for_fn,
     // clippy::missing_docs_in_private_items,
     clippy::module_name_repetitions,
-    clippy::multiple_crate_versions,
     clippy::multiple_inherent_impl,
     clippy::mut_mut,
     clippy::needless_borrow,
@@ -155,6 +154,7 @@
     // clippy::wildcard_enum_match_arm,
     clippy::wrong_pub_self_convention,
 )]
+#![warn(clippy::multiple_crate_versions)]
 #![allow(clippy::mem_replace_with_default)] // Not using std::mem::take() due to MSRV of 1.37 (intro'd in 1.40)
 #![allow(clippy::match_like_matches_macro)] // Not using std::matches! due to MSRV of 1.37 (intro'd in 1.42)
 
@@ -173,7 +173,7 @@ macro_rules! io_fail {
 
 macro_rules! testing_assert {
     ($($e:expr),*) => {
-        #[cfg(feature = "lock_free_delays")]
+        #[cfg(feature = "testing")]
         assert!($($e),*)
     };
 }
@@ -228,17 +228,17 @@ pub mod doc;
     ))
 ))]
 mod threadpool {
-    use super::OneShot;
+    use super::{OneShot, Result};
 
     /// Just execute a task without involving threads.
-    pub fn spawn<F, R>(work: F) -> OneShot<R>
+    pub fn spawn<F, R>(work: F) -> Result<OneShot<R>>
     where
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
         let (promise_filler, promise) = OneShot::pair();
         promise_filler.fill((work)());
-        return promise;
+        Ok(promise)
     }
 }
 
@@ -420,18 +420,34 @@ pub(crate) enum Link {
 
 /// A fast map that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
+#[cfg(not(feature = "testing"))]
 pub(crate) type FastMap8<K, V> = std::collections::HashMap<
     K,
     V,
     std::hash::BuildHasherDefault<fxhash::FxHasher64>,
 >;
 
+#[cfg(feature = "testing")]
+pub(crate) type FastMap8<K, V> = BTreeMap<K, V>;
+
 /// A fast set that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
+#[cfg(not(feature = "testing"))]
 pub(crate) type FastSet8<V> = std::collections::HashSet<
     V,
     std::hash::BuildHasherDefault<fxhash::FxHasher64>,
 >;
+
+#[cfg(feature = "testing")]
+pub(crate) type FastSet8<V> = std::collections::BTreeSet<V>;
+
+#[cfg(not(feature = "testing"))]
+use std::collections::HashMap as Map;
+
+// we avoid HashMap while testing because
+// it makes tests non-deterministic
+#[cfg(feature = "testing")]
+use std::collections::{BTreeMap as Map, BTreeSet as Set};
 
 /// A function that may be configured on a particular shared `Tree`
 /// that will be applied as a kind of read-modify-write operator

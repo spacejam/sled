@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, io};
+use std::{collections::BTreeMap, io, num::NonZeroU64};
 
 use super::{
     pread_exact_or_eof, read_message, read_segment_header, BasedBuf, DiskPtr,
@@ -88,7 +88,10 @@ impl Iterator for LogIter {
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
-                        DiskPtr::Blob(lid, blob_ptr),
+                        DiskPtr::Blob(
+                            Some(NonZeroU64::new(lid).unwrap()),
+                            blob_ptr,
+                        ),
                         u64::from(inline_len),
                     ));
                 }
@@ -334,8 +337,7 @@ fn scan_segment_headers_and_tail(
     );
 
     // scatter
-    let header_promises: Vec<OneShot<Option<(LogOffset, SegmentHeader)>>> = (0
-        ..segments)
+    let header_promises_res: Result<Vec<_>> = (0..segments)
         .map({
             // let config = config.clone();
             move |idx| {
@@ -346,6 +348,8 @@ fn scan_segment_headers_and_tail(
             }
         })
         .collect();
+
+    let header_promises = header_promises_res?;
 
     // gather
     let mut headers: Vec<(LogOffset, SegmentHeader)> = vec![];
@@ -389,7 +393,7 @@ fn scan_segment_headers_and_tail(
             max_header_stable_lsn,
             &ordering,
             config,
-        )?;
+        );
 
     Ok((ordering, end_of_last_contiguous_message_in_unstable_tail))
 }
@@ -403,7 +407,7 @@ fn check_contiguity_in_unstable_tail(
     max_header_stable_lsn: Lsn,
     ordering: &BTreeMap<Lsn, LogOffset>,
     config: &RunningConfig,
-) -> Result<Lsn> {
+) -> Lsn {
     let segment_size = config.segment_size as Lsn;
 
     // -1..(2 *  segment_size) - 1 => 0
@@ -459,7 +463,7 @@ fn check_contiguity_in_unstable_tail(
         end_of_last_message,
     );
 
-    Ok(end_of_last_message)
+    end_of_last_message
 }
 
 /// Returns a log iterator, the max stable lsn,

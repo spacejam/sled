@@ -477,11 +477,7 @@ impl Serialize for Option<i64> {
 
 fn shift_i64_opt(value_opt: &Option<i64>) -> i64 {
     if let Some(value) = value_opt {
-        if value.signum() == -1 {
-            *value
-        } else {
-            value + 1
-        }
+        if value.signum() == -1 { *value } else { value + 1 }
     } else {
         0
     }
@@ -499,7 +495,8 @@ fn unshift_i64_opt(value: i64) -> Option<i64> {
 
 impl Serialize for Snapshot {
     fn serialized_size(&self) -> u64 {
-        self.stable_lsn.serialized_size()
+        self.max_fuzzy_lsn.serialized_size()
+            + self.stable_lsn.serialized_size()
             + self.active_segment.serialized_size()
             + self
                 .pt
@@ -509,6 +506,7 @@ impl Serialize for Snapshot {
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
+        self.max_fuzzy_lsn.serialize_into(buf);
         self.stable_lsn.serialize_into(buf);
         self.active_segment.serialize_into(buf);
         for page_state in &self.pt {
@@ -518,6 +516,7 @@ impl Serialize for Snapshot {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         Ok(Snapshot {
+            max_fuzzy_lsn: Serialize::deserialize(buf)?,
             stable_lsn: Serialize::deserialize(buf)?,
             active_segment: Serialize::deserialize(buf)?,
             pt: deserialize_sequence(buf)?,
@@ -640,7 +639,10 @@ impl Serialize for DiskPtr {
         *buf = &buf[1..];
         Ok(match discriminant {
             0 => DiskPtr::Inline(u64::deserialize(buf)?),
-            1 => DiskPtr::Blob(u64::deserialize(buf)?, i64::deserialize(buf)?),
+            1 => DiskPtr::Blob(
+                Serialize::deserialize(buf)?,
+                i64::deserialize(buf)?,
+            ),
             _ => return Err(Error::corruption(None)),
         })
     }
@@ -991,6 +993,7 @@ mod qc {
     impl Arbitrary for Snapshot {
         fn arbitrary<G: Gen>(g: &mut G) -> Snapshot {
             Snapshot {
+                max_fuzzy_lsn: g.gen(),
                 stable_lsn: g.gen(),
                 active_segment: g.gen(),
                 pt: Arbitrary::arbitrary(g),
@@ -1020,11 +1023,11 @@ mod qc {
         }
     }
 
-    fn prop_serialize<T>(item: T) -> bool
+    fn prop_serialize<T>(item: &T) -> bool
     where
         T: Serialize + PartialEq + Clone + std::fmt::Debug,
     {
-        let mut buf = vec![0; item.serialized_size() as usize];
+        let mut buf = vec![0; usize::try_from(item.serialized_size()).unwrap()];
         let buf_ref = &mut buf.as_mut_slice();
         item.serialize_into(buf_ref);
         assert_eq!(
@@ -1032,79 +1035,79 @@ mod qc {
             0,
             "round-trip failed to consume produced bytes"
         );
-        assert_eq!(buf.len(), item.serialized_size() as usize,);
+        assert_eq!(buf.len() as u64, item.serialized_size());
         let deserialized = T::deserialize(&mut buf.as_slice()).unwrap();
-        if item != deserialized {
+        if *item == deserialized {
+            true
+        } else {
             eprintln!(
                 "round-trip serialization failed. original:\n\n{:?}\n\n \
                  deserialized(serialized(original)):\n\n{:?}",
                 item, deserialized
             );
             false
-        } else {
-            true
         }
     }
 
     quickcheck::quickcheck! {
         #[cfg_attr(miri, ignore)]
         fn bool(item: bool) -> bool {
-            prop_serialize(item)
+            prop_serialize(&item)
         }
 
         #[cfg_attr(miri, ignore)]
         fn u8(item: u8) -> bool {
-            prop_serialize(item)
+            prop_serialize(&item)
         }
 
         #[cfg_attr(miri, ignore)]
         fn i64(item: SpreadI64) -> bool {
-            prop_serialize(item.0)
+            prop_serialize(&item.0)
         }
 
         #[cfg_attr(miri, ignore)]
         fn u64(item: SpreadU64) -> bool {
-            prop_serialize(item.0)
+            prop_serialize(&item.0)
         }
 
         #[cfg_attr(miri, ignore)]
         fn disk_ptr(item: DiskPtr) -> bool {
-            prop_serialize(item)
+            prop_serialize(&item)
         }
 
         #[cfg_attr(miri, ignore)]
         fn page_state(item: PageState) -> bool {
-            prop_serialize(item)
+            prop_serialize(&item)
         }
 
         #[cfg_attr(miri, ignore)]
         fn meta(item: Meta) -> bool {
-            prop_serialize(item)
+            prop_serialize(&item)
         }
 
         #[cfg_attr(miri, ignore)]
         fn snapshot(item: Snapshot) -> bool {
-            prop_serialize(item)
+            prop_serialize(&item)
         }
 
         #[cfg_attr(miri, ignore)]
         fn node(item: Node) -> bool {
-            prop_serialize(item)
+            prop_serialize(&item)
         }
 
         #[cfg_attr(miri, ignore)]
         fn data(item: Data) -> bool {
-            prop_serialize(item)
+            prop_serialize(&item)
         }
 
         #[cfg_attr(miri, ignore)]
         fn link(item: Link) -> bool {
-            prop_serialize(item)
+            prop_serialize(&item)
         }
 
         #[cfg_attr(miri, ignore)]
         fn msg_header(item: MessageHeader) -> bool {
-            prop_serialize(item)
+            prop_serialize(&item)
         }
     }
 
@@ -1122,6 +1125,6 @@ mod qc {
             data: Data::Index(Index::default()),
         };
 
-        prop_serialize(node);
+        prop_serialize(&node);
     }
 }

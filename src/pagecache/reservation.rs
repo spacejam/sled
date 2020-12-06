@@ -82,7 +82,7 @@ impl<'a> Reservation<'a> {
     pub fn mark_writebatch(self, peg_lsn: Lsn) -> Result<(Lsn, DiskPtr)> {
         trace!(
             "writing batch required stable lsn {} into \
-             BatchManifest at lid {} peg_lsn {}",
+             BatchManifest at lid {:?} peg_lsn {}",
             peg_lsn,
             self.pointer.lid(),
             self.lsn

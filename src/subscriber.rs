@@ -11,14 +11,14 @@ use std::{
 
 #[cfg(not(feature = "testing"))]
 use std::collections::hash_map::{
-    HashMap as Map, IntoIter as MapIntoIter, Iter as MapIter, Keys as MapKeys,
+    IntoIter as MapIntoIter, Iter as MapIter, Keys as MapKeys,
 };
 
 // we avoid HashMap while testing because
 // it makes tests non-deterministic
 #[cfg(feature = "testing")]
 use std::collections::btree_map::{
-    BTreeMap as Map, IntoIter as MapIntoIter, Iter as MapIter, Keys as MapKeys,
+    IntoIter as MapIntoIter, Iter as MapIter, Keys as MapKeys,
 };
 
 use crate::*;
@@ -441,17 +441,11 @@ fn basic_subscriber() {
 
     let k2: IVec = vec![].into();
     let r2 = subs.reserve(&k2).unwrap();
-    r2.complete(&Event::Insert {
-        key: k2.clone(),
-        value: IVec::from(k2.clone()),
-    });
+    r2.complete(&Event::Insert { key: k2.clone(), value: k2.clone() });
 
     let k3: IVec = vec![0].into();
     let r3 = subs.reserve(&k3).unwrap();
-    r3.complete(&Event::Insert {
-        key: k3.clone(),
-        value: IVec::from(k3.clone()),
-    });
+    r3.complete(&Event::Insert { key: k3.clone(), value: k3.clone() });
 
     let k4: IVec = vec![0, 1].into();
     let r4 = subs.reserve(&k4).unwrap();
@@ -459,10 +453,7 @@ fn basic_subscriber() {
 
     let k5: IVec = vec![0, 1, 2].into();
     let r5 = subs.reserve(&k5).unwrap();
-    r5.complete(&Event::Insert {
-        key: k5.clone(),
-        value: IVec::from(k5.clone()),
-    });
+    r5.complete(&Event::Insert { key: k5.clone(), value: k5.clone() });
 
     let k6: IVec = vec![1, 1, 2].into();
     let r6 = subs.reserve(&k6).unwrap();
@@ -474,10 +465,7 @@ fn basic_subscriber() {
 
     let k8: IVec = vec![1, 2, 2].into();
     let r8 = subs.reserve(&k8).unwrap();
-    r8.complete(&Event::Insert {
-        key: k8.clone(),
-        value: IVec::from(k8.clone()),
-    });
+    r8.complete(&Event::Insert { key: k8.clone(), value: k8.clone() });
 
     assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k2);
     assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k3);

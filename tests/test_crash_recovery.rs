@@ -29,8 +29,8 @@ const TX_DIR: &str = "crash_tx";
 const CRASH_CHANCE: u32 = 250;
 
 fn main() {
-    // Don't actually run this harness=false test under miri, as it requires spawning and killing
-    // child processes.
+    // Don't actually run this harness=false test under miri, as it requires
+    // spawning and killing child processes.
     if cfg!(miri) {
         return;
     }
@@ -75,7 +75,7 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     let mut lowest = 0;
     for res in iter {
         let (_k, v) = res.unwrap();
-        if &v[..4] == &highest_vec[..4] {
+        if v[..4] == highest_vec[..4] {
             contiguous += 1;
         } else {
             let expected = if highest == 0 {
@@ -238,12 +238,9 @@ fn run() {
         .path(RECOVERY_DIR.to_string())
         .segment_size(SEGMENT_SIZE);
 
-    match thread::spawn(|| run_inner(config)).join() {
-        Err(e) => {
-            println!("worker thread failed: {:?}", e);
-            std::process::exit(15);
-        }
-        _ => {}
+    if let Err(e) = thread::spawn(|| run_inner(config)).join() {
+        println!("worker thread failed: {:?}", e);
+        std::process::exit(15);
     }
 }
 
@@ -270,12 +267,9 @@ fn run_batches() {
         spawn_killah();
     }
 
-    match t1.join().and_then(|_| t2.join()) {
-        Err(e) => {
-            println!("worker thread failed: {:?}", e);
-            std::process::exit(15);
-        }
-        _ => {}
+    if let Err(e) = t1.join().and_then(|_| t2.join()) {
+        println!("worker thread failed: {:?}", e);
+        std::process::exit(15);
     }
 }
 
@@ -288,10 +282,9 @@ fn run_child_process(test_name: &str) -> Child {
         .env(TEST_ENV_VAR, test_name)
         .env("SLED_CRASH_CHANCE", CRASH_CHANCE.to_string())
         .spawn()
-        .expect(&format!(
-            "could not spawn child process for {} test",
-            test_name
-        ))
+        .unwrap_or_else(|_| {
+            panic!("could not spawn child process for {} test", test_name)
+        })
 }
 
 fn handle_child_exit_status(dir: &str, status: ExitStatus) {
@@ -516,8 +509,6 @@ fn run_iter() {
     let deleter = thread::Builder::new()
         .name("deleter".into())
         .spawn({
-            let t = t.clone();
-            let barrier = barrier.clone();
             move || {
                 barrier.wait();
 

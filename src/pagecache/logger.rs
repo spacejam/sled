@@ -1,8 +1,8 @@
 use std::fs::File;
 
 use super::{
-    arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, iobuf, lsn_to_arr,
-    maybe_decompress, pread_exact, pread_exact_or_eof, read_blob, roll_iobuf,
+    arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, decompress, header,
+    iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof, read_blob, roll_iobuf,
     u32_to_arr, Arc, BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind,
     LogOffset, Lsn, MessageKind, Reservation, Serialize, Snapshot,
     BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
@@ -59,7 +59,12 @@ impl Log {
         if ptr.is_inline() {
             iobuf::make_durable(&self.iobufs, lsn)?;
             let f = &self.config.file;
-            read_message(&**f, ptr.lid(), expected_segment_number, &self.config)
+            read_message(
+                &**f,
+                ptr.lid().unwrap(),
+                expected_segment_number,
+                &self.config,
+            )
         } else {
             // we short-circuit the inline read
             // here because it might not still
@@ -228,12 +233,12 @@ impl Log {
             // load current header value
             let iobuf = self.iobufs.current_iobuf();
             let header = iobuf.get_header();
-            let buf_offset = iobuf::offset(header);
+            let buf_offset = header::offset(header);
             let reservation_lsn =
                 iobuf.lsn + Lsn::try_from(buf_offset).unwrap();
 
             // skip if already sealed
-            if iobuf::is_sealed(header) {
+            if header::is_sealed(header) {
                 // already sealed, start over and hope cur
                 // has already been bumped by sealer.
                 trace_once!("io buffer already sealed, spinning");
@@ -300,19 +305,19 @@ impl Log {
             }
 
             // attempt to claim by incrementing an unsealed header
-            let bumped_offset = iobuf::bump_offset(header, inline_buf_len);
+            let bumped_offset = header::bump_offset(header, inline_buf_len);
 
             // check for maxed out IO buffer writers
-            if iobuf::n_writers(bumped_offset) == iobuf::MAX_WRITERS {
+            if header::n_writers(bumped_offset) == header::MAX_WRITERS {
                 trace_once!(
                     "spinning because our buffer has {} writers already",
-                    iobuf::MAX_WRITERS
+                    header::MAX_WRITERS
                 );
                 backoff.snooze();
                 continue;
             }
 
-            let claimed = iobuf::incr_writers(bumped_offset);
+            let claimed = header::incr_writers(bumped_offset);
 
             if iobuf.cas_header(header, claimed).is_err() {
                 // CAS failed, start over
@@ -325,10 +330,10 @@ impl Log {
 
             // if we're giving out a reservation,
             // the writer count should be positive
-            assert_ne!(iobuf::n_writers(claimed), 0);
+            assert_ne!(header::n_writers(claimed), 0);
 
             // should never have claimed a sealed buffer
-            assert!(!iobuf::is_sealed(claimed));
+            assert!(!header::is_sealed(claimed));
 
             // MAX is used to signify unreadiness of
             // the underlying IO buffer, and if it's
@@ -400,7 +405,7 @@ impl Log {
 
         // Decrement writer count, retrying until successful.
         loop {
-            let new_hv = iobuf::decr_writers(header);
+            let new_hv = header::decr_writers(header);
             match iobuf.cas_header(header, new_hv) {
                 Ok(new) => {
                     header = new;
@@ -415,7 +420,7 @@ impl Log {
 
         // Succeeded in decrementing writers, if we decremented writn
         // to 0 and it's sealed then we should write it to storage.
-        if iobuf::n_writers(header) == 0 && iobuf::is_sealed(header) {
+        if header::n_writers(header) == 0 && header::is_sealed(header) {
             if let Err(e) = self.config.global_error() {
                 let intervals = self.iobufs.intervals.lock();
 
@@ -443,7 +448,7 @@ impl Log {
                     );
                     iobufs.config.set_global_error(e);
                 }
-            });
+            })?;
 
             Ok(())
         } else {
@@ -830,11 +835,8 @@ pub(crate) fn read_message<R: ReadAt>(
         | MessageKind::Free
         | MessageKind::Counter => {
             trace!("read a successful inline message");
-            let buf = if config.use_compression {
-                maybe_decompress(buf)?
-            } else {
-                buf
-            };
+            let buf =
+                if config.use_compression { decompress(buf) } else { buf };
 
             Ok(LogRead::Inline(header, buf, inline_len))
         }
