@@ -771,7 +771,7 @@ impl SegmentAccountant {
             && old_cache_infos[0].pointer.is_blob()
             && new_cache_info.pointer.is_blob()
             && old_cache_infos[0].pointer.original_lsn()
-            == new_cache_info.pointer.original_lsn());
+                == new_cache_info.pointer.original_lsn());
 
         let mut removals = FastMap8::default();
 
