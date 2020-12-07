@@ -498,7 +498,7 @@ fn read_snapshot(config: &RunningConfig) -> Result<Option<Snapshot>> {
     let _read = f.read_to_end(&mut buf)?;
     let len = buf.len();
     if len <= 12 {
-        warn!("empty/corrupt snapshot file found");
+        warn!("empty/corrupt snapshot file found at path: {:?}", path);
         return Err(Error::corruption(None));
     }
 
@@ -514,7 +514,11 @@ fn read_snapshot(config: &RunningConfig) -> Result<Option<Snapshot>> {
     let crc_actual = crc32(&buf);
 
     if crc_expected != crc_actual {
-        warn!("corrupt snapshot file found, crc does not match expected");
+        warn!(
+            "corrupt snapshot file found, crc does not match expected. \
+            path: {:?}",
+            path
+        );
         return Err(Error::corruption(None));
     }
 
@@ -536,7 +540,10 @@ fn read_snapshot(config: &RunningConfig) -> Result<Option<Snapshot>> {
     Snapshot::deserialize(&mut bytes.as_slice()).map(Some)
 }
 
-fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
+pub(in crate::pagecache) fn write_snapshot(
+    config: &RunningConfig,
+    snapshot: &Snapshot,
+) -> Result<()> {
     trace!("writing snapshot {:?}", snapshot);
 
     let raw_bytes = snapshot.serialize();

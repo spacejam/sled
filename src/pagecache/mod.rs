@@ -488,19 +488,37 @@ impl Page {
 
 /// A lock-free pagecache which supports linkmented pages
 /// for dramatically improving write throughput.
-pub struct PageCache {
+#[derive(Clone)]
+pub struct PageCache(Arc<PageCacheInner>);
+
+impl Deref for PageCache {
+    type Target = PageCacheInner;
+
+    fn deref(&self) -> &PageCacheInner {
+        &self.0
+    }
+}
+
+pub struct PageCacheInner {
+    was_recovered: bool,
     pub(crate) config: RunningConfig,
     inner: PageTable,
     next_pid_to_allocate: Mutex<PageId>,
+    // needs to be a sub-Arc because we separate
+    // it for async modification in an EBR guard
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     #[doc(hidden)]
     pub log: Log,
     lru: Lru,
-    idgen: Arc<AtomicU64>,
-    idgen_persists: Arc<AtomicU64>,
-    idgen_persist_mu: Arc<Mutex<()>>,
-    snapshot_min_lsn: Arc<AtomicLsn>,
-    was_recovered: bool,
+
+    idgen: AtomicU64,
+    idgen_persists: AtomicU64,
+    idgen_persist_mu: Mutex<()>,
+
+    // fuzzy snapshot-related items
+    snapshot_min_lsn: AtomicLsn,
+    links: AtomicU64,
+    snapshot_lock: Mutex<()>,
 }
 
 impl Debug for PageCache {
@@ -517,7 +535,7 @@ impl Debug for PageCache {
 }
 
 #[cfg(feature = "event_log")]
-impl Drop for PageCache {
+impl Drop for PageCacheInner {
     fn drop(&mut self) {
         trace!("dropping pagecache");
 
@@ -555,7 +573,7 @@ impl Drop for PageCache {
 
 impl PageCache {
     /// Instantiate a new `PageCache`.
-    pub(crate) fn start(config: RunningConfig) -> Result<Self> {
+    pub(crate) fn start(config: RunningConfig) -> Result<PageCache> {
         trace!("starting pagecache");
 
         config.reset_global_error();
@@ -624,20 +642,20 @@ impl PageCache {
         let cache_capacity = config.cache_capacity;
         let lru = Lru::new(cache_capacity);
 
-        let mut pc = Self {
+        let mut pc = PageCacheInner {
+            was_recovered: false,
             config: config.clone(),
-            inner: PageTable::default(),
-            next_pid_to_allocate: Mutex::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
+            idgen: AtomicU64::new(0),
+            idgen_persist_mu: Mutex::new(()),
+            idgen_persists: AtomicU64::new(0),
+            inner: PageTable::default(),
             log: Log::start(config, &snapshot)?,
             lru,
-            idgen_persist_mu: Arc::new(Mutex::new(())),
-            idgen: Arc::new(AtomicU64::new(0)),
-            idgen_persists: Arc::new(AtomicU64::new(0)),
-            snapshot_min_lsn: Arc::new(AtomicLsn::new(
-                snapshot.stable_lsn.unwrap_or(0),
-            )),
-            was_recovered: false,
+            next_pid_to_allocate: Mutex::new(0),
+            snapshot_min_lsn: AtomicLsn::new(snapshot.stable_lsn.unwrap_or(0)),
+            links: AtomicU64::new(0),
+            snapshot_lock: Mutex::new(()),
         };
 
         // now we read it back in
@@ -732,9 +750,260 @@ impl PageCache {
 
         trace!("pagecache started");
 
-        Ok(pc)
+        Ok(PageCache(Arc::new(pc)))
     }
 
+    /// Try to atomically add a `PageLink` to the page.
+    /// Returns `Ok(new_key)` if the operation was successful. Returns
+    /// `Err(None)` if the page no longer exists. Returns
+    /// `Err(Some(actual_key))` if the atomic link fails.
+    pub(crate) fn link<'g>(
+        &self,
+        pid: PageId,
+        mut old: PageView<'g>,
+        new: Link,
+        guard: &'g Guard,
+    ) -> Result<CasResult<'g, Link>> {
+        let _measure = Measure::new(&M.link_page);
+
+        trace!("linking pid {} with {:?}", pid, new);
+
+        // A failure injector that fails links randomly
+        // during test to ensure interleaving coverage.
+        #[cfg(any(test, feature = "lock_free_delays"))]
+        {
+            use std::cell::RefCell;
+            use std::time::{SystemTime, UNIX_EPOCH};
+
+            thread_local! {
+                pub static COUNT: RefCell<u32> = RefCell::new(1);
+            }
+
+            let time_now =
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+            #[allow(clippy::cast_possible_truncation)]
+            let fail_seed = std::cmp::max(3, time_now.as_nanos() as u32 % 128);
+
+            let inject_failure = COUNT.with(|c| {
+                let mut cr = c.borrow_mut();
+                *cr += 1;
+                *cr % fail_seed == 0
+            });
+
+            if inject_failure {
+                debug!(
+                    "injecting a randomized failure in the link of pid {}",
+                    pid
+                );
+                if let Some(current_pointer) = self.get(pid, guard)? {
+                    return Ok(Err(Some((current_pointer.0, new))));
+                } else {
+                    return Ok(Err(None));
+                }
+            }
+        }
+
+        let mut node: Node = old.as_node().clone();
+        node.apply(&new);
+
+        // see if we should short-circuit replace
+        if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {
+            let short_circuit = self.replace(pid, old, node, guard)?;
+            return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
+        }
+
+        let mut new_page = Some(Owned::new(Page {
+            update: Some(Box::new(Update::Node(node))),
+            cache_infos: Vec::default(),
+        }));
+
+        loop {
+            // TODO handle replacement on threshold here instead
+
+            let log_reservation =
+                self.log.reserve(LogKind::Link, pid, &new, guard)?;
+            let lsn = log_reservation.lsn();
+            let pointer = log_reservation.pointer();
+
+            // NB the setting of the timestamp is quite
+            // correctness-critical! We use the ts to
+            // ensure that fundamentally new data causes
+            // high-level link and replace operations
+            // to fail when the data in the pagecache
+            // actually changes. When we just rewrite
+            // the page for the purposes of moving it
+            // to a new location on disk, however, we
+            // don't want to cause threads that are
+            // basing the correctness of their new
+            // writes on the unchanged state to fail.
+            // Here, we bump it by 1, to signal that
+            // the underlying state is fundamentally
+            // changing.
+            let ts = old.ts() + 1;
+
+            let cache_info = CacheInfo {
+                lsn,
+                pointer,
+                ts,
+                log_size: log_reservation.reservation_len() as u64,
+            };
+
+            let mut new_cache_infos =
+                Vec::with_capacity(old.cache_infos.len() + 1);
+            new_cache_infos.extend_from_slice(&old.cache_infos);
+            new_cache_infos.push(cache_info);
+
+            let mut page_ptr = new_page.take().unwrap();
+            page_ptr.cache_infos = new_cache_infos;
+
+            debug_delay();
+            let result =
+                old.entry.compare_and_set(old.read, page_ptr, SeqCst, guard);
+
+            match result {
+                Ok(new_shared) => {
+                    trace!("link of pid {} succeeded", pid);
+
+                    unsafe {
+                        guard.defer_destroy(old.read);
+                    }
+
+                    assert_ne!(old.last_lsn(), 0);
+
+                    self.log.iobufs.sa_mark_link(pid, cache_info, guard);
+
+                    // NB complete must happen AFTER calls to SA, because
+                    // when the iobuf's n_writers hits 0, we may transition
+                    // the segment to inactive, resulting in a race otherwise.
+                    // FIXME can result in deadlock if a node that holds SA
+                    // is waiting to acquire a new reservation blocked by this?
+                    log_reservation.complete()?;
+
+                    // possibly evict an item now that our cache has grown
+                    let total_page_size =
+                        unsafe { new_shared.deref().log_size() };
+                    let to_evict =
+                        self.lru.accessed(pid, total_page_size, guard);
+                    trace!(
+                        "accessed pid {} -> paging out pids {:?}",
+                        pid,
+                        to_evict
+                    );
+                    if !to_evict.is_empty() {
+                        self.page_out(to_evict, guard);
+                    }
+
+                    old.read = new_shared;
+
+                    let link_count = self.links.fetch_add(1, Release);
+
+                    if link_count > 0
+                        && link_count % self.config.snapshot_after_ops == 0
+                    {
+                        let s2: PageCache = self.clone();
+                        threadpool::spawn(move || {
+                            if let Err(e) = s2.take_fuzzy_snapshot() {
+                                log::error!(
+                                    "failed to write snapshot: {:?}",
+                                    e
+                                );
+                            }
+                        })?;
+                    }
+
+                    return Ok(Ok(old));
+                }
+                Err(cas_error) => {
+                    log_reservation.abort()?;
+                    let actual = cas_error.current;
+                    let actual_ts = unsafe { actual.deref().ts() };
+                    if actual_ts == old.ts() {
+                        trace!(
+                            "link of pid {} failed due to movement, retrying",
+                            pid
+                        );
+                        new_page = Some(cas_error.new);
+
+                        old.read = actual;
+                    } else {
+                        trace!("link of pid {} failed due to new update", pid);
+                        let mut page_view = old;
+                        page_view.read = actual;
+                        return Ok(Err(Some((page_view, new))));
+                    }
+                }
+            }
+        }
+    }
+
+    fn take_fuzzy_snapshot(self) -> Result<()> {
+        let lock = self.snapshot_lock.try_lock();
+        if lock.is_none() {
+            log::debug!(
+                "skipping snapshot because the snapshot lock is already claimed"
+            );
+            return Ok(());
+        }
+        let stable_lsn_before: Lsn = self.log.stable_offset();
+
+        // This is how we determine the number of the pages we will snapshot.
+        let pid_bound = *self.next_pid_to_allocate.lock();
+
+        let pid_bound_usize = assert_usize(pid_bound);
+
+        let mut page_states = Vec::<PageState>::with_capacity(pid_bound_usize);
+        let guard = pin();
+        for pid in 0..pid_bound {
+            'inner: loop {
+                if let Some(pg_view) = self.inner.get(pid, &guard) {
+                    if pg_view.cache_infos.is_empty() {
+                        // there is a benign race with the thread
+                        // that is allocating this page. the allocating
+                        // thread has not yet written the new page to disk,
+                        // and it does not yet have any storage tracking
+                        // information.
+                        std::thread::yield_now();
+                    } else {
+                        let page_state = pg_view.to_page_state();
+                        page_states.push(page_state);
+                        break 'inner;
+                    }
+                } else {
+                    // there is a benign race with the thread
+                    // that bumped the next_pid_to_allocate
+                    // atomic counter above. it has not yet
+                    // installed the page that it is allocating.
+                    std::thread::yield_now();
+                }
+            }
+        }
+
+        let stable_lsn_after: Lsn = self.log.stable_offset();
+
+        let snapshot = Snapshot {
+            max_fuzzy_lsn: Some(stable_lsn_after),
+            stable_lsn: Some(stable_lsn_before),
+            active_segment: None,
+            pt: page_states,
+        };
+
+        self.log.make_stable(stable_lsn_after)?;
+
+        snapshot::write_snapshot(&self.config, &snapshot)?;
+
+        // NB: this must only happen after writing the snapshot to disk
+        bump_atomic_lsn(&self.snapshot_min_lsn, stable_lsn_before);
+
+        // explicitly drop this to make it clear that it needs to
+        // be held for the duration of the snapshot operation.
+        drop(lock);
+
+        Ok(())
+    }
+}
+
+impl PageCacheInner {
     /// Flushes any pending IO buffers to disk to ensure durability.
     /// Returns the number of bytes written during this call.
     pub(crate) fn flush(&self) -> Result<usize> {
@@ -958,174 +1227,6 @@ impl PageCache {
         }
 
         Ok(new_pointer.map_err(|o| o.map(|(pointer, _)| (pointer, ()))))
-    }
-
-    /// Try to atomically add a `PageLink` to the page.
-    /// Returns `Ok(new_key)` if the operation was successful. Returns
-    /// `Err(None)` if the page no longer exists. Returns
-    /// `Err(Some(actual_key))` if the atomic link fails.
-    pub(crate) fn link<'g>(
-        &'g self,
-        pid: PageId,
-        mut old: PageView<'g>,
-        new: Link,
-        guard: &'g Guard,
-    ) -> Result<CasResult<'g, Link>> {
-        let _measure = Measure::new(&M.link_page);
-
-        trace!("linking pid {} with {:?}", pid, new);
-
-        // A failure injector that fails links randomly
-        // during test to ensure interleaving coverage.
-        #[cfg(any(test, feature = "lock_free_delays"))]
-        {
-            use std::cell::RefCell;
-            use std::time::{SystemTime, UNIX_EPOCH};
-
-            thread_local! {
-                pub static COUNT: RefCell<u32> = RefCell::new(1);
-            }
-
-            let time_now =
-                SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-
-            #[allow(clippy::cast_possible_truncation)]
-            let fail_seed = std::cmp::max(3, time_now.as_nanos() as u32 % 128);
-
-            let inject_failure = COUNT.with(|c| {
-                let mut cr = c.borrow_mut();
-                *cr += 1;
-                *cr % fail_seed == 0
-            });
-
-            if inject_failure {
-                debug!(
-                    "injecting a randomized failure in the link of pid {}",
-                    pid
-                );
-                if let Some(current_pointer) = self.get(pid, guard)? {
-                    return Ok(Err(Some((current_pointer.0, new))));
-                } else {
-                    return Ok(Err(None));
-                }
-            }
-        }
-
-        let mut node: Node = old.as_node().clone();
-        node.apply(&new);
-
-        // see if we should short-circuit replace
-        if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {
-            let short_circuit = self.replace(pid, old, node, guard)?;
-            return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
-        }
-
-        let mut new_page = Some(Owned::new(Page {
-            update: Some(Box::new(Update::Node(node))),
-            cache_infos: Vec::default(),
-        }));
-
-        loop {
-            // TODO handle replacement on threshold here instead
-
-            let log_reservation =
-                self.log.reserve(LogKind::Link, pid, &new, guard)?;
-            let lsn = log_reservation.lsn();
-            let pointer = log_reservation.pointer();
-
-            // NB the setting of the timestamp is quite
-            // correctness-critical! We use the ts to
-            // ensure that fundamentally new data causes
-            // high-level link and replace operations
-            // to fail when the data in the pagecache
-            // actually changes. When we just rewrite
-            // the page for the purposes of moving it
-            // to a new location on disk, however, we
-            // don't want to cause threads that are
-            // basing the correctness of their new
-            // writes on the unchanged state to fail.
-            // Here, we bump it by 1, to signal that
-            // the underlying state is fundamentally
-            // changing.
-            let ts = old.ts() + 1;
-
-            let cache_info = CacheInfo {
-                lsn,
-                pointer,
-                ts,
-                log_size: log_reservation.reservation_len() as u64,
-            };
-
-            let mut new_cache_infos =
-                Vec::with_capacity(old.cache_infos.len() + 1);
-            new_cache_infos.extend_from_slice(&old.cache_infos);
-            new_cache_infos.push(cache_info);
-
-            let mut page_ptr = new_page.take().unwrap();
-            page_ptr.cache_infos = new_cache_infos;
-
-            debug_delay();
-            let result =
-                old.entry.compare_and_set(old.read, page_ptr, SeqCst, guard);
-
-            match result {
-                Ok(new_shared) => {
-                    trace!("link of pid {} succeeded", pid);
-
-                    unsafe {
-                        guard.defer_destroy(old.read);
-                    }
-
-                    assert_ne!(old.last_lsn(), 0);
-
-                    self.log.iobufs.sa_mark_link(pid, cache_info, guard);
-
-                    // NB complete must happen AFTER calls to SA, because
-                    // when the iobuf's n_writers hits 0, we may transition
-                    // the segment to inactive, resulting in a race otherwise.
-                    // FIXME can result in deadlock if a node that holds SA
-                    // is waiting to acquire a new reservation blocked by this?
-                    log_reservation.complete()?;
-
-                    // possibly evict an item now that our cache has grown
-                    let total_page_size =
-                        unsafe { new_shared.deref().log_size() };
-                    let to_evict =
-                        self.lru.accessed(pid, total_page_size, guard);
-                    trace!(
-                        "accessed pid {} -> paging out pids {:?}",
-                        pid,
-                        to_evict
-                    );
-                    if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard);
-                    }
-
-                    old.read = new_shared;
-
-                    return Ok(Ok(old));
-                }
-                Err(cas_error) => {
-                    log_reservation.abort()?;
-                    let actual = cas_error.current;
-                    let actual_ts = unsafe { actual.deref().ts() };
-                    if actual_ts == old.ts() {
-                        trace!(
-                            "link of pid {} failed due to movement, retrying",
-                            pid
-                        );
-                        new_page = Some(cas_error.new);
-
-                        old.read = actual;
-                    } else {
-                        trace!("link of pid {} failed due to new update", pid);
-                        let mut page_view = old;
-                        page_view.read = actual;
-                        return Ok(Err(Some((page_view, new))));
-                    }
-                }
-            }
-        }
     }
 
     /// Node an existing page with a different set of `PageLink`s.
@@ -2149,60 +2250,5 @@ impl PageCache {
         }
 
         Ok(())
-    }
-
-    /// A snapshot is to recover the pageTable at a point in time.
-    ///
-    /// This is called fuzzy snapshot because while
-    /// we are taking a snapshot, the ongoing inserts
-    /// into the database will keep bumping up the Lsn.
-    /// Therefore, the `stable_lsn` gives us the state
-    /// of the world, when the snapshot was taken.
-    #[allow(unused)]
-    fn take_fuzzy_snapshot(self) -> Snapshot {
-        let stable_lsn_now: Lsn = self.log.stable_offset();
-
-        // This is how we determine the number of the pages we will snapshot.
-        let pid_bound = *self.next_pid_to_allocate.lock();
-
-        let pid_bound_usize = assert_usize(pid_bound);
-
-        let mut page_states = Vec::<PageState>::with_capacity(pid_bound_usize);
-        let guard = pin();
-        for pid in 0..pid_bound {
-            'inner: loop {
-                if let Some(pg_view) = self.inner.get(pid, &guard) {
-                    if pg_view.cache_infos.is_empty() {
-                        // there is a benign race with the thread
-                        // that is allocating this page. the allocating
-                        // thread has not yet written the new page to disk,
-                        // and it does not yet have any storage tracking
-                        // information.
-                        std::thread::yield_now();
-                    } else {
-                        let page_state = pg_view.to_page_state();
-                        page_states.push(page_state);
-                        break 'inner;
-                    }
-                } else {
-                    // there is a benign race with the thread
-                    // that bumped the next_pid_to_allocate
-                    // atomic counter above. it has not yet
-                    // installed the page that it is allocating.
-                    std::thread::yield_now();
-                }
-            }
-        }
-
-        let max_fuzzy_lsn: Lsn = self.log.stable_offset();
-
-        bump_atomic_lsn(&self.snapshot_min_lsn, stable_lsn_now);
-
-        Snapshot {
-            max_fuzzy_lsn: Some(max_fuzzy_lsn),
-            stable_lsn: Some(stable_lsn_now),
-            active_segment: None,
-            pt: page_states,
-        }
     }
 }

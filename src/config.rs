@@ -209,6 +209,8 @@ pub struct Inner {
     #[doc(hidden)]
     pub idgen_persist_interval: u64,
     #[doc(hidden)]
+    pub snapshot_after_ops: u64,
+    #[doc(hidden)]
     pub version: (usize, usize),
     tmp_path: PathBuf,
     pub(crate) global_error: Arc<Atomic<Error>>,
@@ -236,6 +238,11 @@ impl Default for Inner {
             print_profile_on_drop: false,
             flush_every_ms: Some(500),
             idgen_persist_interval: 1_000_000,
+            snapshot_after_ops: if cfg!(feature = "testing") {
+                10
+            } else {
+                1_000_000
+            },
             global_error: Arc::new(Atomic::default()),
             #[cfg(feature = "event_log")]
             event_log: Arc::new(crate::event_log::EventLog::default()),
@@ -376,15 +383,6 @@ impl Config {
         since = "0.31.0",
         note = "this does nothing for now. maybe it will come back in the future."
     )]
-    pub const fn snapshot_after_ops(self, _: u64) -> Self {
-        self
-    }
-
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.31.0",
-        note = "this does nothing for now. maybe it will come back in the future."
-    )]
     pub fn snapshot_path<P>(self, _: P) -> Self {
         self
     }
@@ -514,6 +512,11 @@ impl Config {
             print_profile_on_drop,
             bool,
             "print a performance profile when the Config is dropped"
+        ),
+        (
+            snapshot_after_ops,
+            u64,
+            "take a fuzzy snapshot of pagecache metadata after this many ops"
         )
     );
 
@@ -828,7 +831,7 @@ impl RunningConfig {
                 let path = path_buf.as_path();
                 let path_str = &*path.to_string_lossy();
                 if path_str.starts_with(&*absolute_path.to_string_lossy())
-                    && !path_str.ends_with(".in___motion")
+                    && !path_str.ends_with(".generating")
                 {
                     Some(path.to_path_buf())
                 } else {
