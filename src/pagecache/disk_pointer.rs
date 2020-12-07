@@ -37,11 +37,15 @@ impl DiskPtr {
 
     pub(crate) fn blob(&self) -> (Option<LogOffset>, BlobPointer) {
         match self {
+            DiskPtr::Blob(lid, ptr) => (lid.map(NonZeroU64::get), *ptr),
             DiskPtr::Inline(_) => {
                 panic!("blob called on Internal disk pointer")
             }
-            DiskPtr::Blob(lid, ptr) => (lid.map(NonZeroU64::get), *ptr),
         }
+    }
+
+    pub(crate) fn blob_pointer(&self) -> Option<BlobPointer> {
+        if let DiskPtr::Blob(_, ptr) = self { Some(*ptr) } else { None }
     }
 
     pub(crate) fn original_lsn(&self) -> Lsn {

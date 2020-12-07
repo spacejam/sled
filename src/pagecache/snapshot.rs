@@ -4,9 +4,8 @@ use zstd::block::{compress, decompress};
 use crate::*;
 
 use super::{
-    arr_to_u32, gc_blobs, pwrite_all, raw_segment_iter_from, u32_to_arr,
-    u64_to_arr, BasedBuf, DiskPtr, LogIter, LogKind, LogOffset, Lsn,
-    MessageKind,
+    arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
+    BasedBuf, DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -90,6 +89,33 @@ impl PageState {
                 panic!("called offsets on Uninitialized")
             }
         }
+    }
+
+    pub(crate) fn blob_lsns(&self) -> Vec<Lsn> {
+        let mut ret = vec![];
+
+        match *self {
+            PageState::Present { base, ref frags } => {
+                if let Some(blob_pointer) = base.1.blob_pointer() {
+                    ret.push(blob_pointer);
+                }
+                for (_, ptr, _) in frags {
+                    if let Some(blob_pointer) = ptr.blob_pointer() {
+                        ret.push(blob_pointer);
+                    }
+                }
+            }
+            PageState::Free(_, ptr) => {
+                if let Some(blob_pointer) = ptr.blob_pointer() {
+                    ret.push(blob_pointer);
+                }
+            }
+            PageState::Uninitialized => {
+                panic!("called blob_lsns on Uninitialized")
+            }
+        }
+
+        ret
     }
 }
 
@@ -449,11 +475,6 @@ fn advance_snapshot(
         if !config.temporary {
             config.file.sync_all()?;
         }
-    }
-
-    // remove all blob files larger than our stable offset
-    if let Some(stable_lsn) = snapshot.stable_lsn {
-        gc_blobs(config, stable_lsn)?;
     }
 
     #[cfg(feature = "event_log")]

@@ -35,7 +35,7 @@ use parallel_io_unix::{pread_exact, pread_exact_or_eof, pwrite_all};
 use parallel_io_windows::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 use self::{
-    blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
+    blob_io::{read_blob, remove_blob, write_blob},
     constants::{
         BATCH_MANIFEST_PID, COUNTER_PID, META_PID,
         PAGE_CONSOLIDATION_THRESHOLD, SEGMENT_CLEANUP_THRESHOLD,
@@ -582,6 +582,8 @@ impl PageCache {
         // apply any new data to it to "catch-up" the
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
+
+        blob_io::gc_unknown_blobs(&config, &snapshot)?;
 
         #[cfg(feature = "testing")]
         {
