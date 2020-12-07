@@ -2266,7 +2266,7 @@ fn gc_unknown_blobs(config: &Config, snapshot: &Snapshot) -> Result<()> {
 
     for entry in std::fs::read_dir(config.get_path().join("blobs"))? {
         let item = entry?;
-        if let Some(Ok(lsn)) = item.path().to_str().map(|s| s.parse()) {
+        if let Some(Ok(lsn)) = item.path().to_str().map(str::parse) {
             if !blob_lsns.contains(&lsn) {
                 log::debug!(
                     "removing file that is not known by \
