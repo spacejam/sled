@@ -535,7 +535,7 @@ impl Debug for PageCache {
 }
 
 #[cfg(feature = "event_log")]
-impl Drop for PageCache {
+impl Drop for PageCacheInner {
     fn drop(&mut self) {
         trace!("dropping pagecache");
 
