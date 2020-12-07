@@ -831,7 +831,7 @@ impl RunningConfig {
                 let path = path_buf.as_path();
                 let path_str = &*path.to_string_lossy();
                 if path_str.starts_with(&*absolute_path.to_string_lossy())
-                    && !path_str.ends_with(".in___motion")
+                    && !path_str.ends_with(".generating")
                 {
                     Some(path.to_path_buf())
                 } else {
