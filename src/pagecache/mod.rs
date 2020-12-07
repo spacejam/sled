@@ -983,7 +983,6 @@ impl PageCache {
         let stable_lsn_after: Lsn = self.log.stable_offset();
 
         let snapshot = Snapshot {
-            max_fuzzy_lsn: Some(stable_lsn_after),
             stable_lsn: Some(stable_lsn_before),
             active_segment: None,
             pt: page_states,
