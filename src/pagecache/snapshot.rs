@@ -4,9 +4,8 @@ use zstd::block::{compress, decompress};
 use crate::*;
 
 use super::{
-    arr_to_u32, gc_blobs, pwrite_all, raw_segment_iter_from, u32_to_arr,
-    u64_to_arr, BasedBuf, DiskPtr, LogIter, LogKind, LogOffset, Lsn,
-    MessageKind,
+    arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
+    BasedBuf, DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -476,11 +475,6 @@ fn advance_snapshot(
         if !config.temporary {
             config.file.sync_all()?;
         }
-    }
-
-    // remove all blob files larger than our stable offset
-    if let Some(stable_lsn) = snapshot.stable_lsn {
-        gc_blobs(config, stable_lsn)?;
     }
 
     #[cfg(feature = "event_log")]

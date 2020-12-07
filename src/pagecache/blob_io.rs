@@ -97,52 +97,6 @@ pub(crate) fn write_blob<T: Serialize>(
         .map_err(|e| e.into())
 }
 
-pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
-    let mut base_dir = config.get_path();
-    base_dir.push("blobs");
-    let blob_dir = base_dir;
-    let blobs = std::fs::read_dir(blob_dir)?;
-
-    debug!("gc_blobs removing any blob with an lsn above {}", stable_lsn);
-
-    let mut to_remove = vec![];
-    for blob in blobs {
-        let path = blob?.path();
-        let lsn_str = path.file_name().unwrap().to_str().unwrap();
-        let lsn_res: std::result::Result<Lsn, _> = lsn_str.parse();
-
-        if let Err(e) = lsn_res {
-            warn!(
-                "blobs directory contains \
-                 unparsable path ({:?}): {}",
-                path, e
-            );
-            continue;
-        }
-
-        let lsn = lsn_res.unwrap();
-
-        if lsn >= stable_lsn {
-            to_remove.push(path);
-        }
-    }
-
-    if !to_remove.is_empty() {
-        warn!(
-            "removing {} blobs that have \
-             a higher lsn than our stable log: {:?}",
-            to_remove.len(),
-            stable_lsn
-        );
-    }
-
-    for path in to_remove {
-        std::fs::remove_file(&path)?;
-    }
-
-    Ok(())
-}
-
 pub(crate) fn remove_blob(id: Lsn, config: &Config) -> Result<()> {
     let path = config.blob_path(id);
     let res = std::fs::remove_file(&path);
@@ -151,6 +105,39 @@ pub(crate) fn remove_blob(id: Lsn, config: &Config) -> Result<()> {
         return Err(e.into());
     } else {
         trace!("successfully removed blob at {:?}", path);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn gc_unknown_blobs(
+    config: &Config,
+    snapshot: &Snapshot,
+) -> Result<()> {
+    let mut blob_lsns = FastSet8::default();
+
+    for page_state in &snapshot.pt {
+        for blob_lsn in page_state.blob_lsns() {
+            blob_lsns.insert(blob_lsn);
+        }
+    }
+
+    for entry in std::fs::read_dir(config.get_path().join("blobs"))? {
+        let item = entry?;
+        if let Some(Ok(lsn)) =
+            item.path().file_name().unwrap().to_str().map(str::parse)
+        {
+            if !blob_lsns.contains(&lsn) {
+                log::trace!(
+                    "removing file that is not known by \
+                    the current pagetable: {:?}",
+                    item.path()
+                );
+                std::fs::remove_file(item.path())?;
+            }
+        } else {
+            println!("src/pagecache/mod.rs:2280: {:?}", item.path());
+        }
     }
 
     Ok(())

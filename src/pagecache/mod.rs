@@ -35,7 +35,7 @@ use parallel_io_unix::{pread_exact, pread_exact_or_eof, pwrite_all};
 use parallel_io_windows::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 use self::{
-    blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
+    blob_io::{read_blob, remove_blob, write_blob},
     constants::{
         BATCH_MANIFEST_PID, COUNTER_PID, META_PID,
         PAGE_CONSOLIDATION_THRESHOLD, SEGMENT_CLEANUP_THRESHOLD,
@@ -583,7 +583,7 @@ impl PageCache {
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
 
-        gc_unknown_blobs(&config, &snapshot)?;
+        blob_io::gc_unknown_blobs(&config, &snapshot)?;
 
         #[cfg(feature = "testing")]
         {
@@ -2253,30 +2253,4 @@ impl PageCacheInner {
 
         Ok(())
     }
-}
-
-fn gc_unknown_blobs(config: &Config, snapshot: &Snapshot) -> Result<()> {
-    let mut blob_lsns = FastSet8::default();
-
-    for page_state in &snapshot.pt {
-        for blob_lsn in page_state.blob_lsns() {
-            blob_lsns.insert(blob_lsn);
-        }
-    }
-
-    for entry in std::fs::read_dir(config.get_path().join("blobs"))? {
-        let item = entry?;
-        if let Some(Ok(lsn)) = item.path().to_str().map(str::parse) {
-            if !blob_lsns.contains(&lsn) {
-                log::debug!(
-                    "removing file that is not known by \
-                    the current pagetable: {:?}",
-                    item.path()
-                );
-                std::fs::remove_file(item.path())?;
-            }
-        }
-    }
-
-    Ok(())
 }
