@@ -536,7 +536,10 @@ fn read_snapshot(config: &RunningConfig) -> Result<Option<Snapshot>> {
     Snapshot::deserialize(&mut bytes.as_slice()).map(Some)
 }
 
-fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
+pub(in crate::pagecache) fn write_snapshot(
+    config: &RunningConfig,
+    snapshot: &Snapshot,
+) -> Result<()> {
     trace!("writing snapshot {:?}", snapshot);
 
     let raw_bytes = snapshot.serialize();
