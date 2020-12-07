@@ -988,6 +988,8 @@ impl PageCache {
             pt: page_states,
         };
 
+        self.log.make_stable(stable_lsn_after)?;
+
         snapshot::write_snapshot(&self.config, &snapshot)?;
 
         // NB: this must only happen after writing the snapshot to disk
