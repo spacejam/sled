@@ -98,6 +98,7 @@ pub struct Metrics {
     pub accountant_mark_replace: Histogram,
     pub accountant_next: Histogram,
     pub advance_snapshot: Histogram,
+    pub fuzzy_snapshot: Histogram,
     pub assign_offset: Histogram,
     pub compress: Histogram,
     pub decompress: Histogram,
@@ -352,6 +353,7 @@ impl Metrics {
         p(vec![
             lat("start", &self.tree_start),
             lat("advance snapshot", &self.advance_snapshot),
+            lat("fuzzy snapshot", &self.fuzzy_snapshot),
             lat("load SA", &self.start_segment_accountant),
             lat("load PC", &self.start_pagecache),
             lat("snap apply", &self.snapshot_apply),

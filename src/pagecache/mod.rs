@@ -938,6 +938,7 @@ impl PageCache {
     }
 
     fn take_fuzzy_snapshot(self) -> Result<()> {
+        let _measure = Measure::new(&M.fuzzy_snapshot);
         let lock = self.snapshot_lock.try_lock();
         if lock.is_none() {
             log::debug!(

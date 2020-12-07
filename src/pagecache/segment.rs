@@ -132,6 +132,7 @@ impl SegmentCleaner {
 
 impl Drop for SegmentAccountant {
     fn drop(&mut self) {
+        #[cfg(feature = "metrics")]
         for segment in &self.segments {
             let segment_utilization = match segment {
                 Segment::Free(_) | Segment::Draining(_) => 0,
@@ -491,6 +492,16 @@ impl SegmentAccountant {
             "SA starting with tip {} stable {} free {:?}",
             ret.tip, ret.max_stabilized_lsn, ret.free,
         );
+
+        #[cfg(feature = "metrics")]
+        for segment in &ret.segments {
+            let segment_utilization = match segment {
+                Segment::Free(_) | Segment::Draining(_) => 0,
+                Segment::Active(Active { rss, .. })
+                | Segment::Inactive(Inactive { rss, .. }) => *rss,
+            };
+            M.segment_utilization_startup.measure(segment_utilization as u64);
+        }
 
         Ok(ret)
     }
