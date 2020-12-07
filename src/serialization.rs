@@ -495,8 +495,7 @@ fn unshift_i64_opt(value: i64) -> Option<i64> {
 
 impl Serialize for Snapshot {
     fn serialized_size(&self) -> u64 {
-        self.max_fuzzy_lsn.serialized_size()
-            + self.stable_lsn.serialized_size()
+        self.stable_lsn.serialized_size()
             + self.active_segment.serialized_size()
             + self
                 .pt
@@ -506,7 +505,6 @@ impl Serialize for Snapshot {
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        self.max_fuzzy_lsn.serialize_into(buf);
         self.stable_lsn.serialize_into(buf);
         self.active_segment.serialize_into(buf);
         for page_state in &self.pt {
@@ -516,7 +514,6 @@ impl Serialize for Snapshot {
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         Ok(Snapshot {
-            max_fuzzy_lsn: Serialize::deserialize(buf)?,
             stable_lsn: Serialize::deserialize(buf)?,
             active_segment: Serialize::deserialize(buf)?,
             pt: deserialize_sequence(buf)?,

@@ -14,8 +14,6 @@ use super::{
 #[derive(PartialEq, Debug, Default)]
 #[cfg_attr(test, derive(Clone))]
 pub struct Snapshot {
-    /// The maximum possible LSN that may be accounted for in this snapshot
-    pub max_fuzzy_lsn: Option<Lsn>,
     /// The last read message lsn
     pub stable_lsn: Option<Lsn>,
     /// The last read message lid
