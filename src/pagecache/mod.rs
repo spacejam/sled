@@ -938,8 +938,8 @@ impl PageCache {
     }
 
     fn take_fuzzy_snapshot(self) -> Result<()> {
-        let _lock = self.snapshot_lock.try_lock();
-        if _lock.is_none() {
+        let lock = self.snapshot_lock.try_lock();
+        if lock.is_none() {
             log::debug!(
                 "skipping snapshot because the snapshot lock is already claimed"
             );
@@ -992,6 +992,10 @@ impl PageCache {
 
         // NB: this must only happen after writing the snapshot to disk
         bump_atomic_lsn(&self.snapshot_min_lsn, stable_lsn_before);
+
+        // explicitly drop this to make it clear that it needs to
+        // be held for the duration of the snapshot operation.
+        drop(lock);
 
         Ok(())
     }
