@@ -197,7 +197,7 @@ fn u16_to_bytes(u: u16) -> Vec<u8> {
 }
 
 // just adds up values as if they were u16's
-fn test_merge_operator(
+fn merge_operator(
     _k: &[u8],
     old: Option<&[u8]>,
     to_merge: &[u8],
@@ -252,7 +252,7 @@ fn prop_tree_matches_btreemap_inner(
         .segment_size(256 * (1 << (segment_size_bits as usize % 16)));
 
     let mut tree = config.open().unwrap();
-    tree.set_merge_operator(test_merge_operator);
+    tree.set_merge_operator(merge_operator);
 
     let mut reference: BTreeMap<Key, u16> = BTreeMap::new();
 
@@ -406,7 +406,7 @@ fn prop_tree_matches_btreemap_inner(
 }
 
 #[test]
-fn test_fuzz_test() {
+fn fuzz_test() {
     let seed = [0; 32];
     fuzz_then_shrink(&seed);
     let seed = [0; 31];
