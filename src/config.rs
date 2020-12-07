@@ -575,6 +575,10 @@ impl Config {
             options.create_new(true);
         }
 
+        let _ = std::fs::File::create(
+            self.get_path().join("DO_NOT_USE_THIS_DIRECTORY_FOR_ANYTHING"),
+        );
+
         self.try_lock(options.open(&self.db_path())?)
     }
 
