@@ -91,6 +91,33 @@ impl PageState {
             }
         }
     }
+
+    pub(crate) fn blob_lsns(&self) -> Vec<Lsn> {
+        let mut ret = vec![];
+
+        match *self {
+            PageState::Present { base, ref frags } => {
+                if let Some(blob_pointer) = base.1.blob_pointer() {
+                    ret.push(blob_pointer);
+                }
+                for (_, ptr, _) in frags {
+                    if let Some(blob_pointer) = ptr.blob_pointer() {
+                        ret.push(blob_pointer);
+                    }
+                }
+            }
+            PageState::Free(_, ptr) => {
+                if let Some(blob_pointer) = ptr.blob_pointer() {
+                    ret.push(blob_pointer);
+                }
+            }
+            PageState::Uninitialized => {
+                panic!("called blob_lsns on Uninitialized")
+            }
+        }
+
+        ret
+    }
 }
 
 impl Snapshot {

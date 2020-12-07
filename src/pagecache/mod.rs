@@ -583,6 +583,8 @@ impl PageCache {
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
 
+        gc_unknown_blobs(&config, &snapshot)?;
+
         #[cfg(feature = "testing")]
         {
             // these checks are in place to catch non-idempotent
@@ -2251,4 +2253,30 @@ impl PageCacheInner {
 
         Ok(())
     }
+}
+
+fn gc_unknown_blobs(config: &Config, snapshot: &Snapshot) -> Result<()> {
+    let mut blob_lsns = FastSet8::default();
+
+    for page_state in &snapshot.pt {
+        for blob_lsn in page_state.blob_lsns() {
+            blob_lsns.insert(blob_lsn);
+        }
+    }
+
+    for entry in std::fs::read_dir(config.get_path().join("blobs"))? {
+        let item = entry?;
+        if let Some(Ok(lsn)) = item.path().to_str().map(|s| s.parse()) {
+            if !blob_lsns.contains(&lsn) {
+                log::debug!(
+                    "removing file that is not known by \
+                    the current pagetable: {:?}",
+                    item.path()
+                );
+                std::fs::remove_file(item.path())?;
+            }
+        }
+    }
+
+    Ok(())
 }
