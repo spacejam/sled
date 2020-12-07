@@ -238,7 +238,11 @@ impl Default for Inner {
             print_profile_on_drop: false,
             flush_every_ms: Some(500),
             idgen_persist_interval: 1_000_000,
-            snapshot_after_ops: 1_000_000,
+            snapshot_after_ops: if cfg!(feature = "testing") {
+                10
+            } else {
+                1_000_000
+            },
             global_error: Arc::new(Atomic::default()),
             #[cfg(feature = "event_log")]
             event_log: Arc::new(crate::event_log::EventLog::default()),
