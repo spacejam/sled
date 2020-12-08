@@ -230,7 +230,7 @@ impl DoubleEndedIterator for Iter {
 }
 
 #[test]
-fn test_possible_predecessor() {
+fn basic_functionality() {
     assert_eq!(possible_predecessor(b""), None);
     assert_eq!(possible_predecessor(&[0]), Some(vec![]));
     assert_eq!(possible_predecessor(&[0, 0]), Some(vec![0]));

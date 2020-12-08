@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use common::cleanup;
 
 #[test]
-fn test_quiescent_cpu_time() {
+fn quiescent_cpu_time() {
     const DB_DIR: &str = "sleeper";
     cleanup(DB_DIR);
 

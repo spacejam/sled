@@ -53,7 +53,7 @@ fn very_large_reverse_tree_iterator() {
 
 #[test]
 #[cfg(all(target_os = "linux", not(miri)))]
-fn test_varied_compression_ratios() {
+fn varied_compression_ratios() {
     // tests for the compression issue reported in #938 by @Mrmaxmeier.
 
     let low_entropy = vec![0u8; 64 << 10]; // 64k zeroes

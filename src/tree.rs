@@ -770,11 +770,20 @@ impl Tree {
     /// # thread.join().unwrap();
     /// # Ok(()) }
     /// ```
-    /// Aynchronous, non-blocking subscriber:
+    /// Asynchronous, non-blocking subscriber:
     ///
     /// `Subscription` implements `Future<Output=Option<Event>>`.
     ///
-    /// `while let Some(event) = (&mut subscriber).await { /* use it */ }`
+    /// ```
+    /// # async fn foo() {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open().unwrap();
+    /// # let mut subscriber = db.watch_prefix(vec![]);
+    /// while let Some(event) = (&mut subscriber).await {
+    ///     /* use it */
+    /// }
+    /// # }
+    /// ```
     pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
         self.subscribers.register(prefix.as_ref())
     }
@@ -839,6 +848,13 @@ impl Tree {
 
     /// Retrieve the key and value before the provided key,
     /// if one exists.
+    ///
+    /// # Note
+    /// The order follows the Ord implementation for `Vec<u8>`:
+    ///
+    /// `[] < [0] < [255] < [255, 0] < [255, 255] ...`
+    ///
+    /// To retain the ordering of numerical types use big endian reprensentation
     ///
     /// # Examples
     ///
