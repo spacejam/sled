@@ -770,11 +770,20 @@ impl Tree {
     /// # thread.join().unwrap();
     /// # Ok(()) }
     /// ```
-    /// Aynchronous, non-blocking subscriber:
+    /// Asynchronous, non-blocking subscriber:
     ///
     /// `Subscription` implements `Future<Output=Option<Event>>`.
     ///
-    /// `while let Some(event) = (&mut subscriber).await { /* use it */ }`
+    /// ```
+    /// # async fn foo() {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open().unwrap();
+    /// # let mut subscriber = db.watch_prefix(vec![]);
+    /// while let Some(event) = (&mut subscriber).await {
+    ///     /* use it */
+    /// }
+    /// # }
+    /// ```
     pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
         self.subscribers.register(prefix.as_ref())
     }
