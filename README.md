@@ -69,19 +69,26 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 # features
 
 * [API](https://docs.rs/sled) similar to a threadsafe `BTreeMap<[u8], [u8]>`
-* serializable multi-key and multi-Tree interactive [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction)
-* fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.compare_and_swap)
+* serializable (ACID) [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction)
+  for atomically reading and writing to multiple keys in multiple keyspaces.
+* fully atomic single-key operations, including [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.compare_and_swap)
 * zero-copy reads
-* [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.apply_batch)
-* [subscriber/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
-* [multiple keyspace/Tree support](https://docs.rs/sled/latest/sled/struct.Db.html#method.open_tree)
-* [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)
-* forward and reverse iterators
-* a crash-safe monotonic [ID generator](https://docs.rs/sled/latest/sled/struct.Db.html#method.generate_id) capable of generating 75-125 million unique ID's per second
-* [zstd](https://github.com/facebook/zstd) compression (use the `compression` build feature)
+* [write batches](https://docs.rs/sled/latest/sled/struct.Tree.html#method.apply_batch)
+* [subscribe to changes on key
+  prefixes](struct.Tree.html#method.watch_prefix)
+* [multiple keyspaces](https://docs.rs/sled/latest/sled/struct.Db.html#method.open_tree)
+* [merge operators](https://docs.rs/sled/latest/sled/doc/merge_operators/index.html)
+* forward and reverse iterators over ranges of items
+* a crash-safe monotonic [ID generator](https://docs.rs/sled/latest/sled/struct.Db.html#method.generate_id)
+  capable of generating 75-125 million unique ID's per second
+* [zstd](https://github.com/facebook/zstd) compression (use the
+  `compression` build feature, disabled by default)
 * cpu-scalable lock-free implementation
 * flash-optimized log-structured storage
-* uses modern b-tree techniques such as prefix encoding and suffix truncation for reducing the storage costs of long keys
+* uses modern b-tree techniques such as prefix encoding and suffix
+  truncation for reducing the storage costs of long keys with shared
+  prefixes
+
 
 # a note on lexicographic ordering and endianness
 
