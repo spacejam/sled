@@ -840,6 +840,13 @@ impl Tree {
     /// Retrieve the key and value before the provided key,
     /// if one exists.
     ///
+    /// # Note
+    /// The order follows the Ord implementation for `Vec<u8>`:
+    ///
+    /// `[] < [0] < [255] < [255, 0] < [255, 255] ...`
+    ///
+    /// To retain the ordering of numerical types use big endian reprensentation
+    ///
     /// # Examples
     ///
     /// ```
