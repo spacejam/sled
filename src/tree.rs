@@ -2186,7 +2186,7 @@ impl Tree {
                 }
                 Err(e) => {
                     error!("hit error while trying to pull pid {}: {:?}", pid, e);
-                    return Err(e.into())
+                    return Err(e)
                 }
             };
 
