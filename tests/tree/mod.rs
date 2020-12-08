@@ -380,7 +380,7 @@ fn prop_tree_matches_btreemap_inner(
             Restart => {
                 drop(tree);
                 tree = config.open().unwrap();
-                tree.set_merge_operator(test_merge_operator);
+                tree.set_merge_operator(merge_operator);
             }
         }
         if let Err(e) = config.global_error() {
