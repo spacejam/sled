@@ -2,6 +2,7 @@
 
 ## Breaking Changes
 
+* The deprecated `Config::build` method has been removed.
 * The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.
 
