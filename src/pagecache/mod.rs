@@ -232,6 +232,11 @@ pub(crate) fn lsn_to_arr(number: Lsn) -> [u8; 8] {
 }
 
 #[inline]
+pub(crate) fn arr_to_u64(arr: &[u8]) -> u64 {
+    u64::from_le_bytes(arr.try_into().unwrap())
+}
+
+#[inline]
 pub(crate) fn arr_to_lsn(arr: &[u8]) -> Lsn {
     Lsn::from_le_bytes(arr.try_into().unwrap())
 }

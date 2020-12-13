@@ -74,6 +74,12 @@ impl Drop for Reservation {
 }
 
 impl Reservation {
+    pub fn heap_id(&self) -> HeapId {
+        let slab_id = size_to_slab_id(self.size);
+
+        HeapId::compose(slab_id, self.idx)
+    }
+
     pub fn complete(mut self, data: &[u8]) -> Result<HeapId> {
         assert_eq!(data.len() as u64, self.size);
 

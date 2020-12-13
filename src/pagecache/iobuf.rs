@@ -516,7 +516,7 @@ impl IoBufs {
         item: &T,
         header: MessageHeader,
         mut out_buf: &mut [u8],
-        blob_id: Option<Lsn>,
+        blob_reservation: Option<crate::heap::Reservation>,
     ) -> Result<()> {
         // we create this double ref to allow scooting
         // the slice forward without doing anything
@@ -527,13 +527,26 @@ impl IoBufs {
             header.serialize_into(out_buf_ref);
         }
 
-        if let Some(blob_id) = blob_id {
+        if let Some(blob_reservation) = blob_reservation {
             // write blob to file
             io_fail!(self, "blob blob write");
-            self.config.write_blob(header.kind, blob_id, item)?;
+            let mut heap_buf =
+                vec![0; 5_usize + item.serialized_size() as usize];
 
-            let _ = Measure::new(&M.serialize);
-            blob_id.serialize_into(out_buf_ref);
+            let _ser = Measure::new(&M.serialize);
+            heap_buf[0] = header.kind.into();
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&heap_buf[0..1]);
+            let heap_buf_ref: &mut &mut [u8] = &mut &mut heap_buf[5..];
+            item.serialize_into(heap_buf_ref);
+            drop(_ser);
+            hasher.update(&heap_buf[5..]);
+            let crc = hasher.finalize().to_le_bytes();
+            heap_buf[1..5].copy_from_slice(&crc);
+
+            blob_reservation.complete(&heap_buf)?;
+
+            blob_reservation.heap_id().serialize_into(out_buf_ref);
         } else {
             let _ = Measure::new(&M.serialize);
             item.serialize_into(out_buf_ref);

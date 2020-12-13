@@ -1,12 +1,12 @@
 use std::fs::File;
 
 use super::{
-    arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, decompress, header,
-    iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr,
-    Arc, BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
-    MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
-    COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
-    SEG_HEADER_LEN,
+    arr_to_lsn, arr_to_u32, arr_to_u64, assert_usize, bump_atomic_lsn,
+    decompress, header, iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof,
+    roll_iobuf, u32_to_arr, Arc, BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs,
+    LogKind, LogOffset, Lsn, MessageKind, Reservation, Serialize, Snapshot,
+    BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
+    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -361,14 +361,19 @@ impl Log {
                 reservation_lsn + inline_buf_len as Lsn - 1,
             );
 
-            let blob_id =
-                if over_blob_threshold { Some(reservation_lsn) } else { None };
+            let (blob_reservation, blob_id) = if over_blob_threshold {
+                let blob_reservation =
+                    self.config.heap.reserve(prospective_size as u64, todo!());
+                (Some(blob_reservation), Some(blob_reservation.heap_id()))
+            } else {
+                (None, None)
+            };
 
             self.iobufs.encapsulate(
                 item,
                 message_header,
                 destination,
-                blob_id,
+                blob_reservation,
             )?;
 
             M.log_reservation_success();
@@ -708,7 +713,7 @@ pub(crate) fn read_message<R: ReadAt>(
     file: &R,
     lid: LogOffset,
     expected_segment_number: SegmentNumber,
-    config: &Config,
+    config: &RunningConfig,
 ) -> Result<LogRead> {
     let _measure = Measure::new(&M.read);
     let segment_len = config.segment_size;
@@ -799,13 +804,13 @@ pub(crate) fn read_message<R: ReadAt>(
         MessageKind::BlobLink
         | MessageKind::BlobNode
         | MessageKind::BlobMeta => {
-            let id = arr_to_lsn(&buf);
+            let id = HeapId(arr_to_u64(&buf));
 
-            match config.read_blob(id) {
+            match config.heap.read(id) {
                 Ok((kind, buf)) => {
                     assert_eq!(header.kind, kind);
                     trace!(
-                        "read a successful blob message for blob {} in segment number {:?}",
+                        "read a successful blob message for blob {:?} in segment number {:?}",
                         id,
                         header.segment_number,
                     );
@@ -816,7 +821,7 @@ pub(crate) fn read_message<R: ReadAt>(
                     if e.kind() == std::io::ErrorKind::NotFound =>
                 {
                     debug!(
-                        "underlying blob file not found for blob {} in segment number {:?}",
+                        "underlying blob file not found for blob {:?} in segment number {:?}",
                         id, header.segment_number,
                     );
                     Ok(LogRead::DanglingBlob(header, id, inline_len))
