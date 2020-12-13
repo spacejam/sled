@@ -11,7 +11,7 @@ use crate::{
     pagecache::{
         BatchManifest, MessageHeader, PageState, SegmentNumber, Snapshot,
     },
-    Data, DiskPtr, Error, IVec, Link, Meta, Node, Result,
+    Data, DiskPtr, Error, HeapId, IVec, Link, Meta, Node, Result,
 };
 
 /// Items that may be serialized and deserialized
@@ -314,6 +314,20 @@ impl Serialize for u8 {
     }
 }
 
+impl Serialize for HeapId {
+    fn serialized_size(&self) -> u64 {
+        self.0.serialized_size()
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        self.0.serialize_into(buf)
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<HeapId> {
+        Ok(HeapId(Serialize::deserialize(buf)?))
+    }
+}
+
 impl Serialize for Meta {
     fn serialized_size(&self) -> u64 {
         self.inner
@@ -609,7 +623,7 @@ impl Serialize for DiskPtr {
         match self {
             DiskPtr::Inline(a) => 1 + a.serialized_size(),
             DiskPtr::Blob(a, b) => {
-                1 + a.serialized_size() + b.serialized_size()
+                1 + a.serialized_size() + b.0.serialized_size()
             }
         }
     }
@@ -623,7 +637,7 @@ impl Serialize for DiskPtr {
             DiskPtr::Blob(log_offset, blob_lsn) => {
                 1_u8.serialize_into(buf);
                 log_offset.serialize_into(buf);
-                blob_lsn.serialize_into(buf);
+                blob_lsn.0.serialize_into(buf);
             }
         }
     }
@@ -638,7 +652,7 @@ impl Serialize for DiskPtr {
             0 => DiskPtr::Inline(u64::deserialize(buf)?),
             1 => DiskPtr::Blob(
                 Serialize::deserialize(buf)?,
-                i64::deserialize(buf)?,
+                HeapId(u64::deserialize(buf)?),
             ),
             _ => return Err(Error::corruption(None)),
         })
@@ -823,6 +837,12 @@ mod qc {
                 segment_number: SegmentNumber(SpreadU64::arbitrary(g).0),
                 pid: g.gen(),
             }
+        }
+    }
+
+    impl Arbitrary for HeapId {
+        fn arbitrary<G: Gen>(g: &mut G) -> HeapId {
+            HeapId(SpreadI64::arbitrary(g))
         }
     }
 

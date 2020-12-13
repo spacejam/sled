@@ -354,8 +354,15 @@ impl Config {
 
         let file = config.open_file()?;
 
+        let heap_path = config.get_path().join("heap");
+        let heap = Heap::start(heap_path)?;
+
         // seal config in a Config
-        let config = RunningConfig { inner: config, file: Arc::new(file) };
+        let config = RunningConfig {
+            inner: config,
+            file: Arc::new(file),
+            heap: Arc::new(heap),
+        };
 
         Db::start_inner(config)
     }
@@ -413,30 +420,6 @@ impl Config {
         let m = Arc::make_mut(&mut self.0);
         m.idgen_persist_interval = interval;
         self
-    }
-
-    /// Finalize the configuration.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if it is not possible
-    /// to open the files for performing database IO,
-    /// or if the provided configuration fails some
-    /// basic sanity checks.
-    #[doc(hidden)]
-    #[deprecated(since = "0.29.0", note = "use Config::open instead")]
-    pub fn build(mut self) -> RunningConfig {
-        // only validate, setup directory, and open file once
-        self.validate().unwrap();
-
-        self.limit_cache_max_memory();
-
-        let file = self.open_file().unwrap_or_else(|e| {
-            panic!("open file at {:?}: {}", self.db_path(), e);
-        });
-
-        // seal config in a Config
-        RunningConfig { inner: self, file: Arc::new(file) }
     }
 
     fn gen_temp_path() -> PathBuf {
@@ -791,6 +774,7 @@ impl Config {
 pub struct RunningConfig {
     inner: Config,
     pub(crate) file: Arc<File>,
+    pub(crate) heap: Arc<Heap>,
 }
 
 impl Deref for RunningConfig {

@@ -2,11 +2,11 @@ use std::fs::File;
 
 use super::{
     arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, decompress, header,
-    iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof, read_blob, roll_iobuf,
-    u32_to_arr, Arc, BasedBuf, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind,
-    LogOffset, Lsn, MessageKind, Reservation, Serialize, Snapshot,
-    BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
-    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
+    iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr,
+    Arc, BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
+    MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
+    COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
+    SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -57,7 +57,6 @@ impl Log {
         );
 
         if ptr.is_inline() {
-            iobuf::make_durable(&self.iobufs, lsn)?;
             let f = &self.config.file;
             read_message(
                 &**f,
@@ -70,8 +69,7 @@ impl Log {
             // here because it might not still
             // exist in the inline log.
             let (_, blob_ptr) = ptr.blob();
-            iobuf::make_durable(&self.iobufs, blob_ptr)?;
-            read_blob(blob_ptr, &self.config).map(|(kind, buf)| {
+            self.config.heap.read(blob_ptr).map(|(kind, buf)| {
                 let header = MessageHeader {
                     kind,
                     pid,
@@ -104,7 +102,7 @@ impl Log {
     pub(super) fn rewrite_blob_pointer(
         &self,
         pid: PageId,
-        blob_pointer: BlobPointer,
+        blob_pointer: HeapId,
         guard: &Guard,
     ) -> Result<Reservation<'_>> {
         self.reserve_inner(
@@ -159,7 +157,7 @@ impl Log {
         log_kind: LogKind,
         pid: PageId,
         item: &T,
-        blob_rewrite: Option<Lsn>,
+        blob_rewrite: Option<HeapId>,
         _: &Guard,
     ) -> Result<Reservation<'_>> {
         let _measure = Measure::new(&M.reserve_lat);
@@ -514,7 +512,7 @@ pub enum LogRead {
     /// Successful read, entirely on-log
     Inline(MessageHeader, Vec<u8>, u32),
     /// Successful read, spilled to its own blob file
-    Blob(MessageHeader, Vec<u8>, BlobPointer, u32),
+    Blob(MessageHeader, Vec<u8>, HeapId, u32),
     /// A cancelled message was encountered
     Canceled(u32),
     /// A padding message used to show that a segment was filled
@@ -522,7 +520,7 @@ pub enum LogRead {
     /// This log message was not readable due to corruption
     Corrupted,
     /// This blob file is no longer available
-    DanglingBlob(MessageHeader, BlobPointer, u32),
+    DanglingBlob(MessageHeader, HeapId, u32),
     /// This data may only be read if at least this future location is stable
     BatchManifest(Lsn, u32),
 }
@@ -803,7 +801,7 @@ pub(crate) fn read_message<R: ReadAt>(
         | MessageKind::BlobMeta => {
             let id = arr_to_lsn(&buf);
 
-            match read_blob(id, config) {
+            match config.read_blob(id) {
                 Ok((kind, buf)) => {
                     assert_eq!(header.kind, kind);
                     trace!(

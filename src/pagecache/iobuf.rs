@@ -530,7 +530,7 @@ impl IoBufs {
         if let Some(blob_id) = blob_id {
             // write blob to file
             io_fail!(self, "blob blob write");
-            write_blob(&self.config, header.kind, blob_id, item)?;
+            self.config.write_blob(header.kind, blob_id, item)?;
 
             let _ = Measure::new(&M.serialize);
             blob_id.serialize_into(out_buf_ref);

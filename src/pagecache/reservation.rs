@@ -40,7 +40,7 @@ impl<'a> Reservation<'a> {
                 self.pointer
             );
 
-            remove_blob(self.pointer.blob().1, &self.log.config)?;
+            self.log.config.remove_blob(self.pointer.blob().1)?;
         }
 
         self.flush(false)

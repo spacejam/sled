@@ -1,10 +1,10 @@
-//! Baphomet is a persistent slab allocator.
-//! It doesn't know about
+// TODO rm allow(unused)
+#![allow(unused)]
+#![allow(unsafe_code)]
 
 use std::{
     convert::TryFrom,
     fs::File,
-    io::Result,
     mem::{transmute, MaybeUninit},
     path::Path,
     sync::{
@@ -15,13 +15,13 @@ use std::{
 
 use crossbeam_epoch::pin;
 
-use crate::stack::Stack;
+use crate::{pagecache::MessageKind, stack::Stack, Result};
 
 pub type SlabId = u8;
 pub type SlabIdx = u32;
 
-#[derive(Debug, Clone, Copy)]
-pub struct HeapId(u64);
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, Eq, PartialEq)]
+pub struct HeapId(pub u64);
 
 impl HeapId {
     pub fn decompose(&self) -> (SlabId, SlabIdx) {
@@ -101,6 +101,7 @@ impl Reservation {
     }
 }
 
+#[derive(Debug)]
 pub struct Heap {
     // each slab stores
     // items that are double
@@ -123,7 +124,14 @@ impl Heap {
         Ok(Heap { slabs: unsafe { transmute(slabs) } })
     }
 
-    pub fn read(&self, heap_id: HeapId) -> Result<Vec<u8>> {
+    pub fn gc_unknown_blobs(
+        &self,
+        _snapshot: &crate::pagecache::Snapshot,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    pub fn read(&self, heap_id: HeapId) -> Result<(MessageKind, Vec<u8>)> {
         let (slab_id, slab_idx) = heap_id.decompose();
         self.slabs[slab_id as usize].read(slab_idx)
     }
@@ -144,6 +152,7 @@ impl Heap {
     }
 }
 
+#[derive(Debug)]
 struct Slab {
     file: File,
     bs: u64,
@@ -162,7 +171,7 @@ impl Slab {
         Ok(Slab { file, bs, tip, free })
     }
 
-    fn read(&self, slab_idx: SlabIdx) -> Result<Vec<u8>> {
+    fn read(&self, slab_idx: SlabIdx) -> Result<(MessageKind, Vec<u8>)> {
         let mut ret = vec![0; usize::try_from(self.bs).unwrap()];
 
         let offset = slab_idx as u64 * self.bs;
@@ -170,7 +179,8 @@ impl Slab {
         use std::os::unix::fs::FileExt;
         self.file.read_exact_at(&mut ret, offset)?;
 
-        Ok(ret)
+        //Ok(ret)
+        todo!()
     }
 
     fn reserve(
@@ -219,13 +229,9 @@ impl Slab {
                 unsafe { fallocate(fd, mode, offset as i64, self.bs as i64) };
 
             if ret != 0 {
-                return Err(std::io::Error::last_os_error());
+                return Err(std::io::Error::last_os_error().into());
             }
         }
         Ok(())
     }
-}
-
-fn main() {
-    println!("Hello, world!");
 }

@@ -158,7 +158,7 @@ struct Active {
     pids: BTreeSet<PageId>,
     latest_replacement_lsn: Lsn,
     can_free_upon_deactivation: FastSet8<Lsn>,
-    deferred_rm_blob: FastSet8<BlobPointer>,
+    deferred_rm_blob: FastSet8<HeapId>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -259,7 +259,7 @@ impl Segment {
                     ptr,
                     active.lsn,
                 );
-                remove_blob(*ptr, config)?;
+                config.remove_blob(*ptr)?;
             }
 
             let inactive = Segment::Inactive(Inactive {
@@ -420,11 +420,7 @@ impl Segment {
         }
     }
 
-    fn remove_blob(
-        &mut self,
-        blob_ptr: BlobPointer,
-        config: &Config,
-    ) -> Result<()> {
+    fn remove_blob(&mut self, blob_ptr: HeapId, config: &Config) -> Result<()> {
         match self {
             Segment::Active(active) => {
                 // we have received a removal before
@@ -439,7 +435,7 @@ impl Segment {
                      or Draining.",
                     blob_ptr,
                 );
-                remove_blob(blob_ptr, config)?;
+                config.remove_blob(blob_ptr)?;
             }
             Segment::Free(_) => panic!("remove_blob called on a Free Segment"),
         }
@@ -806,7 +802,7 @@ impl SegmentAccountant {
                 } else {
                     // this was migrated off-log and is present and stabilized
                     // in the snapshot.
-                    remove_blob(old_ptr.blob().1, &self.config)?;
+                    self.config.remove_blob(old_ptr.blob().1)?;
                 }
             }
 

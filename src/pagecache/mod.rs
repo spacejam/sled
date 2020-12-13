@@ -5,7 +5,6 @@
 pub mod constants;
 pub mod logger;
 
-mod blob_io;
 mod disk_pointer;
 mod header;
 mod iobuf;
@@ -35,7 +34,6 @@ use parallel_io_unix::{pread_exact, pread_exact_or_eof, pwrite_all};
 use parallel_io_windows::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 use self::{
-    blob_io::{read_blob, remove_blob, write_blob},
     constants::{
         BATCH_MANIFEST_PID, COUNTER_PID, META_PID,
         PAGE_CONSOLIDATION_THRESHOLD, SEGMENT_CLEANUP_THRESHOLD,
@@ -62,14 +60,12 @@ pub use self::{
         SEG_HEADER_LEN,
     },
     disk_pointer::DiskPtr,
+    heap::HeapId,
     logger::{Log, LogRead},
 };
 
 /// A file offset in the database log.
 pub type LogOffset = u64;
-
-/// A pointer to an blob blob.
-pub type BlobPointer = Lsn;
 
 /// The logical sequence number of an item in the database log.
 pub type Lsn = i64;
@@ -583,7 +579,7 @@ impl PageCache {
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
 
-        blob_io::gc_unknown_blobs(&config, &snapshot)?;
+        config.heap.gc_unknown_blobs(&snapshot)?;
 
         #[cfg(feature = "testing")]
         {
@@ -2094,6 +2090,8 @@ impl PageCacheInner {
             u64::try_from(lsn).unwrap()
                 / u64::try_from(self.config.segment_size).unwrap(),
         );
+
+        iobuf::make_durable(&self.log.iobufs, lsn)?;
 
         let (header, bytes) = match self.log.read(pid, lsn, pointer) {
             Ok(LogRead::Inline(header, buf, _len)) => {

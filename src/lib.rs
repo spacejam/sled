@@ -189,6 +189,7 @@ mod db;
 mod dll;
 mod fastcmp;
 mod fastlock;
+mod heap;
 mod histogram;
 mod iter;
 mod ivec;
@@ -309,6 +310,7 @@ pub use self::{
     batch::Batch,
     config::{Config, Mode},
     db::{open, Db},
+    heap::{Heap, HeapId},
     iter::Iter,
     ivec::IVec,
     result::{Error, Result},

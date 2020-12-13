@@ -1,6 +1,6 @@
 use std::num::NonZeroU64;
 
-use super::{BlobPointer, LogOffset};
+use super::{HeapId, LogOffset};
 use crate::*;
 
 /// A pointer to a location on disk or an off-log blob.
@@ -9,7 +9,7 @@ pub enum DiskPtr {
     /// Points to a value stored in the single-file log.
     Inline(LogOffset),
     /// Points to a value stored off-log in the blob directory.
-    Blob(Option<NonZeroU64>, BlobPointer),
+    Blob(Option<NonZeroU64>, HeapId),
 }
 
 impl DiskPtr {
@@ -17,7 +17,7 @@ impl DiskPtr {
         DiskPtr::Inline(l)
     }
 
-    pub(crate) fn new_blob(lid: LogOffset, ptr: BlobPointer) -> Self {
+    pub(crate) fn new_blob(lid: LogOffset, ptr: HeapId) -> Self {
         DiskPtr::Blob(Some(NonZeroU64::new(lid).unwrap()), ptr)
     }
 
@@ -35,7 +35,7 @@ impl DiskPtr {
         }
     }
 
-    pub(crate) fn blob(&self) -> (Option<LogOffset>, BlobPointer) {
+    pub(crate) fn blob(&self) -> (Option<LogOffset>, HeapId) {
         match self {
             DiskPtr::Blob(lid, ptr) => (lid.map(NonZeroU64::get), *ptr),
             DiskPtr::Inline(_) => {
@@ -44,7 +44,7 @@ impl DiskPtr {
         }
     }
 
-    pub(crate) fn blob_pointer(&self) -> Option<BlobPointer> {
+    pub(crate) fn blob_pointer(&self) -> Option<HeapId> {
         if let DiskPtr::Blob(_, ptr) = self { Some(*ptr) } else { None }
     }
 
