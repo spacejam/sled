@@ -18,6 +18,14 @@ use crossbeam_epoch::pin;
 
 use crate::{pagecache::MessageKind, stack::Stack, Error, Result};
 
+#[cfg(not(feature = "testing"))]
+const MIN_SZ: u64 = 64 * 1024;
+
+#[cfg(feature = "testing")]
+const MIN_SZ: u64 = 32;
+
+const MIN_TRAILING_ZEROS: u64 = MIN_SZ.trailing_zeros() as u64;
+
 pub type SlabId = u8;
 pub type SlabIdx = u32;
 
@@ -58,15 +66,15 @@ pub(crate) fn slab_size(size: u64) -> u64 {
 }
 
 fn slab_id_to_size(slab_id: u8) -> u64 {
-    1 << (16 + slab_id as u64)
+    1 << (MIN_TRAILING_ZEROS + slab_id as u64)
 }
 
 fn size_to_slab_id(size: u64) -> SlabId {
     // find the power of 2 that is at least 64k
-    let normalized_size = std::cmp::max(64 * 1024, size.next_power_of_two());
+    let normalized_size = std::cmp::max(MIN_SZ, size.next_power_of_two());
 
-    // drop the lowest 16 bits
-    let rebased_size = normalized_size >> 16;
+    // drop the lowest unused bits
+    let rebased_size = normalized_size >> MIN_TRAILING_ZEROS;
 
     u8::try_from(rebased_size.trailing_zeros()).unwrap()
 }
@@ -100,6 +108,11 @@ impl Reservation {
     }
 
     pub fn complete(mut self, data: &[u8]) -> Result<HeapId> {
+        log::trace!(
+            "writing heap slab slot {} at offset {}",
+            self.idx,
+            self.offset
+        );
         assert_eq!(data.len() as u64, slab_size(self.size));
 
         use std::os::unix::fs::FileExt;
@@ -158,11 +171,13 @@ impl Heap {
     }
 
     pub fn read(&self, heap_id: HeapId) -> Result<(MessageKind, Vec<u8>)> {
+        log::trace!("Heap::read({:?})", heap_id);
         let (slab_id, slab_idx) = heap_id.decompose();
         self.slabs[slab_id as usize].read(slab_idx)
     }
 
     pub fn free(&self, heap_id: HeapId) -> Result<()> {
+        log::trace!("Heap::free({:?})", heap_id);
         let (slab_id, slab_idx) = heap_id.decompose();
         self.slabs[slab_id as usize].free(slab_idx)
     }
@@ -172,6 +187,7 @@ impl Heap {
         size: u64,
         stability_cb: Box<dyn FnOnce(SlabId)>,
     ) -> Reservation {
+        log::trace!("Heap::reserve({})", size);
         assert!(size < 1 << 48);
         let slab_id = size_to_slab_id(size);
         self.slabs[slab_id as usize].reserve(size, stability_cb)
@@ -208,6 +224,8 @@ impl Slab {
         let mut heap_buf = vec![0; usize::try_from(self.bs).unwrap()];
 
         let offset = slab_idx as u64 * self.bs;
+
+        log::trace!("reading heap slab slot {} at offset {}", slab_idx, offset);
 
         use std::os::unix::fs::FileExt;
         self.file.read_exact_at(&mut heap_buf, offset)?;

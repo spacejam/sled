@@ -2500,3 +2500,12 @@ fn tree_bug_45() {
         ))
     }
 }
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_46() {
+    // postmortem:
+    for _ in 0..1 {
+        assert!(prop_tree_matches_btreemap(vec![Restart], false, true, 0, 0))
+    }
+}
