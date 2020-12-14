@@ -330,22 +330,28 @@ impl Serialize for HeapId {
 
 impl Serialize for Meta {
     fn serialized_size(&self) -> u64 {
-        self.inner
+        let len_sz: u64 = (self.inner.len() as u64).serialized_size();
+        let items_sz: u64 = self
+            .inner
             .iter()
             .map(|(k, v)| {
                 (k.len() as u64).serialized_size()
                     + u64::try_from(k.len()).unwrap()
                     + v.serialized_size()
             })
-            .sum()
+            .sum();
+
+        len_sz + items_sz
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
+        (self.inner.len() as u64).serialize_into(buf);
         serialize_2tuple_sequence(self.inner.iter(), buf);
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
-        Ok(Meta { inner: deserialize_sequence(buf)? })
+        let len = usize::try_from(u64::deserialize(buf)?).unwrap();
+        Ok(Meta { inner: deserialize_bounded_sequence(buf, len)? })
     }
 }
 
@@ -511,6 +517,7 @@ impl Serialize for Snapshot {
     fn serialized_size(&self) -> u64 {
         self.stable_lsn.serialized_size()
             + self.active_segment.serialized_size()
+            + (self.pt.len() as u64).serialized_size()
             + self
                 .pt
                 .iter()
@@ -521,6 +528,7 @@ impl Serialize for Snapshot {
     fn serialize_into(&self, buf: &mut &mut [u8]) {
         self.stable_lsn.serialize_into(buf);
         self.active_segment.serialize_into(buf);
+        (self.pt.len() as u64).serialize_into(buf);
         for page_state in &self.pt {
             page_state.serialize_into(buf);
         }
@@ -530,7 +538,10 @@ impl Serialize for Snapshot {
         Ok(Snapshot {
             stable_lsn: Serialize::deserialize(buf)?,
             active_segment: Serialize::deserialize(buf)?,
-            pt: deserialize_sequence(buf)?,
+            pt: {
+                let len = usize::try_from(u64::deserialize(buf)?).unwrap();
+                deserialize_bounded_sequence(buf, len)?
+            },
         })
     }
 }
@@ -785,14 +796,6 @@ struct ConsumeSequence<'a, 'b, T> {
     buf: &'a mut &'b [u8],
     _t: PhantomData<T>,
     done: bool,
-}
-
-fn deserialize_sequence<T: Serialize, R>(buf: &mut &[u8]) -> Result<R>
-where
-    R: FromIterator<T>,
-{
-    let iter = ConsumeSequence { buf, _t: PhantomData, done: false };
-    iter.collect()
 }
 
 fn deserialize_bounded_sequence<T: Serialize, R>(
