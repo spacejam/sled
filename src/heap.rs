@@ -171,7 +171,15 @@ impl Slab {
     pub fn start<P: AsRef<Path>>(directory: P, slab_id: u8) -> Result<Slab> {
         let bs = slab_id_to_size(slab_id);
         let free = Arc::new(Stack::default());
-        let file = File::open(directory.as_ref().join(format!("{}", slab_id)))?;
+
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true);
+        options.read(true);
+        options.write(true);
+        options.create_new(true);
+
+        let file =
+            options.open(directory.as_ref().join(format!("{}", slab_id)))?;
         let tip =
             AtomicU32::new(u32::try_from(file.metadata()?.len() / bs).unwrap());
 

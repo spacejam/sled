@@ -56,6 +56,8 @@ impl Log {
                 / u64::try_from(self.config.segment_size).unwrap(),
         );
 
+        iobuf::make_durable(&self.iobufs, lsn)?;
+
         if ptr.is_inline() {
             let f = &self.config.file;
             read_message(

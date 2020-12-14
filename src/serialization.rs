@@ -846,7 +846,7 @@ mod qc {
 
     impl Arbitrary for HeapId {
         fn arbitrary<G: Gen>(g: &mut G) -> HeapId {
-            HeapId(SpreadI64::arbitrary(g))
+            HeapId(SpreadU64::arbitrary(g).0)
         }
     }
 
@@ -987,7 +987,7 @@ mod qc {
             if g.gen() {
                 DiskPtr::Inline(g.gen())
             } else {
-                DiskPtr::Blob(g.gen(), g.gen())
+                DiskPtr::Blob(g.gen(), g.gen(), HeapId(g.gen()))
             }
         }
     }

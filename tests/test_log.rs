@@ -268,6 +268,7 @@ fn abort(log: &Log) {
 
 #[test]
 fn log_aborts() {
+    common::setup_logger();
     let config = Config::new().temporary(true);
     let db = config.open().unwrap();
     let log = &db.context.pagecache.log;

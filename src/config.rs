@@ -539,10 +539,10 @@ impl Config {
     }
 
     fn open_file(&self) -> Result<File> {
-        let blob_dir: PathBuf = self.get_path().join("blobs");
+        let heap_dir: PathBuf = self.get_path().join("heap");
 
-        if !blob_dir.exists() {
-            fs::create_dir_all(blob_dir)?;
+        if !heap_dir.exists() {
+            fs::create_dir_all(heap_dir)?;
         }
 
         self.verify_config()?;

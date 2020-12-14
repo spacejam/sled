@@ -35,17 +35,6 @@ impl DiskPtr {
         }
     }
 
-    /*
-    pub(crate) fn blob(&self) -> (Option<LogOffset>, HeapId) {
-        match self {
-            DiskPtr::Blob(lid, _lsn, ptr) => (lid.map(NonZeroU64::get), *ptr),
-            DiskPtr::Inline(_) => {
-                panic!("blob called on Internal disk pointer")
-            }
-        }
-    }
-    */
-
     pub(crate) fn heap_id(&self) -> Option<HeapId> {
         if let DiskPtr::Blob(_, _, ptr) = self { Some(*ptr) } else { None }
     }
