@@ -71,16 +71,18 @@ impl Log {
             // here because it might not still
             // exist in the inline log.
             let heap_id = ptr.heap_id().unwrap();
-            self.config.heap.read(heap_id).map(|(kind, buf)| {
-                let header = MessageHeader {
-                    kind,
-                    pid,
-                    segment_number: expected_segment_number,
-                    crc32: 0,
-                    len: 0,
-                };
-                LogRead::Blob(header, buf, heap_id, 0)
-            })
+            self.config.heap.read(heap_id, self.config.use_compression).map(
+                |(kind, buf)| {
+                    let header = MessageHeader {
+                        kind,
+                        pid,
+                        segment_number: expected_segment_number,
+                        crc32: 0,
+                        len: 0,
+                    };
+                    LogRead::Blob(header, buf, heap_id, 0)
+                },
+            )
         }
     }
 
@@ -816,7 +818,7 @@ pub(crate) fn read_message<R: ReadAt>(
         | MessageKind::BlobMeta => {
             let id = HeapId(arr_to_u64(&buf));
 
-            match config.heap.read(id) {
+            match config.heap.read(id, config.use_compression) {
                 Ok((kind, buf)) => {
                     assert_eq!(header.kind, kind);
                     trace!(

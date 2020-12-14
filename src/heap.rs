@@ -170,10 +170,14 @@ impl Heap {
         Ok(())
     }
 
-    pub fn read(&self, heap_id: HeapId) -> Result<(MessageKind, Vec<u8>)> {
+    pub fn read(
+        &self,
+        heap_id: HeapId,
+        use_compression: bool,
+    ) -> Result<(MessageKind, Vec<u8>)> {
         log::trace!("Heap::read({:?})", heap_id);
         let (slab_id, slab_idx) = heap_id.decompose();
-        self.slabs[slab_id as usize].read(slab_idx)
+        self.slabs[slab_id as usize].read(slab_idx, use_compression)
     }
 
     pub fn free(&self, heap_id: HeapId) -> Result<()> {
@@ -214,13 +218,24 @@ impl Slab {
 
         let file =
             options.open(directory.as_ref().join(format!("{}", slab_id)))?;
-        let tip =
-            AtomicU32::new(u32::try_from(file.metadata()?.len() / bs).unwrap());
+        let len = file.metadata()?.len();
+        let max_idx = len / bs;
+        log::trace!(
+            "starting heap slab for sizes of {}. tip: {} max idx: {}",
+            bs,
+            len,
+            max_idx
+        );
+        let tip = AtomicU32::new(u32::try_from(max_idx).unwrap());
 
         Ok(Slab { file, bs, tip, free })
     }
 
-    fn read(&self, slab_idx: SlabIdx) -> Result<(MessageKind, Vec<u8>)> {
+    fn read(
+        &self,
+        slab_idx: SlabIdx,
+        use_compression: bool,
+    ) -> Result<(MessageKind, Vec<u8>)> {
         let mut heap_buf = vec![0; usize::try_from(self.bs).unwrap()];
 
         let offset = slab_idx as u64 * self.bs;
@@ -238,7 +253,15 @@ impl Slab {
         hasher.update(&heap_buf[5..]);
         let actual_crc = hasher.finalize();
 
-        if actual_crc != stored_crc {
+        if actual_crc == stored_crc {
+            let buf = heap_buf[5..].to_vec();
+            let buf = if use_compression {
+                crate::pagecache::decompress(buf)
+            } else {
+                buf
+            };
+            Ok((MessageKind::from(heap_buf[0]), buf))
+        } else {
             log::error!(
                 "heap message CRC does not match contents. stored: {} actual: {}",
                 stored_crc,
@@ -246,8 +269,6 @@ impl Slab {
             );
             return Err(Error::corruption(None));
         }
-
-        Ok((heap_buf[0].into(), heap_buf[5..].to_vec()))
     }
 
     fn reserve(
@@ -256,10 +277,22 @@ impl Slab {
         stability_cb: Box<dyn FnOnce(SlabId)>,
     ) -> Reservation {
         let idx = if let Some(idx) = self.free.pop(&pin()) {
+            log::trace!(
+                "reusing heap index {} in slab for sizes of {}",
+                idx,
+                self.bs
+            );
             idx
         } else {
+            log::trace!("no free heap slots in slab for sizes of {}", self.bs);
             self.tip.fetch_add(1, Acquire)
         };
+
+        log::trace!(
+            "heap reservation for slot {} in the slab for sizes of {}",
+            idx,
+            self.bs
+        );
 
         let offset = idx as u64 * self.bs;
 

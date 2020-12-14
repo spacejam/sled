@@ -336,7 +336,7 @@ impl Serialize for Meta {
             .iter()
             .map(|(k, v)| {
                 (k.len() as u64).serialized_size()
-                    + u64::try_from(k.len()).unwrap()
+                    + k.len() as u64
                     + v.serialized_size()
             })
             .sum();
@@ -350,8 +350,9 @@ impl Serialize for Meta {
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
-        let len = usize::try_from(u64::deserialize(buf)?).unwrap();
-        Ok(Meta { inner: deserialize_bounded_sequence(buf, len)? })
+        let len = u64::deserialize(buf)?;
+        let meta = Meta { inner: deserialize_bounded_sequence(buf, len)? };
+        Ok(meta)
     }
 }
 
@@ -539,7 +540,7 @@ impl Serialize for Snapshot {
             stable_lsn: Serialize::deserialize(buf)?,
             active_segment: Serialize::deserialize(buf)?,
             pt: {
-                let len = usize::try_from(u64::deserialize(buf)?).unwrap();
+                let len = u64::deserialize(buf)?;
                 deserialize_bounded_sequence(buf, len)?
             },
         })
@@ -614,7 +615,7 @@ impl Serialize for Data {
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
-        let len = usize::try_from(u64::deserialize(buf)?).unwrap();
+        let len = u64::deserialize(buf)?;
         Ok(match discriminant {
             0 => Data::Leaf(Leaf {
                 keys: deserialize_bounded_sequence(buf, len)?,
@@ -722,7 +723,7 @@ impl Serialize for PageState {
             ),
             len => PageState::Present {
                 base: Serialize::deserialize(buf)?,
-                frags: deserialize_bounded_sequence(buf, usize::from(len - 1))?,
+                frags: deserialize_bounded_sequence(buf, u64::from(len - 1))?,
             },
         })
     }
@@ -795,18 +796,18 @@ where
 struct ConsumeSequence<'a, 'b, T> {
     buf: &'a mut &'b [u8],
     _t: PhantomData<T>,
-    done: bool,
+    bound: u64,
 }
 
 fn deserialize_bounded_sequence<T: Serialize, R>(
     buf: &mut &[u8],
-    bound: usize,
+    bound: u64,
 ) -> Result<R>
 where
     R: FromIterator<T>,
 {
-    let iter = ConsumeSequence { buf, _t: PhantomData, done: false };
-    iter.take(bound).collect()
+    let iter = ConsumeSequence { buf, _t: PhantomData, bound };
+    iter.collect()
 }
 
 impl<'a, 'b, T> Iterator for ConsumeSequence<'a, 'b, T>
@@ -816,12 +817,13 @@ where
     type Item = Result<T>;
 
     fn next(&mut self) -> Option<Result<T>> {
-        if self.done || self.buf.is_empty() {
+        if self.bound == 0 || self.buf.is_empty() {
             return None;
         }
         let item_res = T::deserialize(&mut self.buf);
+        self.bound -= 1;
         if item_res.is_err() {
-            self.done = true;
+            self.bound = 0;
         }
         Some(item_res)
     }
