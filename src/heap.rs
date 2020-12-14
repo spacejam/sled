@@ -3,7 +3,7 @@
 #![allow(unsafe_code)]
 
 use std::{
-    convert::TryFrom,
+    convert::{TryFrom, TryInto},
     fs::File,
     mem::{transmute, MaybeUninit},
     path::Path,
@@ -15,7 +15,7 @@ use std::{
 
 use crossbeam_epoch::pin;
 
-use crate::{pagecache::MessageKind, stack::Stack, Result};
+use crate::{pagecache::MessageKind, stack::Stack, Error, Result};
 
 pub type SlabId = u8;
 pub type SlabIdx = u32;
@@ -37,6 +37,10 @@ impl HeapId {
         let heap_id = slab | slab_idx as u64;
         HeapId(heap_id)
     }
+}
+
+pub(crate) fn slab_size(size: u64) -> u64 {
+    slab_id_to_size(size_to_slab_id(size))
 }
 
 fn slab_id_to_size(slab_id: u8) -> u64 {
@@ -82,7 +86,7 @@ impl Reservation {
     }
 
     pub fn complete(mut self, data: &[u8]) -> Result<HeapId> {
-        assert_eq!(data.len() as u64, self.size);
+        assert_eq!(data.len() as u64, slab_size(self.size));
 
         use std::os::unix::fs::FileExt;
         self.file.write_at(data, self.offset)?;
@@ -135,7 +139,8 @@ impl Heap {
         &self,
         _snapshot: &crate::pagecache::Snapshot,
     ) -> Result<()> {
-        todo!()
+        //TODO todo!()
+        Ok(())
     }
 
     pub fn read(&self, heap_id: HeapId) -> Result<(MessageKind, Vec<u8>)> {
@@ -186,15 +191,31 @@ impl Slab {
     }
 
     fn read(&self, slab_idx: SlabIdx) -> Result<(MessageKind, Vec<u8>)> {
-        let mut ret = vec![0; usize::try_from(self.bs).unwrap()];
+        let mut heap_buf = vec![0; usize::try_from(self.bs).unwrap()];
 
         let offset = slab_idx as u64 * self.bs;
 
         use std::os::unix::fs::FileExt;
-        self.file.read_exact_at(&mut ret, offset)?;
+        self.file.read_exact_at(&mut heap_buf, offset)?;
 
-        //Ok(ret)
-        todo!()
+        let stored_crc =
+            u32::from_le_bytes(heap_buf[1..5].as_ref().try_into().unwrap());
+
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&heap_buf[0..1]);
+        hasher.update(&heap_buf[5..]);
+        let actual_crc = hasher.finalize();
+
+        if actual_crc != stored_crc {
+            log::error!(
+                "heap message CRC does not match contents. stored: {} actual: {}",
+                stored_crc,
+                actual_crc
+            );
+            return Err(Error::corruption(None));
+        }
+
+        Ok((heap_buf[0].into(), heap_buf[5..].to_vec()))
     }
 
     fn reserve(

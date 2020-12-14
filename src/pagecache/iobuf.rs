@@ -530,8 +530,11 @@ impl IoBufs {
         if let Some(heap_reservation) = heap_reservation {
             // write blob to file
             io_fail!(self, "blob blob write");
-            let mut heap_buf =
-                vec![0; 5_usize + item.serialized_size() as usize];
+            let mut heap_buf = vec![
+                0;
+                crate::heap::slab_size(5 + item.serialized_size())
+                    as usize
+            ];
 
             let _ser = Measure::new(&M.serialize);
             heap_buf[0] = header.kind.into();
