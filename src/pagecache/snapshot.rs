@@ -91,27 +91,27 @@ impl PageState {
         }
     }
 
-    pub(crate) fn blob_lsns(&self) -> Vec<Lsn> {
+    pub(crate) fn heap_ids(&self) -> Vec<HeapId> {
         let mut ret = vec![];
 
         match *self {
             PageState::Present { base, ref frags } => {
-                if let Some(blob_pointer) = base.1.blob_pointer() {
-                    ret.push(blob_pointer);
+                if let Some(heap_id) = base.1.heap_id() {
+                    ret.push(heap_id);
                 }
                 for (_, ptr, _) in frags {
-                    if let Some(blob_pointer) = ptr.blob_pointer() {
-                        ret.push(blob_pointer);
+                    if let Some(heap_id) = ptr.heap_id() {
+                        ret.push(heap_id);
                     }
                 }
             }
             PageState::Free(_, ptr) => {
-                if let Some(blob_pointer) = ptr.blob_pointer() {
-                    ret.push(blob_pointer);
+                if let Some(heap_id) = ptr.heap_id() {
+                    ret.push(heap_id);
                 }
             }
             PageState::Uninitialized => {
-                panic!("called blob_lsns on Uninitialized")
+                panic!("called heap_ids on Uninitialized")
             }
         }
 
@@ -235,7 +235,7 @@ impl Snapshot {
         Ok(())
     }
 
-    fn filter_inner_blob_pointers(&mut self) {
+    fn filter_inner_heap_ids(&mut self) {
         for page in &mut self.pt {
             match page {
                 PageState::Free(_lsn, ref mut ptr) => {
@@ -397,7 +397,7 @@ fn advance_snapshot(
 
         snapshot.stable_lsn = Some(stable_lsn);
         snapshot.active_segment = active_segment;
-        snapshot.filter_inner_blob_pointers();
+        snapshot.filter_inner_heap_ids();
 
         snapshot
     };

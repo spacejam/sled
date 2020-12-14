@@ -544,9 +544,9 @@ impl IoBufs {
             let crc = hasher.finalize().to_le_bytes();
             heap_buf[1..5].copy_from_slice(&crc);
 
-            blob_reservation.complete(&heap_buf)?;
-
             blob_reservation.heap_id().serialize_into(out_buf_ref);
+
+            blob_reservation.complete(&heap_buf)?;
         } else {
             let _ = Measure::new(&M.serialize);
             item.serialize_into(out_buf_ref);

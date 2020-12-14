@@ -46,6 +46,7 @@ use self::{
 };
 
 pub(crate) use self::{
+    heap::HeapId,
     logger::{
         read_message, read_segment_header, MessageHeader, SegmentHeader,
         SegmentNumber,
@@ -60,7 +61,6 @@ pub use self::{
         SEG_HEADER_LEN,
     },
     disk_pointer::DiskPtr,
-    heap::HeapId,
     logger::{Log, LogRead},
 };
 
@@ -1351,7 +1351,7 @@ impl PageCacheInner {
                 let original_lsn = lone_cache_info.pointer.original_lsn();
                 let skip_log = original_lsn < snapshot_min_lsn;
 
-                let blob_pointer = lone_cache_info.pointer.blob().1;
+                let heap_id = lone_cache_info.pointer.heap_id().unwrap();
 
                 let (log_reservation, cache_info) = if skip_log {
                     trace!(
@@ -1364,20 +1364,14 @@ impl PageCacheInner {
                     );
 
                     let cache_info = CacheInfo {
-                        pointer: DiskPtr::Blob(
-                            None,
-                            lone_cache_info.pointer.blob().1,
-                        ),
+                        pointer: DiskPtr::Blob(None, original_lsn, heap_id),
                         ..lone_cache_info
                     };
 
                     (None, cache_info)
                 } else {
-                    let log_reservation = self.log.rewrite_blob_pointer(
-                        pid,
-                        blob_pointer,
-                        guard,
-                    )?;
+                    let log_reservation =
+                        self.log.rewrite_blob_pointer(pid, heap_id, guard)?;
 
                     let cache_info = CacheInfo {
                         ts: page_view.ts(),

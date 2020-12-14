@@ -20,7 +20,8 @@ use crate::{pagecache::MessageKind, stack::Stack, Result};
 pub type SlabId = u8;
 pub type SlabIdx = u32;
 
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, Eq, PartialEq)]
+/// A unique identifier for a particular slot in the heap
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, Eq, PartialEq, Hash)]
 pub struct HeapId(pub u64);
 
 impl HeapId {
@@ -52,7 +53,7 @@ fn size_to_slab_id(size: u64) -> SlabId {
     u8::try_from(rebased_size.trailing_zeros()).unwrap()
 }
 
-pub struct Reservation {
+pub(crate) struct Reservation {
     slab_free: Arc<Stack<u32>>,
     completed: bool,
     file: File,
@@ -108,7 +109,7 @@ impl Reservation {
 }
 
 #[derive(Debug)]
-pub struct Heap {
+pub(crate) struct Heap {
     // each slab stores
     // items that are double
     // the size of the previous,

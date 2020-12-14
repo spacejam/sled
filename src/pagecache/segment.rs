@@ -158,7 +158,7 @@ struct Active {
     pids: BTreeSet<PageId>,
     latest_replacement_lsn: Lsn,
     can_free_upon_deactivation: FastSet8<Lsn>,
-    deferred_rm_blob: FastSet8<HeapId>,
+    deferred_remove_heap: FastSet8<HeapId>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -234,7 +234,7 @@ impl Segment {
             pids: BTreeSet::default(),
             latest_replacement_lsn: 0,
             can_free_upon_deactivation: FastSet8::default(),
-            deferred_rm_blob: FastSet8::default(),
+            deferred_remove_heap: FastSet8::default(),
         })
     }
 
@@ -244,7 +244,7 @@ impl Segment {
     fn active_to_inactive(
         &mut self,
         lsn: Lsn,
-        config: &Config,
+        config: &RunningConfig,
     ) -> Result<FastSet8<Lsn>> {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
 
@@ -252,14 +252,14 @@ impl Segment {
             assert!(lsn >= active.lsn);
 
             // now we can push any deferred blob removals to the removed set
-            for ptr in &active.deferred_rm_blob {
+            for heap_id in &active.deferred_remove_heap {
                 trace!(
-                    "removing blob {} while transitioning \
+                    "removing heap_id {:?} while transitioning \
                      segment lsn {:?} to Inactive",
-                    ptr,
+                    heap_id,
                     active.lsn,
                 );
-                config.remove_blob(*ptr)?;
+                config.heap.free(*heap_id)?;
             }
 
             let inactive = Segment::Inactive(Inactive {
@@ -420,22 +420,26 @@ impl Segment {
         }
     }
 
-    fn remove_blob(&mut self, blob_ptr: HeapId, config: &Config) -> Result<()> {
+    fn remove_blob(
+        &mut self,
+        heap_id: HeapId,
+        config: &RunningConfig,
+    ) -> Result<()> {
         match self {
             Segment::Active(active) => {
                 // we have received a removal before
                 // transferring this segment to Inactive, so
                 // we defer this pid's removal until the transfer.
-                active.deferred_rm_blob.insert(blob_ptr);
+                active.deferred_remove_heap.insert(heap_id);
             }
             Segment::Inactive(_) | Segment::Draining(_) => {
                 trace!(
-                    "directly removing blob {} that was referred-to \
+                    "directly removing heap_id {:?} that was referred-to \
                      in a segment that has already been marked as Inactive \
                      or Draining.",
-                    blob_ptr,
+                    heap_id,
                 );
-                config.remove_blob(blob_ptr)?;
+                config.heap.free(heap_id)?;
             }
             Segment::Free(_) => panic!("remove_blob called on a Free Segment"),
         }
@@ -777,8 +781,8 @@ impl SegmentAccountant {
         let schedule_rm_blob = !(old_cache_infos.len() == 1
             && old_cache_infos[0].pointer.is_blob()
             && new_cache_info.pointer.is_blob()
-            && old_cache_infos[0].pointer.original_lsn()
-                == new_cache_info.pointer.original_lsn());
+            && old_cache_infos[0].pointer.heap_id()
+                == new_cache_info.pointer.heap_id());
 
         let mut removals = FastMap8::default();
 
@@ -797,12 +801,14 @@ impl SegmentAccountant {
                     old_ptr
                 );
                 if let Some(new_idx) = new_idx {
-                    self.segments[new_idx]
-                        .remove_blob(old_ptr.blob().1, &self.config)?;
+                    self.segments[new_idx].remove_blob(
+                        old_ptr.heap_id().unwrap(),
+                        &self.config,
+                    )?;
                 } else {
                     // this was migrated off-log and is present and stabilized
                     // in the snapshot.
-                    self.config.remove_blob(old_ptr.blob().1)?;
+                    self.config.heap.free(old_ptr.heap_id().unwrap())?;
                 }
             }
 

@@ -68,8 +68,8 @@ impl Log {
             // we short-circuit the inline read
             // here because it might not still
             // exist in the inline log.
-            let (_, blob_ptr) = ptr.blob();
-            self.config.heap.read(blob_ptr).map(|(kind, buf)| {
+            let heap_id = ptr.heap_id().unwrap();
+            self.config.heap.read(heap_id).map(|(kind, buf)| {
                 let header = MessageHeader {
                     kind,
                     pid,
@@ -77,7 +77,7 @@ impl Log {
                     crc32: 0,
                     len: 0,
                 };
-                LogRead::Blob(header, buf, blob_ptr, 0)
+                LogRead::Blob(header, buf, heap_id, 0)
             })
         }
     }
@@ -361,10 +361,14 @@ impl Log {
                 reservation_lsn + inline_buf_len as Lsn - 1,
             );
 
+            let heap_write_callback = Box::new(move |_heap_id| {});
             let (blob_reservation, blob_id) = if over_blob_threshold {
-                let blob_reservation =
-                    self.config.heap.reserve(prospective_size as u64, todo!());
-                (Some(blob_reservation), Some(blob_reservation.heap_id()))
+                let blob_reservation = self
+                    .config
+                    .heap
+                    .reserve(prospective_size as u64, heap_write_callback);
+                let heap_id = blob_reservation.heap_id();
+                (Some(blob_reservation), Some(heap_id))
             } else {
                 (None, None)
             };
@@ -379,9 +383,13 @@ impl Log {
             M.log_reservation_success();
 
             let pointer = if let Some(blob_id) = blob_id {
-                DiskPtr::new_blob(reservation_lid, blob_id)
+                DiskPtr::new_blob(reservation_lid, reservation_lsn, blob_id)
             } else if let Some(blob_rewrite) = blob_rewrite {
-                DiskPtr::new_blob(reservation_lid, blob_rewrite)
+                DiskPtr::new_blob(
+                    reservation_lid,
+                    reservation_lsn,
+                    blob_rewrite,
+                )
             } else {
                 DiskPtr::new_inline(reservation_lid)
             };
