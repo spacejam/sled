@@ -1513,7 +1513,7 @@ impl PageCacheInner {
     pub(crate) fn size_on_disk(&self) -> Result<u64> {
         let mut size = self.config.file.metadata()?.len();
 
-        let stable = self.config.blob_path(0);
+        let stable = self.config.get_path().join("heap");
         let blob_dir = stable.parent().expect(
             "should be able to determine the parent for the blob directory",
         );

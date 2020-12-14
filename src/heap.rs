@@ -4,6 +4,7 @@
 
 use std::{
     convert::{TryFrom, TryInto},
+    fmt::{self, Debug},
     fs::File,
     mem::{transmute, MaybeUninit},
     path::Path,
@@ -21,8 +22,21 @@ pub type SlabId = u8;
 pub type SlabIdx = u32;
 
 /// A unique identifier for a particular slot in the heap
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, PartialOrd, Ord, Eq, PartialEq, Hash)]
 pub struct HeapId(pub u64);
+
+impl Debug for HeapId {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
+        let (slab, idx) = self.decompose();
+        f.debug_struct("HeapId")
+            .field("slab", &slab)
+            .field("idx", &idx)
+            .finish()
+    }
+}
 
 impl HeapId {
     pub fn decompose(&self) -> (SlabId, SlabIdx) {

@@ -8,7 +8,7 @@ use std::{
     sync::atomic::AtomicUsize,
 };
 
-use crate::pagecache::{arr_to_u32, u32_to_arr, Lsn};
+use crate::pagecache::{arr_to_u32, u32_to_arr};
 use crate::*;
 
 const DEFAULT_PATH: &str = "default.sled";
@@ -259,10 +259,6 @@ impl Inner {
         } else {
             self.path.clone()
         }
-    }
-
-    pub(crate) fn blob_path(&self, id: Lsn) -> PathBuf {
-        self.get_path().join("blobs").join(format!("{}", id))
     }
 
     fn db_path(&self) -> PathBuf {
