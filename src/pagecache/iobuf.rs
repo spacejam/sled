@@ -516,7 +516,7 @@ impl IoBufs {
         item: &T,
         header: MessageHeader,
         mut out_buf: &mut [u8],
-        blob_reservation: Option<crate::heap::Reservation>,
+        heap_reservation: Option<crate::heap::Reservation>,
     ) -> Result<()> {
         // we create this double ref to allow scooting
         // the slice forward without doing anything
@@ -527,7 +527,7 @@ impl IoBufs {
             header.serialize_into(out_buf_ref);
         }
 
-        if let Some(blob_reservation) = blob_reservation {
+        if let Some(heap_reservation) = heap_reservation {
             // write blob to file
             io_fail!(self, "blob blob write");
             let mut heap_buf =
@@ -544,9 +544,9 @@ impl IoBufs {
             let crc = hasher.finalize().to_le_bytes();
             heap_buf[1..5].copy_from_slice(&crc);
 
-            blob_reservation.heap_id().serialize_into(out_buf_ref);
+            heap_reservation.heap_id().serialize_into(out_buf_ref);
 
-            blob_reservation.complete(&heap_buf)?;
+            heap_reservation.complete(&heap_buf)?;
         } else {
             let _ = Measure::new(&M.serialize);
             item.serialize_into(out_buf_ref);

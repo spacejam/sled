@@ -176,7 +176,6 @@ impl Slab {
         options.create(true);
         options.read(true);
         options.write(true);
-        options.create_new(true);
 
         let file =
             options.open(directory.as_ref().join(format!("{}", slab_id)))?;

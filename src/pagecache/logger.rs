@@ -364,13 +364,13 @@ impl Log {
             );
 
             let heap_write_callback = Box::new(move |_heap_id| {});
-            let (blob_reservation, blob_id) = if over_blob_threshold {
-                let blob_reservation = self
+            let (heap_reservation, blob_id) = if over_blob_threshold {
+                let heap_reservation = self
                     .config
                     .heap
-                    .reserve(prospective_size as u64, heap_write_callback);
-                let heap_id = blob_reservation.heap_id();
-                (Some(blob_reservation), Some(heap_id))
+                    .reserve(serialized_len + 5, heap_write_callback);
+                let heap_id = heap_reservation.heap_id();
+                (Some(heap_reservation), Some(heap_id))
             } else {
                 (None, None)
             };
@@ -379,7 +379,7 @@ impl Log {
                 item,
                 message_header,
                 destination,
-                blob_reservation,
+                heap_reservation,
             )?;
 
             M.log_reservation_success();

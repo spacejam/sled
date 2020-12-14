@@ -316,15 +316,15 @@ impl Serialize for u8 {
 
 impl Serialize for HeapId {
     fn serialized_size(&self) -> u64 {
-        self.0.serialized_size()
+        8
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        self.0.serialize_into(buf)
+        (self.0 as i64).serialize_into(buf)
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<HeapId> {
-        Ok(HeapId(Serialize::deserialize(buf)?))
+        Ok(HeapId(i64::deserialize(buf)? as u64))
     }
 }
 
