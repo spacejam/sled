@@ -2148,6 +2148,9 @@ impl Tree {
         let guard = pin();
 
         let mut pid = self.root.load(Acquire);
+        if pid == 0 {
+            panic!("somehow tree root was 0");
+        }
         let mut left_most = pid;
         let mut level = 0;
         let mut expected_pids = FastSet8::default();

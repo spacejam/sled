@@ -1771,13 +1771,10 @@ impl PageCacheInner {
         let _measure = Measure::new(&M.get_page);
 
         if pid == COUNTER_PID || pid == META_PID || pid == BATCH_MANIFEST_PID {
-            return Err(Error::Unsupported(
-                "you are not able to iterate over \
-                 the first couple pages, which are \
-                 reserved for storing metadata and \
-                 monotonic ID generator info"
-                    .into(),
-            ));
+            panic!(
+                "tried to do normal pagecache get on priviledged pid {}",
+                pid
+            );
         }
 
         let mut last_attempted_cache_info = None;
