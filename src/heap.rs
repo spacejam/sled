@@ -318,18 +318,32 @@ impl Slab {
 
         #[cfg(target_os = "linux")]
         {
+            use std::{
+                os::unix::io::AsRawFd,
+                sync::atomic::{AtomicBool, Ordering::Relaxed},
+            };
+
             use libc::{fallocate, FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE};
-            use std::os::unix::io::AsRawFd;
 
-            let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
+            static HOLE_PUNCHING_ENABLED: AtomicBool = AtomicBool::new(false);
 
-            let fd = self.file.as_raw_fd();
+            if HOLE_PUNCHING_ENABLED.load(Relaxed) {
+                let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
 
-            let ret =
-                unsafe { fallocate(fd, mode, offset as i64, self.bs as i64) };
+                let fd = self.file.as_raw_fd();
 
-            if ret != 0 {
-                return Err(std::io::Error::last_os_error().into());
+                let ret = unsafe {
+                    fallocate(fd, mode, offset as i64, self.bs as i64)
+                };
+
+                if ret != 0 {
+                    let err = std::io::Error::last_os_error();
+                    log::error!(
+                        "failed to punch hole in heap file: {:?}. disabling hole punching",
+                        err
+                    );
+                    HOLE_PUNCHING_ENABLED.store(false, Relaxed);
+                }
             }
         }
         Ok(())
