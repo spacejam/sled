@@ -516,7 +516,7 @@ impl IoBufs {
         item: &T,
         header: MessageHeader,
         mut out_buf: &mut [u8],
-        heap_reservation: Option<crate::heap::Reservation>,
+        heap_reservation: Option<super::heap::Reservation>,
     ) -> Result<()> {
         // we create this double ref to allow scooting
         // the slice forward without doing anything
@@ -532,7 +532,7 @@ impl IoBufs {
             io_fail!(self, "blob blob write");
             let mut heap_buf = vec![
                 0;
-                crate::heap::slab_size(5 + item.serialized_size())
+                super::heap::slab_size(5 + item.serialized_size())
                     as usize
             ];
 
@@ -549,7 +549,7 @@ impl IoBufs {
 
             heap_buf[1..5].copy_from_slice(&crc);
 
-            heap_reservation.heap_id().serialize_into(out_buf_ref);
+            heap_reservation.heap_id.serialize_into(out_buf_ref);
 
             heap_reservation.complete(&heap_buf)?;
         } else {

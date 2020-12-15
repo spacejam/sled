@@ -259,7 +259,7 @@ impl Segment {
                     heap_id,
                     active.lsn,
                 );
-                config.heap.free(*heap_id)?;
+                config.heap.free(*heap_id);
             }
 
             let inactive = Segment::Inactive(Inactive {
@@ -439,7 +439,7 @@ impl Segment {
                      or Draining.",
                     heap_id,
                 );
-                config.heap.free(heap_id)?;
+                config.heap.free(heap_id);
             }
             Segment::Free(_) => panic!("remove_blob called on a Free Segment"),
         }
@@ -808,7 +808,7 @@ impl SegmentAccountant {
                 } else {
                     // this was migrated off-log and is present and stabilized
                     // in the snapshot.
-                    self.config.heap.free(old_ptr.heap_id().unwrap())?;
+                    self.config.heap.free(old_ptr.heap_id().unwrap());
                 }
             }
 

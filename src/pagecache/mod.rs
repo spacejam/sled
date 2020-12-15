@@ -7,6 +7,7 @@ pub mod logger;
 
 mod disk_pointer;
 mod header;
+mod heap;
 mod iobuf;
 mod iterator;
 mod pagetable;
@@ -46,7 +47,7 @@ use self::{
 };
 
 pub(crate) use self::{
-    heap::HeapId,
+    heap::{Heap, HeapId},
     logger::{
         read_message, read_segment_header, MessageHeader, SegmentHeader,
         SegmentNumber,

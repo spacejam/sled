@@ -9,9 +9,10 @@ use std::{
 use crate::{
     node::{Index, Leaf},
     pagecache::{
-        BatchManifest, MessageHeader, PageState, SegmentNumber, Snapshot,
+        BatchManifest, HeapId, MessageHeader, PageState, SegmentNumber,
+        Snapshot,
     },
-    Data, DiskPtr, Error, HeapId, IVec, Link, Meta, Node, Result,
+    Data, DiskPtr, Error, IVec, Link, Meta, Node, Result,
 };
 
 /// Items that may be serialized and deserialized

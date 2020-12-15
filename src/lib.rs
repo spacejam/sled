@@ -189,7 +189,6 @@ mod db;
 mod dll;
 mod fastcmp;
 mod fastlock;
-mod heap;
 mod histogram;
 mod iter;
 mod ivec;
@@ -326,7 +325,6 @@ use {
         concurrency_control::Protector,
         context::Context,
         fastcmp::fastcmp,
-        heap::{Heap, HeapId},
         histogram::Histogram,
         lru::Lru,
         meta::Meta,
