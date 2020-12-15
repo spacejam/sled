@@ -71,8 +71,11 @@ impl Log {
             // here because it might not still
             // exist in the inline log.
             let heap_id = ptr.heap_id().unwrap();
-            self.config.heap.read(heap_id, self.config.use_compression).map(
-                |(kind, buf)| {
+            let original_lsn = ptr.original_lsn();
+            self.config
+                .heap
+                .read(heap_id, original_lsn, self.config.use_compression)
+                .map(|(kind, buf)| {
                     let header = MessageHeader {
                         kind,
                         pid,
@@ -81,8 +84,7 @@ impl Log {
                         len: 0,
                     };
                     LogRead::Blob(header, buf, heap_id, 0)
-                },
-            )
+                })
         }
     }
 
@@ -107,13 +109,14 @@ impl Log {
         &self,
         pid: PageId,
         blob_pointer: HeapId,
+        original_lsn: Lsn,
         guard: &Guard,
     ) -> Result<Reservation<'_>> {
         self.reserve_inner(
             LogKind::Replace,
             pid,
             &blob_pointer,
-            Some(blob_pointer),
+            Some((blob_pointer, original_lsn)),
             guard,
         )
     }
@@ -161,7 +164,7 @@ impl Log {
         log_kind: LogKind,
         pid: PageId,
         item: &T,
-        blob_rewrite: Option<HeapId>,
+        blob_rewrite: Option<(HeapId, Lsn)>,
         _: &Guard,
     ) -> Result<Reservation<'_>> {
         let _measure = Measure::new(&M.reserve_lat);
@@ -262,7 +265,8 @@ impl Log {
                 ),
                 pid,
                 len: if over_blob_threshold {
-                    reservation_lsn.serialized_size()
+                    8   // for the HeapId
+                    + 8 // for the original Lsn
                 } else {
                     serialized_len
                 },
@@ -271,7 +275,8 @@ impl Log {
             let inline_buf_len = if over_blob_threshold {
                 usize::try_from(
                     message_header.serialized_size()
-                        + reservation_lsn.serialized_size(),
+                    + 8  // for the HeapId
+                    + 8, // for the original Lsn
                 )
                 .unwrap()
             } else {
@@ -367,7 +372,7 @@ impl Log {
 
             let (heap_reservation, blob_id) = if over_blob_threshold {
                 let heap_reservation =
-                    self.config.heap.reserve(serialized_len + 5);
+                    self.config.heap.reserve(serialized_len + 13);
                 let heap_id = heap_reservation.heap_id;
                 (Some(heap_reservation), Some(heap_id))
             } else {
@@ -376,6 +381,7 @@ impl Log {
 
             self.iobufs.encapsulate(
                 item,
+                reservation_lsn,
                 message_header,
                 destination,
                 heap_reservation,
@@ -385,12 +391,8 @@ impl Log {
 
             let pointer = if let Some(blob_id) = blob_id {
                 DiskPtr::new_blob(reservation_lid, reservation_lsn, blob_id)
-            } else if let Some(blob_rewrite) = blob_rewrite {
-                DiskPtr::new_blob(
-                    reservation_lid,
-                    reservation_lsn,
-                    blob_rewrite,
-                )
+            } else if let Some((heap_id, original_lsn)) = blob_rewrite {
+                DiskPtr::new_blob(reservation_lid, original_lsn, heap_id)
             } else {
                 DiskPtr::new_inline(reservation_lid)
             };
@@ -813,9 +815,10 @@ pub(crate) fn read_message<R: ReadAt>(
         MessageKind::BlobLink
         | MessageKind::BlobNode
         | MessageKind::BlobMeta => {
-            let id = HeapId(arr_to_u64(&buf));
+            let id = HeapId(arr_to_u64(&buf[..8]));
+            let original_lsn = arr_to_lsn(&buf[8..]);
 
-            match config.heap.read(id, config.use_compression) {
+            match config.heap.read(id, original_lsn, config.use_compression) {
                 Ok((kind, buf)) => {
                     assert_eq!(header.kind, kind);
                     trace!(

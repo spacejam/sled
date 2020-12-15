@@ -1371,8 +1371,12 @@ impl PageCacheInner {
 
                     (None, cache_info)
                 } else {
-                    let log_reservation =
-                        self.log.rewrite_blob_pointer(pid, heap_id, guard)?;
+                    let log_reservation = self.log.rewrite_blob_pointer(
+                        pid,
+                        heap_id,
+                        original_lsn,
+                        guard,
+                    )?;
 
                     let cache_info = CacheInfo {
                         ts: page_view.ts(),

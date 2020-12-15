@@ -19,7 +19,7 @@ use crossbeam_epoch::pin;
 use crate::{
     pagecache::{pread_exact, pwrite_all, MessageKind},
     stack::Stack,
-    Error, Result,
+    Error, Lsn, Result,
 };
 
 #[cfg(not(feature = "testing"))]
@@ -163,11 +163,16 @@ impl Heap {
     pub fn read(
         &self,
         heap_id: HeapId,
+        original_lsn: Lsn,
         use_compression: bool,
     ) -> Result<(MessageKind, Vec<u8>)> {
         log::trace!("Heap::read({:?})", heap_id);
         let (slab_id, slab_idx) = heap_id.decompose();
-        self.slabs[slab_id as usize].read(slab_idx, use_compression)
+        self.slabs[slab_id as usize].read(
+            slab_idx,
+            original_lsn,
+            use_compression,
+        )
     }
 
     pub fn free(&self, heap_id: HeapId) {
@@ -221,6 +226,7 @@ impl Slab {
     fn read(
         &self,
         slab_idx: SlabIdx,
+        original_lsn: Lsn,
         use_compression: bool,
     ) -> Result<(MessageKind, Vec<u8>)> {
         use std::os::unix::fs::FileExt;
@@ -243,7 +249,18 @@ impl Slab {
         let actual_crc = hasher.finalize();
 
         if actual_crc == stored_crc {
-            let buf = heap_buf[5..].to_vec();
+            let actual_lsn = Lsn::from_le_bytes(
+                heap_buf[5..13].as_ref().try_into().unwrap(),
+            );
+            if actual_lsn != original_lsn {
+                log::error!(
+                    "heap slot lsn {} does not match expected original lsn {}",
+                    actual_lsn,
+                    original_lsn
+                );
+                return Err(Error::corruption(None));
+            }
+            let buf = heap_buf[13..].to_vec();
             let buf = if use_compression {
                 crate::pagecache::decompress(buf)
             } else {
