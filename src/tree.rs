@@ -782,11 +782,20 @@ impl Tree {
     /// # thread.join().unwrap();
     /// # Ok(()) }
     /// ```
-    /// Aynchronous, non-blocking subscriber:
+    /// Asynchronous, non-blocking subscriber:
     ///
     /// `Subscription` implements `Future<Output=Option<Event>>`.
     ///
-    /// `while let Some(event) = (&mut subscriber).await { /* use it */ }`
+    /// ```
+    /// # async fn foo() {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open().unwrap();
+    /// # let mut subscriber = db.watch_prefix(vec![]);
+    /// while let Some(event) = (&mut subscriber).await {
+    ///     /* use it */
+    /// }
+    /// # }
+    /// ```
     pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
         self.subscribers.register(prefix.as_ref())
     }
@@ -851,6 +860,13 @@ impl Tree {
 
     /// Retrieve the key and value before the provided key,
     /// if one exists.
+    ///
+    /// # Note
+    /// The order follows the Ord implementation for `Vec<u8>`:
+    ///
+    /// `[] < [0] < [255] < [255, 0] < [255, 255] ...`
+    ///
+    /// To retain the ordering of numerical types use big endian reprensentation
     ///
     /// # Examples
     ///
@@ -1460,7 +1476,7 @@ impl Tree {
         root_pid: PageId,
         guard: &'g Guard,
     ) -> Result<()> {
-        trace!("splitting node {}", view.pid);
+        trace!("splitting node with pid {}", view.pid);
         // split node
         let (mut lhs, rhs) = view.deref().clone().split();
         let rhs_lo = rhs.lo.clone();
@@ -2106,7 +2122,7 @@ impl Tree {
                     if let Some(view) = self.view_for_pid(pid, &guard)? {
                         view
                     } else {
-                        trace!("encountered Free node while GC'ing tree");
+                        trace!("encountered Free node pid {} while GC'ing tree", pid);
                         break;
                     };
 
@@ -2133,20 +2149,20 @@ impl Tree {
 
     #[doc(hidden)]
     pub fn verify_integrity(&self) -> Result<()> {
-        // verification happens in Debug impl
-        let _out = format!("{:?}", self);
+        // verification happens in attempt_fmt
+        self.attempt_fmt()?;
         Ok(())
     }
-}
 
-impl Debug for Tree {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> std::result::Result<(), fmt::Error> {
+    // format and verify tree integrity
+    fn attempt_fmt(&self) -> Result<Option<String>> {
+        let mut f = String::new();
         let guard = pin();
 
         let mut pid = self.root.load(Acquire);
+        if pid == 0 {
+            panic!("somehow tree root was 0");
+        }
         let mut left_most = pid;
         let mut level = 0;
         let mut expected_pids = FastSet8::default();
@@ -2155,53 +2171,58 @@ impl Debug for Tree {
 
         expected_pids.insert(pid);
 
-        f.write_str("Tree: \n\t")?;
-        self.context.pagecache.fmt(f)?;
-        f.write_str("\tlevel 0:\n")?;
+        f.push_str("\tlevel 0:\n");
 
         loop {
             let get_res = self.view_for_pid(pid, &guard);
-            let node = if let Ok(Some(ref view)) = get_res {
-                expected_pids.remove(&pid);
-                if loop_detector.contains(&pid) {
+            let node = match get_res {
+                Ok(Some(ref view)) => {
+                    expected_pids.remove(&pid);
+                    if loop_detector.contains(&pid) {
+                        if cfg!(feature = "testing") {
+                            panic!(
+                                "detected a loop while iterating over the Tree. \
+                                pid {} was encountered multiple times",
+                                pid
+                            );
+                        } else {
+                            error!(
+                                "detected a loop while iterating over the Tree. \
+                                pid {} was encountered multiple times",
+                                pid
+                            );
+                        }
+                    } else {
+                        loop_detector.insert(pid);
+                    }
+
+                    view.deref()
+                }
+                Ok(None) => {
                     if cfg!(feature = "testing") {
-                        panic!(
-                            "detected a loop while iterating over the Tree. \
-                            pid {} was encountered multiple times",
-                            pid
+                        error!(
+                            "Tree::fmt failed to read node pid {} \
+                             that has been freed",
+                            pid,
                         );
+                        return Ok(None);
                     } else {
                         error!(
-                            "detected a loop while iterating over the Tree. \
-                            pid {} was encountered multiple times",
-                            pid
+                            "Tree::fmt failed to read node pid {} \
+                             that has been freed",
+                            pid,
                         );
                     }
-                } else {
-                    loop_detector.insert(pid);
+                    break;
                 }
-
-                view.deref()
-            } else {
-                if cfg!(feature = "testing") {
-                    panic!(
-                        "Tree::fmt failed to read node {} \
-                         that has been freed",
-                        pid,
-                    );
-                } else {
-                    error!(
-                        "Tree::fmt failed to read node {} \
-                         that has been freed",
-                        pid,
-                    );
+                Err(e) => {
+                    error!("hit error while trying to pull pid {}: {:?}", pid, e);
+                    return Err(e)
                 }
-                break;
             };
 
-            write!(f, "\t\t{}: ", pid)?;
-            node.fmt(f)?;
-            f.write_str("\n")?;
+            f.push_str(&format!("\t\t{}: ", pid));
+            f.push_str(&format!("{:?}\n", node));
 
             if let Data::Index(ref index) = &node.data {
                 for pid in &index.pointers {
@@ -2229,7 +2250,7 @@ impl Debug for Tree {
                             pid = *next_pid;
                             left_most = *next_pid;
                             level += 1;
-                            f.write_str(&*format!("\n\tlevel {}:\n", level))?;
+                            f.push_str(&format!("\n\tlevel {}:\n", level));
                             assert!(
                                 expected_pids.is_empty(),
                                 "expected pids {:?} but never \
@@ -2250,7 +2271,29 @@ impl Debug for Tree {
             }
         }
 
-        Ok(())
+        Ok(Some(f))
+    }
+}
+
+impl Debug for Tree {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
+        f.write_str("Tree: \n\t")?;
+        self.context.pagecache.fmt(f)?;
+
+        if let Some(fmt) = self.attempt_fmt().map_err(|_| std::fmt::Error)? {
+            f.write_str(&fmt)?;
+            return Ok(());
+        }
+
+        if cfg!(feature = "testing") {
+            panic!("failed to fmt Tree due to expected page disappearing part-way through");
+        } else {
+            log::error!("failed to fmt Tree due to expected page disappearing part-way through");
+            Ok(())
+        }
     }
 }
 

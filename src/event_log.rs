@@ -111,7 +111,7 @@ impl EventLog {
                                 .iter()
                                 .map(|ptr| {
                                     let mut ptr = *ptr;
-                                    ptr.forget_blob_log_coordinates();
+                                    ptr.forget_heap_log_coordinates();
                                     ptr
                                 })
                                 .collect();

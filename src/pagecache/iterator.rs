@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, io, num::NonZeroU64};
+use std::{collections::BTreeMap, io};
 
 use super::{
     pread_exact_or_eof, read_message, read_segment_header, BasedBuf, DiskPtr,
@@ -80,18 +80,15 @@ impl Iterator for LogIter {
                 expected_segment_number,
                 &self.config,
             ) {
-                Ok(LogRead::Blob(header, _buf, blob_ptr, inline_len)) => {
-                    trace!("read blob flush in LogIter::next");
+                Ok(LogRead::Heap(header, _buf, heap_id, inline_len)) => {
+                    trace!("read heap item in LogIter::next");
                     self.cur_lsn = Some(lsn + Lsn::from(inline_len));
 
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
-                        DiskPtr::Blob(
-                            Some(NonZeroU64::new(lid).unwrap()),
-                            blob_ptr,
-                        ),
+                        DiskPtr::new_heap_item(lid, heap_id),
                         u64::from(inline_len),
                     ));
                 }
@@ -156,11 +153,11 @@ impl Iterator for LogIter {
 
                     continue;
                 }
-                Ok(LogRead::DanglingBlob(_, blob_ptr, inline_len)) => {
+                Ok(LogRead::DanglingHeap(_, heap_id, inline_len)) => {
                     debug!(
-                        "encountered dangling blob \
-                         pointer at lsn {} ptr {}",
-                        lsn, blob_ptr
+                        "encountered dangling heap \
+                         pointer at lsn {} heap_id {:?}",
+                        lsn, heap_id
                     );
                     self.cur_lsn = Some(lsn + Lsn::from(inline_len));
                     continue;

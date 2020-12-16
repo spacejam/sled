@@ -2,6 +2,10 @@
 
 ## Breaking Changes
 
+* #1214 a new slab-style storage engine has been added which
+  replaces the previous file-per-blob technique for storing
+  large pages.
+* #1214 The deprecated `Config::build` method has been removed.
 * #1178 the `Event::Batch` variant has been added which
   contains the entire atomic batch that is written by a
   transaction or a write batch.
@@ -10,9 +14,6 @@
   present.
 * #1135 The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.
-* #1203 Snapshot files have had their on-disk
-  structure modified to facilitate the handling
-  of fuzzy snapshots.
 
 ## Bug Fixes
 

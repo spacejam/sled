@@ -26,7 +26,7 @@ pub struct Context {
     ))]
     pub(crate) flusher: Arc<Mutex<Option<flusher::Flusher>>>,
     #[doc(hidden)]
-    pub pagecache: Arc<PageCache>,
+    pub pagecache: PageCache,
 }
 
 impl std::ops::Deref for Context {
@@ -41,7 +41,7 @@ impl Context {
     pub(crate) fn start(config: RunningConfig) -> Result<Self> {
         trace!("starting context");
 
-        let pagecache = Arc::new(PageCache::start(config.clone())?);
+        let pagecache = PageCache::start(config.clone())?;
 
         Ok(Self {
             config,

@@ -1,15 +1,15 @@
 use std::num::NonZeroU64;
 
-use super::{BlobPointer, LogOffset};
+use super::{HeapId, LogOffset};
 use crate::*;
 
-/// A pointer to a location on disk or an off-log blob.
+/// A pointer to a location on disk or an off-log heap item.
 #[derive(Debug, Clone, PartialOrd, Ord, Copy, Eq, PartialEq)]
 pub enum DiskPtr {
     /// Points to a value stored in the single-file log.
     Inline(LogOffset),
-    /// Points to a value stored off-log in the blob directory.
-    Blob(Option<NonZeroU64>, BlobPointer),
+    /// Points to a value stored off-log in the heap.
+    Heap(Option<NonZeroU64>, HeapId),
 }
 
 impl DiskPtr {
@@ -17,58 +17,52 @@ impl DiskPtr {
         DiskPtr::Inline(l)
     }
 
-    pub(crate) fn new_blob(lid: LogOffset, ptr: BlobPointer) -> Self {
-        DiskPtr::Blob(Some(NonZeroU64::new(lid).unwrap()), ptr)
+    pub(crate) fn new_heap_item(lid: LogOffset, heap_id: HeapId) -> Self {
+        DiskPtr::Heap(Some(NonZeroU64::new(lid).unwrap()), heap_id)
     }
 
     pub(crate) fn is_inline(&self) -> bool {
         match self {
             DiskPtr::Inline(_) => true,
-            DiskPtr::Blob(_, _) => false,
+            DiskPtr::Heap(_, _) => false,
         }
     }
 
-    pub(crate) fn is_blob(&self) -> bool {
+    pub(crate) fn is_heap_item(&self) -> bool {
         match self {
             DiskPtr::Inline(_) => false,
-            DiskPtr::Blob(_, _) => true,
+            DiskPtr::Heap(_, _) => true,
         }
     }
 
-    pub(crate) fn blob(&self) -> (Option<LogOffset>, BlobPointer) {
-        match self {
-            DiskPtr::Inline(_) => {
-                panic!("blob called on Internal disk pointer")
-            }
-            DiskPtr::Blob(lid, ptr) => (lid.map(NonZeroU64::get), *ptr),
-        }
-    }
-
-    pub(crate) fn original_lsn(&self) -> Lsn {
-        if let DiskPtr::Blob(_, ptr) = self {
-            *ptr
-        } else {
-            panic!("called original_lsn on non-Blob");
-        }
+    pub(crate) fn heap_id(&self) -> Option<HeapId> {
+        if let DiskPtr::Heap(_, heap_id) = self { Some(*heap_id) } else { None }
     }
 
     #[doc(hidden)]
     pub fn lid(&self) -> Option<LogOffset> {
         match self {
             DiskPtr::Inline(lid) => Some(*lid),
-            DiskPtr::Blob(lid, _) => lid.map(NonZeroU64::get),
+            DiskPtr::Heap(lid, _) => lid.map(NonZeroU64::get),
         }
     }
 
-    pub(crate) fn forget_blob_log_coordinates(&mut self) {
+    pub(crate) fn forget_heap_log_coordinates(&mut self) {
         match self {
             DiskPtr::Inline(_) => {}
-            DiskPtr::Blob(ref mut opt, _blob_pointer) => *opt = None,
+            DiskPtr::Heap(ref mut opt, _) => *opt = None,
         }
     }
 
-    pub(crate) fn blob_pointer_merged_into_snapshot(&self) -> bool {
-        if let DiskPtr::Blob(None, _) = self { true } else { false }
+    pub(crate) fn original_lsn(&self) -> Lsn {
+        match self {
+            DiskPtr::Heap(_, heap_id) => heap_id.original_lsn,
+            DiskPtr::Inline(_) => panic!("called original_lsn on non-Heap"),
+        }
+    }
+
+    pub(crate) fn heap_pointer_merged_into_snapshot(&self) -> bool {
+        if let DiskPtr::Heap(None, _) = self { true } else { false }
     }
 }
 

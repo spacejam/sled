@@ -53,7 +53,7 @@ fn very_large_reverse_tree_iterator() {
 
 #[test]
 #[cfg(all(target_os = "linux", not(miri)))]
-fn test_varied_compression_ratios() {
+fn varied_compression_ratios() {
     // tests for the compression issue reported in #938 by @Mrmaxmeier.
 
     let low_entropy = vec![0u8; 64 << 10]; // 64k zeroes
@@ -2498,5 +2498,17 @@ fn tree_bug_45() {
             0,
             210
         ))
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_46() {
+    // postmortem: while implementing the heap slab, decompression
+    // was failing to account for the fact that the slab allocator
+    // will always write to the end of the slab to be compatible
+    // with O_DIRECT.
+    for _ in 0..1 {
+        assert!(prop_tree_matches_btreemap(vec![Restart], false, true, 0, 0))
     }
 }

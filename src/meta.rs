@@ -59,6 +59,7 @@ where
     loop {
         match context.pagecache.meta_pid_for_name(&name, guard) {
             Ok(root_id) => {
+                assert_ne!(root_id, 0);
                 return Ok(Tree(Arc::new(TreeInner {
                     tree_id: name,
                     context: context.clone(),

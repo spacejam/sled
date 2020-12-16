@@ -219,22 +219,3 @@ where
 
     Ok(promise)
 }
-
-/// Wait for all submitted tasks to complete
-#[cfg(feature = "testing")]
-pub fn drain() -> Result<()> {
-    let submitted = SUBMITTED.load(Acquire);
-
-    while COMPLETED.load(Acquire) < submitted {
-        if BROKEN.load(Relaxed) {
-            return Err(Error::ReportableBug(
-                "IO thread unexpectedly panicked. please report \
-            this bug on the sled github repo."
-                    .to_string(),
-            ));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-
-    Ok(())
-}

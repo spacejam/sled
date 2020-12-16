@@ -130,7 +130,6 @@ impl<T: Send + Sync + 'static> Stack<T> {
     }
 
     /// Pop the next item off the stack. Returns None if nothing is there.
-    #[cfg(any(test, feature = "event_log"))]
     pub(crate) fn pop(&self, guard: &Guard) -> Option<T> {
         use std::ptr;
         use std::sync::atomic::Ordering::SeqCst;
