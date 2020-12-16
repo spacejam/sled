@@ -31,7 +31,7 @@ pub enum PageState {
     /// correct by construction.
     /// The third element in each tuple is the on-log
     /// size for the corresponding write. If things
-    /// are pretty large, they spill into the blobs
+    /// are pretty large, they spill into the heaps
     /// directory, but still get a small pointer that
     /// gets written into the log. The sizes are used
     /// for the garbage collection statistics on
@@ -239,12 +239,12 @@ impl Snapshot {
         for page in &mut self.pt {
             match page {
                 PageState::Free(_lsn, ref mut ptr) => {
-                    ptr.forget_blob_log_coordinates()
+                    ptr.forget_heap_log_coordinates()
                 }
                 PageState::Present { ref mut base, ref mut frags } => {
-                    base.1.forget_blob_log_coordinates();
+                    base.1.forget_heap_log_coordinates();
                     for (_, ref mut ptr, _) in frags {
-                        ptr.forget_blob_log_coordinates();
+                        ptr.forget_heap_log_coordinates();
                     }
                 }
                 PageState::Uninitialized => {

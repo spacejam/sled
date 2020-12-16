@@ -79,7 +79,7 @@ impl Log {
                         crc32: 0,
                         len: 0,
                     };
-                    LogRead::Blob(header, buf, heap_id, 0)
+                    LogRead::Heap(header, buf, heap_id, 0)
                 },
             )
         }
@@ -100,19 +100,20 @@ impl Log {
     }
 
     /// Reserve a replacement buffer for a previously written
-    /// blob write. This ensures the message header has the
-    /// proper blob flag set.
-    pub(super) fn rewrite_blob_pointer(
+    /// heap write. This allows the tiny pointer in the log
+    /// to be migrated to a new segment without copying the
+    /// massive slab in the heap that the pointer references.
+    pub(super) fn rewrite_heap_pointer(
         &self,
         pid: PageId,
-        blob_pointer: HeapId,
+        heap_pointer: HeapId,
         guard: &Guard,
     ) -> Result<Reservation<'_>> {
         self.reserve_inner(
             LogKind::Replace,
             pid,
-            &blob_pointer,
-            Some(blob_pointer),
+            &heap_pointer,
+            Some(heap_pointer),
             guard,
         )
     }
@@ -160,7 +161,7 @@ impl Log {
         log_kind: LogKind,
         pid: PageId,
         item: &T,
-        blob_rewrite: Option<HeapId>,
+        heap_rewrite: Option<HeapId>,
         _: &Guard,
     ) -> Result<Reservation<'_>> {
         let _measure = Measure::new(&M.reserve_lat);
@@ -173,10 +174,10 @@ impl Log {
 
         let max_buf_size = self.config.segment_size - SEG_HEADER_LEN;
 
-        let over_blob_threshold =
+        let over_heap_threshold =
             max_buf_len > u64::try_from(max_buf_size).unwrap();
 
-        assert!(!(over_blob_threshold && blob_rewrite.is_some()));
+        assert!(!(over_heap_threshold && heap_rewrite.is_some()));
 
         let mut printed = false;
         macro_rules! trace_once {
@@ -193,22 +194,22 @@ impl Log {
         let kind = match (
             pid,
             log_kind,
-            over_blob_threshold || blob_rewrite.is_some(),
+            over_heap_threshold || heap_rewrite.is_some(),
         ) {
             (COUNTER_PID, LogKind::Replace, false) => MessageKind::Counter,
-            (META_PID, LogKind::Replace, true) => MessageKind::BlobMeta,
+            (META_PID, LogKind::Replace, true) => MessageKind::HeapMeta,
             (META_PID, LogKind::Replace, false) => MessageKind::InlineMeta,
             (BATCH_MANIFEST_PID, LogKind::Skip, false) => {
                 MessageKind::BatchManifest
             }
             (_, LogKind::Free, false) => MessageKind::Free,
-            (_, LogKind::Replace, true) => MessageKind::BlobNode,
+            (_, LogKind::Replace, true) => MessageKind::HeapNode,
             (_, LogKind::Replace, false) => MessageKind::InlineNode,
-            (_, LogKind::Link, true) => MessageKind::BlobLink,
+            (_, LogKind::Link, true) => MessageKind::HeapLink,
             (_, LogKind::Link, false) => MessageKind::InlineLink,
             other => unreachable!(
                 "unexpected combination of PageId, \
-                 LogKind, and blob status: {:?}",
+                 LogKind, and heap status: {:?}",
                 other
             ),
         };
@@ -258,19 +259,18 @@ impl Log {
                         / u64::try_from(self.config.segment_size).unwrap(),
                 ),
                 pid,
-                len: if over_blob_threshold {
-                    8   // for the HeapId
-                    + 8 // for the original Lsn
+                len: if over_heap_threshold {
+                    // a HeapId is always 16 bytes
+                    16
                 } else {
                     serialized_len
                 },
             };
 
-            let inline_buf_len = if over_blob_threshold {
+            let inline_buf_len = if over_heap_threshold {
                 usize::try_from(
-                    message_header.serialized_size()
-                    + 8  // for the HeapId
-                    + 8, // for the original Lsn
+                    // a HeapId is always 16 bytes
+                    message_header.serialized_size() + 16,
                 )
                 .unwrap()
             } else {
@@ -369,7 +369,7 @@ impl Log {
                 reservation_lsn + inline_buf_len as Lsn - 1,
             );
 
-            let (heap_reservation, heap_id) = if over_blob_threshold {
+            let (heap_reservation, heap_id) = if over_heap_threshold {
                 let heap_reservation = self
                     .config
                     .heap
@@ -390,9 +390,9 @@ impl Log {
             M.log_reservation_success();
 
             let pointer = if let Some(heap_id) = heap_id {
-                DiskPtr::new_blob(reservation_lid, heap_id)
-            } else if let Some(heap_id) = blob_rewrite {
-                DiskPtr::new_blob(reservation_lid, heap_id)
+                DiskPtr::new_heap_item(reservation_lid, heap_id)
+            } else if let Some(heap_id) = heap_rewrite {
+                DiskPtr::new_heap_item(reservation_lid, heap_id)
             } else {
                 DiskPtr::new_inline(reservation_lid)
             };
@@ -404,7 +404,7 @@ impl Log {
                 flushed: false,
                 lsn: reservation_lsn,
                 pointer,
-                is_blob_rewrite: blob_rewrite.is_some(),
+                is_heap_item_rewrite: heap_rewrite.is_some(),
                 header_len: usize::try_from(message_header.serialized_size())
                     .unwrap(),
             });
@@ -527,8 +527,8 @@ pub struct SegmentHeader {
 pub enum LogRead {
     /// Successful read, entirely on-log
     Inline(MessageHeader, Vec<u8>, u32),
-    /// Successful read, spilled to its own blob file
-    Blob(MessageHeader, Vec<u8>, HeapId, u32),
+    /// Successful read, spilled to a slot in the heap
+    Heap(MessageHeader, Vec<u8>, HeapId, u32),
     /// A cancelled message was encountered
     Canceled(u32),
     /// A padding message used to show that a segment was filled
@@ -536,16 +536,16 @@ pub enum LogRead {
     /// This log message was not readable due to corruption
     Corrupted,
     /// This heap slot has been replaced
-    DanglingBlob(MessageHeader, HeapId, u32),
+    DanglingHeap(MessageHeader, HeapId, u32),
     /// This data may only be read if at least this future location is stable
     BatchManifest(Lsn, u32),
 }
 
 impl LogRead {
-    /// Return true if we read a successful Inline or Blob value.
+    /// Return true if we read a successful Inline or Heap value.
     pub fn is_successful(&self) -> bool {
         match *self {
-            LogRead::Inline(..) | LogRead::Blob(..) => true,
+            LogRead::Inline(..) | LogRead::Heap(..) => true,
             _ => false,
         }
     }
@@ -553,7 +553,7 @@ impl LogRead {
     /// Return the underlying data read from a log read, if successful.
     pub fn into_data(self) -> Option<Vec<u8>> {
         match self {
-            LogRead::Blob(_, buf, _, _) | LogRead::Inline(_, buf, _) => {
+            LogRead::Heap(_, buf, _, _) | LogRead::Inline(_, buf, _) => {
                 Some(buf)
             }
             _ => None,
@@ -812,9 +812,9 @@ pub(crate) fn read_message<R: ReadAt>(
             trace!("read pad in segment number {:?}", header.segment_number);
             Ok(LogRead::Cap(header.segment_number))
         }
-        MessageKind::BlobLink
-        | MessageKind::BlobNode
-        | MessageKind::BlobMeta => {
+        MessageKind::HeapLink
+        | MessageKind::HeapNode
+        | MessageKind::HeapMeta => {
             assert_eq!(buf.len(), 16);
             let heap_id = HeapId::deserialize(&mut &buf[..]).unwrap();
 
@@ -822,16 +822,16 @@ pub(crate) fn read_message<R: ReadAt>(
                 Ok((kind, buf)) => {
                     assert_eq!(header.kind, kind);
                     trace!(
-                        "read a successful blob message for blob {:?} in segment number {:?}",
+                        "read a successful heap message for heap {:?} in segment number {:?}",
                         heap_id,
                         header.segment_number,
                     );
 
-                    Ok(LogRead::Blob(header, buf, heap_id, inline_len))
+                    Ok(LogRead::Heap(header, buf, heap_id, inline_len))
                 }
                 Err(e) => {
-                    debug!("failed to read blob: {:?}", e);
-                    Ok(LogRead::DanglingBlob(header, heap_id, inline_len))
+                    debug!("failed to read heap: {:?}", e);
+                    Ok(LogRead::DanglingHeap(header, heap_id, inline_len))
                 }
             }
         }

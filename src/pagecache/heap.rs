@@ -166,7 +166,7 @@ impl Heap {
         Ok(Heap { slabs: unsafe { transmute(slabs) } })
     }
 
-    pub fn gc_unknown_blobs(
+    pub fn gc_unknown_items(
         &self,
         _snapshot: &crate::pagecache::Snapshot,
     ) -> Result<()> {

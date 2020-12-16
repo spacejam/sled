@@ -12,7 +12,7 @@ pub struct Reservation<'a> {
     pub(super) flushed: bool,
     pub pointer: DiskPtr,
     pub lsn: Lsn,
-    pub(super) is_blob_rewrite: bool,
+    pub(super) is_heap_item_rewrite: bool,
     pub(super) header_len: usize,
 }
 
@@ -31,12 +31,14 @@ impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
     pub fn abort(mut self) -> Result<(Lsn, DiskPtr)> {
-        if self.pointer.is_blob() && !self.is_blob_rewrite {
-            // we don't want to remove this blob if something
-            // else may still be using it.
+        if self.pointer.is_heap_item() && !self.is_heap_item_rewrite {
+            // we can instantly free this heap item because its pointer
+            // is assumed to have failed to have been installed into
+            // the pagetable, so we can assume nobody is operating
+            // on it.
 
             trace!(
-                "removing blob for aborted reservation at lsn {}",
+                "removing heap item for aborted reservation at lsn {}",
                 self.pointer
             );
 

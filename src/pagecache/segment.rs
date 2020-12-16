@@ -158,7 +158,7 @@ struct Active {
     pids: BTreeSet<PageId>,
     latest_replacement_lsn: Lsn,
     can_free_upon_deactivation: FastSet8<Lsn>,
-    deferred_remove_heap: FastSet8<HeapId>,
+    deferred_heap_removals: FastSet8<HeapId>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -234,7 +234,7 @@ impl Segment {
             pids: BTreeSet::default(),
             latest_replacement_lsn: 0,
             can_free_upon_deactivation: FastSet8::default(),
-            deferred_remove_heap: FastSet8::default(),
+            deferred_heap_removals: FastSet8::default(),
         })
     }
 
@@ -251,8 +251,8 @@ impl Segment {
         let (inactive, ret) = if let Segment::Active(active) = self {
             assert!(lsn >= active.lsn);
 
-            // now we can push any deferred blob removals to the removed set
-            for heap_id in &active.deferred_remove_heap {
+            // now we can push any deferred heap removals to the removed set
+            for heap_id in &active.deferred_heap_removals {
                 trace!(
                     "removing heap_id {:?} while transitioning \
                      segment lsn {:?} to Inactive",
@@ -420,7 +420,7 @@ impl Segment {
         }
     }
 
-    fn remove_blob(
+    fn remove_heap_item(
         &mut self,
         heap_id: HeapId,
         config: &RunningConfig,
@@ -430,7 +430,7 @@ impl Segment {
                 // we have received a removal before
                 // transferring this segment to Inactive, so
                 // we defer this pid's removal until the transfer.
-                active.deferred_remove_heap.insert(heap_id);
+                active.deferred_heap_removals.insert(heap_id);
             }
             Segment::Inactive(_) | Segment::Draining(_) => {
                 trace!(
@@ -441,7 +441,9 @@ impl Segment {
                 );
                 config.heap.free(heap_id);
             }
-            Segment::Free(_) => panic!("remove_blob called on a Free Segment"),
+            Segment::Free(_) => {
+                panic!("remove_heap_item called on a Free Segment")
+            }
         }
 
         Ok(())
@@ -547,7 +549,7 @@ impl SegmentAccountant {
                    segments: &mut Vec<Segment>| {
             if lid.is_none() {
                 trace!(
-                    "skipping segment GC for pid {} with a blob \
+                    "skipping segment GC for pid {} with a heap \
                     ptr already in the snapshot",
                     pid
                 );
@@ -757,7 +759,7 @@ impl SegmentAccountant {
     ) -> Result<()> {
         let _measure = Measure::new(&M.accountant_mark_replace);
 
-        if !new_cache_info.pointer.blob_pointer_merged_into_snapshot() {
+        if !new_cache_info.pointer.heap_pointer_merged_into_snapshot() {
             self.mark_link(pid, new_cache_info);
         }
 
@@ -774,13 +776,13 @@ impl SegmentAccountant {
         let new_idx =
             new_cache_info.pointer.lid().map(|lid| self.segment_id(lid));
 
-        // Do we need to schedule any blob cleanups?
+        // Do we need to schedule any heap cleanups?
         // Not if we just moved the pointer without changing
-        // the underlying blob, as is the case with a single Blob
-        // with nothing else.
-        let schedule_rm_blob = !(old_cache_infos.len() == 1
-            && old_cache_infos[0].pointer.is_blob()
-            && new_cache_info.pointer.is_blob()
+        // the underlying heap, as is the case with a single heap
+        // item with nothing else.
+        let schedule_rm_heap_item = !(old_cache_infos.len() == 1
+            && old_cache_infos[0].pointer.is_heap_item()
+            && new_cache_info.pointer.is_heap_item()
             && old_cache_infos[0].pointer.heap_id()
                 == new_cache_info.pointer.heap_id());
 
@@ -791,17 +793,18 @@ impl SegmentAccountant {
             let old_lid = if let Some(old_lid) = old_ptr.lid() {
                 old_lid
             } else {
-                // the frag had been migrated to the blob store fully
+                // the frag had been migrated to the heap store fully
                 continue;
             };
 
-            if schedule_rm_blob && old_ptr.is_blob() {
+            if schedule_rm_heap_item {
+                assert!(old_ptr.is_heap_item());
                 trace!(
-                    "queueing blob removal for {} in our own segment",
+                    "queueing heap item removal for {} in our own segment",
                     old_ptr
                 );
                 if let Some(new_idx) = new_idx {
-                    self.segments[new_idx].remove_blob(
+                    self.segments[new_idx].remove_heap_item(
                         old_ptr.heap_id().unwrap(),
                         &self.config,
                     )?;
@@ -839,7 +842,7 @@ impl SegmentAccountant {
         let lid = if let Some(lid) = cache_info.pointer.lid() {
             lid
         } else {
-            // item has been migrated off-log to the blob store
+            // item has been migrated off-log to the heap store
             return;
         };
 

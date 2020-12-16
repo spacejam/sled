@@ -80,15 +80,15 @@ impl Iterator for LogIter {
                 expected_segment_number,
                 &self.config,
             ) {
-                Ok(LogRead::Blob(header, _buf, heap_id, inline_len)) => {
-                    trace!("read blob flush in LogIter::next");
+                Ok(LogRead::Heap(header, _buf, heap_id, inline_len)) => {
+                    trace!("read heap item in LogIter::next");
                     self.cur_lsn = Some(lsn + Lsn::from(inline_len));
 
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
-                        DiskPtr::new_blob(lid, heap_id),
+                        DiskPtr::new_heap_item(lid, heap_id),
                         u64::from(inline_len),
                     ));
                 }
@@ -153,9 +153,9 @@ impl Iterator for LogIter {
 
                     continue;
                 }
-                Ok(LogRead::DanglingBlob(_, heap_id, inline_len)) => {
+                Ok(LogRead::DanglingHeap(_, heap_id, inline_len)) => {
                     debug!(
-                        "encountered dangling blob \
+                        "encountered dangling heap \
                          pointer at lsn {} heap_id {:?}",
                         lsn, heap_id
                     );

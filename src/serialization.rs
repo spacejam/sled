@@ -639,7 +639,7 @@ impl Serialize for DiskPtr {
     fn serialized_size(&self) -> u64 {
         match self {
             DiskPtr::Inline(a) => 1 + a.serialized_size(),
-            DiskPtr::Blob(a, b) => {
+            DiskPtr::Heap(a, b) => {
                 1 + a.serialized_size() + b.serialized_size()
             }
         }
@@ -651,7 +651,7 @@ impl Serialize for DiskPtr {
                 0_u8.serialize_into(buf);
                 log_offset.serialize_into(buf);
             }
-            DiskPtr::Blob(log_offset, heap_id) => {
+            DiskPtr::Heap(log_offset, heap_id) => {
                 1_u8.serialize_into(buf);
                 log_offset.serialize_into(buf);
                 heap_id.serialize_into(buf);
@@ -667,7 +667,7 @@ impl Serialize for DiskPtr {
         *buf = &buf[1..];
         Ok(match discriminant {
             0 => DiskPtr::Inline(u64::deserialize(buf)?),
-            1 => DiskPtr::Blob(
+            1 => DiskPtr::Heap(
                 Serialize::deserialize(buf)?,
                 HeapId::deserialize(buf)?,
             ),
@@ -996,7 +996,7 @@ mod qc {
             if g.gen() {
                 DiskPtr::Inline(g.gen())
             } else {
-                DiskPtr::Blob(g.gen(), HeapId::arbitrary(g))
+                DiskPtr::Heap(g.gen(), HeapId::arbitrary(g))
             }
         }
     }
