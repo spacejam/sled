@@ -337,25 +337,22 @@ impl Slab {
             use libc::{fallocate, FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE};
 
             static HOLE_PUNCHING_ENABLED: AtomicBool = AtomicBool::new(false);
-
-            #[cfg(target_pointer_width = "64")]
-            let bs = i64::try_from(slab_id_to_size(self.slab_id)).unwrap();
-
-            #[cfg(target_pointer_width = "32")]
-            let bs = i32::try_from(slab_id_to_size(self.slab_id)).unwrap();
-
-            #[cfg(target_pointer_width = "64")]
-            let offset = i64::from(idx) * bs;
-
-            #[cfg(target_pointer_width = "32")]
-            let offset = i32::try_from(idx).unwrap() * bs;
+            const MODE: i32 = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
 
             if HOLE_PUNCHING_ENABLED.load(Relaxed) {
-                let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
+                let bs = i64::try_from(slab_id_to_size(self.slab_id)).unwrap();
+                let offset = i64::from(idx) * bs;
 
                 let fd = self.file.as_raw_fd();
 
-                let ret = unsafe { fallocate(fd, mode, offset, bs) };
+                let ret = unsafe {
+                    fallocate(
+                        fd,
+                        MODE,
+                        offset.try_into().unwrap(),
+                        bs.try_into().unwrap(),
+                    )
+                };
 
                 if ret != 0 {
                     let err = std::io::Error::last_os_error();
