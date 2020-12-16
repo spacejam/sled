@@ -321,13 +321,13 @@ impl Serialize for HeapId {
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        (self.location as i64).serialize_into(buf);
+        (i64::try_from(self.location).unwrap()).serialize_into(buf);
         self.original_lsn.serialize_into(buf);
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<HeapId> {
         Ok(HeapId {
-            location: i64::deserialize(buf)? as u64,
+            location: u64::try_from(i64::deserialize(buf)?).unwrap(),
             original_lsn: i64::deserialize(buf)?,
         })
     }

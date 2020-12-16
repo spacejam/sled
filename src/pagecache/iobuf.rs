@@ -536,14 +536,14 @@ impl IoBufs {
                     as usize
             ];
 
-            let _ser = Measure::new(&M.serialize);
+            let serialization_timer = Measure::new(&M.serialize);
             heap_buf[0] = header.kind.into();
             heap_buf[5..13].copy_from_slice(
                 &heap_reservation.heap_id.original_lsn.to_le_bytes(),
             );
             let heap_buf_ref: &mut &mut [u8] = &mut &mut heap_buf[13..];
             item.serialize_into(heap_buf_ref);
-            drop(_ser);
+            drop(serialization_timer);
 
             let mut hasher = crc32fast::Hasher::new();
             hasher.update(&heap_buf[0..1]);

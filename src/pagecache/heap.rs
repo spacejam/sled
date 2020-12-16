@@ -34,6 +34,7 @@ pub type SlabId = u8;
 pub type SlabIdx = u32;
 
 /// A unique identifier for a particular slot in the heap
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Copy, PartialOrd, Ord, Eq, PartialEq, Hash)]
 pub struct HeapId {
     pub location: u64,
@@ -68,7 +69,7 @@ impl HeapId {
         slab_idx: SlabIdx,
         original_lsn: Lsn,
     ) -> HeapId {
-        let slab = 1 << (32 + slab_id as u64);
+        let slab = 1 << (32 + u64::from(slab_id));
         let heap_id = slab | slab_idx as u64;
         HeapId { location: heap_id, original_lsn }
     }
