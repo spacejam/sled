@@ -292,8 +292,7 @@ pub use {
         lazy::Lazy,
         pagecache::{
             constants::{
-                MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION,
-                MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
+                MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, SEG_HEADER_LEN,
             },
             BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
             PageCache, PageId,

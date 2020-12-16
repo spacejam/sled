@@ -5,9 +5,9 @@
 pub mod constants;
 pub mod logger;
 
-mod blob_io;
 mod disk_pointer;
 mod header;
+mod heap;
 mod iobuf;
 mod iterator;
 mod pagetable;
@@ -35,7 +35,6 @@ use parallel_io_unix::{pread_exact, pread_exact_or_eof, pwrite_all};
 use parallel_io_windows::{pread_exact, pread_exact_or_eof, pwrite_all};
 
 use self::{
-    blob_io::{read_blob, remove_blob, write_blob},
     constants::{
         BATCH_MANIFEST_PID, COUNTER_PID, META_PID,
         PAGE_CONSOLIDATION_THRESHOLD, SEGMENT_CLEANUP_THRESHOLD,
@@ -48,6 +47,7 @@ use self::{
 };
 
 pub(crate) use self::{
+    heap::{Heap, HeapId},
     logger::{
         read_message, read_segment_header, MessageHeader, SegmentHeader,
         SegmentNumber,
@@ -57,19 +57,13 @@ pub(crate) use self::{
 };
 
 pub use self::{
-    constants::{
-        MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, MINIMUM_ITEMS_PER_SEGMENT,
-        SEG_HEADER_LEN,
-    },
+    constants::{MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, SEG_HEADER_LEN},
     disk_pointer::DiskPtr,
     logger::{Log, LogRead},
 };
 
 /// A file offset in the database log.
 pub type LogOffset = u64;
-
-/// A pointer to an blob blob.
-pub type BlobPointer = Lsn;
 
 /// The logical sequence number of an item in the database log.
 pub type Lsn = i64;
@@ -116,16 +110,16 @@ pub enum MessageKind {
     Counter = 5,
     /// The meta page, stored inline
     InlineMeta = 6,
-    /// The meta page, stored blobly
-    BlobMeta = 7,
+    /// The meta page, stored heaply
+    HeapMeta = 7,
     /// A consolidated page replacement, stored inline
     InlineNode = 8,
-    /// A consolidated page replacement, stored blobly
-    BlobNode = 9,
+    /// A consolidated page replacement, stored heaply
+    HeapNode = 9,
     /// A partial page update, stored inline
     InlineLink = 10,
-    /// A partial page update, stored blobly
-    BlobLink = 11,
+    /// A partial page update, stored heaply
+    HeapLink = 11,
 }
 
 impl MessageKind {
@@ -145,11 +139,11 @@ impl From<u8> for MessageKind {
             4 => Free,
             5 => Counter,
             6 => InlineMeta,
-            7 => BlobMeta,
+            7 => HeapMeta,
             8 => InlineNode,
-            9 => BlobNode,
+            9 => HeapNode,
             10 => InlineLink,
-            11 => BlobLink,
+            11 => HeapLink,
             other => {
                 debug!("encountered unexpected message kind byte {}", other);
                 Corrupted
@@ -190,10 +184,10 @@ impl From<MessageKind> for LogKind {
             MessageKind::Free => LogKind::Free,
             MessageKind::InlineNode
             | MessageKind::Counter
-            | MessageKind::BlobNode
+            | MessageKind::HeapNode
             | MessageKind::InlineMeta
-            | MessageKind::BlobMeta => LogKind::Replace,
-            MessageKind::InlineLink | MessageKind::BlobLink => LogKind::Link,
+            | MessageKind::HeapMeta => LogKind::Replace,
+            MessageKind::InlineLink | MessageKind::HeapLink => LogKind::Link,
             MessageKind::Canceled
             | MessageKind::Cap
             | MessageKind::BatchManifest => LogKind::Skip,
@@ -256,23 +250,24 @@ pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
 }
 
 #[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_return)]
 pub(crate) fn decompress(in_buf: Vec<u8>) -> Vec<u8> {
     #[cfg(feature = "compression")]
     {
         use zstd::stream::decode_all;
 
         let scootable_in_buf = &mut &*in_buf;
-        let _ivec_varint = u64::deserialize(scootable_in_buf)
+        let raw: IVec = IVec::deserialize(scootable_in_buf)
             .expect("this had to be serialized with an extra length frame");
         let _measure = Measure::new(&M.decompress);
-        let out_buf = decode_all(scootable_in_buf).expect(
+        let out_buf = decode_all(&raw[..]).expect(
             "failed to decompress data. \
              This is not expected, please open an issue on \
              https://github.com/spacejam/sled so we can \
              fix this critical issue ASAP. Thank you :)",
         );
 
-        out_buf
+        return out_buf;
     }
 
     #[cfg(not(feature = "compression"))]
@@ -476,8 +471,9 @@ impl Page {
         self.cache_infos.last().map_or(0, |ci| ci.ts)
     }
 
-    fn lone_blob(&self) -> Option<CacheInfo> {
-        if self.cache_infos.len() == 1 && self.cache_infos[0].pointer.is_blob()
+    fn lone_heap_item(&self) -> Option<CacheInfo> {
+        if self.cache_infos.len() == 1
+            && self.cache_infos[0].pointer.is_heap_item()
         {
             Some(self.cache_infos[0])
         } else {
@@ -583,7 +579,7 @@ impl PageCache {
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
 
-        blob_io::gc_unknown_blobs(&config, &snapshot)?;
+        config.heap.gc_unknown_items(&snapshot)?;
 
         #[cfg(feature = "testing")]
         {
@@ -825,8 +821,8 @@ impl PageCache {
 
             let log_reservation =
                 self.log.reserve(LogKind::Link, pid, &new, guard)?;
-            let lsn = log_reservation.lsn();
-            let pointer = log_reservation.pointer();
+            let lsn = log_reservation.lsn;
+            let pointer = log_reservation.pointer;
 
             // NB the setting of the timestamp is quite
             // correctness-critical! We use the ts to
@@ -1334,7 +1330,8 @@ impl PageCacheInner {
                         lid / self.config.segment_size as u64
                             == purge_segment_id
                     } else {
-                        // the blob has been relocated off-log
+                        // the item has been relocated off-log to
+                        // a slot in the heap.
                         true
                     }
                 });
@@ -1342,19 +1339,21 @@ impl PageCacheInner {
                 return Ok(());
             }
 
-            // if the page is just a single blob pointer, rewrite it.
-            if let Some(lone_cache_info) = page_view.lone_blob() {
-                trace!("rewriting blob with pid {}", pid);
+            // if the page only has a single heap pointer in the log, rewrite
+            // the pointer in a new segment without touching the big heap
+            // slot that the pointer references.
+            if let Some(lone_cache_info) = page_view.lone_heap_item() {
+                trace!("rewriting pointer to heap item with pid {}", pid);
 
                 let snapshot_min_lsn = self.snapshot_min_lsn.load(Acquire);
                 let original_lsn = lone_cache_info.pointer.original_lsn();
                 let skip_log = original_lsn < snapshot_min_lsn;
 
-                let blob_pointer = lone_cache_info.pointer.blob().1;
+                let heap_id = lone_cache_info.pointer.heap_id().unwrap();
 
                 let (log_reservation, cache_info) = if skip_log {
                     trace!(
-                        "allowing blob pointer for pid {} with original lsn of {} \
+                        "allowing heap pointer for pid {} with original lsn of {} \
                         to be forgotten from the log, as it is contained in the \
                         snapshot which has a minimum lsn of {}",
                         pid,
@@ -1363,20 +1362,14 @@ impl PageCacheInner {
                     );
 
                     let cache_info = CacheInfo {
-                        pointer: DiskPtr::Blob(
-                            None,
-                            lone_cache_info.pointer.blob().1,
-                        ),
+                        pointer: DiskPtr::Heap(None, heap_id),
                         ..lone_cache_info
                     };
 
                     (None, cache_info)
                 } else {
-                    let log_reservation = self.log.rewrite_blob_pointer(
-                        pid,
-                        blob_pointer,
-                        guard,
-                    )?;
+                    let log_reservation =
+                        self.log.rewrite_heap_pointer(pid, heap_id, guard)?;
 
                     let cache_info = CacheInfo {
                         ts: page_view.ts(),
@@ -1518,30 +1511,30 @@ impl PageCacheInner {
     pub(crate) fn size_on_disk(&self) -> Result<u64> {
         let mut size = self.config.file.metadata()?.len();
 
-        let stable = self.config.blob_path(0);
-        let blob_dir = stable.parent().expect(
-            "should be able to determine the parent for the blob directory",
+        let base_path = self.config.get_path().join("heap");
+        let heap_dir = base_path.parent().expect(
+            "should be able to determine the parent for the heap directory",
         );
-        let blob_files = std::fs::read_dir(blob_dir)?;
+        let heap_files = std::fs::read_dir(heap_dir)?;
 
-        for blob_file in blob_files {
-            let blob_file = if let Ok(bf) = blob_file {
+        for slab_file in heap_files {
+            let slab_file = if let Ok(bf) = slab_file {
                 bf
             } else {
                 continue;
             };
 
-            // it's possible the blob file was removed lazily
+            // it's possible the heap item was removed lazily
             // in the background and no longer exists
             #[cfg(not(miri))]
             {
-                size += blob_file.metadata().map(|m| m.len()).unwrap_or(0);
+                size += slab_file.metadata().map(|m| m.len()).unwrap_or(0);
             }
 
             // workaround to avoid missing `dirfd` shim
             #[cfg(miri)]
             {
-                size += std::fs::metadata(blob_file.path())
+                size += std::fs::metadata(slab_file.path())
                     .map(|m| m.len())
                     .unwrap_or(0);
             }
@@ -1606,8 +1599,8 @@ impl PageCacheInner {
                     panic!("non-replacement used in cas_page: {:?}", other)
                 }
             };
-            let lsn = log_reservation.lsn();
-            let new_pointer = log_reservation.pointer();
+            let lsn = log_reservation.lsn;
+            let new_pointer = log_reservation.pointer;
 
             // NB the setting of the timestamp is quite
             // correctness-critical! We use the ts to
@@ -1776,13 +1769,10 @@ impl PageCacheInner {
         let _measure = Measure::new(&M.get_page);
 
         if pid == COUNTER_PID || pid == META_PID || pid == BATCH_MANIFEST_PID {
-            return Err(Error::Unsupported(
-                "you are not able to iterate over \
-                 the first couple pages, which are \
-                 reserved for storing metadata and \
-                 monotonic ID generator info"
-                    .into(),
-            ));
+            panic!(
+                "tried to do normal pagecache get on priviledged pid {}",
+                pid
+            );
         }
 
         let mut last_attempted_cache_info = None;
@@ -2095,6 +2085,8 @@ impl PageCacheInner {
                 / u64::try_from(self.config.segment_size).unwrap(),
         );
 
+        iobuf::make_durable(&self.log.iobufs, lsn)?;
+
         let (header, bytes) = match self.log.read(pid, lsn, pointer) {
             Ok(LogRead::Inline(header, buf, _len)) => {
                 assert_eq!(
@@ -2111,7 +2103,7 @@ impl PageCacheInner {
                 );
                 Ok((header, buf))
             }
-            Ok(LogRead::Blob(header, buf, _blob_pointer, _inline_len)) => {
+            Ok(LogRead::Heap(header, buf, _heap_id, _inline_len)) => {
                 assert_eq!(
                     header.pid, pid,
                     "expected pid {} on pull of pointer {}, \
@@ -2147,13 +2139,13 @@ impl PageCacheInner {
 
             match header.kind {
                 Counter => u64::deserialize(buf).map(Update::Counter),
-                BlobMeta | InlineMeta => {
+                HeapMeta | InlineMeta => {
                     Meta::deserialize(buf).map(Update::Meta)
                 }
-                BlobLink | InlineLink => {
+                HeapLink | InlineLink => {
                     Link::deserialize(buf).map(Update::Link)
                 }
-                BlobNode | InlineNode => {
+                HeapNode | InlineNode => {
                     Node::deserialize(buf).map(Update::Node)
                 }
                 Free => Ok(Update::Free),

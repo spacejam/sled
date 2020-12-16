@@ -5,7 +5,7 @@ use crate::*;
 
 use super::{
     arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
-    BasedBuf, DiskPtr, LogIter, LogKind, LogOffset, Lsn, MessageKind,
+    BasedBuf, DiskPtr, HeapId, LogIter, LogKind, LogOffset, Lsn, MessageKind,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -31,7 +31,7 @@ pub enum PageState {
     /// correct by construction.
     /// The third element in each tuple is the on-log
     /// size for the corresponding write. If things
-    /// are pretty large, they spill into the blobs
+    /// are pretty large, they spill into the heaps
     /// directory, but still get a small pointer that
     /// gets written into the log. The sizes are used
     /// for the garbage collection statistics on
@@ -91,27 +91,27 @@ impl PageState {
         }
     }
 
-    pub(crate) fn blob_lsns(&self) -> Vec<Lsn> {
+    pub(crate) fn heap_ids(&self) -> Vec<HeapId> {
         let mut ret = vec![];
 
         match *self {
             PageState::Present { base, ref frags } => {
-                if let Some(blob_pointer) = base.1.blob_pointer() {
-                    ret.push(blob_pointer);
+                if let Some(heap_id) = base.1.heap_id() {
+                    ret.push(heap_id);
                 }
                 for (_, ptr, _) in frags {
-                    if let Some(blob_pointer) = ptr.blob_pointer() {
-                        ret.push(blob_pointer);
+                    if let Some(heap_id) = ptr.heap_id() {
+                        ret.push(heap_id);
                     }
                 }
             }
             PageState::Free(_, ptr) => {
-                if let Some(blob_pointer) = ptr.blob_pointer() {
-                    ret.push(blob_pointer);
+                if let Some(heap_id) = ptr.heap_id() {
+                    ret.push(heap_id);
                 }
             }
             PageState::Uninitialized => {
-                panic!("called blob_lsns on Uninitialized")
+                panic!("called heap_ids on Uninitialized")
             }
         }
 
@@ -235,16 +235,16 @@ impl Snapshot {
         Ok(())
     }
 
-    fn filter_inner_blob_pointers(&mut self) {
+    fn filter_inner_heap_ids(&mut self) {
         for page in &mut self.pt {
             match page {
                 PageState::Free(_lsn, ref mut ptr) => {
-                    ptr.forget_blob_log_coordinates()
+                    ptr.forget_heap_log_coordinates()
                 }
                 PageState::Present { ref mut base, ref mut frags } => {
-                    base.1.forget_blob_log_coordinates();
+                    base.1.forget_heap_log_coordinates();
                     for (_, ref mut ptr, _) in frags {
-                        ptr.forget_blob_log_coordinates();
+                        ptr.forget_heap_log_coordinates();
                     }
                 }
                 PageState::Uninitialized => {
@@ -397,7 +397,7 @@ fn advance_snapshot(
 
         snapshot.stable_lsn = Some(stable_lsn);
         snapshot.active_segment = active_segment;
-        snapshot.filter_inner_blob_pointers();
+        snapshot.filter_inner_heap_ids();
 
         snapshot
     };

@@ -2,7 +2,11 @@
 
 ## Breaking Changes
 
-* The "no_metrics" anti-feature has been replaced with
+* #1214 a new slab-style storage engine has been added which
+  replaces the previous file-per-blob technique for storing
+  large pages.
+* #1214 The deprecated `Config::build` method has been removed.
+* #1135 The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.
 
 ## Bug Fixes

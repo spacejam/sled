@@ -2500,3 +2500,15 @@ fn tree_bug_45() {
         ))
     }
 }
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_46() {
+    // postmortem: while implementing the heap slab, decompression
+    // was failing to account for the fact that the slab allocator
+    // will always write to the end of the slab to be compatible
+    // with O_DIRECT.
+    for _ in 0..1 {
+        assert!(prop_tree_matches_btreemap(vec![Restart], false, true, 0, 0))
+    }
+}
