@@ -1362,7 +1362,7 @@ impl PageCacheInner {
                     );
 
                     let cache_info = CacheInfo {
-                        pointer: DiskPtr::Blob(None, original_lsn, heap_id),
+                        pointer: DiskPtr::Blob(None, heap_id, original_lsn),
                         ..lone_cache_info
                     };
 
@@ -2107,7 +2107,13 @@ impl PageCacheInner {
                 );
                 Ok((header, buf))
             }
-            Ok(LogRead::Blob(header, buf, _blob_pointer, _inline_len)) => {
+            Ok(LogRead::Blob(
+                header,
+                buf,
+                _original_lsn,
+                _heap_id,
+                _inline_len,
+            )) => {
                 assert_eq!(
                     header.pid, pid,
                     "expected pid {} on pull of pointer {}, \

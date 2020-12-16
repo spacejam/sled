@@ -637,8 +637,8 @@ impl Serialize for DiskPtr {
             DiskPtr::Inline(a) => 1 + a.serialized_size(),
             DiskPtr::Blob(a, b, c) => {
                 1 + a.serialized_size()
-                    + b.serialized_size()
-                    + c.0.serialized_size()
+                    + b.0.serialized_size()
+                    + c.serialized_size()
             }
         }
     }
@@ -649,11 +649,11 @@ impl Serialize for DiskPtr {
                 0_u8.serialize_into(buf);
                 log_offset.serialize_into(buf);
             }
-            DiskPtr::Blob(log_offset, lsn, heap_id) => {
+            DiskPtr::Blob(log_offset, heap_id, lsn) => {
                 1_u8.serialize_into(buf);
                 log_offset.serialize_into(buf);
-                lsn.serialize_into(buf);
                 heap_id.0.serialize_into(buf);
+                lsn.serialize_into(buf);
             }
         }
     }
@@ -668,8 +668,8 @@ impl Serialize for DiskPtr {
             0 => DiskPtr::Inline(u64::deserialize(buf)?),
             1 => DiskPtr::Blob(
                 Serialize::deserialize(buf)?,
-                Serialize::deserialize(buf)?,
                 HeapId(u64::deserialize(buf)?),
+                Serialize::deserialize(buf)?,
             ),
             _ => return Err(Error::corruption(None)),
         })
@@ -993,7 +993,7 @@ mod qc {
             if g.gen() {
                 DiskPtr::Inline(g.gen())
             } else {
-                DiskPtr::Blob(g.gen(), g.gen(), HeapId(g.gen()))
+                DiskPtr::Blob(g.gen(), HeapId(g.gen()), g.gen())
             }
         }
     }

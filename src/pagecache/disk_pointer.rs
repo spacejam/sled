@@ -9,7 +9,7 @@ pub enum DiskPtr {
     /// Points to a value stored in the single-file log.
     Inline(LogOffset),
     /// Points to a value stored off-log in the blob directory.
-    Blob(Option<NonZeroU64>, Lsn, HeapId),
+    Blob(Option<NonZeroU64>, HeapId, Lsn),
 }
 
 impl DiskPtr {
@@ -17,8 +17,16 @@ impl DiskPtr {
         DiskPtr::Inline(l)
     }
 
-    pub(crate) fn new_blob(lid: LogOffset, lsn: Lsn, ptr: HeapId) -> Self {
-        DiskPtr::Blob(Some(NonZeroU64::new(lid).unwrap()), lsn, ptr)
+    pub(crate) fn new_blob(
+        lid: LogOffset,
+        heap_id: HeapId,
+        original_lsn: Lsn,
+    ) -> Self {
+        DiskPtr::Blob(
+            Some(NonZeroU64::new(lid).unwrap()),
+            heap_id,
+            original_lsn,
+        )
     }
 
     pub(crate) fn is_inline(&self) -> bool {
@@ -36,7 +44,11 @@ impl DiskPtr {
     }
 
     pub(crate) fn heap_id(&self) -> Option<HeapId> {
-        if let DiskPtr::Blob(_, _, ptr) = self { Some(*ptr) } else { None }
+        if let DiskPtr::Blob(_, heap_id, _) = self {
+            Some(*heap_id)
+        } else {
+            None
+        }
     }
 
     #[doc(hidden)]
@@ -56,7 +68,7 @@ impl DiskPtr {
 
     pub(crate) fn original_lsn(&self) -> Lsn {
         match self {
-            DiskPtr::Blob(_, original_lsn, _) => *original_lsn,
+            DiskPtr::Blob(_, _, original_lsn) => *original_lsn,
             DiskPtr::Inline(_) => panic!("called original_lsn on non-Blob"),
         }
     }

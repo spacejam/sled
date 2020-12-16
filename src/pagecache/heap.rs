@@ -111,7 +111,12 @@ impl Drop for Reservation {
 
 impl Reservation {
     pub fn complete(mut self, data: &[u8]) -> Result<HeapId> {
-        log::trace!("writing heap slab slot {:?}", self.heap_id);
+        log::trace!(
+            "Heap::complete({:?}) to offset {} in file {:?}",
+            self.heap_id,
+            self.heap_id.offset(),
+            self.file
+        );
         assert_eq!(data.len() as u64, self.heap_id.slab_size());
 
         pwrite_all(&self.file, data, self.heap_id.offset())?;
