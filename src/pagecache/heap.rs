@@ -70,13 +70,13 @@ impl HeapId {
         original_lsn: Lsn,
     ) -> HeapId {
         let slab = 1 << (32 + u64::from(slab_id));
-        let heap_id = slab | slab_idx as u64;
+        let heap_id = slab | u64::from(slab_idx);
         HeapId { location: heap_id, original_lsn }
     }
 
     fn offset(&self) -> u64 {
         let (slab_id, idx, _) = self.decompose();
-        slab_id_to_size(slab_id) * idx as u64
+        slab_id_to_size(slab_id) * u64::from(idx)
     }
 
     fn slab_size(&self) -> u64 {
@@ -90,7 +90,7 @@ pub(crate) fn slab_size(size: u64) -> u64 {
 }
 
 fn slab_id_to_size(slab_id: u8) -> u64 {
-    1 << (MIN_TRAILING_ZEROS + slab_id as u64)
+    1 << (MIN_TRAILING_ZEROS + u64::from(slab_id))
 }
 
 fn size_to_slab_id(size: u64) -> SlabId {
@@ -244,11 +244,11 @@ impl Slab {
         use_compression: bool,
     ) -> Result<(MessageKind, Vec<u8>)> {
         let bs = slab_id_to_size(self.slab_id);
-        let offset = slab_idx as u64 * bs;
+        let offset = u64::from(slab_idx) * bs;
 
         log::trace!("reading heap slab slot {} at offset {}", slab_idx, offset);
 
-        let mut heap_buf = vec![0; bs as usize];
+        let mut heap_buf = vec![0; usize::try_from(bs).unwrap()];
 
         pread_exact(&self.file, &mut heap_buf, offset)?;
 
@@ -285,7 +285,7 @@ impl Slab {
                 stored_crc,
                 actual_crc
             );
-            return Err(Error::corruption(None));
+            Err(Error::corruption(None))
         }
     }
 
