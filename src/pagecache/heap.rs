@@ -242,8 +242,6 @@ impl Slab {
         original_lsn: Lsn,
         use_compression: bool,
     ) -> Result<(MessageKind, Vec<u8>)> {
-        use std::os::unix::fs::FileExt;
-
         let bs = slab_id_to_size(self.slab_id);
         let offset = slab_idx as u64 * bs;
 
@@ -251,7 +249,7 @@ impl Slab {
 
         let mut heap_buf = vec![0; bs as usize];
 
-        self.file.read_exact_at(&mut heap_buf, offset)?;
+        pread_exact(&self.file, &mut heap_buf, offset)?;
 
         let stored_crc =
             u32::from_le_bytes(heap_buf[1..5].as_ref().try_into().unwrap());
