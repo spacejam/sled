@@ -797,8 +797,7 @@ impl SegmentAccountant {
                 continue;
             };
 
-            if schedule_rm_heap_item {
-                assert!(old_ptr.is_heap_item());
+            if schedule_rm_heap_item && old_ptr.is_heap_item() {
                 trace!(
                     "queueing heap item removal for {} in our own segment",
                     old_ptr
