@@ -328,7 +328,11 @@ fn multi_segment_log_iteration() -> Result<()> {
     common::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
-    let config = Config::new().temporary(true).segment_size(512);
+    let config =
+        Config::new().temporary(true).segment_size(512).flush_every_ms(None);
+
+    // this guard prevents any segments from being freed
+    let _guard = pin();
 
     let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MAX_MSG_HEADER_LEN + total_seg_overhead;
@@ -337,22 +341,43 @@ fn multi_segment_log_iteration() -> Result<()> {
     let db = config.open().unwrap();
     let log = &db.context.pagecache.log;
 
-    for i in 0..48 {
+    let mut expected_pids = std::collections::HashSet::new();
+
+    for i in 4..1000 {
         let buf = IVec::from(vec![i as u8; big_msg_sz * i]);
         let guard = pin();
-        log.reserve(REPLACE, i as PageId, &buf, &guard)
+        let (lsn, _ptr) = log
+            .reserve(REPLACE, i as PageId, &buf, &guard)
             .unwrap()
             .complete()
             .unwrap();
+
+        expected_pids.insert(i as PageId);
     }
-    log.flush()?;
+
+    db.flush();
 
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
 
-    for _ in 0..48 {
-        iter.next().expect("expected to read another message");
+    while let Some((_, pid, _, _, _)) = iter.next() {
+        if pid <= 3 {
+            // this page is for the meta page, counter page, or the default
+            // tree's leaf or index nodes
+            continue;
+        }
+        assert!(
+            expected_pids.remove(&pid),
+            "read pid {} while iterating, but this was no longer expected",
+            pid
+        );
     }
+
+    assert!(
+        expected_pids.is_empty(),
+        "expected to read pids {:?} but never saw them while iterating",
+        expected_pids
+    );
 
     Ok(())
 }
