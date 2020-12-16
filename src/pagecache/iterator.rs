@@ -80,13 +80,7 @@ impl Iterator for LogIter {
                 expected_segment_number,
                 &self.config,
             ) {
-                Ok(LogRead::Blob(
-                    header,
-                    _buf,
-                    heap_id,
-                    original_lsn,
-                    inline_len,
-                )) => {
+                Ok(LogRead::Blob(header, _buf, heap_id, inline_len)) => {
                     trace!("read blob flush in LogIter::next");
                     self.cur_lsn = Some(lsn + Lsn::from(inline_len));
 
@@ -94,7 +88,7 @@ impl Iterator for LogIter {
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
-                        DiskPtr::new_blob(lid, heap_id, original_lsn),
+                        DiskPtr::new_blob(lid, heap_id),
                         u64::from(inline_len),
                     ));
                 }

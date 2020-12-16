@@ -230,11 +230,6 @@ pub(crate) fn lsn_to_arr(number: Lsn) -> [u8; 8] {
 }
 
 #[inline]
-pub(crate) fn arr_to_u64(arr: &[u8]) -> u64 {
-    u64::from_le_bytes(arr.try_into().unwrap())
-}
-
-#[inline]
 pub(crate) fn arr_to_lsn(arr: &[u8]) -> Lsn {
     Lsn::from_le_bytes(arr.try_into().unwrap())
 }
@@ -1362,18 +1357,14 @@ impl PageCacheInner {
                     );
 
                     let cache_info = CacheInfo {
-                        pointer: DiskPtr::Blob(None, heap_id, original_lsn),
+                        pointer: DiskPtr::Blob(None, heap_id),
                         ..lone_cache_info
                     };
 
                     (None, cache_info)
                 } else {
-                    let log_reservation = self.log.rewrite_blob_pointer(
-                        pid,
-                        heap_id,
-                        original_lsn,
-                        guard,
-                    )?;
+                    let log_reservation =
+                        self.log.rewrite_blob_pointer(pid, heap_id, guard)?;
 
                     let cache_info = CacheInfo {
                         ts: page_view.ts(),
@@ -2107,13 +2098,7 @@ impl PageCacheInner {
                 );
                 Ok((header, buf))
             }
-            Ok(LogRead::Blob(
-                header,
-                buf,
-                _original_lsn,
-                _heap_id,
-                _inline_len,
-            )) => {
+            Ok(LogRead::Blob(header, buf, _heap_id, _inline_len)) => {
                 assert_eq!(
                     header.pid, pid,
                     "expected pid {} on pull of pointer {}, \

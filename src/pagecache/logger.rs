@@ -1,12 +1,11 @@
 use std::fs::File;
 
 use super::{
-    arr_to_lsn, arr_to_u32, arr_to_u64, assert_usize, bump_atomic_lsn,
-    decompress, header, iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof,
-    roll_iobuf, u32_to_arr, Arc, BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs,
-    LogKind, LogOffset, Lsn, MessageKind, Reservation, Serialize, Snapshot,
-    BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
-    SEG_HEADER_LEN,
+    arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, decompress, header,
+    iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr,
+    Arc, BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
+    MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
+    COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -71,11 +70,8 @@ impl Log {
             // here because it might not still
             // exist in the inline log.
             let heap_id = ptr.heap_id().unwrap();
-            let original_lsn = ptr.original_lsn();
-            self.config
-                .heap
-                .read2(heap_id, original_lsn, self.config.use_compression)
-                .map(|(kind, buf)| {
+            self.config.heap.read(heap_id, self.config.use_compression).map(
+                |(kind, buf)| {
                     let header = MessageHeader {
                         kind,
                         pid,
@@ -83,8 +79,9 @@ impl Log {
                         crc32: 0,
                         len: 0,
                     };
-                    LogRead::Blob(header, buf, heap_id, original_lsn, 0)
-                })
+                    LogRead::Blob(header, buf, heap_id, 0)
+                },
+            )
         }
     }
 
@@ -109,14 +106,13 @@ impl Log {
         &self,
         pid: PageId,
         blob_pointer: HeapId,
-        original_lsn: Lsn,
         guard: &Guard,
     ) -> Result<Reservation<'_>> {
         self.reserve_inner(
             LogKind::Replace,
             pid,
-            &(blob_pointer, original_lsn),
-            Some((blob_pointer, original_lsn)),
+            &blob_pointer,
+            Some(blob_pointer),
             guard,
         )
     }
@@ -164,7 +160,7 @@ impl Log {
         log_kind: LogKind,
         pid: PageId,
         item: &T,
-        blob_rewrite: Option<(HeapId, Lsn)>,
+        blob_rewrite: Option<HeapId>,
         _: &Guard,
     ) -> Result<Reservation<'_>> {
         let _measure = Measure::new(&M.reserve_lat);
@@ -374,8 +370,10 @@ impl Log {
             );
 
             let (heap_reservation, heap_id) = if over_blob_threshold {
-                let heap_reservation =
-                    self.config.heap.reserve(serialized_len + 13);
+                let heap_reservation = self
+                    .config
+                    .heap
+                    .reserve(serialized_len + 13, reservation_lsn);
                 let heap_id = heap_reservation.heap_id;
                 (Some(heap_reservation), Some(heap_id))
             } else {
@@ -384,7 +382,6 @@ impl Log {
 
             self.iobufs.encapsulate(
                 item,
-                reservation_lsn,
                 message_header,
                 destination,
                 heap_reservation,
@@ -393,9 +390,9 @@ impl Log {
             M.log_reservation_success();
 
             let pointer = if let Some(heap_id) = heap_id {
-                DiskPtr::new_blob(reservation_lid, heap_id, reservation_lsn)
-            } else if let Some((heap_id, original_lsn)) = blob_rewrite {
-                DiskPtr::new_blob(reservation_lid, heap_id, original_lsn)
+                DiskPtr::new_blob(reservation_lid, heap_id)
+            } else if let Some(heap_id) = blob_rewrite {
+                DiskPtr::new_blob(reservation_lid, heap_id)
             } else {
                 DiskPtr::new_inline(reservation_lid)
             };
@@ -531,7 +528,7 @@ pub enum LogRead {
     /// Successful read, entirely on-log
     Inline(MessageHeader, Vec<u8>, u32),
     /// Successful read, spilled to its own blob file
-    Blob(MessageHeader, Vec<u8>, HeapId, Lsn, u32),
+    Blob(MessageHeader, Vec<u8>, HeapId, u32),
     /// A cancelled message was encountered
     Canceled(u32),
     /// A padding message used to show that a segment was filled
@@ -556,7 +553,7 @@ impl LogRead {
     /// Return the underlying data read from a log read, if successful.
     pub fn into_data(self) -> Option<Vec<u8>> {
         match self {
-            LogRead::Blob(_, buf, _, _, _) | LogRead::Inline(_, buf, _) => {
+            LogRead::Blob(_, buf, _, _) | LogRead::Inline(_, buf, _) => {
                 Some(buf)
             }
             _ => None,
@@ -819,14 +816,9 @@ pub(crate) fn read_message<R: ReadAt>(
         | MessageKind::BlobNode
         | MessageKind::BlobMeta => {
             assert_eq!(buf.len(), 16);
-            let heap_id = HeapId(arr_to_u64(&buf[..8]));
-            let original_lsn = arr_to_lsn(&buf[8..16]);
+            let heap_id = HeapId::deserialize(&mut &buf[..]).unwrap();
 
-            match config.heap.read(
-                heap_id,
-                original_lsn,
-                config.use_compression,
-            ) {
+            match config.heap.read(heap_id, config.use_compression) {
                 Ok((kind, buf)) => {
                     assert_eq!(header.kind, kind);
                     trace!(
@@ -835,13 +827,7 @@ pub(crate) fn read_message<R: ReadAt>(
                         header.segment_number,
                     );
 
-                    Ok(LogRead::Blob(
-                        header,
-                        buf,
-                        heap_id,
-                        original_lsn,
-                        inline_len,
-                    ))
+                    Ok(LogRead::Blob(header, buf, heap_id, inline_len))
                 }
                 Err(Error::Io(ref e))
                     if e.kind() == std::io::ErrorKind::NotFound =>

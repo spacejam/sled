@@ -317,15 +317,19 @@ impl Serialize for u8 {
 
 impl Serialize for HeapId {
     fn serialized_size(&self) -> u64 {
-        8
+        16
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        (self.0 as i64).serialize_into(buf)
+        (self.location as i64).serialize_into(buf);
+        self.original_lsn.serialize_into(buf);
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<HeapId> {
-        Ok(HeapId(i64::deserialize(buf)? as u64))
+        Ok(HeapId {
+            location: i64::deserialize(buf)? as u64,
+            original_lsn: i64::deserialize(buf)?,
+        })
     }
 }
 
@@ -635,10 +639,8 @@ impl Serialize for DiskPtr {
     fn serialized_size(&self) -> u64 {
         match self {
             DiskPtr::Inline(a) => 1 + a.serialized_size(),
-            DiskPtr::Blob(a, b, c) => {
-                1 + a.serialized_size()
-                    + b.0.serialized_size()
-                    + c.serialized_size()
+            DiskPtr::Blob(a, b) => {
+                1 + a.serialized_size() + b.serialized_size()
             }
         }
     }
@@ -649,11 +651,10 @@ impl Serialize for DiskPtr {
                 0_u8.serialize_into(buf);
                 log_offset.serialize_into(buf);
             }
-            DiskPtr::Blob(log_offset, heap_id, lsn) => {
+            DiskPtr::Blob(log_offset, heap_id) => {
                 1_u8.serialize_into(buf);
                 log_offset.serialize_into(buf);
-                heap_id.0.serialize_into(buf);
-                lsn.serialize_into(buf);
+                heap_id.serialize_into(buf);
             }
         }
     }
@@ -668,8 +669,7 @@ impl Serialize for DiskPtr {
             0 => DiskPtr::Inline(u64::deserialize(buf)?),
             1 => DiskPtr::Blob(
                 Serialize::deserialize(buf)?,
-                HeapId(u64::deserialize(buf)?),
-                Serialize::deserialize(buf)?,
+                HeapId::deserialize(buf)?,
             ),
             _ => return Err(Error::corruption(None)),
         })
@@ -852,7 +852,10 @@ mod qc {
 
     impl Arbitrary for HeapId {
         fn arbitrary<G: Gen>(g: &mut G) -> HeapId {
-            HeapId(SpreadU64::arbitrary(g).0)
+            HeapId {
+                location: SpreadU64::arbitrary(g).0,
+                original_lsn: SpreadI64::arbitrary(g).0,
+            }
         }
     }
 
@@ -993,7 +996,7 @@ mod qc {
             if g.gen() {
                 DiskPtr::Inline(g.gen())
             } else {
-                DiskPtr::Blob(g.gen(), HeapId(g.gen()), g.gen())
+                DiskPtr::Blob(g.gen(), HeapId::arbitrary(g))
             }
         }
     }

@@ -514,7 +514,6 @@ impl IoBufs {
     pub(crate) fn encapsulate<T: Serialize + Debug>(
         &self,
         item: &T,
-        original_lsn: Lsn,
         header: MessageHeader,
         mut out_buf: &mut [u8],
         heap_reservation: Option<super::heap::Reservation>,
@@ -539,7 +538,9 @@ impl IoBufs {
 
             let _ser = Measure::new(&M.serialize);
             heap_buf[0] = header.kind.into();
-            heap_buf[5..13].copy_from_slice(&original_lsn.to_le_bytes());
+            heap_buf[5..13].copy_from_slice(
+                &heap_reservation.heap_id.original_lsn.to_le_bytes(),
+            );
             let heap_buf_ref: &mut &mut [u8] = &mut &mut heap_buf[13..];
             item.serialize_into(heap_buf_ref);
             drop(_ser);
@@ -554,7 +555,6 @@ impl IoBufs {
             // write the blob pointer and its original lsn into
             // the log
             heap_reservation.heap_id.serialize_into(out_buf_ref);
-            original_lsn.serialize_into(out_buf_ref);
 
             // write the blob file
             heap_reservation.complete(&heap_buf)?;

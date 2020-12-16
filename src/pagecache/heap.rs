@@ -35,42 +35,51 @@ pub type SlabIdx = u32;
 
 /// A unique identifier for a particular slot in the heap
 #[derive(Clone, Copy, PartialOrd, Ord, Eq, PartialEq, Hash)]
-pub struct HeapId(pub u64);
+pub struct HeapId {
+    pub location: u64,
+    pub original_lsn: Lsn,
+}
 
 impl Debug for HeapId {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
-        let (slab, idx) = self.decompose();
+        let (slab, idx, original_lsn) = self.decompose();
         f.debug_struct("HeapId")
             .field("slab", &slab)
             .field("idx", &idx)
+            .field("original_lsn", &original_lsn)
             .finish()
     }
 }
 
 impl HeapId {
-    pub fn decompose(&self) -> (SlabId, SlabIdx) {
+    pub fn decompose(&self) -> (SlabId, SlabIdx, Lsn) {
         const IDX_MASK: u64 = (1 << 32) - 1;
-        let slab_id = u8::try_from((self.0 >> 32).trailing_zeros()).unwrap();
-        let slab_idx = u32::try_from(self.0 & IDX_MASK).unwrap();
-        (slab_id, slab_idx)
+        let slab_id =
+            u8::try_from((self.location >> 32).trailing_zeros()).unwrap();
+        let slab_idx = u32::try_from(self.location & IDX_MASK).unwrap();
+        (slab_id, slab_idx, self.original_lsn)
     }
 
-    pub fn compose(slab_id: SlabId, slab_idx: SlabIdx) -> HeapId {
+    pub fn compose(
+        slab_id: SlabId,
+        slab_idx: SlabIdx,
+        original_lsn: Lsn,
+    ) -> HeapId {
         let slab = 1 << (32 + slab_id as u64);
         let heap_id = slab | slab_idx as u64;
-        HeapId(heap_id)
+        HeapId { location: heap_id, original_lsn }
     }
 
     fn offset(&self) -> u64 {
-        let (slab_id, idx) = self.decompose();
+        let (slab_id, idx, _) = self.decompose();
         slab_id_to_size(slab_id) * idx as u64
     }
 
     fn slab_size(&self) -> u64 {
-        let (slab_id, idx) = self.decompose();
+        let (slab_id, idx, _) = self.decompose();
         slab_id_to_size(slab_id)
     }
 }
@@ -103,7 +112,7 @@ pub(crate) struct Reservation {
 impl Drop for Reservation {
     fn drop(&mut self) {
         if !self.completed {
-            let (slab_id, idx) = self.heap_id.decompose();
+            let (slab_id, idx, _) = self.heap_id.decompose();
             self.slab_free.push(idx, &pin());
         }
     }
@@ -168,11 +177,10 @@ impl Heap {
     pub fn read(
         &self,
         heap_id: HeapId,
-        original_lsn: Lsn,
         use_compression: bool,
     ) -> Result<(MessageKind, Vec<u8>)> {
         log::trace!("Heap::read({:?})", heap_id);
-        let (slab_id, slab_idx) = heap_id.decompose();
+        let (slab_id, slab_idx, original_lsn) = heap_id.decompose();
         self.slabs[slab_id as usize].read(
             slab_idx,
             original_lsn,
@@ -182,14 +190,14 @@ impl Heap {
 
     pub fn free(&self, heap_id: HeapId) {
         log::trace!("Heap::free({:?})", heap_id);
-        let (slab_id, slab_idx) = heap_id.decompose();
+        let (slab_id, slab_idx, _) = heap_id.decompose();
         self.slabs[slab_id as usize].free(slab_idx)
     }
 
-    pub fn reserve(&self, size: u64) -> Reservation {
+    pub fn reserve(&self, size: u64, original_lsn: Lsn) -> Reservation {
         assert!(size < 1 << 48);
         let slab_id = size_to_slab_id(size);
-        let ret = self.slabs[slab_id as usize].reserve(size);
+        let ret = self.slabs[slab_id as usize].reserve(size, original_lsn);
         log::trace!("Heap::reserve({}) -> {:?}", size, ret.heap_id);
         ret
     }
@@ -282,7 +290,7 @@ impl Slab {
         }
     }
 
-    fn reserve(&self, size: u64) -> Reservation {
+    fn reserve(&self, size: u64, original_lsn: Lsn) -> Reservation {
         let idx = if let Some(idx) = self.free.pop(&pin()) {
             log::trace!(
                 "reusing heap index {} in slab for sizes of {}",
@@ -304,7 +312,7 @@ impl Slab {
             slab_id_to_size(self.slab_id),
         );
 
-        let heap_id = HeapId::compose(self.slab_id, idx);
+        let heap_id = HeapId::compose(self.slab_id, idx, original_lsn);
 
         Reservation {
             slab_free: self.free.clone(),
