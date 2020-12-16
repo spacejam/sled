@@ -336,7 +336,7 @@ impl Slab {
 
             use libc::{fallocate, FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE};
 
-            static HOLE_PUNCHING_ENABLED: AtomicBool = AtomicBool::new(false);
+            static HOLE_PUNCHING_ENABLED: AtomicBool = AtomicBool::new(true);
             const MODE: i32 = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
 
             if HOLE_PUNCHING_ENABLED.load(Relaxed) {
