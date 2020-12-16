@@ -346,8 +346,7 @@ fn multi_segment_log_iteration() -> Result<()> {
     for i in 4..1000 {
         let buf = IVec::from(vec![i as u8; big_msg_sz * i]);
         let guard = pin();
-        let (lsn, _ptr) = log
-            .reserve(REPLACE, i as PageId, &buf, &guard)
+        log.reserve(REPLACE, i as PageId, &buf, &guard)
             .unwrap()
             .complete()
             .unwrap();
@@ -355,7 +354,7 @@ fn multi_segment_log_iteration() -> Result<()> {
         expected_pids.insert(i as PageId);
     }
 
-    db.flush();
+    db.flush().unwrap();
 
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
