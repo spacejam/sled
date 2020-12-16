@@ -6,7 +6,7 @@ use super::{
     roll_iobuf, u32_to_arr, Arc, BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs,
     LogKind, LogOffset, Lsn, MessageKind, Reservation, Serialize, Snapshot,
     BATCH_MANIFEST_PID, COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID,
-    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
+    SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -115,7 +115,7 @@ impl Log {
         self.reserve_inner(
             LogKind::Replace,
             pid,
-            &blob_pointer,
+            &(blob_pointer, original_lsn),
             Some((blob_pointer, original_lsn)),
             guard,
         )
@@ -175,9 +175,7 @@ impl Log {
 
         M.reserve_sz.measure(max_buf_len);
 
-        let max_buf_size = (self.config.segment_size
-            / MINIMUM_ITEMS_PER_SEGMENT)
-            - SEG_HEADER_LEN;
+        let max_buf_size = self.config.segment_size - SEG_HEADER_LEN;
 
         let over_blob_threshold =
             max_buf_len > u64::try_from(max_buf_size).unwrap();
@@ -820,28 +818,33 @@ pub(crate) fn read_message<R: ReadAt>(
         MessageKind::BlobLink
         | MessageKind::BlobNode
         | MessageKind::BlobMeta => {
-            let id = HeapId(arr_to_u64(&buf[..8]));
-            let original_lsn = arr_to_lsn(&buf[8..]);
+            assert_eq!(buf.len(), 16);
+            let heap_id = HeapId(arr_to_u64(&buf[..8]));
+            let original_lsn = arr_to_lsn(&buf[8..16]);
 
-            match config.heap.read(id, original_lsn, config.use_compression) {
+            match config.heap.read(
+                heap_id,
+                original_lsn,
+                config.use_compression,
+            ) {
                 Ok((kind, buf)) => {
                     assert_eq!(header.kind, kind);
                     trace!(
                         "read a successful blob message for blob {:?} in segment number {:?}",
-                        id,
+                        heap_id,
                         header.segment_number,
                     );
 
-                    Ok(LogRead::Blob(header, buf, id, inline_len))
+                    Ok(LogRead::Blob(header, buf, heap_id, inline_len))
                 }
                 Err(Error::Io(ref e))
                     if e.kind() == std::io::ErrorKind::NotFound =>
                 {
                     debug!(
                         "underlying blob file not found for blob {:?} in segment number {:?}",
-                        id, header.segment_number,
+                        heap_id, header.segment_number,
                     );
-                    Ok(LogRead::DanglingBlob(header, id, inline_len))
+                    Ok(LogRead::DanglingBlob(header, heap_id, inline_len))
                 }
                 Err(other_e) => {
                     debug!("failed to read blob: {:?}", other_e);

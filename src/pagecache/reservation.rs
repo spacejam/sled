@@ -10,8 +10,8 @@ pub struct Reservation<'a> {
     pub(super) iobuf: Arc<IoBuf>,
     pub(super) buf: &'a mut [u8],
     pub(super) flushed: bool,
-    pub(super) pointer: DiskPtr,
-    pub(super) lsn: Lsn,
+    pub pointer: DiskPtr,
+    pub lsn: Lsn,
     pub(super) is_blob_rewrite: bool,
     pub(super) header_len: usize,
 }

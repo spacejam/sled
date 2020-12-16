@@ -38,7 +38,7 @@ fn log_writebatch() -> crate::Result<()> {
     log.reserve(REPLACE, PID, &IVec::from(b"7"), &guard)?.complete()?;
     log.reserve(REPLACE, PID, &IVec::from(b"8"), &guard)?.complete()?;
     let last_res = log.reserve(REPLACE, PID, &IVec::from(b"9"), &guard)?;
-    let last_res_lsn = last_res.lsn();
+    let last_res_lsn = last_res.lsn;
     last_res.complete()?;
     batch_res.mark_writebatch(last_res_lsn + 50)?;
     log.reserve(REPLACE, PID, &IVec::from(b"10"), &guard)?.complete()?;
@@ -91,8 +91,7 @@ fn non_contiguous_log_flush() -> Result<()> {
     let log = &db.context.pagecache.log;
 
     let seg_overhead = SEG_HEADER_LEN;
-    let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
-        - (MAX_MSG_HEADER_LEN + seg_overhead);
+    let buf_len = config.segment_size - (MAX_MSG_HEADER_LEN + seg_overhead);
 
     let guard = pin();
     let res1 = log
@@ -101,7 +100,7 @@ fn non_contiguous_log_flush() -> Result<()> {
     let res2 = log
         .reserve(REPLACE, PID, &IVec::from(vec![0; buf_len]), &guard)
         .unwrap();
-    let lsn = res2.lsn();
+    let lsn = res2.lsn;
     res2.abort()?;
     res1.abort()?;
     log.make_stable(lsn)?;
@@ -129,8 +128,7 @@ fn concurrent_logging() -> Result<()> {
         let db6 = db.clone();
 
         let seg_overhead = SEG_HEADER_LEN;
-        let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
-            - (MAX_MSG_HEADER_LEN + seg_overhead);
+        let buf_len = config.segment_size - (MAX_MSG_HEADER_LEN + seg_overhead);
 
         let t1 = thread::Builder::new()
             .name("c1".to_string())
@@ -314,7 +312,7 @@ fn log_chunky_iterator() {
             let res = log
                 .reserve(REPLACE, pid, &buf, &guard)
                 .expect("should be able to write reservation");
-            let ptr = res.pointer();
+            let ptr = res.pointer;
             let (lsn, _) = res.complete().unwrap();
             reference.push((REPLACE, pid, lsn, ptr));
         }
