@@ -532,8 +532,10 @@ impl IoBufs {
             io_fail!(self, "blob blob write");
             let mut heap_buf = vec![
                 0;
-                super::heap::slab_size(13 + item.serialized_size())
-                    as usize
+                usize::try_from(super::heap::slab_size(
+                    13 + item.serialized_size()
+                ))
+                .unwrap()
             ];
 
             let serialization_timer = Measure::new(&M.serialize);

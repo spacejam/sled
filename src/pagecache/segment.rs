@@ -245,7 +245,7 @@ impl Segment {
         &mut self,
         lsn: Lsn,
         config: &RunningConfig,
-    ) -> Result<FastSet8<Lsn>> {
+    ) -> FastSet8<Lsn> {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
 
         let (inactive, ret) = if let Segment::Active(active) = self {
@@ -285,7 +285,7 @@ impl Segment {
         };
 
         *self = inactive;
-        Ok(ret)
+        ret
     }
 
     fn inactive_to_draining(&mut self, lsn: Lsn) -> BTreeSet<PageId> {
@@ -978,7 +978,7 @@ impl SegmentAccountant {
         );
 
         let freeable_segments = if self.segments[idx].is_active() {
-            self.segments[idx].active_to_inactive(lsn, &self.config)?
+            self.segments[idx].active_to_inactive(lsn, &self.config)
         } else {
             Default::default()
         };

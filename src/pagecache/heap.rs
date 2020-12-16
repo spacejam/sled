@@ -327,8 +327,8 @@ impl Slab {
     }
 
     fn punch_hole(&self, idx: u32) {
-        let bs = slab_id_to_size(self.slab_id);
-        let offset = idx as u64 * bs;
+        let bs = i64::try_from(slab_id_to_size(self.slab_id)).unwrap();
+        let offset = i64::from(idx) * bs;
 
         #[cfg(target_os = "linux")]
         {
@@ -346,8 +346,7 @@ impl Slab {
 
                 let fd = self.file.as_raw_fd();
 
-                let ret =
-                    unsafe { fallocate(fd, mode, offset as i64, bs as i64) };
+                let ret = unsafe { fallocate(fd, mode, offset, bs) };
 
                 if ret != 0 {
                     let err = std::io::Error::last_os_error();

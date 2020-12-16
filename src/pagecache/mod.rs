@@ -250,6 +250,7 @@ pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
 }
 
 #[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_return)]
 pub(crate) fn decompress(in_buf: Vec<u8>) -> Vec<u8> {
     #[cfg(feature = "compression")]
     {
@@ -266,7 +267,7 @@ pub(crate) fn decompress(in_buf: Vec<u8>) -> Vec<u8> {
              fix this critical issue ASAP. Thank you :)",
         );
 
-        out_buf
+        return out_buf;
     }
 
     #[cfg(not(feature = "compression"))]
