@@ -420,11 +420,7 @@ impl Segment {
         }
     }
 
-    fn remove_heap_item(
-        &mut self,
-        heap_id: HeapId,
-        config: &RunningConfig,
-    ) -> Result<()> {
+    fn remove_heap_item(&mut self, heap_id: HeapId, config: &RunningConfig) {
         match self {
             Segment::Active(active) => {
                 // we have received a removal before
@@ -445,8 +441,6 @@ impl Segment {
                 panic!("remove_heap_item called on a Free Segment")
             }
         }
-
-        Ok(())
     }
 
     fn can_free(&self) -> bool {
@@ -806,7 +800,7 @@ impl SegmentAccountant {
                     self.segments[new_idx].remove_heap_item(
                         old_ptr.heap_id().unwrap(),
                         &self.config,
-                    )?;
+                    );
                 } else {
                     // this was migrated off-log and is present and stabilized
                     // in the snapshot.
