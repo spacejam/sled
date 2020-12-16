@@ -223,7 +223,7 @@ impl Slab {
         options.write(true);
 
         let file =
-            options.open(directory.as_ref().join(format!("{}", slab_id)))?;
+            options.open(directory.as_ref().join(format!("{:02}", slab_id)))?;
         let len = file.metadata()?.len();
         let max_idx = len / bs;
         log::trace!(
