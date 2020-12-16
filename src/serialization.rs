@@ -232,6 +232,29 @@ impl Serialize for u64 {
     }
 }
 
+struct NonVarU64(u64);
+
+impl Serialize for NonVarU64 {
+    fn serialized_size(&self) -> u64 {
+        8
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        buf[..8].copy_from_slice(&self.0.to_le_bytes());
+        scoot(buf, 8);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        if buf.len() < 8 {
+            return Err(Error::corruption(None));
+        }
+
+        let array = buf[..8].try_into().unwrap();
+        *buf = &buf[8..];
+        Ok(NonVarU64(u64::from_le_bytes(array)))
+    }
+}
+
 impl Serialize for i64 {
     fn serialized_size(&self) -> u64 {
         8
@@ -321,13 +344,13 @@ impl Serialize for HeapId {
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        (i64::try_from(self.location).unwrap()).serialize_into(buf);
+        NonVarU64(self.location).serialize_into(buf);
         self.original_lsn.serialize_into(buf);
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<HeapId> {
         Ok(HeapId {
-            location: u64::try_from(i64::deserialize(buf)?).unwrap(),
+            location: NonVarU64::deserialize(buf)?.0,
             original_lsn: i64::deserialize(buf)?,
         })
     }
