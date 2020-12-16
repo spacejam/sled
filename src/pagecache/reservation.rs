@@ -52,18 +52,6 @@ impl<'a> Reservation<'a> {
         self.flush(true)
     }
 
-    /// Get the log sequence number for this update.
-    pub const fn lsn(&self) -> Lsn {
-        self.lsn
-    }
-
-    /// Get the underlying storage location for the written value.
-    /// Note that an blob write still has a pointer in the
-    /// log at the provided lid location.
-    pub const fn pointer(&self) -> DiskPtr {
-        self.pointer
-    }
-
     /// Returns the length of the on-log reservation.
     pub(crate) fn reservation_len(&self) -> usize {
         self.buf.len()
@@ -138,6 +126,6 @@ impl<'a> Reservation<'a> {
         }
         self.log.exit_reservation(&self.iobuf)?;
 
-        Ok((self.lsn(), self.pointer()))
+        Ok((self.lsn, self.pointer))
     }
 }

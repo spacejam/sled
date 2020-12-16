@@ -827,8 +827,8 @@ impl PageCache {
 
             let log_reservation =
                 self.log.reserve(LogKind::Link, pid, &new, guard)?;
-            let lsn = log_reservation.lsn();
-            let pointer = log_reservation.pointer();
+            let lsn = log_reservation.lsn;
+            let pointer = log_reservation.pointer;
 
             // NB the setting of the timestamp is quite
             // correctness-critical! We use the ts to
@@ -1606,8 +1606,8 @@ impl PageCacheInner {
                     panic!("non-replacement used in cas_page: {:?}", other)
                 }
             };
-            let lsn = log_reservation.lsn();
-            let new_pointer = log_reservation.pointer();
+            let lsn = log_reservation.lsn;
+            let new_pointer = log_reservation.pointer;
 
             // NB the setting of the timestamp is quite
             // correctness-critical! We use the ts to

@@ -286,7 +286,12 @@ impl Log {
                 .unwrap()
             };
 
-            trace!("reserving buf of len {}", inline_buf_len);
+            trace!(
+                "reserving buf of len {} for pid {} with kind {:?}",
+                inline_buf_len,
+                pid,
+                kind
+            );
 
             // try to claim space
             let prospective_size = buf_offset + inline_buf_len;
