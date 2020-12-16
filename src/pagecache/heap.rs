@@ -129,7 +129,34 @@ impl Reservation {
         );
         assert_eq!(data.len() as u64, self.heap_id.slab_size());
 
+        // write data
         pwrite_all(&self.file, data, self.heap_id.offset())?;
+
+        // sync data
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::io::AsRawFd;
+            let ret = unsafe {
+                libc::sync_file_range(
+                    self.file.as_raw_fd(),
+                    i64::try_from(self.heap_id.offset()).unwrap(),
+                    i64::try_from(data.len()).unwrap(),
+                    libc::SYNC_FILE_RANGE_WAIT_BEFORE
+                        | libc::SYNC_FILE_RANGE_WRITE
+                        | libc::SYNC_FILE_RANGE_WAIT_AFTER,
+                )
+            };
+            if ret < 0 {
+                let err = std::io::Error::last_os_error();
+                if let Some(libc::ENOSYS) = err.raw_os_error() {
+                    self.file.sync_all()?;
+                } else {
+                    return Err(err.into());
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
         self.file.sync_all()?;
 
         // if this is not reached due to an IO error,
