@@ -535,7 +535,7 @@ pub enum LogRead {
     Cap(SegmentNumber),
     /// This log message was not readable due to corruption
     Corrupted,
-    /// This blob file is no longer available
+    /// This heap slot has been replaced
     DanglingBlob(MessageHeader, HeapId, u32),
     /// This data may only be read if at least this future location is stable
     BatchManifest(Lsn, u32),
@@ -829,18 +829,9 @@ pub(crate) fn read_message<R: ReadAt>(
 
                     Ok(LogRead::Blob(header, buf, heap_id, inline_len))
                 }
-                Err(Error::Io(ref e))
-                    if e.kind() == std::io::ErrorKind::NotFound =>
-                {
-                    debug!(
-                        "underlying blob file not found for blob {:?} in segment number {:?}",
-                        heap_id, header.segment_number,
-                    );
+                Err(e) => {
+                    debug!("failed to read blob: {:?}", e);
                     Ok(LogRead::DanglingBlob(header, heap_id, inline_len))
-                }
-                Err(other_e) => {
-                    debug!("failed to read blob: {:?}", other_e);
-                    Err(other_e)
                 }
             }
         }
