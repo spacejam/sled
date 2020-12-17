@@ -112,7 +112,7 @@ impl Iterator for LogIter {
                         if last_lsn_in_batch > max_lsn {
                             debug!(
                                 "cutting recovery short due to torn batch. \
-                            required stable lsn: {} actual max possible lsn: {}",
+                                required stable lsn: {} actual max possible lsn: {}",
                                 last_lsn_in_batch,
                                 self.max_lsn.unwrap()
                             );

@@ -286,11 +286,6 @@ fn advance_snapshot(
             continue;
         }
 
-        if lsn >= iter.max_lsn.unwrap() {
-            error!("lsn {} >= iter max_lsn {}", lsn, iter.max_lsn.unwrap());
-            return Err(Error::corruption(None));
-        }
-
         snapshot.apply(log_kind, pid, lsn, ptr, sz)?;
     }
 

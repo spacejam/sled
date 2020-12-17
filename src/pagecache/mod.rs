@@ -978,7 +978,8 @@ impl PageCache {
             }
         }
 
-        let stable_lsn_after: Lsn = self.log.stable_offset();
+        let max_reserved_lsn_after: Lsn =
+            self.log.iobufs.max_reserved_lsn.load(Acquire);
 
         let snapshot = Snapshot {
             stable_lsn: Some(stable_lsn_before),
@@ -986,7 +987,7 @@ impl PageCache {
             pt: page_states,
         };
 
-        self.log.make_stable(stable_lsn_after)?;
+        self.log.make_stable(max_reserved_lsn_after)?;
 
         snapshot::write_snapshot(&self.config, &snapshot)?;
 
