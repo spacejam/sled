@@ -88,9 +88,16 @@ type Senders = Map<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 ///
 /// // `Subscription` implements `Iterator<Item=Event>`
 /// for event in subscriber.take(1) {
-///     match event {
-///         Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
-///         Event::Remove {key } => {}
+///     // Events occur due to single key operations,
+///     // batches, or transactions. The tree is included
+///     // so that you may perform a new transaction or
+///     // operation in response to the event.
+///     for (tree, key, value_opt) in &event {
+///         if let Some(value) = value_opt {
+///             // key `key` was set to value `value`
+///         } else {
+///             // key `key` was removed
+///         }
 ///     }
 /// }
 ///
