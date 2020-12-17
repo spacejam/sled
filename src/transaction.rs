@@ -76,7 +76,7 @@
 use std::{cell::RefCell, fmt, rc::Rc};
 
 use crate::{
-    concurrency_control, pin, Batch, Error, Guard, IVec, Map, Protector,
+    concurrency_control, pin, Batch, Error, Event, Guard, IVec, Map, Protector,
     Result, Tree,
 };
 
@@ -347,13 +347,13 @@ impl TransactionalTree {
         true
     }
 
-    fn commit(&self) -> Result<()> {
+    fn commit(&self, event: Event) -> Result<()> {
         let writes = std::mem::replace(
             &mut *self.writes.borrow_mut(),
             Default::default(),
         );
         let mut guard = pin();
-        self.tree.apply_batch_inner(writes, true, &mut guard)
+        self.tree.apply_batch_inner(writes, Some(event), &mut guard)
     }
 
     fn from_tree(tree: &Tree) -> Self {
@@ -393,8 +393,17 @@ impl TransactionalTrees {
 
     fn commit(&self, guard: &Guard) -> Result<()> {
         let peg = self.inner[0].tree.context.pin_log(guard)?;
+
+        let batches = self
+            .inner
+            .iter()
+            .map(|tree| (tree.tree.clone(), tree.writes.borrow().clone()))
+            .collect();
+
+        let event = Event::from_batches(batches);
+
         for tree in &self.inner {
-            tree.commit()?;
+            tree.commit(event.clone())?;
         }
 
         // when the peg drops, it ensures all updates

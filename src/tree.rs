@@ -155,7 +155,7 @@ impl Tree {
         loop {
             trace!("setting key {:?}", key.as_ref());
             if let Ok(res) =
-                self.insert_inner(key.as_ref(), Some(value.clone()), false, &mut guard)?
+                self.insert_inner(key.as_ref(), Some(value.clone()),false,  &mut guard)?
             {
                 return Ok(res);
             }
@@ -165,8 +165,8 @@ impl Tree {
     pub(crate) fn insert_inner(
         &self,
         key: &[u8],
-        mut value: Option<IVec>,
-        is_batch: bool,
+        value: Option<IVec>,
+        is_transactional: bool,
         guard: &mut Guard,
     ) -> Result<Conflictable<Option<IVec>>> {
         let _measure = if value.is_some() {
@@ -178,11 +178,10 @@ impl Tree {
         let View { node_view, pid, .. } =
             self.view_for_key(key.as_ref(), guard)?;
 
-        let mut subscriber_reservation = if is_batch {
-            // batch subscription events are handled in the apply_batch_inner method.
+        let mut subscriber_reservation = if is_transactional {
             None
         } else {
-            self.subscribers.reserve(&key)
+            Some(self.subscribers.reserve(&key))
         };
 
         let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
@@ -207,15 +206,12 @@ impl Tree {
 
         if link.is_ok() {
             // success
-            if let Some(res) = subscriber_reservation.take() {
-                let event = if let Some(value) = value.take() {
-                    subscriber::Event::Insert {
-                        key: key.as_ref().into(),
-                        value,
-                    }
-                } else {
-                    subscriber::Event::Remove { key: key.as_ref().into() }
-                };
+            if let Some(Some(res)) = subscriber_reservation.take() {
+                let event = subscriber::Event::single_update(
+                    self.clone(),
+                    key.as_ref().into(),
+                    value,
+                );
 
                 res.complete(&event);
             }
@@ -376,16 +372,16 @@ impl Tree {
     pub fn apply_batch(&self, batch: Batch) -> Result<()> {
         let _cc = concurrency_control::write();
         let mut guard = pin();
-        self.apply_batch_inner(batch, false, &mut guard)
+        self.apply_batch_inner(batch, None, &mut guard)
     }
 
     pub(crate) fn apply_batch_inner(
         &self,
         batch: Batch,
-        is_transaction: bool,
+        transaction_batch: Option<Event>,
         guard: &mut Guard,
     ) -> Result<()> {
-        let peg = if is_transaction {
+        let peg = if transaction_batch.is_none() {
             None
         } else {
             Some(self.context.pin_log(guard)?)
@@ -397,13 +393,18 @@ impl Tree {
 
         for (k, v_opt) in &batch.writes {
             loop {
-                if self.insert_inner(k, v_opt.clone(), true, guard)?.is_ok() {
+                if self.insert_inner(k, v_opt.clone(), transaction_batch.is_some(), guard)?.is_ok() {
                     break;
                 }
             }
         }
+
         if let Some(res) = subscriber_reservation.take() {
-            res.complete(&Event::Batch(batch));
+            if let Some(transaction_batch) = transaction_batch {
+                res.complete(&transaction_batch);
+            } else {
+                res.complete(&Event::single_batch(self.clone(), batch));
+            }
         }
 
         if let Some(peg) = peg {
@@ -592,14 +593,11 @@ impl Tree {
 
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
-                    let event = if let Some(new) = new {
-                        subscriber::Event::Insert {
-                            key: key.as_ref().into(),
-                            value: new,
-                        }
-                    } else {
-                        subscriber::Event::Remove { key: key.as_ref().into() }
-                    };
+                    let event = subscriber::Event::single_update(
+                        self.clone(),
+                        key.as_ref().into(),
+                        new
+                    );
 
                     res.complete(&event);
                 }
@@ -783,9 +781,16 @@ impl Tree {
     ///
     /// // `Subscription` implements `Iterator<Item=Event>`
     /// for event in subscriber.take(1) {
-    ///     match event {
-    ///         sled::Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
-    ///         sled::Event::Remove {key } => {}
+    ///     // Events occur due to single key operations,
+    ///     // batches, or transactions. The tree is included
+    ///     // so that you may perform a new transaction or
+    ///     // operation in response to the event.
+    ///     for (tree, key, value_opt) in &event {
+    ///         if let Some(value) = value_opt {
+    ///             // key `key` was set to value `value`
+    ///         } else {
+    ///             // key `key` was removed
+    ///         }
     ///     }
     /// }
     ///
@@ -1086,14 +1091,11 @@ impl Tree {
 
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
-                    let event = if let Some(new) = &new {
-                        subscriber::Event::Insert {
-                            key: key.as_ref().into(),
-                            value: new.clone(),
-                        }
-                    } else {
-                        subscriber::Event::Remove { key: key.as_ref().into() }
-                    };
+                    let event = subscriber::Event::single_update(
+                        self.clone(),
+                        key.as_ref().into(),
+                        new.clone()
+                    );
 
                     res.complete(&event);
                 }

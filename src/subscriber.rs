@@ -9,140 +9,55 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(not(feature = "testing"))]
-use std::collections::hash_map::{
-    IntoIter as MapIntoIter, Iter as MapIter, Keys as MapKeys,
-};
-
-// we avoid HashMap while testing because
-// it makes tests non-deterministic
-#[cfg(feature = "testing")]
-use std::collections::btree_map::{
-    IntoIter as MapIntoIter, Iter as MapIter, Keys as MapKeys,
-};
-
 use crate::*;
 
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 
 /// An event that happened to a key that a subscriber is interested in.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Event {
-    /// A new complete (key, value) pair
-    Insert {
-        /// The key that has been set
-        key: IVec,
-        /// The value that has been set
-        value: IVec,
-    },
-    /// A deleted key
-    Remove {
-        /// The key that has been removed
-        key: IVec,
-    },
-    /// A batch of updates from a transaction or batch write.
-    ///
-    /// IMPORTANT NOTE: the batch will contain the full writeset
-    /// for a transaction or batch with at least one key that
-    /// is prefixed by the `Subscriber`'s watched prefix.
-    Batch(Batch),
+#[derive(Debug, Clone)]
+pub struct Event {
+    /// A map of batches for each tree written to in a transaction,
+    /// only one of which will be the one subscribed to.
+    pub(crate) batches: Arc<[(Tree, Batch)]>,
 }
 
 impl Event {
-    /// Return the key associated with the `Event`
-    pub fn keys(&self) -> Keys<'_> {
-        match self {
-            Event::Insert { ref key, .. } | Event::Remove { ref key } => {
-                Keys::Single(std::iter::once(key))
-            }
-            Event::Batch(ref batch) => Keys::Batch(batch.writes.keys()),
-        }
+    pub(crate) fn single_update(
+        tree: Tree,
+        key: IVec,
+        value: Option<IVec>,
+    ) -> Event {
+        Event::single_batch(
+            tree,
+            Batch { writes: vec![(key, value)].into_iter().collect() },
+        )
     }
-}
 
-/// An iterator over the keys contained in an `Event`. There
-/// may be multiple keys if the `Event` is a `Batch` which
-/// was written atomically from a transaction or batch write.
-pub enum Keys<'a> {
-    Single(std::iter::Once<&'a IVec>),
-    Batch(MapKeys<'a, IVec, Option<IVec>>),
-}
-
-impl<'a> Iterator for Keys<'a> {
-    type Item = &'a IVec;
-
-    fn next(&mut self) -> Option<&'a IVec> {
-        match self {
-            Keys::Single(s) => s.next(),
-            Keys::Batch(b) => b.next(),
-        }
+    pub(crate) fn single_batch(tree: Tree, batch: Batch) -> Event {
+        Event::from_batches(vec![(tree, batch)])
     }
-}
 
-impl IntoIterator for Event {
-    type IntoIter = IntoIter;
-    type Item = (IVec, Option<IVec>);
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self {
-            Event::Insert { key, value } => {
-                IntoIter::Single(std::iter::once((key, Some(value))))
-            }
-            Event::Remove { key } => {
-                IntoIter::Single(std::iter::once((key, None)))
-            }
-            Event::Batch(batch) => IntoIter::Batch(batch.writes.into_iter()),
-        }
+    pub(crate) fn from_batches(batches: Vec<(Tree, Batch)>) -> Event {
+        Event { batches: Arc::from(batches.into_boxed_slice()) }
     }
-}
 
-pub enum IntoIter {
-    Single(std::iter::Once<(IVec, Option<IVec>)>),
-    Batch(MapIntoIter<IVec, Option<IVec>>),
-}
-
-impl Iterator for IntoIter {
-    type Item = (IVec, Option<IVec>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            IntoIter::Single(s) => s.next(),
-            IntoIter::Batch(b) => b.next(),
-        }
+    /// Iterate over each Tree, key, and optional value in this `Event`
+    pub fn iter<'a>(
+        &'a self,
+    ) -> Box<dyn 'a + Iterator<Item = (&'a Tree, &'a IVec, &'a Option<IVec>)>>
+    {
+        self.into_iter()
     }
 }
 
 impl<'a> IntoIterator for &'a Event {
-    type IntoIter = Iter<'a>;
-    type Item = (&'a IVec, Option<&'a IVec>);
+    type Item = (&'a Tree, &'a IVec, &'a Option<IVec>);
+    type IntoIter = Box<dyn 'a + Iterator<Item = Self::Item>>;
 
-    fn into_iter(self) -> Iter<'a> {
-        match self {
-            Event::Insert { key, value } => {
-                Iter::Single(Some((key, Some(value))))
-            }
-            Event::Remove { key } => Iter::Single(Some((key, None))),
-            Event::Batch(batch) => Iter::Batch(batch.writes.iter()),
-        }
-    }
-}
-
-pub enum Iter<'a> {
-    Single(Option<(&'a IVec, Option<&'a IVec>)>),
-    Batch(MapIter<'a, IVec, Option<IVec>>),
-}
-
-impl<'a> Iterator for Iter<'a> {
-    type Item = (&'a IVec, Option<&'a IVec>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Iter::Single(s) => s.take(),
-            Iter::Batch(b) => {
-                let (k, v) = b.next()?;
-                Some((k, v.as_ref()))
-            }
-        }
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.batches.iter().flat_map(|(ref tree, ref batch)| {
+            batch.writes.iter().map(move |(k, v_opt)| (tree, k, v_opt))
+        }))
     }
 }
 
@@ -424,62 +339,4 @@ impl ReservedBroadcast {
             }
         }
     }
-}
-
-#[test]
-fn basic_subscriber() {
-    let subs = Subscribers::default();
-
-    let mut s2 = subs.register(&[0]);
-    let mut s3 = subs.register(&[0, 1]);
-    let mut s4 = subs.register(&[1, 2]);
-
-    let r1 = subs.reserve(b"awft");
-    assert!(r1.is_none());
-
-    let mut s1 = subs.register(&[]);
-
-    let k2: IVec = vec![].into();
-    let r2 = subs.reserve(&k2).unwrap();
-    r2.complete(&Event::Insert { key: k2.clone(), value: k2.clone() });
-
-    let k3: IVec = vec![0].into();
-    let r3 = subs.reserve(&k3).unwrap();
-    r3.complete(&Event::Insert { key: k3.clone(), value: k3.clone() });
-
-    let k4: IVec = vec![0, 1].into();
-    let r4 = subs.reserve(&k4).unwrap();
-    r4.complete(&Event::Remove { key: k4.clone() });
-
-    let k5: IVec = vec![0, 1, 2].into();
-    let r5 = subs.reserve(&k5).unwrap();
-    r5.complete(&Event::Insert { key: k5.clone(), value: k5.clone() });
-
-    let k6: IVec = vec![1, 1, 2].into();
-    let r6 = subs.reserve(&k6).unwrap();
-    r6.complete(&Event::Remove { key: k6.clone() });
-
-    let k7: IVec = vec![1, 1, 2].into();
-    let r7 = subs.reserve(&k7).unwrap();
-    drop(r7);
-
-    let k8: IVec = vec![1, 2, 2].into();
-    let r8 = subs.reserve(&k8).unwrap();
-    r8.complete(&Event::Insert { key: k8.clone(), value: k8.clone() });
-
-    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k2);
-    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k3);
-    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k4);
-    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k5);
-    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k6);
-    assert_eq!(s1.next().unwrap().keys().next().unwrap(), &*k8);
-
-    assert_eq!(s2.next().unwrap().keys().next().unwrap(), &*k3);
-    assert_eq!(s2.next().unwrap().keys().next().unwrap(), &*k4);
-    assert_eq!(s2.next().unwrap().keys().next().unwrap(), &*k5);
-
-    assert_eq!(s3.next().unwrap().keys().next().unwrap(), &*k4);
-    assert_eq!(s3.next().unwrap().keys().next().unwrap(), &*k5);
-
-    assert_eq!(s4.next().unwrap().keys().next().unwrap(), &*k8);
 }
