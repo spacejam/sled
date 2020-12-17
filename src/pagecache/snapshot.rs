@@ -266,14 +266,6 @@ fn advance_snapshot(
 
     let old_stable_lsn = snapshot.stable_lsn;
 
-    assert!(
-        iter.max_lsn.unwrap_or(0) + 1 >= old_stable_lsn.unwrap_or(0),
-        "snapshots must never regress over time. \
-        old snapshot lsn: {:?}, current iter lsn: {:?}",
-        old_stable_lsn,
-        iter.max_lsn
-    );
-
     while let Some((log_kind, pid, lsn, ptr, sz)) = iter.next() {
         trace!(
             "in advance_snapshot looking at item with pid {} lsn {} ptr {}",
@@ -292,11 +284,6 @@ fn advance_snapshot(
                 snapshot.stable_lsn
             );
             continue;
-        }
-
-        if lsn >= iter.max_lsn.unwrap() {
-            error!("lsn {} >= iter max_lsn {}", lsn, iter.max_lsn.unwrap());
-            return Err(Error::corruption(None));
         }
 
         snapshot.apply(log_kind, pid, lsn, ptr, sz)?;
