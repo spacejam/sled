@@ -382,9 +382,9 @@ impl Tree {
         guard: &mut Guard,
     ) -> Result<()> {
         let peg = if transaction_batch.is_none() {
-            None
-        } else {
             Some(self.context.pin_log(guard)?)
+        } else {
+            None
         };
 
         trace!("applying batch {:?}", batch);
