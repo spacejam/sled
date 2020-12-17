@@ -376,15 +376,21 @@ impl Tree {
     pub fn apply_batch(&self, batch: Batch) -> Result<()> {
         let _cc = concurrency_control::write();
         let mut guard = pin();
-        self.apply_batch_inner(batch, &mut guard)
+        self.apply_batch_inner(batch, false, &mut guard)
     }
 
     pub(crate) fn apply_batch_inner(
         &self,
         batch: Batch,
+        is_transaction: bool,
         guard: &mut Guard,
     ) -> Result<()> {
-        let peg = self.context.pin_log(guard)?;
+        let peg = if is_transaction {
+            None
+        } else {
+            Some(self.context.pin_log(guard)?)
+        };
+
         trace!("applying batch {:?}", batch);
 
         let mut subscriber_reservation = self.subscribers.reserve_batch(&batch);
@@ -400,10 +406,14 @@ impl Tree {
             res.complete(&Event::Batch(batch));
         }
 
-        // when the peg drops, it ensures all updates
-        // written to the log since its creation are
-        // recovered atomically
-        peg.seal_batch()
+        if let Some(peg) = peg {
+            // when the peg drops, it ensures all updates
+            // written to the log since its creation are
+            // recovered atomically
+            peg.seal_batch()
+        } else {
+            Ok(())
+        }
     }
 
     /// Retrieve a value from the `Tree` if it exists.

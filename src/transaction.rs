@@ -353,7 +353,7 @@ impl TransactionalTree {
             Default::default(),
         );
         let mut guard = pin();
-        self.tree.apply_batch_inner(writes, &mut guard)
+        self.tree.apply_batch_inner(writes, true, &mut guard)
     }
 
     fn from_tree(tree: &Tree) -> Self {

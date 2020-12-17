@@ -254,8 +254,8 @@ impl StabilityIntervals {
                 // through the `batch_stable_lsn` variable.
                 if let Some(bsl) = batch_stable_lsn {
                     assert!(
-                        bsl <= high,
-                        "expected batch stable lsn of {} to be less than or equal to high of {}",
+                        bsl < high,
+                        "expected batch stable lsn of {} to be less than high of {}",
                         bsl,
                         high
                     );
