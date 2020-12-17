@@ -14,28 +14,50 @@ use crate::*;
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 
 /// An event that happened to a key that a subscriber is interested in.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Event {
-    /// A new complete (key, value) pair
-    Insert {
-        /// The key that has been set
-        key: IVec,
-        /// The value that has been set
-        value: IVec,
-    },
-    /// A deleted key
-    Remove {
-        /// The key that has been removed
-        key: IVec,
-    },
+#[derive(Debug, Clone)]
+pub struct Event {
+    /// A map of batches for each tree written to in a transaction,
+    /// only one of which will be the one subscribed to.
+    pub(crate) batches: Arc<[(Tree, Batch)]>,
 }
 
 impl Event {
-    /// Return the key associated with the `Event`
-    pub fn key(&self) -> &IVec {
-        match self {
-            Event::Insert { key, .. } | Event::Remove { key } => key,
-        }
+    pub(crate) fn single_update(
+        tree: Tree,
+        key: IVec,
+        value: Option<IVec>,
+    ) -> Event {
+        Event::single_batch(
+            tree,
+            Batch { writes: vec![(key, value)].into_iter().collect() },
+        )
+    }
+
+    pub(crate) fn single_batch(tree: Tree, batch: Batch) -> Event {
+        Event::from_batches(vec![(tree, batch)])
+    }
+
+    pub(crate) fn from_batches(batches: Vec<(Tree, Batch)>) -> Event {
+        Event { batches: Arc::from(batches.into_boxed_slice()) }
+    }
+
+    /// Iterate over each Tree, key, and optional value in this `Event`
+    pub fn iter<'a>(
+        &'a self,
+    ) -> Box<dyn 'a + Iterator<Item = (&'a Tree, &'a IVec, &'a Option<IVec>)>>
+    {
+        self.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Event {
+    type Item = (&'a Tree, &'a IVec, &'a Option<IVec>);
+    type IntoIter = Box<dyn 'a + Iterator<Item = Self::Item>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.batches.iter().flat_map(|(ref tree, ref batch)| {
+            batch.writes.iter().map(move |(k, v_opt)| (tree, k, v_opt))
+        }))
     }
 }
 
@@ -66,9 +88,16 @@ type Senders = Map<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 ///
 /// // `Subscription` implements `Iterator<Item=Event>`
 /// for event in subscriber.take(1) {
-///     match event {
-///         Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
-///         Event::Remove {key } => {}
+///     // Events occur due to single key operations,
+///     // batches, or transactions. The tree is included
+///     // so that you may perform a new transaction or
+///     // operation in response to the event.
+///     for (tree, key, value_opt) in &event {
+///         if let Some(value) = value_opt {
+///             // key `key` was set to value `value`
+///         } else {
+///             // key `key` was removed
+///         }
 ///     }
 /// }
 ///
@@ -232,6 +261,43 @@ impl Subscribers {
         Subscriber { id, rx, home: arc_senders.clone() }
     }
 
+    pub(crate) fn reserve_batch(
+        &self,
+        batch: &Batch,
+    ) -> Option<ReservedBroadcast> {
+        if !self.ever_used.load(Relaxed) {
+            return None;
+        }
+
+        let r_mu = self.watched.read();
+
+        let mut skip_indices = std::collections::HashSet::new();
+        let mut subscribers = vec![];
+
+        for key in batch.writes.keys() {
+            for (idx, (prefix, subs_rwl)) in r_mu.iter().enumerate() {
+                if key.starts_with(prefix) && !skip_indices.contains(&idx) {
+                    skip_indices.insert(idx);
+                    let subs = subs_rwl.read();
+
+                    for (_id, (waker, sender)) in subs.iter() {
+                        let (tx, rx) = OneShot::pair();
+                        if sender.send(rx).is_err() {
+                            continue;
+                        }
+                        subscribers.push((waker.clone(), tx));
+                    }
+                }
+            }
+        }
+
+        if subscribers.is_empty() {
+            None
+        } else {
+            Some(ReservedBroadcast { subscribers })
+        }
+    }
+
     pub(crate) fn reserve<R: AsRef<[u8]>>(
         &self,
         key: R,
@@ -280,62 +346,4 @@ impl ReservedBroadcast {
             }
         }
     }
-}
-
-#[test]
-fn basic_subscriber() {
-    let subs = Subscribers::default();
-
-    let mut s2 = subs.register(&[0]);
-    let mut s3 = subs.register(&[0, 1]);
-    let mut s4 = subs.register(&[1, 2]);
-
-    let r1 = subs.reserve(b"awft");
-    assert!(r1.is_none());
-
-    let mut s1 = subs.register(&[]);
-
-    let k2: IVec = vec![].into();
-    let r2 = subs.reserve(&k2).unwrap();
-    r2.complete(&Event::Insert { key: k2.clone(), value: k2.clone() });
-
-    let k3: IVec = vec![0].into();
-    let r3 = subs.reserve(&k3).unwrap();
-    r3.complete(&Event::Insert { key: k3.clone(), value: k3.clone() });
-
-    let k4: IVec = vec![0, 1].into();
-    let r4 = subs.reserve(&k4).unwrap();
-    r4.complete(&Event::Remove { key: k4.clone() });
-
-    let k5: IVec = vec![0, 1, 2].into();
-    let r5 = subs.reserve(&k5).unwrap();
-    r5.complete(&Event::Insert { key: k5.clone(), value: k5.clone() });
-
-    let k6: IVec = vec![1, 1, 2].into();
-    let r6 = subs.reserve(&k6).unwrap();
-    r6.complete(&Event::Remove { key: k6.clone() });
-
-    let k7: IVec = vec![1, 1, 2].into();
-    let r7 = subs.reserve(&k7).unwrap();
-    drop(r7);
-
-    let k8: IVec = vec![1, 2, 2].into();
-    let r8 = subs.reserve(&k8).unwrap();
-    r8.complete(&Event::Insert { key: k8.clone(), value: k8.clone() });
-
-    assert_eq!(s1.next().unwrap().key(), &*k2);
-    assert_eq!(s1.next().unwrap().key(), &*k3);
-    assert_eq!(s1.next().unwrap().key(), &*k4);
-    assert_eq!(s1.next().unwrap().key(), &*k5);
-    assert_eq!(s1.next().unwrap().key(), &*k6);
-    assert_eq!(s1.next().unwrap().key(), &*k8);
-
-    assert_eq!(s2.next().unwrap().key(), &*k3);
-    assert_eq!(s2.next().unwrap().key(), &*k4);
-    assert_eq!(s2.next().unwrap().key(), &*k5);
-
-    assert_eq!(s3.next().unwrap().key(), &*k4);
-    assert_eq!(s3.next().unwrap().key(), &*k5);
-
-    assert_eq!(s4.next().unwrap().key(), &*k8);
 }

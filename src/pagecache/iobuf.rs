@@ -253,7 +253,12 @@ impl StabilityIntervals {
                 // and fsynced, so we can propagate its stability
                 // through the `batch_stable_lsn` variable.
                 if let Some(bsl) = batch_stable_lsn {
-                    assert!(bsl < high);
+                    assert!(
+                        bsl < high,
+                        "expected batch stable lsn of {} to be less than high of {}",
+                        bsl,
+                        high
+                    );
                 }
                 batch_stable_lsn = Some(high);
                 self.batches.remove(&low).unwrap();

@@ -28,7 +28,7 @@ use super::*;
 /// # let _ = std::fs::remove_dir_all("batch_db_2");
 /// # Ok(()) }
 /// ```
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Batch {
     pub(crate) writes: Map<IVec, Option<IVec>>,
 }
@@ -49,5 +49,12 @@ impl Batch {
         K: Into<IVec>,
     {
         self.writes.insert(key.into(), None);
+    }
+
+    /// Get a value if it is present in the `Batch`.
+    /// `Some(None)` means it's present as a deletion.
+    pub fn get<K: AsRef<[u8]>>(&self, k: K) -> Option<Option<&IVec>> {
+        let inner = self.writes.get(k.as_ref())?;
+        Some(inner.as_ref())
     }
 }

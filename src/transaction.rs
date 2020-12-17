@@ -76,7 +76,7 @@
 use std::{cell::RefCell, fmt, rc::Rc};
 
 use crate::{
-    concurrency_control, pin, Batch, Error, Guard, IVec, Map, Protector,
+    concurrency_control, pin, Batch, Error, Event, Guard, IVec, Map, Protector,
     Result, Tree,
 };
 
@@ -86,7 +86,7 @@ use crate::{
 #[derive(Clone)]
 pub struct TransactionalTree {
     pub(super) tree: Tree,
-    pub(super) writes: Rc<RefCell<Map<IVec, Option<IVec>>>>,
+    pub(super) writes: Rc<RefCell<Batch>>,
     pub(super) read_cache: Rc<RefCell<Map<IVec, Option<IVec>>>>,
     pub(super) flush_on_commit: Rc<RefCell<bool>>,
 }
@@ -260,7 +260,7 @@ impl TransactionalTree {
     {
         let old = self.get(key.as_ref())?;
         let mut writes = self.writes.borrow_mut();
-        let _last_write = writes.insert(key.into(), Some(value.into()));
+        let _last_write = writes.insert(key, value.into());
         Ok(old)
     }
 
@@ -274,7 +274,7 @@ impl TransactionalTree {
     {
         let old = self.get(key.as_ref());
         let mut writes = self.writes.borrow_mut();
-        let _last_write = writes.insert(key.into(), None);
+        let _last_write = writes.remove(key);
         old
     }
 
@@ -285,7 +285,7 @@ impl TransactionalTree {
     ) -> UnabortableTransactionResult<Option<IVec>> {
         let writes = self.writes.borrow();
         if let Some(first_try) = writes.get(key.as_ref()) {
-            return Ok(first_try.clone());
+            return Ok(first_try.cloned());
         }
         let mut reads = self.read_cache.borrow_mut();
         if let Some(second_try) = reads.get(key.as_ref()) {
@@ -347,16 +347,15 @@ impl TransactionalTree {
         true
     }
 
-    fn commit(&self) -> Result<()> {
-        let writes = self.writes.borrow();
+    fn commit(&self, event: Event) -> Result<()> {
+        let writes = std::mem::replace(
+            &mut *self.writes.borrow_mut(),
+            Default::default(),
+        );
         let mut guard = pin();
-        for (k, v_opt) in &*writes {
-            while self.tree.insert_inner(k, v_opt.clone(), &mut guard)?.is_err()
-            {
-            }
-        }
-        Ok(())
+        self.tree.apply_batch_inner(writes, Some(event), &mut guard)
     }
+
     fn from_tree(tree: &Tree) -> Self {
         Self {
             tree: tree.clone(),
@@ -394,8 +393,17 @@ impl TransactionalTrees {
 
     fn commit(&self, guard: &Guard) -> Result<()> {
         let peg = self.inner[0].tree.context.pin_log(guard)?;
+
+        let batches = self
+            .inner
+            .iter()
+            .map(|tree| (tree.tree.clone(), tree.writes.borrow().clone()))
+            .collect();
+
+        let event = Event::from_batches(batches);
+
         for tree in &self.inner {
-            tree.commit()?;
+            tree.commit(event.clone())?;
         }
 
         // when the peg drops, it ensures all updates

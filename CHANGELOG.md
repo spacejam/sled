@@ -1,11 +1,24 @@
 # Unreleased
 
-## Breaking Changes
+## New Features
+
+* #1178 batches and transactions are now unified for subscribers.
+
+## Improvements
 
 * #1214 a new slab-style storage engine has been added which
   replaces the previous file-per-blob technique for storing
   large pages.
+
+## Breaking Changes
+
 * #1214 The deprecated `Config::build` method has been removed.
+* #1178 the `Event` enum has become a unified struct that allows
+  subscribers to iterate over each (Tree, key, optional value)
+  involved in single key operations, batches, or transactions in
+  a unified way.
+* #1178 the `Event::key` method has been removed in favor of the
+  new more comprehensive `iter` method.
 * #1135 The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.
 

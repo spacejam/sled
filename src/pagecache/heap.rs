@@ -376,7 +376,9 @@ impl Slab {
                     fallocate(
                         fd,
                         MODE,
+                        #[allow(clippy::useless_conversion)]
                         offset.try_into().unwrap(),
+                        #[allow(clippy::useless_conversion)]
                         bs.try_into().unwrap(),
                     )
                 };
