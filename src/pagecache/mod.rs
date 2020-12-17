@@ -579,7 +579,7 @@ impl PageCache {
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
 
-        config.heap.gc_unknown_items(&snapshot)?;
+        config.heap.gc_unknown_items(&snapshot);
 
         #[cfg(feature = "testing")]
         {

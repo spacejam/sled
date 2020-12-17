@@ -194,12 +194,41 @@ impl Heap {
         Ok(Heap { slabs: unsafe { transmute(slabs) } })
     }
 
-    pub fn gc_unknown_items(
-        &self,
-        _snapshot: &crate::pagecache::Snapshot,
-    ) -> Result<()> {
-        //TODO todo!()
-        Ok(())
+    pub fn gc_unknown_items(&self, snapshot: &crate::pagecache::Snapshot) {
+        let mut bitmaps = vec![];
+        for slab in &self.slabs {
+            let tip = slab.tip.load(Acquire) as usize;
+            bitmaps.push(vec![0_u64; 1 + (tip / 64)]);
+        }
+
+        for page_state in &snapshot.pt {
+            for heap_id in page_state.heap_ids() {
+                let (sid, idx, _lsn) = heap_id.decompose();
+
+                // set the bit for this slot
+                let block = idx / 64;
+                let bit = idx % 64;
+                let bitmask = 1 << bit;
+                bitmaps[sid as usize][block as usize] |= bitmask;
+            }
+        }
+
+        let iter = self.slabs.iter().zip(bitmaps.into_iter());
+
+        for (slab, bitmap) in iter {
+            let tip = slab.tip.load(Acquire);
+
+            for idx in 0..tip {
+                let block = idx / 64;
+                let bit = idx % 64;
+                let bitmask = 1 << bit;
+                let free = bitmap[block as usize] & bitmask == 0;
+
+                if free {
+                    slab.free(idx);
+                }
+            }
+        }
     }
 
     pub fn read(
