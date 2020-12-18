@@ -724,7 +724,7 @@ pub(crate) struct Index {
     pub(crate) pointers: Vec<PageId>,
 }
 
-#[cfg(feature = "lock_free_delays")]
+#[cfg(feature = "testing")]
 fn is_sorted<T: PartialOrd>(xs: &[T]) -> bool {
     xs.windows(2).all(|pair| pair[0] <= pair[1])
 }

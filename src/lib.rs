@@ -190,6 +190,7 @@ mod dll;
 mod fastcmp;
 mod fastlock;
 mod histogram;
+mod inline_string_table;
 mod iter;
 mod ivec;
 mod lazy;
