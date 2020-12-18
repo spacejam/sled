@@ -29,8 +29,8 @@ const TX_DIR: &str = "crash_tx";
 const CRASH_CHANCE: u32 = 250;
 
 fn main() {
-    // Don't actually run this harness=false test under miri, as it requires spawning and killing
-    // child processes.
+    // Don't actually run this harness=false test under miri, as it requires
+    // spawning and killing child processes.
     if cfg!(miri) {
         return;
     }
@@ -39,8 +39,8 @@ fn main() {
 
     match env::var(TEST_ENV_VAR) {
         Err(VarError::NotPresent) => {
-            test_crash_recovery();
-            test_crash_batches();
+            crash_recovery();
+            crash_batches();
             concurrent_crash_iter();
             concurrent_crash_transactions();
         }
@@ -302,7 +302,7 @@ fn handle_child_wait_err(dir: &str, e: std::io::Error) {
     panic!("error waiting for {} test child: {}", dir, e);
 }
 
-fn test_crash_recovery() {
+fn crash_recovery() {
     let dir = RECOVERY_DIR;
     cleanup(dir);
 
@@ -319,7 +319,7 @@ fn test_crash_recovery() {
     cleanup(dir);
 }
 
-fn test_crash_batches() {
+fn crash_batches() {
     let dir = BATCHES_DIR;
     cleanup(dir);
 

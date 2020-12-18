@@ -9,7 +9,8 @@ use std::{
 use crate::{
     node::{Index, Leaf},
     pagecache::{
-        BatchManifest, MessageHeader, PageState, SegmentNumber, Snapshot,
+        BatchManifest, HeapId, MessageHeader, PageState, SegmentNumber,
+        Snapshot,
     },
     Data, DiskPtr, Error, IVec, Link, Meta, Node, Result,
 };
@@ -231,6 +232,29 @@ impl Serialize for u64 {
     }
 }
 
+struct NonVarU64(u64);
+
+impl Serialize for NonVarU64 {
+    fn serialized_size(&self) -> u64 {
+        8
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        buf[..8].copy_from_slice(&self.0.to_le_bytes());
+        scoot(buf, 8);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        if buf.len() < 8 {
+            return Err(Error::corruption(None));
+        }
+
+        let array = buf[..8].try_into().unwrap();
+        *buf = &buf[8..];
+        Ok(NonVarU64(u64::from_le_bytes(array)))
+    }
+}
+
 impl Serialize for i64 {
     fn serialized_size(&self) -> u64 {
         8
@@ -314,24 +338,49 @@ impl Serialize for u8 {
     }
 }
 
-impl Serialize for Meta {
+impl Serialize for HeapId {
     fn serialized_size(&self) -> u64 {
-        self.inner
-            .iter()
-            .map(|(k, v)| {
-                (k.len() as u64).serialized_size()
-                    + u64::try_from(k.len()).unwrap()
-                    + v.serialized_size()
-            })
-            .sum()
+        16
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
+        NonVarU64(self.location).serialize_into(buf);
+        self.original_lsn.serialize_into(buf);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<HeapId> {
+        Ok(HeapId {
+            location: NonVarU64::deserialize(buf)?.0,
+            original_lsn: i64::deserialize(buf)?,
+        })
+    }
+}
+
+impl Serialize for Meta {
+    fn serialized_size(&self) -> u64 {
+        let len_sz: u64 = (self.inner.len() as u64).serialized_size();
+        let items_sz: u64 = self
+            .inner
+            .iter()
+            .map(|(k, v)| {
+                (k.len() as u64).serialized_size()
+                    + k.len() as u64
+                    + v.serialized_size()
+            })
+            .sum();
+
+        len_sz + items_sz
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        (self.inner.len() as u64).serialize_into(buf);
         serialize_2tuple_sequence(self.inner.iter(), buf);
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<Self> {
-        Ok(Meta { inner: deserialize_sequence(buf)? })
+        let len = u64::deserialize(buf)?;
+        let meta = Meta { inner: deserialize_bounded_sequence(buf, len)? };
+        Ok(meta)
     }
 }
 
@@ -477,11 +526,7 @@ impl Serialize for Option<i64> {
 
 fn shift_i64_opt(value_opt: &Option<i64>) -> i64 {
     if let Some(value) = value_opt {
-        if value.signum() == -1 {
-            *value
-        } else {
-            value + 1
-        }
+        if value.signum() == -1 { *value } else { value + 1 }
     } else {
         0
     }
@@ -501,6 +546,7 @@ impl Serialize for Snapshot {
     fn serialized_size(&self) -> u64 {
         self.stable_lsn.serialized_size()
             + self.active_segment.serialized_size()
+            + (self.pt.len() as u64).serialized_size()
             + self
                 .pt
                 .iter()
@@ -511,6 +557,7 @@ impl Serialize for Snapshot {
     fn serialize_into(&self, buf: &mut &mut [u8]) {
         self.stable_lsn.serialize_into(buf);
         self.active_segment.serialize_into(buf);
+        (self.pt.len() as u64).serialize_into(buf);
         for page_state in &self.pt {
             page_state.serialize_into(buf);
         }
@@ -520,7 +567,10 @@ impl Serialize for Snapshot {
         Ok(Snapshot {
             stable_lsn: Serialize::deserialize(buf)?,
             active_segment: Serialize::deserialize(buf)?,
-            pt: deserialize_sequence(buf)?,
+            pt: {
+                let len = u64::deserialize(buf)?;
+                deserialize_bounded_sequence(buf, len)?
+            },
         })
     }
 }
@@ -593,7 +643,7 @@ impl Serialize for Data {
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
-        let len = usize::try_from(u64::deserialize(buf)?).unwrap();
+        let len = u64::deserialize(buf)?;
         Ok(match discriminant {
             0 => Data::Leaf(Leaf {
                 keys: deserialize_bounded_sequence(buf, len)?,
@@ -612,7 +662,7 @@ impl Serialize for DiskPtr {
     fn serialized_size(&self) -> u64 {
         match self {
             DiskPtr::Inline(a) => 1 + a.serialized_size(),
-            DiskPtr::Blob(a, b) => {
+            DiskPtr::Heap(a, b) => {
                 1 + a.serialized_size() + b.serialized_size()
             }
         }
@@ -624,10 +674,10 @@ impl Serialize for DiskPtr {
                 0_u8.serialize_into(buf);
                 log_offset.serialize_into(buf);
             }
-            DiskPtr::Blob(log_offset, blob_lsn) => {
+            DiskPtr::Heap(log_offset, heap_id) => {
                 1_u8.serialize_into(buf);
                 log_offset.serialize_into(buf);
-                blob_lsn.serialize_into(buf);
+                heap_id.serialize_into(buf);
             }
         }
     }
@@ -640,7 +690,10 @@ impl Serialize for DiskPtr {
         *buf = &buf[1..];
         Ok(match discriminant {
             0 => DiskPtr::Inline(u64::deserialize(buf)?),
-            1 => DiskPtr::Blob(u64::deserialize(buf)?, i64::deserialize(buf)?),
+            1 => DiskPtr::Heap(
+                Serialize::deserialize(buf)?,
+                HeapId::deserialize(buf)?,
+            ),
             _ => return Err(Error::corruption(None)),
         })
     }
@@ -694,7 +747,7 @@ impl Serialize for PageState {
             ),
             len => PageState::Present {
                 base: Serialize::deserialize(buf)?,
-                frags: deserialize_bounded_sequence(buf, usize::from(len - 1))?,
+                frags: deserialize_bounded_sequence(buf, u64::from(len - 1))?,
             },
         })
     }
@@ -767,26 +820,18 @@ where
 struct ConsumeSequence<'a, 'b, T> {
     buf: &'a mut &'b [u8],
     _t: PhantomData<T>,
-    done: bool,
-}
-
-fn deserialize_sequence<T: Serialize, R>(buf: &mut &[u8]) -> Result<R>
-where
-    R: FromIterator<T>,
-{
-    let iter = ConsumeSequence { buf, _t: PhantomData, done: false };
-    iter.collect()
+    bound: u64,
 }
 
 fn deserialize_bounded_sequence<T: Serialize, R>(
     buf: &mut &[u8],
-    bound: usize,
+    bound: u64,
 ) -> Result<R>
 where
     R: FromIterator<T>,
 {
-    let iter = ConsumeSequence { buf, _t: PhantomData, done: false };
-    iter.take(bound).collect()
+    let iter = ConsumeSequence { buf, _t: PhantomData, bound };
+    iter.collect()
 }
 
 impl<'a, 'b, T> Iterator for ConsumeSequence<'a, 'b, T>
@@ -796,12 +841,13 @@ where
     type Item = Result<T>;
 
     fn next(&mut self) -> Option<Result<T>> {
-        if self.done || self.buf.is_empty() {
+        if self.bound == 0 || self.buf.is_empty() {
             return None;
         }
         let item_res = T::deserialize(&mut self.buf);
+        self.bound -= 1;
         if item_res.is_err() {
-            self.done = true;
+            self.bound = 0;
         }
         Some(item_res)
     }
@@ -823,6 +869,15 @@ mod qc {
                 kind: MessageKind::arbitrary(g),
                 segment_number: SegmentNumber(SpreadU64::arbitrary(g).0),
                 pid: g.gen(),
+            }
+        }
+    }
+
+    impl Arbitrary for HeapId {
+        fn arbitrary<G: Gen>(g: &mut G) -> HeapId {
+            HeapId {
+                location: SpreadU64::arbitrary(g).0,
+                original_lsn: SpreadI64::arbitrary(g).0,
             }
         }
     }
@@ -964,7 +1019,7 @@ mod qc {
             if g.gen() {
                 DiskPtr::Inline(g.gen())
             } else {
-                DiskPtr::Blob(g.gen(), g.gen())
+                DiskPtr::Heap(g.gen(), HeapId::arbitrary(g))
             }
         }
     }

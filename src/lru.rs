@@ -210,8 +210,6 @@ pub struct Lru {
     shards: Vec<(AccessQueue, FastLock<Shard>)>,
 }
 
-unsafe impl Sync for Lru {}
-
 impl Lru {
     /// Instantiates a new `Lru` cache.
     pub(crate) fn new(cache_capacity: u64) -> Self {
@@ -277,6 +275,9 @@ struct Entry {
     ptr: *mut Node,
     size: u64,
 }
+
+#[allow(unsafe_code)]
+unsafe impl Send for Entry {}
 
 impl Default for Entry {
     fn default() -> Self {

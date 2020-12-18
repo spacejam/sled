@@ -1,14 +1,8 @@
-use std::collections::HashMap;
-
 use parking_lot::Mutex;
 
-use crate::Lazy;
+use crate::{Lazy, Map};
 
-type HM = HashMap<
-    &'static str,
-    u64,
-    std::hash::BuildHasherDefault<fxhash::FxHasher64>,
->;
+type HM = Map<&'static str, u64>;
 
 static ACTIVE: Lazy<Mutex<HM>, fn() -> Mutex<HM>> = Lazy::new(init);
 

@@ -18,7 +18,7 @@ io_uring = ["sled/io_uring"]
 event_log = ["sled/event_log"]
 compression = ["sled/compression"]
 no_logs = ["sled/no_logs"]
-no_metrics = ["sled/no_metrics"]
+metrics = ["sled/metrics"]
 measure_allocs = ["sled/measure_allocs"]
 jemalloc = ["jemallocator"]
 logging = ["env_logger", "log", "color-backtrace"]
@@ -31,5 +31,4 @@ color-backtrace = { version = "0.3.0", optional = true }
 jemallocator = { version = "0.3.2", optional = true }
 
 [dependencies.sled]
-default_features = false
 path = "../.."

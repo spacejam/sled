@@ -223,7 +223,7 @@ impl Drop for PageTable {
 }
 
 #[test]
-fn test_split_fanout() {
+fn fanout_functionality() {
     assert_eq!(
         split_fanout(0b11_1111_1111_1111_1111),
         (0, 0b11_1111_1111_1111_1111)

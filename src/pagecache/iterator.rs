@@ -80,15 +80,15 @@ impl Iterator for LogIter {
                 expected_segment_number,
                 &self.config,
             ) {
-                Ok(LogRead::Blob(header, _buf, blob_ptr, inline_len)) => {
-                    trace!("read blob flush in LogIter::next");
+                Ok(LogRead::Heap(header, _buf, heap_id, inline_len)) => {
+                    trace!("read heap item in LogIter::next");
                     self.cur_lsn = Some(lsn + Lsn::from(inline_len));
 
                     return Some((
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
-                        DiskPtr::Blob(lid, blob_ptr),
+                        DiskPtr::new_heap_item(lid, heap_id),
                         u64::from(inline_len),
                     ));
                 }
@@ -112,7 +112,7 @@ impl Iterator for LogIter {
                         if last_lsn_in_batch > max_lsn {
                             debug!(
                                 "cutting recovery short due to torn batch. \
-                            required stable lsn: {} actual max possible lsn: {}",
+                                required stable lsn: {} actual max possible lsn: {}",
                                 last_lsn_in_batch,
                                 self.max_lsn.unwrap()
                             );
@@ -153,11 +153,11 @@ impl Iterator for LogIter {
 
                     continue;
                 }
-                Ok(LogRead::DanglingBlob(_, blob_ptr, inline_len)) => {
+                Ok(LogRead::DanglingHeap(_, heap_id, inline_len)) => {
                     debug!(
-                        "encountered dangling blob \
-                         pointer at lsn {} ptr {}",
-                        lsn, blob_ptr
+                        "encountered dangling heap \
+                         pointer at lsn {} heap_id {:?}",
+                        lsn, heap_id
                     );
                     self.cur_lsn = Some(lsn + Lsn::from(inline_len));
                     continue;
@@ -390,7 +390,7 @@ fn scan_segment_headers_and_tail(
             max_header_stable_lsn,
             &ordering,
             config,
-        )?;
+        );
 
     Ok((ordering, end_of_last_contiguous_message_in_unstable_tail))
 }
@@ -404,7 +404,7 @@ fn check_contiguity_in_unstable_tail(
     max_header_stable_lsn: Lsn,
     ordering: &BTreeMap<Lsn, LogOffset>,
     config: &RunningConfig,
-) -> Result<Lsn> {
+) -> Lsn {
     let segment_size = config.segment_size as Lsn;
 
     // -1..(2 *  segment_size) - 1 => 0
@@ -460,7 +460,7 @@ fn check_contiguity_in_unstable_tail(
         end_of_last_message,
     );
 
-    Ok(end_of_last_message)
+    end_of_last_message
 }
 
 /// Returns a log iterator, the max stable lsn,

@@ -33,7 +33,7 @@ impl Flusher {
     /// Spawns a thread that periodically calls `callback` until dropped.
     pub(crate) fn new(
         name: String,
-        pagecache: Arc<PageCache>,
+        pagecache: PageCache,
         flush_every_ms: u64,
     ) -> Self {
         #[allow(clippy::mutex_atomic)] // mutex used in CondVar below
@@ -56,7 +56,7 @@ impl Flusher {
 fn run(
     shutdown: &Arc<Mutex<ShutdownState>>,
     sc: &Arc<Condvar>,
-    pagecache: &Arc<PageCache>,
+    pagecache: &PageCache,
     flush_every_ms: u64,
 ) {
     let flush_every = Duration::from_millis(flush_every_ms);
@@ -167,8 +167,13 @@ impl Drop for Flusher {
             let _notified = self.sc.notify_all();
         }
 
+        #[allow(unused_variables)]
+        let mut count = 0;
         while !shutdown.is_shutdown() {
             let _ = self.sc.wait_for(&mut shutdown, Duration::from_millis(100));
+            count += 1;
+
+            testing_assert!(count < 5);
         }
 
         let mut join_handle_opt = self.join_handle.lock();

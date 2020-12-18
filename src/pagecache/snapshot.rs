@@ -4,9 +4,8 @@ use zstd::block::{compress, decompress};
 use crate::*;
 
 use super::{
-    arr_to_u32, gc_blobs, pwrite_all, raw_segment_iter_from, u32_to_arr,
-    u64_to_arr, BasedBuf, DiskPtr, LogIter, LogKind, LogOffset, Lsn,
-    MessageKind,
+    arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
+    BasedBuf, DiskPtr, HeapId, LogIter, LogKind, LogOffset, Lsn, MessageKind,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -32,7 +31,7 @@ pub enum PageState {
     /// correct by construction.
     /// The third element in each tuple is the on-log
     /// size for the corresponding write. If things
-    /// are pretty large, they spill into the blobs
+    /// are pretty large, they spill into the heaps
     /// directory, but still get a small pointer that
     /// gets written into the log. The sizes are used
     /// for the garbage collection statistics on
@@ -76,7 +75,7 @@ impl PageState {
     }
 
     #[cfg(feature = "testing")]
-    fn offsets(&self) -> Vec<LogOffset> {
+    fn offsets(&self) -> Vec<Option<LogOffset>> {
         match *self {
             PageState::Present { base, ref frags } => {
                 let mut offsets = vec![base.1.lid()];
@@ -90,6 +89,33 @@ impl PageState {
                 panic!("called offsets on Uninitialized")
             }
         }
+    }
+
+    pub(crate) fn heap_ids(&self) -> Vec<HeapId> {
+        let mut ret = vec![];
+
+        match *self {
+            PageState::Present { base, ref frags } => {
+                if let Some(heap_id) = base.1.heap_id() {
+                    ret.push(heap_id);
+                }
+                for (_, ptr, _) in frags {
+                    if let Some(heap_id) = ptr.heap_id() {
+                        ret.push(heap_id);
+                    }
+                }
+            }
+            PageState::Free(_, ptr) => {
+                if let Some(heap_id) = ptr.heap_id() {
+                    ret.push(heap_id);
+                }
+            }
+            PageState::Uninitialized => {
+                panic!("called heap_ids on Uninitialized")
+            }
+        }
+
+        ret
     }
 }
 
@@ -184,7 +210,9 @@ impl Snapshot {
                     if pushed {
                         let old = self.pt.pop().unwrap();
                         if old != PageState::Uninitialized {
-                            error!("expected previous page state to be uninitialized");
+                            error!(
+                                "expected previous page state to be uninitialized"
+                            );
                             return Err(Error::corruption(None));
                         }
                     }
@@ -205,6 +233,25 @@ impl Snapshot {
         }
 
         Ok(())
+    }
+
+    fn filter_inner_heap_ids(&mut self) {
+        for page in &mut self.pt {
+            match page {
+                PageState::Free(_lsn, ref mut ptr) => {
+                    ptr.forget_heap_log_coordinates()
+                }
+                PageState::Present { ref mut base, ref mut frags } => {
+                    base.1.forget_heap_log_coordinates();
+                    for (_, ref mut ptr, _) in frags {
+                        ptr.forget_heap_log_coordinates();
+                    }
+                }
+                PageState::Uninitialized => {
+                    unreachable!()
+                }
+            }
+        }
     }
 }
 
@@ -237,11 +284,6 @@ fn advance_snapshot(
                 snapshot.stable_lsn
             );
             continue;
-        }
-
-        if lsn >= iter.max_lsn.unwrap() {
-            error!("lsn {} >= iter max_lsn {}", lsn, iter.max_lsn.unwrap());
-            return Err(Error::corruption(None));
         }
 
         snapshot.apply(log_kind, pid, lsn, ptr, sz)?;
@@ -295,9 +337,9 @@ fn advance_snapshot(
         let monotonic = segment_progress >= SEG_HEADER_LEN as Lsn
             || (segment_progress == 0 && iter.segment_base.is_none());
         if !monotonic {
-            error!("expected segment progress {} to be above SEG_HEADER_LEN or == 0, cur_lsn: {}",
-                segment_progress,
-                iterated_lsn,
+            error!(
+                "expected segment progress {} to be above SEG_HEADER_LEN or == 0, cur_lsn: {}",
+                segment_progress, iterated_lsn,
             );
             return Err(Error::corruption(None));
         }
@@ -350,6 +392,7 @@ fn advance_snapshot(
 
         snapshot.stable_lsn = Some(stable_lsn);
         snapshot.active_segment = active_segment;
+        snapshot.filter_inner_heap_ids();
 
         snapshot
     };
@@ -367,12 +410,16 @@ fn advance_snapshot(
 
     #[cfg(feature = "testing")]
     let reverse_segments = {
-        use std::collections::{HashMap, HashSet};
         let shred_base = shred_point.unwrap_or(LogOffset::max_value());
-        let mut reverse_segments = HashMap::new();
+        let mut reverse_segments = Map::new();
         for (pid, page) in snapshot.pt.iter().enumerate() {
             let offsets = page.offsets();
-            for offset in offsets {
+            for offset_option in offsets {
+                let offset = if let Some(offset) = offset_option {
+                    offset
+                } else {
+                    continue;
+                };
                 let segment = config.normalize(offset);
                 if segment == config.normalize(shred_base) {
                     assert!(
@@ -385,9 +432,8 @@ fn advance_snapshot(
                         shred_base
                     );
                 }
-                let entry = reverse_segments
-                    .entry(segment)
-                    .or_insert_with(HashSet::new);
+                let entry =
+                    reverse_segments.entry(segment).or_insert_with(Set::new);
                 entry.insert((pid, offset));
             }
         }
@@ -424,11 +470,6 @@ fn advance_snapshot(
         if !config.temporary {
             config.file.sync_all()?;
         }
-    }
-
-    // remove all blob files larger than our stable offset
-    if let Some(stable_lsn) = snapshot.stable_lsn {
-        gc_blobs(config, stable_lsn)?;
     }
 
     #[cfg(feature = "event_log")]
@@ -471,7 +512,7 @@ fn read_snapshot(config: &RunningConfig) -> Result<Option<Snapshot>> {
     let _read = f.read_to_end(&mut buf)?;
     let len = buf.len();
     if len <= 12 {
-        warn!("empty/corrupt snapshot file found");
+        warn!("empty/corrupt snapshot file found at path: {:?}", path);
         return Err(Error::corruption(None));
     }
 
@@ -487,7 +528,11 @@ fn read_snapshot(config: &RunningConfig) -> Result<Option<Snapshot>> {
     let crc_actual = crc32(&buf);
 
     if crc_expected != crc_actual {
-        warn!("corrupt snapshot file found, crc does not match expected");
+        warn!(
+            "corrupt snapshot file found, crc does not match expected. \
+            path: {:?}",
+            path
+        );
         return Err(Error::corruption(None));
     }
 
@@ -509,7 +554,10 @@ fn read_snapshot(config: &RunningConfig) -> Result<Option<Snapshot>> {
     Snapshot::deserialize(&mut bytes.as_slice()).map(Some)
 }
 
-fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
+pub(in crate::pagecache) fn write_snapshot(
+    config: &RunningConfig,
+    snapshot: &Snapshot,
+) -> Result<()> {
     trace!("writing snapshot {:?}", snapshot);
 
     let raw_bytes = snapshot.serialize();

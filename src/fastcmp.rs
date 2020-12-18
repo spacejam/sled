@@ -31,7 +31,7 @@ mod qc {
     }
 
     #[test]
-    fn test_fastcmp() {
+    fn basic_functionality() {
         let cases: [&[u8]; 8] = [
             &[],
             &[0],

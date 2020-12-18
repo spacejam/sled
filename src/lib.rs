@@ -169,7 +169,7 @@ macro_rules! io_fail {
 
 macro_rules! testing_assert {
     ($($e:expr),*) => {
-        #[cfg(feature = "lock_free_delays")]
+        #[cfg(feature = "testing")]
         assert!($($e),*)
     };
 }
@@ -288,8 +288,7 @@ pub use {
         lazy::Lazy,
         pagecache::{
             constants::{
-                MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION,
-                MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN,
+                MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, SEG_HEADER_LEN,
             },
             BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
             PageCache, PageId,
@@ -417,25 +416,34 @@ pub(crate) enum Link {
 
 /// A fast map that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
+#[cfg(not(feature = "testing"))]
 pub(crate) type FastMap8<K, V> = std::collections::HashMap<
     K,
     V,
     std::hash::BuildHasherDefault<fxhash::FxHasher64>,
 >;
 
-/// A fast map that is not resistant to collision attacks.
-pub(crate) type FastMap<K, V> = std::collections::HashMap<
-    K,
-    V,
-    std::hash::BuildHasherDefault<fxhash::FxHasher>,
->;
+#[cfg(feature = "testing")]
+pub(crate) type FastMap8<K, V> = BTreeMap<K, V>;
 
 /// A fast set that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
+#[cfg(not(feature = "testing"))]
 pub(crate) type FastSet8<V> = std::collections::HashSet<
     V,
     std::hash::BuildHasherDefault<fxhash::FxHasher64>,
 >;
+
+#[cfg(feature = "testing")]
+pub(crate) type FastSet8<V> = std::collections::BTreeSet<V>;
+
+#[cfg(not(feature = "testing"))]
+use std::collections::HashMap as Map;
+
+// we avoid HashMap while testing because
+// it makes tests non-deterministic
+#[cfg(feature = "testing")]
+use std::collections::{BTreeMap as Map, BTreeSet as Set};
 
 /// A function that may be configured on a particular shared `Tree`
 /// that will be applied as a kind of read-modify-write operator
@@ -498,11 +506,11 @@ pub(crate) type FastSet8<V> = std::collections::HashSet<
 /// # Ok(()) }
 /// ```
 pub trait MergeOperator:
-    Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
+    Send + Sync + Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
 {
 }
 impl<F> MergeOperator for F where
-    F: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
+    F: Send + Sync + Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
 {
 }
 

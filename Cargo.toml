@@ -24,13 +24,13 @@ debug = true
 opt-level = 3
 
 [features]
-default = ["no_metrics"]
+default = []
 testing = ["event_log", "lock_free_delays", "compression", "failpoints", "backtrace"]
 compression = ["zstd"]
 lock_free_delays = []
 failpoints = []
 event_log = []
-no_metrics = []
+metrics = []
 no_logs = ["log/max_level_off"]
 no_inline = []
 measure_allocs = []
@@ -58,7 +58,7 @@ fs2 = "0.4.3"
 
 [dev-dependencies]
 rand = "0.7.3"
-rand_chacha = "0.2.2"
+rand_chacha = "0.3.0"
 rand_distr = "0.3.0"
 quickcheck = "0.9.2"
 log = "0.4.11"

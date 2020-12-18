@@ -29,6 +29,9 @@
 #![allow(unused_results)]
 #![allow(clippy::print_stdout)]
 #![allow(clippy::float_arithmetic)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_sign_loss)]
 
 use std::convert::TryFrom;
 use std::fmt::{self, Debug};
@@ -82,9 +85,6 @@ impl Default for Histogram {
     }
 }
 
-#[allow(unsafe_code)]
-unsafe impl Send for Histogram {}
-
 impl Debug for Histogram {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         const PS: [f64; 10] =
@@ -105,7 +105,7 @@ impl Histogram {
     /// Record a value.
     #[inline]
     pub fn measure(&self, raw_value: u64) {
-        #[cfg(not(feature = "no_metrics"))]
+        #[cfg(feature = "metrics")]
         {
             let value_float: f64 = raw_value as f64;
             self.sum.fetch_add(value_float.round() as usize, Ordering::Relaxed);
@@ -124,7 +124,7 @@ impl Histogram {
     /// Retrieve a percentile [0-100]. Returns NAN if no metrics have been
     /// collected yet.
     pub fn percentile(&self, p: f64) -> f64 {
-        #[cfg(not(feature = "no_metrics"))]
+        #[cfg(feature = "metrics")]
         {
             assert!(p <= 100., "percentiles must not exceed 100.0");
 
@@ -196,7 +196,7 @@ fn decompress(compressed: u16) -> f64 {
     (unboosted.exp() - 1.)
 }
 
-#[cfg(not(feature = "no_metrics"))]
+#[cfg(feature = "metrics")]
 #[test]
 fn it_works() {
     let c = Histogram::default();
@@ -214,7 +214,7 @@ fn it_works() {
     c.print_percentiles();
 }
 
-#[cfg(not(feature = "no_metrics"))]
+#[cfg(feature = "metrics")]
 #[test]
 fn high_percentiles() {
     let c = Histogram::default();
@@ -239,7 +239,7 @@ fn high_percentiles() {
     assert_eq!(c.percentile(100.).round() as usize, 502);
 }
 
-#[cfg(not(feature = "no_metrics"))]
+#[cfg(feature = "metrics")]
 #[test]
 fn multithreaded() {
     use std::sync::Arc;

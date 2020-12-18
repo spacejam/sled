@@ -39,6 +39,8 @@ pub struct DoublyLinkedList {
     len: usize,
 }
 
+unsafe impl Send for DoublyLinkedList {}
+
 impl Drop for DoublyLinkedList {
     fn drop(&mut self) {
         let mut cursor = self.head;
@@ -194,7 +196,7 @@ impl DoublyLinkedList {
 
 #[allow(unused_results)]
 #[test]
-fn test_dll() {
+fn basic_functionality() {
     let mut dll = DoublyLinkedList::default();
     dll.push_head(5);
     dll.push_tail(6);

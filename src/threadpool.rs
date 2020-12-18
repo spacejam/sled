@@ -2,7 +2,10 @@
 
 use std::{
     collections::VecDeque,
-    sync::atomic::{AtomicBool, Ordering::Relaxed},
+    sync::atomic::{
+        AtomicBool,
+        Ordering::{Acquire, Relaxed, Release, SeqCst},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -10,8 +13,7 @@ use std::{
 use parking_lot::{Condvar, Mutex};
 
 use crate::{
-    debug_delay, warn, Acquire, AtomicUsize, Error, Lazy, OneShot, Result,
-    SeqCst,
+    debug_delay, warn, AtomicU64, AtomicUsize, Error, Lazy, OneShot, Result,
 };
 
 // This is lower for CI reasons.
@@ -27,8 +29,23 @@ static WAITING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static SPAWNS: AtomicUsize = AtomicUsize::new(0);
 static SPAWNING: AtomicBool = AtomicBool::new(false);
+static SUBMITTED: AtomicU64 = AtomicU64::new(0);
+static COMPLETED: AtomicU64 = AtomicU64::new(0);
+static QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(init_queue);
+static BROKEN: AtomicBool = AtomicBool::new(false);
 
 type Work = Box<dyn FnOnce() + Send + 'static>;
+
+fn init_queue() -> Queue {
+    debug_delay();
+    for _ in 0..DESIRED_WAITING_THREADS {
+        debug_delay();
+        if let Err(e) = spawn_new_thread(true) {
+            log::error!("failed to initialize threadpool: {:?}", e);
+        }
+    }
+    Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
+}
 
 struct Queue {
     cv: Condvar,
@@ -74,20 +91,6 @@ impl Queue {
     }
 }
 
-static QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(init_queue);
-static BROKEN: AtomicBool = AtomicBool::new(false);
-
-fn init_queue() -> Queue {
-    debug_delay();
-    for _ in 0..DESIRED_WAITING_THREADS {
-        debug_delay();
-        if let Err(e) = spawn_new_thread(true) {
-            log::error!("failed to initialize threadpool: {:?}", e);
-        }
-    }
-    Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
-}
-
 fn perform_work(is_immortal: bool) {
     let wait_limit = Duration::from_secs(1);
 
@@ -101,6 +104,7 @@ fn perform_work(is_immortal: bool) {
         if let Some(task) = task_res {
             WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
             (task)();
+            COMPLETED.fetch_add(1, Release);
             WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
             performed += 1;
         }
@@ -109,6 +113,7 @@ fn perform_work(is_immortal: bool) {
             debug_delay();
             WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
             (task)();
+            COMPLETED.fetch_add(1, Release);
             WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
             performed += 1;
         }
@@ -166,14 +171,14 @@ fn spawn_new_thread(is_immortal: bool) -> Result<()> {
             debug_delay();
             let res = std::panic::catch_unwind(|| perform_work(is_immortal));
             TOTAL_THREAD_COUNT.fetch_sub(1, SeqCst);
-            if is_immortal || res.is_err() {
+            if is_immortal {
                 // IO thread panicked, shut down the system
-                log::error!(
-                    "IO thread unexpectedly terminated.
-                    please report this error at the sled github repo. {:?}",
+                BROKEN.store(true, SeqCst);
+                panic!(
+                    "IO thread unexpectedly panicked. please report \
+                    this bug on the sled github repo. error: {:?}",
                     res
                 );
-                BROKEN.store(true, SeqCst);
             }
         });
 
@@ -200,10 +205,10 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static + Sized,
 {
+    SUBMITTED.fetch_add(1, Acquire);
     let (promise_filler, promise) = OneShot::pair();
     let task = move || {
-        let result = (work)();
-        promise_filler.fill(result);
+        promise_filler.fill((work)());
     };
 
     let depth = QUEUE.send(Box::new(task));

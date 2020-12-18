@@ -29,12 +29,6 @@ macro_rules! io_fail {
 
 struct AlignedBuf(*mut u8, usize);
 
-#[allow(unsafe_code)]
-unsafe impl Send for AlignedBuf {}
-
-#[allow(unsafe_code)]
-unsafe impl Sync for AlignedBuf {}
-
 impl AlignedBuf {
     fn new(len: usize) -> AlignedBuf {
         let layout = Layout::from_size_align(len, 8192).unwrap();
@@ -163,11 +157,7 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old {
-            Ok(new)
-        } else {
-            Err(res)
-        }
+        if res == old { Ok(new) } else { Err(res) }
     }
 }
 
@@ -263,7 +253,12 @@ impl StabilityIntervals {
                 // and fsynced, so we can propagate its stability
                 // through the `batch_stable_lsn` variable.
                 if let Some(bsl) = batch_stable_lsn {
-                    assert!(bsl < high);
+                    assert!(
+                        bsl < high,
+                        "expected batch stable lsn of {} to be less than high of {}",
+                        bsl,
+                        high
+                    );
                 }
                 batch_stable_lsn = Some(high);
                 self.batches.remove(&low).unwrap();
@@ -437,7 +432,6 @@ impl IoBufs {
     pub(in crate::pagecache) fn sa_mark_replace(
         &self,
         pid: PageId,
-        lsn: Lsn,
         old_cache_infos: &[CacheInfo],
         new_cache_info: CacheInfo,
         guard: &Guard,
@@ -445,7 +439,7 @@ impl IoBufs {
         debug_delay();
         if let Some(mut sa) = self.segment_accountant.try_lock() {
             let start = clock();
-            sa.mark_replace(pid, lsn, old_cache_infos, new_cache_info)?;
+            sa.mark_replace(pid, old_cache_infos, new_cache_info)?;
             for op in self.deferred_segment_ops.take_iter(guard) {
                 sa.apply_op(op)?;
             }
@@ -453,7 +447,6 @@ impl IoBufs {
         } else {
             let op = SegmentOp::Replace {
                 pid,
-                lsn,
                 old_cache_infos: old_cache_infos.to_vec(),
                 new_cache_info,
             };
@@ -528,7 +521,7 @@ impl IoBufs {
         item: &T,
         header: MessageHeader,
         mut out_buf: &mut [u8],
-        blob_id: Option<Lsn>,
+        heap_reservation: Option<super::heap::Reservation>,
     ) -> Result<()> {
         // we create this double ref to allow scooting
         // the slice forward without doing anything
@@ -539,13 +532,39 @@ impl IoBufs {
             header.serialize_into(out_buf_ref);
         }
 
-        if let Some(blob_id) = blob_id {
+        if let Some(heap_reservation) = heap_reservation {
             // write blob to file
             io_fail!(self, "blob blob write");
-            write_blob(&self.config, header.kind, blob_id, item)?;
+            let mut heap_buf = vec![
+                0;
+                usize::try_from(super::heap::slab_size(
+                    13 + item.serialized_size()
+                ))
+                .unwrap()
+            ];
 
-            let _ = Measure::new(&M.serialize);
-            blob_id.serialize_into(out_buf_ref);
+            let serialization_timer = Measure::new(&M.serialize);
+            heap_buf[0] = header.kind.into();
+            heap_buf[5..13].copy_from_slice(
+                &heap_reservation.heap_id.original_lsn.to_le_bytes(),
+            );
+            let heap_buf_ref: &mut &mut [u8] = &mut &mut heap_buf[13..];
+            item.serialize_into(heap_buf_ref);
+            drop(serialization_timer);
+
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&heap_buf[0..1]);
+            hasher.update(&heap_buf[5..]);
+            let crc = hasher.finalize().to_le_bytes();
+
+            heap_buf[1..5].copy_from_slice(&crc);
+
+            // write the blob pointer and its original lsn into
+            // the log
+            heap_reservation.heap_id.serialize_into(out_buf_ref);
+
+            // write the blob file
+            heap_reservation.complete(&heap_buf)?;
         } else {
             let _ = Measure::new(&M.serialize);
             item.serialize_into(out_buf_ref);

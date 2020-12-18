@@ -72,17 +72,9 @@ use std::{
     cell::RefCell, panic::UnwindSafe, rc::Rc, sync::atomic::AtomicUsize,
 };
 
-#[cfg(not(feature = "testing"))]
-use crate::{FastMap as Map, FastSet8 as Set};
-
-// we avoid HashMap while testing because
-// it makes tests non-deterministic
-#[cfg(feature = "testing")]
-use std::collections::{BTreeMap as Map, BTreeSet as Set};
-
 use crate::{
     concurrency_control, pin, Batch, Error, Guard, IVec, PageId, Protector,
-    Result, Tree,
+    Result, Tree, Map, Set
 };
 
 /// Fully serializable (ACID) multi-`Tree` transactions.

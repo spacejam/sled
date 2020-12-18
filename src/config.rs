@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs,
     fs::File,
     io,
@@ -9,7 +8,7 @@ use std::{
     sync::atomic::AtomicUsize,
 };
 
-use crate::pagecache::{arr_to_u32, u32_to_arr, Lsn};
+use crate::pagecache::{arr_to_u32, u32_to_arr, Heap};
 use crate::*;
 
 const DEFAULT_PATH: &str = "default.sled";
@@ -56,7 +55,7 @@ impl StorageParameters {
     pub fn deserialize(bytes: &[u8]) -> Result<StorageParameters> {
         let reader = BufReader::new(bytes);
 
-        let mut lines = HashMap::new();
+        let mut lines = Map::new();
 
         for line in reader.lines() {
             let line = if let Ok(l) = line {
@@ -210,6 +209,8 @@ pub struct Inner {
     #[doc(hidden)]
     pub idgen_persist_interval: u64,
     #[doc(hidden)]
+    pub snapshot_after_ops: u64,
+    #[doc(hidden)]
     pub version: (usize, usize),
     tmp_path: PathBuf,
     pub(crate) global_error: Arc<Atomic<Error>>,
@@ -237,6 +238,11 @@ impl Default for Inner {
             print_profile_on_drop: false,
             flush_every_ms: Some(500),
             idgen_persist_interval: 1_000_000,
+            snapshot_after_ops: if cfg!(feature = "testing") {
+                10
+            } else {
+                1_000_000
+            },
             global_error: Arc::new(Atomic::default()),
             #[cfg(feature = "event_log")]
             event_log: Arc::new(crate::event_log::EventLog::default()),
@@ -253,10 +259,6 @@ impl Inner {
         } else {
             self.path.clone()
         }
-    }
-
-    pub(crate) fn blob_path(&self, id: Lsn) -> PathBuf {
-        self.get_path().join("blobs").join(format!("{}", id))
     }
 
     fn db_path(&self) -> PathBuf {
@@ -348,8 +350,15 @@ impl Config {
 
         let file = config.open_file()?;
 
+        let heap_path = config.get_path().join("heap");
+        let heap = Heap::start(heap_path)?;
+
         // seal config in a Config
-        let config = RunningConfig { inner: config, file: Arc::new(file) };
+        let config = RunningConfig {
+            inner: config,
+            file: Arc::new(file),
+            heap: Arc::new(heap),
+        };
 
         Db::start_inner(config)
     }
@@ -369,15 +378,6 @@ impl Config {
         note = "this does nothing for now. maybe it will come back in the future."
     )]
     pub const fn segment_cleanup_threshold(self, _: u8) -> Self {
-        self
-    }
-
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.31.0",
-        note = "this does nothing for now. maybe it will come back in the future."
-    )]
-    pub const fn snapshot_after_ops(self, _: u64) -> Self {
         self
     }
 
@@ -416,30 +416,6 @@ impl Config {
         let m = Arc::make_mut(&mut self.0);
         m.idgen_persist_interval = interval;
         self
-    }
-
-    /// Finalize the configuration.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if it is not possible
-    /// to open the files for performing database IO,
-    /// or if the provided configuration fails some
-    /// basic sanity checks.
-    #[doc(hidden)]
-    #[deprecated(since = "0.29.0", note = "use Config::open instead")]
-    pub fn build(mut self) -> RunningConfig {
-        // only validate, setup directory, and open file once
-        self.validate().unwrap();
-
-        self.limit_cache_max_memory();
-
-        let file = self.open_file().unwrap_or_else(|e| {
-            panic!("open file at {:?}: {}", self.db_path(), e);
-        });
-
-        // seal config in a Config
-        RunningConfig { inner: self, file: Arc::new(file) }
     }
 
     fn gen_temp_path() -> PathBuf {
@@ -515,6 +491,11 @@ impl Config {
             print_profile_on_drop,
             bool,
             "print a performance profile when the Config is dropped"
+        ),
+        (
+            snapshot_after_ops,
+            u64,
+            "take a fuzzy snapshot of pagecache metadata after this many ops"
         )
     );
 
@@ -554,10 +535,10 @@ impl Config {
     }
 
     fn open_file(&self) -> Result<File> {
-        let blob_dir: PathBuf = self.get_path().join("blobs");
+        let heap_dir: PathBuf = self.get_path().join("heap");
 
-        if !blob_dir.exists() {
-            fs::create_dir_all(blob_dir)?;
+        if !heap_dir.exists() {
+            fs::create_dir_all(heap_dir)?;
         }
 
         self.verify_config()?;
@@ -572,6 +553,10 @@ impl Config {
         if self.create_new {
             options.create_new(true);
         }
+
+        let _ = std::fs::File::create(
+            self.get_path().join("DO_NOT_USE_THIS_DIRECTORY_FOR_ANYTHING"),
+        );
 
         self.try_lock(options.open(&self.db_path())?)
     }
@@ -785,13 +770,8 @@ impl Config {
 pub struct RunningConfig {
     inner: Config,
     pub(crate) file: Arc<File>,
+    pub(crate) heap: Arc<Heap>,
 }
-
-#[allow(unsafe_code)]
-unsafe impl Send for RunningConfig {}
-
-#[allow(unsafe_code)]
-unsafe impl Sync for RunningConfig {}
 
 impl Deref for RunningConfig {
     type Target = Config;
@@ -835,7 +815,7 @@ impl RunningConfig {
                 let path = path_buf.as_path();
                 let path_str = &*path.to_string_lossy();
                 if path_str.starts_with(&*absolute_path.to_string_lossy())
-                    && !path_str.ends_with(".in___motion")
+                    && !path_str.ends_with(".generating")
                 {
                     Some(path.to_path_buf())
                 } else {

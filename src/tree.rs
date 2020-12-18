@@ -136,12 +136,6 @@ impl Deref for Tree {
     }
 }
 
-#[allow(unsafe_code)]
-unsafe impl Send for Tree {}
-
-#[allow(unsafe_code)]
-unsafe impl Sync for Tree {}
-
 impl Tree {
     #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
@@ -177,7 +171,7 @@ impl Tree {
         loop {
             trace!("setting key {:?}", key.as_ref());
             if let Ok(res) =
-                self.insert_inner(key.as_ref(), Some(value.clone()), &mut guard)?
+                self.insert_inner(key.as_ref(), Some(value.clone()),false,  &mut guard)?
             {
                 return Ok(res);
             }
@@ -187,7 +181,8 @@ impl Tree {
     pub(crate) fn insert_inner(
         &self,
         key: &[u8],
-        mut value: Option<IVec>,
+        value: Option<IVec>,
+        is_transactional: bool,
         guard: &mut Guard,
     ) -> Result<Conflictable<Option<IVec>>> {
         let _measure = if value.is_some() {
@@ -199,7 +194,11 @@ impl Tree {
         let View { node_view, pid, .. } =
             self.view_for_key(key.as_ref(), guard)?;
 
-        let mut subscriber_reservation = self.subscribers.reserve(&key);
+        let mut subscriber_reservation = if is_transactional {
+            None
+        } else {
+            Some(self.subscribers.reserve(&key))
+        };
 
         let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
 
@@ -223,15 +222,12 @@ impl Tree {
 
         if link.is_ok() {
             // success
-            if let Some(res) = subscriber_reservation.take() {
-                let event = if let Some(value) = value.take() {
-                    subscriber::Event::Insert {
-                        key: key.as_ref().into(),
-                        value,
-                    }
-                } else {
-                    subscriber::Event::Remove { key: key.as_ref().into() }
-                };
+            if let Some(Some(res)) = subscriber_reservation.take() {
+                let event = subscriber::Event::single_update(
+                    self.clone(),
+                    key.as_ref().into(),
+                    value,
+                );
 
                 res.complete(&event);
             }
@@ -274,28 +270,49 @@ impl Tree {
     pub fn apply_batch(&self, batch: Batch) -> Result<()> {
         let _cc = concurrency_control::write();
         let mut guard = pin();
-        self.apply_batch_inner(batch, &mut guard)
+        self.apply_batch_inner(batch, None, &mut guard)
     }
 
     pub(crate) fn apply_batch_inner(
         &self,
         batch: Batch,
+        transaction_batch: Option<Event>,
         guard: &mut Guard,
     ) -> Result<()> {
-        let peg = self.context.pin_log(guard)?;
+        let peg = if transaction_batch.is_none() {
+            Some(self.context.pin_log(guard)?)
+        } else {
+            None
+        };
+
         trace!("applying batch {:?}", batch);
-        for (k, v_opt) in batch.writes {
+
+        let mut subscriber_reservation = self.subscribers.reserve_batch(&batch);
+
+        for (k, v_opt) in &batch.writes {
             loop {
-                if self.insert_inner(&k, v_opt.clone(), guard)?.is_ok() {
+                if self.insert_inner(k, v_opt.clone(), transaction_batch.is_some(), guard)?.is_ok() {
                     break;
                 }
             }
         }
 
-        // when the peg drops, it ensures all updates
-        // written to the log since its creation are
-        // recovered atomically
-        peg.seal_batch()
+        if let Some(res) = subscriber_reservation.take() {
+            if let Some(transaction_batch) = transaction_batch {
+                res.complete(&transaction_batch);
+            } else {
+                res.complete(&Event::single_batch(self.clone(), batch));
+            }
+        }
+
+        if let Some(peg) = peg {
+            // when the peg drops, it ensures all updates
+            // written to the log since its creation are
+            // recovered atomically
+            peg.seal_batch()
+        } else {
+            Ok(())
+        }
     }
 
     /// Retrieve a value from the `Tree` if it exists.
@@ -365,7 +382,7 @@ impl Tree {
         loop {
             trace!("removing key {:?}", key.as_ref());
 
-            if let Ok(res) = self.insert_inner(key.as_ref(), None, &mut guard)? {
+            if let Ok(res) = self.insert_inner(key.as_ref(), None, false, &mut guard)? {
                 return Ok(res);
             }
         }
@@ -474,14 +491,11 @@ impl Tree {
 
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
-                    let event = if let Some(new) = new {
-                        subscriber::Event::Insert {
-                            key: key.as_ref().into(),
-                            value: new,
-                        }
-                    } else {
-                        subscriber::Event::Remove { key: key.as_ref().into() }
-                    };
+                    let event = subscriber::Event::single_update(
+                        self.clone(),
+                        key.as_ref().into(),
+                        new
+                    );
 
                     res.complete(&event);
                 }
@@ -665,20 +679,36 @@ impl Tree {
     ///
     /// // `Subscription` implements `Iterator<Item=Event>`
     /// for event in subscriber.take(1) {
-    ///     match event {
-    ///         sled::Event::Insert{ key, value } => assert_eq!(key.as_ref(), &[0]),
-    ///         sled::Event::Remove {key } => {}
+    ///     // Events occur due to single key operations,
+    ///     // batches, or transactions. The tree is included
+    ///     // so that you may perform a new transaction or
+    ///     // operation in response to the event.
+    ///     for (tree, key, value_opt) in &event {
+    ///         if let Some(value) = value_opt {
+    ///             // key `key` was set to value `value`
+    ///         } else {
+    ///             // key `key` was removed
+    ///         }
     ///     }
     /// }
     ///
     /// # thread.join().unwrap();
     /// # Ok(()) }
     /// ```
-    /// Aynchronous, non-blocking subscriber:
+    /// Asynchronous, non-blocking subscriber:
     ///
     /// `Subscription` implements `Future<Output=Option<Event>>`.
     ///
-    /// `while let Some(event) = (&mut subscriber).await { /* use it */ }`
+    /// ```
+    /// # async fn foo() {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open().unwrap();
+    /// # let mut subscriber = db.watch_prefix(vec![]);
+    /// while let Some(event) = (&mut subscriber).await {
+    ///     /* use it */
+    /// }
+    /// # }
+    /// ```
     pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
         self.subscribers.register(prefix.as_ref())
     }
@@ -743,6 +773,13 @@ impl Tree {
 
     /// Retrieve the key and value before the provided key,
     /// if one exists.
+    ///
+    /// # Note
+    /// The order follows the Ord implementation for `Vec<u8>`:
+    ///
+    /// `[] < [0] < [255] < [255, 0] < [255, 255] ...`
+    ///
+    /// To retain the ordering of numerical types use big endian reprensentation
     ///
     /// # Examples
     ///
@@ -952,14 +989,11 @@ impl Tree {
 
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
-                    let event = if let Some(new) = &new {
-                        subscriber::Event::Insert {
-                            key: key.as_ref().into(),
-                            value: new.clone(),
-                        }
-                    } else {
-                        subscriber::Event::Remove { key: key.as_ref().into() }
-                    };
+                    let event = subscriber::Event::single_update(
+                        self.clone(),
+                        key.as_ref().into(),
+                        new.clone()
+                    );
 
                     res.complete(&event);
                 }
@@ -1352,7 +1386,7 @@ impl Tree {
         root_pid: PageId,
         guard: &'g Guard,
     ) -> Result<()> {
-        trace!("splitting node {}", view.pid);
+        trace!("splitting node with pid {}", view.pid);
         // split node
         let (mut lhs, rhs) = view.deref().clone().split();
         let rhs_lo = rhs.lo.clone();
@@ -1998,7 +2032,7 @@ impl Tree {
                     if let Some(view) = self.view_for_pid(pid, &guard)? {
                         view
                     } else {
-                        trace!("encountered Free node while GC'ing tree");
+                        trace!("encountered Free node pid {} while GC'ing tree", pid);
                         break;
                     };
 
@@ -2025,20 +2059,20 @@ impl Tree {
 
     #[doc(hidden)]
     pub fn verify_integrity(&self) -> Result<()> {
-        // verification happens in Debug impl
-        let _out = format!("{:?}", self);
+        // verification happens in attempt_fmt
+        self.attempt_fmt()?;
         Ok(())
     }
-}
 
-impl Debug for Tree {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> std::result::Result<(), fmt::Error> {
+    // format and verify tree integrity
+    fn attempt_fmt(&self) -> Result<Option<String>> {
+        let mut f = String::new();
         let guard = pin();
 
         let mut pid = self.root.load(Acquire);
+        if pid == 0 {
+            panic!("somehow tree root was 0");
+        }
         let mut left_most = pid;
         let mut level = 0;
         let mut expected_pids = FastSet8::default();
@@ -2047,53 +2081,58 @@ impl Debug for Tree {
 
         expected_pids.insert(pid);
 
-        f.write_str("Tree: \n\t")?;
-        self.context.pagecache.fmt(f)?;
-        f.write_str("\tlevel 0:\n")?;
+        f.push_str("\tlevel 0:\n");
 
         loop {
             let get_res = self.view_for_pid(pid, &guard);
-            let node = if let Ok(Some(ref view)) = get_res {
-                expected_pids.remove(&pid);
-                if loop_detector.contains(&pid) {
+            let node = match get_res {
+                Ok(Some(ref view)) => {
+                    expected_pids.remove(&pid);
+                    if loop_detector.contains(&pid) {
+                        if cfg!(feature = "testing") {
+                            panic!(
+                                "detected a loop while iterating over the Tree. \
+                                pid {} was encountered multiple times",
+                                pid
+                            );
+                        } else {
+                            error!(
+                                "detected a loop while iterating over the Tree. \
+                                pid {} was encountered multiple times",
+                                pid
+                            );
+                        }
+                    } else {
+                        loop_detector.insert(pid);
+                    }
+
+                    view.deref()
+                }
+                Ok(None) => {
                     if cfg!(feature = "testing") {
-                        panic!(
-                            "detected a loop while iterating over the Tree. \
-                            pid {} was encountered multiple times",
-                            pid
+                        error!(
+                            "Tree::fmt failed to read node pid {} \
+                             that has been freed",
+                            pid,
                         );
+                        return Ok(None);
                     } else {
                         error!(
-                            "detected a loop while iterating over the Tree. \
-                            pid {} was encountered multiple times",
-                            pid
+                            "Tree::fmt failed to read node pid {} \
+                             that has been freed",
+                            pid,
                         );
                     }
-                } else {
-                    loop_detector.insert(pid);
+                    break;
                 }
-
-                view.deref()
-            } else {
-                if cfg!(feature = "testing") {
-                    panic!(
-                        "Tree::fmt failed to read node {} \
-                         that has been freed",
-                        pid,
-                    );
-                } else {
-                    error!(
-                        "Tree::fmt failed to read node {} \
-                         that has been freed",
-                        pid,
-                    );
+                Err(e) => {
+                    error!("hit error while trying to pull pid {}: {:?}", pid, e);
+                    return Err(e)
                 }
-                break;
             };
 
-            write!(f, "\t\t{}: ", pid)?;
-            node.fmt(f)?;
-            f.write_str("\n")?;
+            f.push_str(&format!("\t\t{}: ", pid));
+            f.push_str(&format!("{:?}\n", node));
 
             if let Data::Index(ref index) = &node.data {
                 for pid in &index.pointers {
@@ -2121,7 +2160,7 @@ impl Debug for Tree {
                             pid = *next_pid;
                             left_most = *next_pid;
                             level += 1;
-                            f.write_str(&*format!("\n\tlevel {}:\n", level))?;
+                            f.push_str(&format!("\n\tlevel {}:\n", level));
                             assert!(
                                 expected_pids.is_empty(),
                                 "expected pids {:?} but never \
@@ -2142,7 +2181,29 @@ impl Debug for Tree {
             }
         }
 
-        Ok(())
+        Ok(Some(f))
+    }
+}
+
+impl Debug for Tree {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
+        f.write_str("Tree: \n\t")?;
+        self.context.pagecache.fmt(f)?;
+
+        if let Some(fmt) = self.attempt_fmt().map_err(|_| std::fmt::Error)? {
+            f.write_str(&fmt)?;
+            return Ok(());
+        }
+
+        if cfg!(feature = "testing") {
+            panic!("failed to fmt Tree due to expected page disappearing part-way through");
+        } else {
+            log::error!("failed to fmt Tree due to expected page disappearing part-way through");
+            Ok(())
+        }
     }
 }
 

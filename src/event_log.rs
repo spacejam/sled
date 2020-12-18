@@ -22,8 +22,6 @@
 //! 4.
 #![allow(missing_docs)]
 
-use std::collections::HashMap;
-
 use crate::pagecache::DiskPtr;
 use crate::*;
 
@@ -32,8 +30,8 @@ use crate::stack::{Iter as StackIter, Stack};
 /// A thing that happens at a certain time.
 #[derive(Debug, Clone)]
 enum Event {
-    PagesOnShutdown { pages: HashMap<PageId, Vec<DiskPtr>> },
-    PagesOnRecovery { pages: HashMap<PageId, Vec<DiskPtr>> },
+    PagesOnShutdown { pages: Map<PageId, Vec<DiskPtr>> },
+    PagesOnRecovery { pages: Map<PageId, Vec<DiskPtr>> },
     MetaOnShutdown { meta: Meta },
     MetaOnRecovery { meta: Meta },
     RecoveredLsn(Lsn),
@@ -98,12 +96,31 @@ impl EventLog {
                             .chain(
                                 pages.iter().map(|(pid, _frag_locations)| *pid),
                             )
-                            .collect::<std::collections::HashSet<_>>()
+                            .collect::<Set<_>>()
                             .into_iter();
 
                         for pid in pids {
-                            let locations_before_restart = pages.get(&pid);
-                            let locations_after_restart = par.get(&pid);
+                            // we filter out the blob pointer in the log
+                            // because it is expected that upon recovery,
+                            // any blob pointers will be forgotten from
+                            // the log now that they are present in the
+                            // snapshot.
+                            let locations_before_restart: Vec<_> = pages
+                                .get(&pid)
+                                .unwrap()
+                                .iter()
+                                .map(|ptr| {
+                                    let mut ptr = *ptr;
+                                    ptr.forget_heap_log_coordinates();
+                                    ptr
+                                })
+                                .collect();
+                            let locations_after_restart: Vec<_> = par
+                                .get(&pid)
+                                .unwrap()
+                                .iter()
+                                .copied()
+                                .collect();
                             assert_eq!(
                                 locations_before_restart,
                                 locations_after_restart,
@@ -114,8 +131,6 @@ impl EventLog {
                                 locations_after_restart
                             );
                         }
-
-                        assert_eq!(pages, par);
                     }
                 }
                 Event::MetaOnRecovery { meta } => {
@@ -144,16 +159,13 @@ impl EventLog {
 
     pub(crate) fn pages_before_restart(
         &self,
-        pages: HashMap<PageId, Vec<DiskPtr>>,
+        pages: Map<PageId, Vec<DiskPtr>>,
     ) {
         let guard = pin();
         self.inner.push(Event::PagesOnShutdown { pages }, &guard);
     }
 
-    pub(crate) fn pages_after_restart(
-        &self,
-        pages: HashMap<PageId, Vec<DiskPtr>>,
-    ) {
+    pub(crate) fn pages_after_restart(&self, pages: Map<PageId, Vec<DiskPtr>>) {
         let guard = pin();
         self.inner.push(Event::PagesOnRecovery { pages }, &guard);
     }

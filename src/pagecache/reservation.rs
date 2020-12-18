@@ -10,9 +10,9 @@ pub struct Reservation<'a> {
     pub(super) iobuf: Arc<IoBuf>,
     pub(super) buf: &'a mut [u8],
     pub(super) flushed: bool,
-    pub(super) pointer: DiskPtr,
-    pub(super) lsn: Lsn,
-    pub(super) is_blob_rewrite: bool,
+    pub pointer: DiskPtr,
+    pub lsn: Lsn,
+    pub(super) is_heap_item_rewrite: bool,
     pub(super) header_len: usize,
 }
 
@@ -31,16 +31,18 @@ impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
     pub fn abort(mut self) -> Result<(Lsn, DiskPtr)> {
-        if self.pointer.is_blob() && !self.is_blob_rewrite {
-            // we don't want to remove this blob if something
-            // else may still be using it.
+        if self.pointer.is_heap_item() && !self.is_heap_item_rewrite {
+            // we can instantly free this heap item because its pointer
+            // is assumed to have failed to have been installed into
+            // the pagetable, so we can assume nobody is operating
+            // on it.
 
             trace!(
-                "removing blob for aborted reservation at lsn {}",
+                "removing heap item for aborted reservation at lsn {}",
                 self.pointer
             );
 
-            remove_blob(self.pointer.blob().1, &self.log.config)?;
+            self.log.config.heap.free(self.pointer.heap_id().unwrap());
         }
 
         self.flush(false)
@@ -50,18 +52,6 @@ impl<'a> Reservation<'a> {
     /// the log sequence number of the write, and the file offset.
     pub fn complete(mut self) -> Result<(Lsn, DiskPtr)> {
         self.flush(true)
-    }
-
-    /// Get the log sequence number for this update.
-    pub const fn lsn(&self) -> Lsn {
-        self.lsn
-    }
-
-    /// Get the underlying storage location for the written value.
-    /// Note that an blob write still has a pointer in the
-    /// log at the provided lid location.
-    pub const fn pointer(&self) -> DiskPtr {
-        self.pointer
     }
 
     /// Returns the length of the on-log reservation.
@@ -82,7 +72,7 @@ impl<'a> Reservation<'a> {
     pub fn mark_writebatch(self, peg_lsn: Lsn) -> Result<(Lsn, DiskPtr)> {
         trace!(
             "writing batch required stable lsn {} into \
-             BatchManifest at lid {} peg_lsn {}",
+             BatchManifest at lid {:?} peg_lsn {}",
             peg_lsn,
             self.pointer.lid(),
             self.lsn
@@ -138,6 +128,6 @@ impl<'a> Reservation<'a> {
         }
         self.log.exit_reservation(&self.iobuf)?;
 
-        Ok((self.lsn(), self.pointer()))
+        Ok((self.lsn, self.pointer))
     }
 }

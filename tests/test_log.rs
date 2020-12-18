@@ -38,7 +38,7 @@ fn log_writebatch() -> crate::Result<()> {
     log.reserve(REPLACE, PID, &IVec::from(b"7"), &guard)?.complete()?;
     log.reserve(REPLACE, PID, &IVec::from(b"8"), &guard)?.complete()?;
     let last_res = log.reserve(REPLACE, PID, &IVec::from(b"9"), &guard)?;
-    let last_res_lsn = last_res.lsn();
+    let last_res_lsn = last_res.lsn;
     last_res.complete()?;
     batch_res.mark_writebatch(last_res_lsn + 50)?;
     log.reserve(REPLACE, PID, &IVec::from(b"10"), &guard)?.complete()?;
@@ -91,8 +91,7 @@ fn non_contiguous_log_flush() -> Result<()> {
     let log = &db.context.pagecache.log;
 
     let seg_overhead = SEG_HEADER_LEN;
-    let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
-        - (MAX_MSG_HEADER_LEN + seg_overhead);
+    let buf_len = config.segment_size - (MAX_MSG_HEADER_LEN + seg_overhead);
 
     let guard = pin();
     let res1 = log
@@ -101,7 +100,7 @@ fn non_contiguous_log_flush() -> Result<()> {
     let res2 = log
         .reserve(REPLACE, PID, &IVec::from(vec![0; buf_len]), &guard)
         .unwrap();
-    let lsn = res2.lsn();
+    let lsn = res2.lsn;
     res2.abort()?;
     res1.abort()?;
     log.make_stable(lsn)?;
@@ -129,8 +128,7 @@ fn concurrent_logging() -> Result<()> {
         let db6 = db.clone();
 
         let seg_overhead = SEG_HEADER_LEN;
-        let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
-            - (MAX_MSG_HEADER_LEN + seg_overhead);
+        let buf_len = config.segment_size - (MAX_MSG_HEADER_LEN + seg_overhead);
 
         let t1 = thread::Builder::new()
             .name("c1".to_string())
@@ -268,6 +266,7 @@ fn abort(log: &Log) {
 
 #[test]
 fn log_aborts() {
+    common::setup_logger();
     let config = Config::new().temporary(true);
     let db = config.open().unwrap();
     let log = &db.context.pagecache.log;
@@ -313,7 +312,7 @@ fn log_chunky_iterator() {
             let res = log
                 .reserve(REPLACE, pid, &buf, &guard)
                 .expect("should be able to write reservation");
-            let ptr = res.pointer();
+            let ptr = res.pointer;
             let (lsn, _) = res.complete().unwrap();
             reference.push((REPLACE, pid, lsn, ptr));
         }
@@ -329,7 +328,11 @@ fn multi_segment_log_iteration() -> Result<()> {
     common::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
-    let config = Config::new().temporary(true).segment_size(512);
+    let config =
+        Config::new().temporary(true).segment_size(512).flush_every_ms(None);
+
+    // this guard prevents any segments from being freed
+    let _guard = pin();
 
     let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MAX_MSG_HEADER_LEN + total_seg_overhead;
@@ -338,22 +341,42 @@ fn multi_segment_log_iteration() -> Result<()> {
     let db = config.open().unwrap();
     let log = &db.context.pagecache.log;
 
-    for i in 0..48 {
+    let mut expected_pids = std::collections::HashSet::new();
+
+    for i in 4..1000 {
         let buf = IVec::from(vec![i as u8; big_msg_sz * i]);
         let guard = pin();
         log.reserve(REPLACE, i as PageId, &buf, &guard)
             .unwrap()
             .complete()
             .unwrap();
+
+        expected_pids.insert(i as PageId);
     }
-    log.flush()?;
+
+    db.flush().unwrap();
 
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
 
-    for _ in 0..48 {
-        iter.next().expect("expected to read another message");
+    while let Some((_, pid, _, _, _)) = iter.next() {
+        if pid <= 3 {
+            // this page is for the meta page, counter page, or the default
+            // tree's leaf or index nodes
+            continue;
+        }
+        assert!(
+            expected_pids.remove(&pid),
+            "read pid {} while iterating, but this was no longer expected",
+            pid
+        );
     }
+
+    assert!(
+        expected_pids.is_empty(),
+        "expected to read pids {:?} but never saw them while iterating",
+        expected_pids
+    );
 
     Ok(())
 }
