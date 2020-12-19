@@ -57,24 +57,24 @@ fn main() {
                     TESTS.to_vec()
                 };
 
-            eprintln!();
-            eprintln!(
+            println!();
+            println!(
                 "running {} test{}",
                 filtered.len(),
                 if filtered.len() == 1 { "" } else { "s" },
             );
             for (test_name, test_fn) in filtered.iter() {
-                eprint!("test {} ...", test_name);
+                print!("test {} ...", test_name);
                 test_fn();
-                eprintln!(" ok");
+                println!(" ok");
             }
-            eprintln!();
-            eprintln!(
+            println!();
+            println!(
                 "test result: ok. {} passed; {} filtered out",
                 filtered.len(),
                 TESTS.len() - filtered.len(),
             );
-            eprintln!();
+            println!();
         }
 
         Ok(ref s) if s == RECOVERY_DIR => run(),
