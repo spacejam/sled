@@ -26,6 +26,13 @@ const BATCHES_DIR: &str = "crash_batches";
 const ITER_DIR: &str = "crash_iter";
 const TX_DIR: &str = "crash_tx";
 
+const TESTS: [(&'static str, fn()); 4] = [
+    (RECOVERY_DIR, crash_recovery),
+    (BATCHES_DIR, crash_batches),
+    (ITER_DIR, concurrent_crash_iter),
+    (TX_DIR, concurrent_crash_transactions),
+];
+
 const CRASH_CHANCE: u32 = 250;
 
 fn main() {
@@ -39,10 +46,35 @@ fn main() {
 
     match env::var(TEST_ENV_VAR) {
         Err(VarError::NotPresent) => {
-            crash_recovery();
-            crash_batches();
-            concurrent_crash_iter();
-            concurrent_crash_transactions();
+            let filtered: Vec<(&'static str, fn())> =
+                if let Some(filter) = std::env::args().skip(1).next() {
+                    TESTS
+                        .iter()
+                        .filter(|(name, _)| name.contains(&filter))
+                        .cloned()
+                        .collect()
+                } else {
+                    TESTS.to_vec()
+                };
+
+            eprintln!();
+            eprintln!(
+                "running {} test{}",
+                filtered.len(),
+                if filtered.len() == 1 { "" } else { "s" },
+            );
+            for (test_name, test_fn) in filtered.iter() {
+                eprint!("test {} ...", test_name);
+                test_fn();
+                eprintln!(" ok");
+            }
+            eprintln!();
+            eprintln!(
+                "test result: ok. {} passed; {} filtered out",
+                filtered.len(),
+                TESTS.len() - filtered.len(),
+            );
+            eprintln!();
         }
 
         Ok(ref s) if s == RECOVERY_DIR => run(),
