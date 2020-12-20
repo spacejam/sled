@@ -138,7 +138,10 @@ impl Reservation {
         } else if cfg!(not(target_os = "linux")) {
             self.file.sync_data()?;
         } else {
-            assert!(cfg!(target_os = "linux"));
+            #[allow(clippy::assertions_on_constants)]
+            {
+                assert!(cfg!(target_os = "linux"));
+            }
 
             #[cfg(target_os = "linux")]
             {
