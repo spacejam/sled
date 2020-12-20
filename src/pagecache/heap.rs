@@ -395,6 +395,12 @@ impl Slab {
             static HOLE_PUNCHING_ENABLED: AtomicBool = AtomicBool::new(true);
             const MODE: i32 = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
 
+            #[cfg(miri)]
+            {
+                // fallocate is not yet supported
+                HOLE_PUNCHING_ENABLED.store(false, Relaxed);
+            }
+
             if HOLE_PUNCHING_ENABLED.load(Relaxed) {
                 let bs = i64::try_from(slab_id_to_size(self.slab_id)).unwrap();
                 let offset = i64::from(idx) * bs;
