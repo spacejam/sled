@@ -151,7 +151,7 @@ impl Db {
         Ok(tree)
     }
 
-    /// Remove a disk-backed collection.
+    /// Remove a disk-backed collection. This is blocking and fairly slow.
     pub fn drop_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<bool> {
         let name_ref = name.as_ref();
         if name_ref == DEFAULT_TREE_ID {
@@ -169,7 +169,15 @@ impl Db {
             return Ok(false);
         };
 
+        let _cc = concurrency_control::write();
         let guard = pin();
+
+        // peg is for atomic recovery in case we crash
+        // half-way through this cleaning operation.
+        let peg = self.context.pin_log(&guard)?;
+
+        // signal to all threads that this tree is no longer valid
+        tree.root.store(u64::max_value(), SeqCst);
 
         let mut root_id =
             Some(self.context.pagecache.meta_pid_for_name(name_ref, &guard)?);
@@ -199,7 +207,8 @@ impl Db {
             }
         }
 
-        tree.root.store(u64::max_value(), SeqCst);
+        // record atomic recovery information into the log
+        peg.seal_batch()?;
 
         // drop writer lock
         drop(tenants);
@@ -397,9 +406,7 @@ impl Db {
         let tenants: BTreeMap<_, _> = tenants_mu.iter().collect();
 
         let mut hasher = crc32fast::Hasher::new();
-        let mut locks = vec![];
-
-        locks.push(concurrency_control::write());
+        let _cc = concurrency_control::write();
 
         for (name, tree) in &tenants {
             hasher.update(name);
