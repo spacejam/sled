@@ -1,5 +1,6 @@
 use std::{
     future::Future,
+    ops::{Index, IndexMut},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
@@ -18,8 +19,34 @@ static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 pub struct Event {
     /// A map of batches for each tree written to in a transaction,
     /// only one of which will be the one subscribed to.
-    pub(crate) batches: Arc<[(Tree, Batch)]>,
+    pub(crate) batches: Map<Tree, Batch>,
 }
+
+/*
+enum BatchSlot<'a> {
+    Present(&'a Batch),
+    Absent,
+}
+
+impl<'a> Index<&'a Tree> for Event {
+    type Output = BatchSlot<'a>;
+
+    fn index(&'a self, tree: &'a Tree) -> &'a Self::Output {
+        if let Some(item) = self.batches.get(tree) {
+            &BatchSlot::Present(item)
+        } else {
+            &BatchSlot::Absent
+        }
+    }
+}
+
+
+impl<'a> IndexMut<&'a Tree> for Event {
+    fn index_mut(&mut self, tree: &Tree) -> &mut Self::Output {
+        self.batches.entry(tree.clone()).or_insert_with(Batch::default)
+    }
+}
+*/
 
 impl Event {
     pub(crate) fn single_update(
@@ -38,7 +65,7 @@ impl Event {
     }
 
     pub(crate) fn from_batches(batches: Vec<(Tree, Batch)>) -> Event {
-        Event { batches: Arc::from(batches.into_boxed_slice()) }
+        Event { batches: batches.into_iter().collect() }
     }
 
     /// Iterate over each Tree, key, and optional value in this `Event`
@@ -55,7 +82,7 @@ impl<'a> IntoIterator for &'a Event {
     type IntoIter = Box<dyn 'a + Iterator<Item = Self::Item>>;
 
     fn into_iter(self) -> Self::IntoIter {
-        Box::new(self.batches.iter().flat_map(|(ref tree, ref batch)| {
+        Box::new(self.batches.iter().flat_map(|(tree, ref batch)| {
             batch.writes.iter().map(move |(k, v_opt)| (tree, k, v_opt))
         }))
     }
@@ -249,7 +276,7 @@ impl Subscribers {
             }
         };
 
-        let (tx, rx) = sync_channel(1024);
+        let (tx, rx) = sync_channel(0);
 
         let arc_senders = &r_mu[prefix];
         let mut w_senders = arc_senders.write();

@@ -2,9 +2,9 @@ use std::{
     num::NonZeroU64,
     borrow::Cow,
     hash::{Hasher, Hash},
-    cmp::{PartialEq, Eq},
+    cmp::{PartialOrd, PartialEq, Ordering, Ord},
     fmt::{self, Debug},
-    ops::{self, Deref, RangeBounds},
+    ops::{self, Deref, RangeBounds, },
     sync::atomic::Ordering::SeqCst,
 };
 
@@ -88,17 +88,29 @@ impl IntoIterator for &'_ Tree {
 #[derive(Clone)]
 pub struct Tree(pub(crate) Arc<TreeInner>);
 
+impl Hash for Tree {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.tree_id.hash(state)
+    }
+}
+
 impl PartialEq for Tree {
     fn eq(&self, other: &Self) -> bool {
-        other.tree_id == self.tree_id
+        self.0.tree_id.eq(&other.0.tree_id)
     }
 }
 
 impl Eq for Tree {}
 
-impl Hash for Tree {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.tree_id.hash(state);
+impl PartialOrd for Tree {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Tree {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.tree_id.cmp(&other.0.tree_id)
     }
 }
 
