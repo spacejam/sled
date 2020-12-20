@@ -325,7 +325,7 @@ impl Slab {
                 heap_buf[5..13].as_ref().try_into().unwrap(),
             );
             if actual_lsn != original_lsn {
-                log::error!(
+                log::debug!(
                     "heap slot lsn {} does not match expected original lsn {}",
                     actual_lsn,
                     original_lsn
@@ -340,7 +340,7 @@ impl Slab {
             };
             Ok((MessageKind::from(heap_buf[0]), buf))
         } else {
-            log::error!(
+            log::debug!(
                 "heap message CRC does not match contents. stored: {} actual: {}",
                 stored_crc,
                 actual_crc
