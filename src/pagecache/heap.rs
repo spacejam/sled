@@ -1,5 +1,4 @@
 // TODO rm allow(unused)
-#![allow(unused)]
 #![allow(unsafe_code)]
 
 use std::{
@@ -80,7 +79,7 @@ impl HeapId {
     }
 
     fn slab_size(&self) -> u64 {
-        let (slab_id, idx, _) = self.decompose();
+        let (slab_id, _idx, _lsn) = self.decompose();
         slab_id_to_size(slab_id)
     }
 }
@@ -113,7 +112,7 @@ pub(crate) struct Reservation {
 impl Drop for Reservation {
     fn drop(&mut self) {
         if !self.completed {
-            let (slab_id, idx, _) = self.heap_id.decompose();
+            let (_slab_id, idx, _) = self.heap_id.decompose();
             self.slab_free.push(idx, &pin());
         }
     }
@@ -165,10 +164,6 @@ impl Reservation {
 
         Ok(self.heap_id)
     }
-
-    pub fn abort(self) {
-        // actual logic in Drop
-    }
 }
 
 #[derive(Debug)]
@@ -203,13 +198,13 @@ impl Heap {
 
         for page_state in &snapshot.pt {
             for heap_id in page_state.heap_ids() {
-                let (sid, idx, _lsn) = heap_id.decompose();
+                let (slab_id, idx, _lsn) = heap_id.decompose();
 
                 // set the bit for this slot
                 let block = idx / 64;
                 let bit = idx % 64;
                 let bitmask = 1 << bit;
-                bitmaps[sid as usize][block as usize] |= bitmask;
+                bitmaps[slab_id as usize][block as usize] |= bitmask;
             }
         }
 
@@ -254,7 +249,7 @@ impl Heap {
     pub fn reserve(&self, size: u64, original_lsn: Lsn) -> Reservation {
         assert!(size < 1 << 48);
         let slab_id = size_to_slab_id(size);
-        let ret = self.slabs[slab_id as usize].reserve(size, original_lsn);
+        let ret = self.slabs[slab_id as usize].reserve(original_lsn);
         log::trace!("Heap::reserve({}) -> {:?}", size, ret.heap_id);
         ret
     }
@@ -345,7 +340,7 @@ impl Slab {
         }
     }
 
-    fn reserve(&self, size: u64, original_lsn: Lsn) -> Reservation {
+    fn reserve(&self, original_lsn: Lsn) -> Reservation {
         let idx = if let Some(idx) = self.free.pop(&pin()) {
             log::trace!(
                 "reusing heap index {} in slab for sizes of {}",
@@ -382,8 +377,8 @@ impl Slab {
         self.free.push(idx, &pin());
     }
 
-    fn punch_hole(&self, idx: u32) {
-        #[cfg(target_os = "linux")]
+    fn punch_hole(&self, #[allow(unused)] idx: u32) {
+        #[cfg(all(target_os = "linux", not(miri)))]
         {
             use std::{
                 os::unix::io::AsRawFd,
@@ -394,12 +389,6 @@ impl Slab {
 
             static HOLE_PUNCHING_ENABLED: AtomicBool = AtomicBool::new(true);
             const MODE: i32 = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
-
-            #[cfg(miri)]
-            {
-                // fallocate is not yet supported
-                HOLE_PUNCHING_ENABLED.store(false, Relaxed);
-            }
 
             if HOLE_PUNCHING_ENABLED.load(Relaxed) {
                 let bs = i64::try_from(slab_id_to_size(self.slab_id)).unwrap();
