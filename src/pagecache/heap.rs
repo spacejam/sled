@@ -133,9 +133,13 @@ impl Reservation {
         pwrite_all(&self.file, data, self.heap_id.offset())?;
 
         // sync data
-        if self.from_tip || cfg!(not(target_os = "linux")) {
+        if self.from_tip {
             self.file.sync_all()?;
+        } else if cfg!(not(target_os = "linux")) {
+            self.file.sync_data()?;
         } else {
+            assert!(cfg!(target_os = "linux"));
+
             #[cfg(target_os = "linux")]
             {
                 use std::os::unix::io::AsRawFd;

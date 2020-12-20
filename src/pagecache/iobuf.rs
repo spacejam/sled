@@ -757,9 +757,13 @@ impl IoBufs {
             let f = &self.config.file;
             pwrite_all(f, data, log_offset)?;
             if !self.config.temporary {
-                if iobuf.from_tip || cfg!(not(target_os = "linux")) {
+                if iobuf.from_tip {
                     f.sync_all()?;
+                } else if cfg!(not(target_os = "linux")) {
+                    f.sync_data()?;
                 } else {
+                    assert!(cfg!(target_os = "linux"));
+
                     #[cfg(target_os = "linux")]
                     {
                         use std::os::unix::io::AsRawFd;
