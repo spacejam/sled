@@ -1,5 +1,4 @@
 // TODO rm allow(unused)
-#![allow(unused)]
 #![allow(unsafe_code)]
 
 use std::{
@@ -80,7 +79,7 @@ impl HeapId {
     }
 
     fn slab_size(&self) -> u64 {
-        let (slab_id, idx, _) = self.decompose();
+        let (slab_id, _idx, _lsn) = self.decompose();
         slab_id_to_size(slab_id)
     }
 }
@@ -108,12 +107,13 @@ pub(crate) struct Reservation {
     completed: bool,
     file: File,
     pub heap_id: HeapId,
+    from_tip: bool,
 }
 
 impl Drop for Reservation {
     fn drop(&mut self) {
         if !self.completed {
-            let (slab_id, idx, _) = self.heap_id.decompose();
+            let (_slab_id, idx, _) = self.heap_id.decompose();
             self.slab_free.push(idx, &pin());
         }
     }
@@ -133,41 +133,45 @@ impl Reservation {
         pwrite_all(&self.file, data, self.heap_id.offset())?;
 
         // sync data
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::io::AsRawFd;
-            let ret = unsafe {
-                libc::sync_file_range(
-                    self.file.as_raw_fd(),
-                    i64::try_from(self.heap_id.offset()).unwrap(),
-                    i64::try_from(data.len()).unwrap(),
-                    libc::SYNC_FILE_RANGE_WAIT_BEFORE
-                        | libc::SYNC_FILE_RANGE_WRITE
-                        | libc::SYNC_FILE_RANGE_WAIT_AFTER,
-                )
-            };
-            if ret < 0 {
-                let err = std::io::Error::last_os_error();
-                if let Some(libc::ENOSYS) = err.raw_os_error() {
-                    self.file.sync_all()?;
-                } else {
-                    return Err(err.into());
+        if self.from_tip {
+            self.file.sync_all()?;
+        } else if cfg!(not(target_os = "linux")) {
+            self.file.sync_data()?;
+        } else {
+            #[allow(clippy::assertions_on_constants)]
+            {
+                assert!(cfg!(target_os = "linux"));
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::io::AsRawFd;
+                let ret = unsafe {
+                    libc::sync_file_range(
+                        self.file.as_raw_fd(),
+                        i64::try_from(self.heap_id.offset()).unwrap(),
+                        i64::try_from(data.len()).unwrap(),
+                        libc::SYNC_FILE_RANGE_WAIT_BEFORE
+                            | libc::SYNC_FILE_RANGE_WRITE
+                            | libc::SYNC_FILE_RANGE_WAIT_AFTER,
+                    )
+                };
+                if ret < 0 {
+                    let err = std::io::Error::last_os_error();
+                    if let Some(libc::ENOSYS) = err.raw_os_error() {
+                        self.file.sync_all()?;
+                    } else {
+                        return Err(err.into());
+                    }
                 }
             }
         }
-
-        #[cfg(not(target_os = "linux"))]
-        self.file.sync_all()?;
 
         // if this is not reached due to an IO error,
         // the offset will be returned to the Slab in Drop
         self.completed = true;
 
         Ok(self.heap_id)
-    }
-
-    pub fn abort(self) {
-        // actual logic in Drop
     }
 }
 
@@ -203,13 +207,13 @@ impl Heap {
 
         for page_state in &snapshot.pt {
             for heap_id in page_state.heap_ids() {
-                let (sid, idx, _lsn) = heap_id.decompose();
+                let (slab_id, idx, _lsn) = heap_id.decompose();
 
                 // set the bit for this slot
                 let block = idx / 64;
                 let bit = idx % 64;
                 let bitmask = 1 << bit;
-                bitmaps[sid as usize][block as usize] |= bitmask;
+                bitmaps[slab_id as usize][block as usize] |= bitmask;
             }
         }
 
@@ -254,7 +258,7 @@ impl Heap {
     pub fn reserve(&self, size: u64, original_lsn: Lsn) -> Reservation {
         assert!(size < 1 << 48);
         let slab_id = size_to_slab_id(size);
-        let ret = self.slabs[slab_id as usize].reserve(size, original_lsn);
+        let ret = self.slabs[slab_id as usize].reserve(original_lsn);
         log::trace!("Heap::reserve({}) -> {:?}", size, ret.heap_id);
         ret
     }
@@ -321,7 +325,7 @@ impl Slab {
                 heap_buf[5..13].as_ref().try_into().unwrap(),
             );
             if actual_lsn != original_lsn {
-                log::error!(
+                log::debug!(
                     "heap slot lsn {} does not match expected original lsn {}",
                     actual_lsn,
                     original_lsn
@@ -336,7 +340,7 @@ impl Slab {
             };
             Ok((MessageKind::from(heap_buf[0]), buf))
         } else {
-            log::error!(
+            log::debug!(
                 "heap message CRC does not match contents. stored: {} actual: {}",
                 stored_crc,
                 actual_crc
@@ -345,20 +349,20 @@ impl Slab {
         }
     }
 
-    fn reserve(&self, size: u64, original_lsn: Lsn) -> Reservation {
-        let idx = if let Some(idx) = self.free.pop(&pin()) {
+    fn reserve(&self, original_lsn: Lsn) -> Reservation {
+        let (idx, from_tip) = if let Some(idx) = self.free.pop(&pin()) {
             log::trace!(
                 "reusing heap index {} in slab for sizes of {}",
                 idx,
                 slab_id_to_size(self.slab_id),
             );
-            idx
+            (idx, false)
         } else {
             log::trace!(
                 "no free heap slots in slab for sizes of {}",
                 slab_id_to_size(self.slab_id),
             );
-            self.tip.fetch_add(1, Acquire)
+            (self.tip.fetch_add(1, Acquire), true)
         };
 
         log::trace!(
@@ -373,6 +377,7 @@ impl Slab {
             slab_free: self.free.clone(),
             completed: false,
             file: self.file.try_clone().unwrap(),
+            from_tip,
             heap_id,
         }
     }
@@ -382,8 +387,8 @@ impl Slab {
         self.free.push(idx, &pin());
     }
 
-    fn punch_hole(&self, idx: u32) {
-        #[cfg(target_os = "linux")]
+    fn punch_hole(&self, #[allow(unused)] idx: u32) {
+        #[cfg(all(target_os = "linux", not(miri)))]
         {
             use std::{
                 os::unix::io::AsRawFd,
