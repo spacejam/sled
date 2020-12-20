@@ -732,7 +732,7 @@ impl IoBufs {
                 );
 
                 let sync_completion = if iobuf.from_tip {
-                    self.io_uring.fsync(&*self.config_file)
+                    self.io_uring.fsync(&*self.config.file)
                 } else {
                     self.io_uring.sync_file_range(
                         &*self.config.file,
