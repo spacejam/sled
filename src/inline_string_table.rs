@@ -37,7 +37,7 @@ fn fatten(data: *const u8, len: usize) -> *mut [u8] {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Header {
     // NB always lay out fields from largest to smallest
     // to properly pack the struct
