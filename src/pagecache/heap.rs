@@ -107,6 +107,7 @@ pub(crate) struct Reservation {
     completed: bool,
     file: File,
     pub heap_id: HeapId,
+    from_tip: bool,
 }
 
 impl Drop for Reservation {
@@ -132,31 +133,39 @@ impl Reservation {
         pwrite_all(&self.file, data, self.heap_id.offset())?;
 
         // sync data
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::io::AsRawFd;
-            let ret = unsafe {
-                libc::sync_file_range(
-                    self.file.as_raw_fd(),
-                    i64::try_from(self.heap_id.offset()).unwrap(),
-                    i64::try_from(data.len()).unwrap(),
-                    libc::SYNC_FILE_RANGE_WAIT_BEFORE
-                        | libc::SYNC_FILE_RANGE_WRITE
-                        | libc::SYNC_FILE_RANGE_WAIT_AFTER,
-                )
-            };
-            if ret < 0 {
-                let err = std::io::Error::last_os_error();
-                if let Some(libc::ENOSYS) = err.raw_os_error() {
-                    self.file.sync_all()?;
-                } else {
-                    return Err(err.into());
+        if self.from_tip {
+            self.file.sync_all()?;
+        } else if cfg!(not(target_os = "linux")) {
+            self.file.sync_data()?;
+        } else {
+            #[allow(clippy::assertions_on_constants)]
+            {
+                assert!(cfg!(target_os = "linux"));
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::io::AsRawFd;
+                let ret = unsafe {
+                    libc::sync_file_range(
+                        self.file.as_raw_fd(),
+                        i64::try_from(self.heap_id.offset()).unwrap(),
+                        i64::try_from(data.len()).unwrap(),
+                        libc::SYNC_FILE_RANGE_WAIT_BEFORE
+                            | libc::SYNC_FILE_RANGE_WRITE
+                            | libc::SYNC_FILE_RANGE_WAIT_AFTER,
+                    )
+                };
+                if ret < 0 {
+                    let err = std::io::Error::last_os_error();
+                    if let Some(libc::ENOSYS) = err.raw_os_error() {
+                        self.file.sync_all()?;
+                    } else {
+                        return Err(err.into());
+                    }
                 }
             }
         }
-
-        #[cfg(not(target_os = "linux"))]
-        self.file.sync_all()?;
 
         // if this is not reached due to an IO error,
         // the offset will be returned to the Slab in Drop
@@ -341,19 +350,19 @@ impl Slab {
     }
 
     fn reserve(&self, original_lsn: Lsn) -> Reservation {
-        let idx = if let Some(idx) = self.free.pop(&pin()) {
+        let (idx, from_tip) = if let Some(idx) = self.free.pop(&pin()) {
             log::trace!(
                 "reusing heap index {} in slab for sizes of {}",
                 idx,
                 slab_id_to_size(self.slab_id),
             );
-            idx
+            (idx, false)
         } else {
             log::trace!(
                 "no free heap slots in slab for sizes of {}",
                 slab_id_to_size(self.slab_id),
             );
-            self.tip.fetch_add(1, Acquire)
+            (self.tip.fetch_add(1, Acquire), true)
         };
 
         log::trace!(
@@ -368,6 +377,7 @@ impl Slab {
             slab_free: self.free.clone(),
             completed: false,
             file: self.file.try_clone().unwrap(),
+            from_tip,
             heap_id,
         }
     }

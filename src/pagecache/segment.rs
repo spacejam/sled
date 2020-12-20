@@ -1034,8 +1034,11 @@ impl SegmentAccountant {
         Ok(lid)
     }
 
-    /// Returns the next offset to write a new segment in.
-    pub(super) fn next(&mut self, lsn: Lsn) -> Result<LogOffset> {
+    /// Returns the next offset to write a new segment in, as well
+    /// as whether the corresponding segment must be persisted using
+    /// fsync due to having been allocated from the file's tip, rather
+    /// than `sync_file_range` as is normal.
+    pub(super) fn next(&mut self, lsn: Lsn) -> Result<(LogOffset, bool)> {
         let _measure = Measure::new(&M.accountant_next);
 
         assert_eq!(
@@ -1049,11 +1052,11 @@ impl SegmentAccountant {
         // pop free or add to end
         let safe = self.free.iter().next().copied();
 
-        let lid = if let Some(next) = safe {
+        let (lid, from_tip) = if let Some(next) = safe {
             self.free.remove(&next);
-            next
+            (next, false)
         } else {
-            self.bump_tip()?
+            (self.bump_tip()?, true)
         };
 
         // pin lsn to this segment
@@ -1076,7 +1079,7 @@ impl SegmentAccountant {
             lid
         );
 
-        Ok(lid)
+        Ok((lid, from_tip))
     }
 
     /// Returns an iterator over a snapshot of current segment
