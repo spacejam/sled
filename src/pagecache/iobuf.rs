@@ -56,6 +56,7 @@ pub(crate) struct IoBuf {
     pub offset: LogOffset,
     pub lsn: Lsn,
     pub capacity: usize,
+    from_tip: bool,
     stored_max_stable_lsn: Lsn,
 }
 
@@ -343,31 +344,34 @@ impl IoBufs {
         let (recovered_lid, recovered_lsn) =
             snapshot.recovered_coords(config.segment_size);
 
-        let (next_lid, next_lsn) = match (recovered_lid, recovered_lsn) {
-            (Some(next_lid), Some(next_lsn)) => {
-                debug!(
-                    "starting log at recovered active \
-                    offset {}, recovered lsn {}",
-                    next_lid, next_lsn
-                );
-                (next_lid, next_lsn)
-            }
-            (None, None) => {
-                debug!("starting log for a totally fresh system");
-                let next_lsn = 0;
-                let next_lid = segment_accountant.next(next_lsn)?;
-                (next_lid, next_lsn)
-            }
-            (None, Some(next_lsn)) => {
-                let next_lid = segment_accountant.next(next_lsn)?;
-                debug!(
-                    "starting log at clean offset {}, recovered lsn {}",
-                    next_lid, next_lsn
-                );
-                (next_lid, next_lsn)
-            }
-            (Some(_), None) => unreachable!(),
-        };
+        let (next_lid, next_lsn, from_tip) =
+            match (recovered_lid, recovered_lsn) {
+                (Some(next_lid), Some(next_lsn)) => {
+                    debug!(
+                        "starting log at recovered active \
+                        offset {}, recovered lsn {}",
+                        next_lid, next_lsn
+                    );
+                    (next_lid, next_lsn, true)
+                }
+                (None, None) => {
+                    debug!("starting log for a totally fresh system");
+                    let next_lsn = 0;
+                    let (next_lid, from_tip) =
+                        segment_accountant.next(next_lsn)?;
+                    (next_lid, next_lsn, from_tip)
+                }
+                (None, Some(next_lsn)) => {
+                    let (next_lid, from_tip) =
+                        segment_accountant.next(next_lsn)?;
+                    debug!(
+                        "starting log at clean offset {}, recovered lsn {}",
+                        next_lid, next_lsn
+                    );
+                    (next_lid, next_lsn, from_tip)
+                }
+                (Some(_), None) => unreachable!(),
+            };
 
         assert!(next_lsn >= Lsn::try_from(next_lid).unwrap());
 
@@ -390,6 +394,7 @@ impl IoBufs {
             base,
             offset: next_lid,
             lsn: next_lsn,
+            from_tip,
             capacity: segment_size - base,
             stored_max_stable_lsn: -1,
         };
@@ -726,11 +731,15 @@ impl IoBufs {
                     rio::Ordering::Link,
                 );
 
-                let sync_completion = self.io_uring.sync_file_range(
-                    &*self.config.file,
-                    offset,
-                    to_write.len(),
-                );
+                let sync_completion = if iobuf.from_tip {
+                    self.io_uring.fsync(&*self.config_file)
+                } else {
+                    self.io_uring.sync_file_range(
+                        &*self.config.file,
+                        offset,
+                        to_write.len(),
+                    )
+                };
 
                 sync_completion.wait()?;
 
@@ -748,31 +757,32 @@ impl IoBufs {
             let f = &self.config.file;
             pwrite_all(f, data, log_offset)?;
             if !self.config.temporary {
-                #[cfg(target_os = "linux")]
-                {
-                    use std::os::unix::io::AsRawFd;
-                    let ret = unsafe {
-                        libc::sync_file_range(
-                            f.as_raw_fd(),
-                            i64::try_from(log_offset).unwrap(),
-                            i64::try_from(total_len).unwrap(),
-                            libc::SYNC_FILE_RANGE_WAIT_BEFORE
-                                | libc::SYNC_FILE_RANGE_WRITE
-                                | libc::SYNC_FILE_RANGE_WAIT_AFTER,
-                        )
-                    };
-                    if ret < 0 {
-                        let err = std::io::Error::last_os_error();
-                        if let Some(libc::ENOSYS) = err.raw_os_error() {
-                            f.sync_all()?;
-                        } else {
-                            return Err(err.into());
+                if iobuf.from_tip || cfg!(not(target_os = "linux")) {
+                    f.sync_all()?;
+                } else {
+                    #[cfg(target_os = "linux")]
+                    {
+                        use std::os::unix::io::AsRawFd;
+                        let ret = unsafe {
+                            libc::sync_file_range(
+                                f.as_raw_fd(),
+                                i64::try_from(log_offset).unwrap(),
+                                i64::try_from(total_len).unwrap(),
+                                libc::SYNC_FILE_RANGE_WAIT_BEFORE
+                                    | libc::SYNC_FILE_RANGE_WRITE
+                                    | libc::SYNC_FILE_RANGE_WAIT_AFTER,
+                            )
+                        };
+                        if ret < 0 {
+                            let err = std::io::Error::last_os_error();
+                            if let Some(libc::ENOSYS) = err.raw_os_error() {
+                                f.sync_all()?;
+                            } else {
+                                return Err(err.into());
+                            }
                         }
                     }
                 }
-
-                #[cfg(not(target_os = "linux"))]
-                f.sync_all()?;
             }
         }
         io_fail!(self, "buffer write post");
@@ -1096,7 +1106,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
 
     let measure_assign_offset = Measure::new(&M.assign_offset);
 
-    let next_offset = if maxed {
+    let (next_offset, from_tip) = if maxed {
         // roll lsn to the next offset
         let lsn_idx = lsn / segment_size as Lsn;
         next_lsn = (lsn_idx + 1) * segment_size as Lsn;
@@ -1130,7 +1140,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         );
         next_lsn += res_len as Lsn;
 
-        lid + res_len as LogOffset
+        (lid + res_len as LogOffset, iobuf.from_tip)
     };
 
     // NB as soon as the "sealed" bit is 0, this allows new threads
@@ -1144,6 +1154,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             base: 0,
             offset: next_offset,
             lsn: next_lsn,
+            from_tip,
             capacity: segment_size,
             stored_max_stable_lsn: -1,
         };
@@ -1164,6 +1175,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             base: iobuf.base + res_len,
             offset: next_offset,
             lsn: next_lsn,
+            from_tip,
             capacity: new_cap,
             stored_max_stable_lsn: -1,
         }
