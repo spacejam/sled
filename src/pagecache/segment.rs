@@ -1037,7 +1037,7 @@ impl SegmentAccountant {
     /// Returns the next offset to write a new segment in, as well
     /// as whether the corresponding segment must be persisted using
     /// fsync due to having been allocated from the file's tip, rather
-    /// than sync_file_range as is normal.
+    /// than `sync_file_range` as is normal.
     pub(super) fn next(&mut self, lsn: Lsn) -> Result<(LogOffset, bool)> {
         let _measure = Measure::new(&M.accountant_next);
 
