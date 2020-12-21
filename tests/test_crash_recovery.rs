@@ -26,6 +26,13 @@ const BATCHES_DIR: &str = "crash_batches";
 const ITER_DIR: &str = "crash_iter";
 const TX_DIR: &str = "crash_tx";
 
+const TESTS: [(&'static str, fn()); 4] = [
+    (RECOVERY_DIR, crash_recovery),
+    (BATCHES_DIR, crash_batches),
+    (ITER_DIR, concurrent_crash_iter),
+    (TX_DIR, concurrent_crash_transactions),
+];
+
 const CRASH_CHANCE: u32 = 250;
 
 fn main() {
@@ -39,16 +46,57 @@ fn main() {
 
     match env::var(TEST_ENV_VAR) {
         Err(VarError::NotPresent) => {
-            crash_recovery();
-            crash_batches();
-            concurrent_crash_iter();
-            concurrent_crash_transactions();
+            let filtered: Vec<(&'static str, fn())> =
+                if let Some(filter) = std::env::args().skip(1).next() {
+                    TESTS
+                        .iter()
+                        .filter(|(name, _)| name.contains(&filter))
+                        .cloned()
+                        .collect()
+                } else {
+                    TESTS.to_vec()
+                };
+
+            let filtered_len = filtered.len();
+
+            println!();
+            println!(
+                "running {} test{}",
+                filtered.len(),
+                if filtered.len() == 1 { "" } else { "s" },
+            );
+
+            let mut tests = vec![];
+            for (test_name, test_fn) in filtered.into_iter() {
+                let test = thread::spawn(move || {
+                    let res = std::panic::catch_unwind(|| test_fn());
+                    println!(
+                        "test {} ... {}",
+                        test_name,
+                        if res.is_ok() { "ok" } else { "panicked" }
+                    );
+                    res.unwrap();
+                });
+                tests.push(test);
+            }
+
+            for test in tests.into_iter() {
+                test.join().unwrap();
+            }
+
+            println!();
+            println!(
+                "test result: ok. {} passed; {} filtered out",
+                filtered_len,
+                TESTS.len() - filtered_len,
+            );
+            println!();
         }
 
-        Ok(ref s) if s == RECOVERY_DIR => run(),
-        Ok(ref s) if s == BATCHES_DIR => run_batches(),
-        Ok(ref s) if s == ITER_DIR => run_iter(),
-        Ok(ref s) if s == TX_DIR => run_tx(),
+        Ok(ref s) if s == RECOVERY_DIR => run_crash_recovery(),
+        Ok(ref s) if s == BATCHES_DIR => run_crash_batches(),
+        Ok(ref s) if s == ITER_DIR => run_crash_iter(),
+        Ok(ref s) if s == TX_DIR => run_crash_tx(),
 
         Ok(_) | Err(_) => panic!("invalid crash test case"),
     }
@@ -231,7 +279,7 @@ fn run_batches_inner(db: sled::Db) {
     }
 }
 
-fn run() {
+fn run_crash_recovery() {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(1))
@@ -244,7 +292,7 @@ fn run() {
     }
 }
 
-fn run_batches() {
+fn run_crash_batches() {
     let crash_during_initialization = rand::thread_rng().gen_ratio(1, 10);
 
     if crash_during_initialization {
@@ -370,7 +418,7 @@ fn concurrent_crash_transactions() {
     cleanup(dir);
 }
 
-fn run_iter() {
+fn run_crash_iter() {
     common::setup_logger();
 
     const N_FORWARD: usize = 50;
@@ -535,7 +583,7 @@ fn run_iter() {
     }
 }
 
-fn run_tx() {
+fn run_crash_tx() {
     common::setup_logger();
 
     let config = Config::new().flush_every_ms(Some(1)).path(TX_DIR);

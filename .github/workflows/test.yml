@@ -71,7 +71,6 @@ jobs:
       run: |
         set -eo pipefail
         echo "cross build"
-        echo "https://github.com/rust-lang/cargo/issues/4753"
         scripts/cross_compile.sh
   burn-in:
     name: Burn In
