@@ -97,15 +97,14 @@ impl InlineRecords {
         prefix_len: u8,
         items: &[(&[u8], u64)],
     ) -> InlineRecords {
-        let offsets_and_lengths_size =
-            (2 * size_of::<u64>()) * (2 + items.len());
+        let offsets_size = size_of::<u64>() * (2 + items.len());
         let keys_and_values_size =
             items.iter().map(|(k, _pid)| k.len()).sum::<usize>()
-                + size_of::<u64>() * (2 + items.len());
+                + (2 * size_of::<u64>()) * (2 + items.len());
 
-        let boxed_slice = aligned_boxed_slice(
-            offsets_and_lengths_size + keys_and_values_size,
-        );
+        println!("allocating size of {}", offsets_size + keys_and_values_size);
+        let boxed_slice =
+            aligned_boxed_slice(offsets_size + keys_and_values_size);
 
         let mut ret = InlineRecords(ManuallyDrop::new(boxed_slice));
         ret.next = None;
@@ -117,7 +116,7 @@ impl InlineRecords {
 
         let data_buf = &mut ret.0[size_of::<Header>()..];
         let (offsets, lengths_keys_and_values) =
-            data_buf.split_at_mut(offsets_and_lengths_size);
+            data_buf.split_at_mut(offsets_size);
 
         let bounds = [(lo, 0), (hi, 0)];
         let iter = bounds.iter().chain(items.into_iter());
@@ -139,6 +138,7 @@ impl InlineRecords {
             lengths_keys_and_values[kv_cursor..kv_cursor + U64_SZ]
                 .copy_from_slice(&pid.to_le_bytes());
             kv_cursor += U64_SZ;
+            dbg!(kv_cursor);
         }
 
         ret
@@ -152,8 +152,12 @@ impl InlineRecords {
         unsafe { &mut *(self.0.as_mut_ptr() as *mut Header) }
     }
 
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         usize::from(self.children)
+    }
+
+    fn len_internal(&self) -> usize {
+        self.len() + 2
     }
 
     fn find(&self, key: &[u8]) -> Result<usize, usize> {
@@ -180,7 +184,9 @@ impl InlineRecords {
     }
 
     fn iter(&self) -> impl Iterator<Item = (&[u8], u64)> {
-        (0..usize::from(self.children)).map(move |idx| self.index(idx))
+        (2..)
+            .take_while(move |idx| *idx < self.len_internal())
+            .map(move |idx| self.index(idx))
     }
 
     fn lo(&self) -> &[u8] {
@@ -192,9 +198,14 @@ impl InlineRecords {
     }
 
     fn index(&self, idx: usize) -> (&[u8], u64) {
-        assert!(idx < usize::from(self.children));
+        assert!(
+            idx < self.len_internal(),
+            "index {} is not less than internal length of {}",
+            idx,
+            self.len_internal()
+        );
 
-        let raw = self.index_raw(idx);
+        let raw = self.index_raw_kv(idx);
 
         let pivot = raw.len() - U64_SZ;
 
@@ -203,31 +214,25 @@ impl InlineRecords {
         (key, u64::from_le_bytes(pid_bytes.try_into().unwrap()))
     }
 
-    fn index_raw(&self, idx: usize) -> &[u8] {
-        assert!(idx <= usize::from(self.children));
-        let offsets_start = size_of::<Header>();
-        let offsets_end = offsets_start + (usize::from(self.children) * U64_SZ);
-        let offsets = &self.0[offsets_start..offsets_end];
-        let offset = &offsets[U64_SZ * idx..U64_SZ * (idx + 1)];
+    fn index_raw_kv(&self, idx: usize) -> &[u8] {
+        assert!(idx <= self.len_internal());
+        let data_buf = &self.0[size_of::<Header>()..];
+        let offsets_len = self.len_internal() * U64_SZ;
+        let (offsets, items) = data_buf.split_at(offsets_len);
 
-        let offset_slice = &offset[..U64_SZ];
+        let offset_buf = &offsets[U64_SZ * idx..U64_SZ * (idx + 1)];
+        let kv_offset =
+            u64::from_le_bytes(offset_buf.try_into().unwrap()) as usize;
 
-        let offset =
-            u64::from_le_bytes(offset_slice.try_into().unwrap()) as usize;
+        let item_buf = &items[kv_offset..];
+        let len_buf = &item_buf[..U64_SZ];
+        let key_len = u64::from_le_bytes(len_buf.try_into().unwrap()) as usize;
+        let val_len = U64_SZ;
 
-        let length_key_and_value = &self.0[offsets_end + offset..];
+        let start = U64_SZ;
+        let end = (2 * U64_SZ) + key_len;
 
-        let length_buf = &length_key_and_value[..U64_SZ];
-        let length =
-            u64::from_le_bytes(length_buf.try_into().unwrap()) as usize;
-
-        let length =
-            u64::from_le_bytes(offset_slice.try_into().unwrap()) as usize;
-
-        let start = offset + U64_SZ;
-        let end = start + length + U64_SZ;
-
-        &length_key_and_value[start..end]
+        &item_buf[start..end]
     }
 }
 
@@ -314,11 +319,11 @@ mod test {
 
     #[test]
     fn simple() {
-        let mut ir = InlineRecords::new(&[], &[], 0, &[]);
-        let header: &mut Header = ir.header_mut();
-        header.next = Some(NonZeroU64::new(5).unwrap());
-        header.is_index = true;
-        dbg!(header);
-        println!("ir: {:?}", ir);
+        let mut ir =
+            InlineRecords::new(&[], &[7], 0, &[(&[42], 42), (&[6, 6, 6], 66)]);
+        ir.next = Some(NonZeroU64::new(5).unwrap());
+        ir.is_index = false;
+        dbg!(ir.header());
+        println!("ir: {:#?}", ir);
     }
 }
