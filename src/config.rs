@@ -558,7 +558,9 @@ impl Config {
             self.get_path().join("DO_NOT_USE_THIS_DIRECTORY_FOR_ANYTHING"),
         );
 
-        self.try_lock(options.open(&self.db_path())?)
+        let file = self.try_lock(options.open(&self.db_path())?)?;
+        fs::File::open(self.get_path())?.sync_all()?;
+        Ok(file)
     }
 
     fn try_lock(&self, file: File) -> Result<File> {
