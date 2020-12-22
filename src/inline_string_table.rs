@@ -3,6 +3,7 @@
 
 use std::{
     alloc::{alloc_zeroed, dealloc, Layout},
+    cmp::Ordering::{Equal, Greater, Less},
     convert::{TryFrom, TryInto},
     fmt,
     mem::{align_of, size_of, ManuallyDrop},
@@ -162,7 +163,27 @@ impl InlineRecords {
     }
 
     fn find(&self, key: &[u8]) -> Result<usize, usize> {
-        todo!()
+        let mut size = self.len();
+        if size == 0 || key < self.index_child(0).0 {
+            return Err(0);
+        }
+        let mut base = 0_usize;
+        while size > 1 {
+            let half = size / 2;
+            let mid = base + half;
+            // mid is always in [0, size), that means mid is >= 0 and < size.
+            // mid >= 0: by definition
+            // mid < size: mid = size / 2 + size / 4 + size / 8 ...
+            let l = self.index_child(mid).0;
+            let cmp = crate::fastcmp(l, key);
+            base = if cmp == Greater { base } else { mid };
+            size -= half;
+        }
+        // base is always in [0, size) because base <= mid.
+        let l = self.index_child(base).0;
+        let cmp = crate::fastcmp(l, key);
+
+        if cmp == Equal { Ok(base) } else { Err(base + (cmp == Less) as usize) }
     }
 
     fn insert(&mut self, key: &[u8], pid: u64) {
@@ -181,7 +202,10 @@ impl InlineRecords {
 
     fn get_lub(&self, key: &[u8]) -> u64 {
         assert!(key >= self.lo());
-        todo!()
+        match self.find(key) {
+            Ok(idx) => self.index_child(idx).1,
+            Err(idx) => self.index_child(idx - 1).1,
+        }
     }
 
     fn iter(&self) -> impl Iterator<Item = (&[u8], u64)> {
@@ -196,6 +220,10 @@ impl InlineRecords {
 
     fn hi(&self) -> &[u8] {
         self.index(1).0
+    }
+
+    fn index_child(&self, idx: usize) -> (&[u8], u64) {
+        self.index(idx + 2)
     }
 
     fn index(&self, idx: usize) -> (&[u8], u64) {
@@ -321,10 +349,14 @@ mod test {
     #[test]
     fn simple() {
         let mut ir =
-            InlineRecords::new(&[1], &[7], 0, &[(&[42], 42), (&[6, 6, 6], 66)]);
+            InlineRecords::new(&[1], &[7], 0, &[(&[1], 42), (&[6, 6, 6], 66)]);
         ir.next = Some(NonZeroU64::new(5).unwrap());
         ir.is_index = false;
         dbg!(ir.header());
         println!("ir: {:#?}", ir);
+        assert_eq!(ir.get_lub(&[1]), 42);
+        assert_eq!(ir.get_lub(&[2]), 42);
+        assert_eq!(ir.get_lub(&[6]), 42);
+        assert_eq!(ir.get_lub(&[7]), 66);
     }
 }
