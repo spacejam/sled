@@ -92,15 +92,16 @@ impl DerefMut for InlineRecords {
 
 impl InlineRecords {
     fn new(
-        hi: &[u8],
         lo: &[u8],
+        hi: &[u8],
         prefix_len: u8,
         items: &[(&[u8], u64)],
     ) -> InlineRecords {
         let offsets_size = size_of::<u64>() * (2 + items.len());
-        let keys_and_values_size =
-            items.iter().map(|(k, _pid)| k.len()).sum::<usize>()
-                + (2 * size_of::<u64>()) * (2 + items.len());
+        let keys_and_values_size = lo.len()
+            + hi.len()
+            + items.iter().map(|(k, _pid)| k.len()).sum::<usize>()
+            + (2 * size_of::<u64>()) * (2 + items.len());
 
         println!("allocating size of {}", offsets_size + keys_and_values_size);
         let boxed_slice =
@@ -320,7 +321,7 @@ mod test {
     #[test]
     fn simple() {
         let mut ir =
-            InlineRecords::new(&[], &[7], 0, &[(&[42], 42), (&[6, 6, 6], 66)]);
+            InlineRecords::new(&[1], &[7], 0, &[(&[42], 42), (&[6, 6, 6], 66)]);
         ir.next = Some(NonZeroU64::new(5).unwrap());
         ir.is_index = false;
         dbg!(ir.header());
