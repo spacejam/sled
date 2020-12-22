@@ -47,6 +47,8 @@ pub(crate) struct Header {
     // to properly pack the struct
     pub next: Option<NonZeroU64>,
     pub merging_child: Option<NonZeroU64>,
+    lo_len: u64,
+    hi_len: u64,
     //fixed_key_length: Option<NonZeroU64>,
     pub children: u16,
     pub prefix_len: u8,
@@ -54,9 +56,10 @@ pub(crate) struct Header {
     pub is_index: bool,
 }
 
-pub(crate) struct InlineRecords(ManuallyDrop<Box<[u8]>>);
+/// An immutable sorted string table
+pub(crate) struct SSTable(ManuallyDrop<Box<[u8]>>);
 
-impl Drop for InlineRecords {
+impl Drop for SSTable {
     fn drop(&mut self) {
         let box_ptr = self.0.as_mut_ptr();
         let layout = Layout::from_size_align(self.0.len(), ALIGNMENT).unwrap();
@@ -66,7 +69,7 @@ impl Drop for InlineRecords {
     }
 }
 
-impl Deref for InlineRecords {
+impl Deref for SSTable {
     type Target = Header;
 
     fn deref(&self) -> &Header {
@@ -74,9 +77,9 @@ impl Deref for InlineRecords {
     }
 }
 
-impl fmt::Debug for InlineRecords {
+impl fmt::Debug for SSTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("InlineRecords")
+        f.debug_struct("SSTable")
             .field("header", self.header())
             .field("lo", &self.lo())
             .field("hi", &self.hi())
@@ -85,19 +88,19 @@ impl fmt::Debug for InlineRecords {
     }
 }
 
-impl DerefMut for InlineRecords {
+impl DerefMut for SSTable {
     fn deref_mut(&mut self) -> &mut Header {
         self.header_mut()
     }
 }
 
-impl InlineRecords {
-    fn new(
+impl SSTable {
+    pub fn new(
         lo: &[u8],
         hi: &[u8],
         prefix_len: u8,
         items: &[(&[u8], u64)],
-    ) -> InlineRecords {
+    ) -> SSTable {
         let offsets_size = size_of::<u64>() * (2 + items.len());
         let keys_and_values_size = lo.len()
             + hi.len()
@@ -105,16 +108,22 @@ impl InlineRecords {
             + (2 * size_of::<u64>()) * (2 + items.len());
 
         println!("allocating size of {}", offsets_size + keys_and_values_size);
+
         let boxed_slice =
             aligned_boxed_slice(offsets_size + keys_and_values_size);
 
-        let mut ret = InlineRecords(ManuallyDrop::new(boxed_slice));
-        ret.next = None;
-        ret.merging_child = None;
-        ret.children = u16::try_from(items.len()).unwrap();
-        ret.prefix_len = prefix_len;
-        ret.merging = false;
-        ret.is_index = true;
+        let mut ret = SSTable(ManuallyDrop::new(boxed_slice));
+
+        *ret.header_mut() = Header {
+            next: None,
+            merging_child: None,
+            lo_len: lo.len() as u64,
+            hi_len: hi.len() as u64,
+            children: u16::try_from(items.len()).unwrap(),
+            prefix_len: prefix_len,
+            merging: false,
+            is_index: true,
+        };
 
         let data_buf = &mut ret.0[size_of::<Header>()..];
         let (offsets, lengths_keys_and_values) =
@@ -146,6 +155,49 @@ impl InlineRecords {
         ret
     }
 
+    pub fn insert(&self, key: &[u8], pid: u64) -> SSTable {
+        match self.find(&key[usize::from(self.prefix_len)..]) {
+            Ok(offset) => {
+                if self.is_index {
+                    panic!("already contained key being merged into index");
+                }
+                todo!()
+            }
+            Err(prospective_offset) => {
+                todo!()
+            }
+        }
+    }
+
+    pub fn remove(&self, key: &[u8]) -> SSTable {
+        let offset = self
+            .find(&key[usize::from(self.prefix_len)..])
+            .expect("called remove for non-present key");
+
+        //
+
+        //
+
+        //
+        todo!()
+    }
+
+    pub fn split(&self) -> (SSTable, SSTable) {
+        todo!()
+    }
+
+    pub fn merge(&self, other: &SSTable) -> SSTable {
+        todo!()
+    }
+
+    pub fn should_split(&self) -> bool {
+        todo!()
+    }
+
+    pub fn should_merge(&self) -> bool {
+        todo!()
+    }
+
     fn header(&self) -> &Header {
         unsafe { &*(self.0.as_ptr() as *mut Header) }
     }
@@ -154,7 +206,7 @@ impl InlineRecords {
         unsafe { &mut *(self.0.as_mut_ptr() as *mut Header) }
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         usize::from(self.children)
     }
 
@@ -184,20 +236,6 @@ impl InlineRecords {
         let cmp = crate::fastcmp(l, key);
 
         if cmp == Equal { Ok(base) } else { Err(base + (cmp == Less) as usize) }
-    }
-
-    fn insert(&mut self, key: &[u8], pid: u64) {
-        match self.find(&key[usize::from(self.prefix_len)..]) {
-            Ok(offset) => {
-                if self.is_index {
-                    panic!("already contained key being merged into index");
-                }
-                todo!()
-            }
-            Err(prospective_offset) => {
-                todo!()
-            }
-        }
     }
 
     fn get_lub(&self, key: &[u8]) -> u64 {
@@ -349,7 +387,7 @@ mod test {
     #[test]
     fn simple() {
         let mut ir =
-            InlineRecords::new(&[1], &[7], 0, &[(&[1], 42), (&[6, 6, 6], 66)]);
+            SSTable::new(&[1], &[7], 0, &[(&[1], 42), (&[6, 6, 6], 66)]);
         ir.next = Some(NonZeroU64::new(5).unwrap());
         ir.is_index = false;
         dbg!(ir.header());
