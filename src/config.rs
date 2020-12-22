@@ -653,15 +653,22 @@ impl Config {
         let crc: u32 = crc32(&*bytes);
         let crc_arr = u32_to_arr(crc);
 
-        let path = self.config_path();
+        let temp_path = self.get_path().join("conf.tmp");
+        let final_path = self.config_path();
 
         let mut f =
-            fs::OpenOptions::new().write(true).create(true).open(path)?;
+            fs::OpenOptions::new().write(true).create(true).open(&temp_path)?;
 
         io_fail!(self, "write_config bytes");
         f.write_all(&*bytes)?;
         io_fail!(self, "write_config crc");
         f.write_all(&crc_arr)?;
+        io_fail!(self, "write_config fsync");
+        f.sync_all()?;
+        io_fail!(self, "write_config rename");
+        fs::rename(temp_path, final_path)?;
+        io_fail!(self, "write_config dir fsync");
+        fs::File::open(self.get_path())?.sync_all()?;
         io_fail!(self, "write_config post");
         Ok(())
     }
