@@ -310,6 +310,16 @@ macro_rules! builder {
     }
 }
 
+#[cfg(all(unix, not(miri)))]
+fn maybe_fsync_directory<P: AsRef<Path>>(path: P) -> io::Result<()> {
+    fs::File::open(path)?.sync_all()
+}
+
+#[cfg(any(not(unix), miri))]
+fn maybe_fsync_directory<P: AsRef<Path>>(_: P) -> io::Result<()> {
+    Ok(())
+}
+
 impl Config {
     /// Returns a default `Config`
     pub fn new() -> Config {
@@ -559,7 +569,7 @@ impl Config {
         );
 
         let file = self.try_lock(options.open(&self.db_path())?)?;
-        fs::File::open(self.get_path())?.sync_all()?;
+        maybe_fsync_directory(self.get_path())?;
         Ok(file)
     }
 
@@ -670,7 +680,7 @@ impl Config {
         io_fail!(self, "write_config rename");
         fs::rename(temp_path, final_path)?;
         io_fail!(self, "write_config dir fsync");
-        fs::File::open(self.get_path())?.sync_all()?;
+        maybe_fsync_directory(self.get_path())?;
         io_fail!(self, "write_config post");
         Ok(())
     }
