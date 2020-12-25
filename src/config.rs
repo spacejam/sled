@@ -361,7 +361,8 @@ impl Config {
         let file = config.open_file()?;
 
         let heap_path = config.get_path().join("heap");
-        let heap = Heap::start(heap_path)?;
+        let heap = Heap::start(&heap_path)?;
+        maybe_fsync_directory(heap_path)?;
 
         // seal config in a Config
         let config = RunningConfig {
