@@ -133,6 +133,19 @@ impl IVec {
             _ => {}
         }
     }
+
+    #[cfg(feature = "serde")]
+    /// Deserialized the `IVec` into the specified struct.
+    pub fn view_as<'de, T: c_serde::Deserialize<'de>>(&'de self) -> Result<T, crate::result::Error> {
+        crate::serde::from_ivec(self)
+    }
+
+    // It's not possible to implement `From` for `Serialize` due to conflicting impls.
+    #[cfg(feature = "serde")]
+    /// Creates an `IVec` from a `Serialize`-able types.
+    pub fn serialize<T: c_serde::Serialize>(v: &T) -> IVec {
+        crate::serde::to_vec(v).into()
+    }
 }
 
 impl FromIterator<u8> for IVec {

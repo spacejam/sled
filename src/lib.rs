@@ -282,6 +282,9 @@ mod measure_allocs;
 static ALLOCATOR: measure_allocs::TrackingAllocator =
     measure_allocs::TrackingAllocator;
 
+#[cfg(feature = "serde")]
+mod serde;
+
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
 /// hidden re-export of items for testing purposes
