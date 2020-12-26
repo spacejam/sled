@@ -239,7 +239,6 @@ impl SSTable {
         //  - fixed_key_length: None, fixed_value_length: Some
         // 4. [offsets] [variable keys followed by variable values]
         //  - fixed_key_length: None, fixed_value_length: None
-
         let mut offset = 0_u64;
         for (idx, (k, v)) in items.iter().enumerate() {
             if !keys_equal_length || !values_equal_length {
@@ -252,9 +251,21 @@ impl SSTable {
                 offset += varint_size(v.len() as u64) + v.len() as u64;
             }
 
-            ret.key_buf_for_offset_mut(idx).copy_from_slice(k);
+            let mut key_buf = ret.key_buf_for_offset_mut(idx);
+            if !keys_equal_length {
+                let varint_bytes =
+                    serialize_varint_into(k.len() as u64, key_buf);
+                key_buf = &mut key_buf[varint_bytes..];
+            }
+            key_buf[..k.len()].copy_from_slice(k);
 
-            ret.value_buf_for_offset_mut(idx).copy_from_slice(v);
+            let mut value_buf = ret.value_buf_for_offset_mut(idx);
+            if !values_equal_length {
+                let varint_bytes =
+                    serialize_varint_into(v.len() as u64, value_buf);
+                value_buf = &mut value_buf[varint_bytes..];
+            }
+            value_buf[..v.len()].copy_from_slice(v);
         }
 
         ret
