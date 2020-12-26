@@ -30,7 +30,6 @@ fn aligned_boxed_slice(size: usize) -> Box<[u8]> {
 
 /// <https://users.rust-lang.org/t/construct-fat-pointer-to-struct/29198/9>
 #[allow(trivial_casts)]
-#[inline]
 fn fatten(data: *const u8, len: usize) -> *mut [u8] {
     // Requirements of slice::from_raw_parts.
     assert!(!data.is_null());
@@ -49,8 +48,10 @@ pub(crate) struct Header {
     pub merging_child: Option<NonZeroU64>,
     lo_len: u64,
     hi_len: u64,
-    //fixed_key_length: Option<NonZeroU64>,
+    fixed_key_length: Option<NonZeroU64>,
+    fixed_value_length: Option<NonZeroU64>,
     pub children: u16,
+    offset_bytes: u8,
     pub prefix_len: u8,
     pub merging: bool,
     pub is_index: bool,
@@ -99,18 +100,108 @@ impl SSTable {
         lo: &[u8],
         hi: &[u8],
         prefix_len: u8,
-        items: &[(&[u8], u64)],
+        items: &[(&[u8], &[u8])],
     ) -> SSTable {
-        let offsets_size = size_of::<u64>() * (2 + items.len());
-        let keys_and_values_size = lo.len()
-            + hi.len()
-            + items.iter().map(|(k, _pid)| k.len()).sum::<usize>()
-            + (2 * size_of::<u64>()) * (2 + items.len());
+        // determine if we need to use varints and offset
+        // indirection tables, or if everything is equal
+        // size we can skip this.
+        let mut key_lengths = Vec::with_capacity(items.len());
+        let mut value_lengths = Vec::with_capacity(items.len());
 
-        println!("allocating size of {}", offsets_size + keys_and_values_size);
+        let mut keys_equal_length = true;
+        let mut values_equal_length = true;
+        for (k, v) in items {
+            key_lengths.push(k.len() as u64);
+            if let Some(first_sz) = key_lengths.first() {
+                keys_equal_length &= *first_sz == k.len() as u64;
+            }
+            value_lengths.push(v.len() as u64);
+            if let Some(first_sz) = value_lengths.first() {
+                values_equal_length &= *first_sz == v.len() as u64;
+            }
+        }
 
-        let boxed_slice =
-            aligned_boxed_slice(offsets_size + keys_and_values_size);
+        let fixed_key_length = if keys_equal_length {
+            if let Some(key_length) = key_lengths.first() {
+                if *key_length > 0 {
+                    Some(NonZeroU64::new(*key_length).unwrap())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let fixed_value_length = if values_equal_length {
+            if let Some(value_length) = value_lengths.first() {
+                if *value_length > 0 {
+                    Some(NonZeroU64::new(*value_length).unwrap())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let key_storage_size = if let Some(key_length) = fixed_key_length {
+            key_length.get() * (items.len() as u64)
+        } else {
+            let mut sum = 0;
+            for key_length in &key_lengths {
+                sum += key_length;
+                sum += varint_size(*key_length);
+            }
+            sum
+        };
+
+        let value_storage_size = if let Some(value_length) = fixed_value_length
+        {
+            value_length.get() * (items.len() as u64)
+        } else {
+            let mut sum = 0;
+            for value_length in &value_lengths {
+                sum += value_length;
+                sum += varint_size(*value_length);
+            }
+            sum
+        };
+
+        let (offsets_storage_size, offset_bytes) = if keys_equal_length
+            && values_equal_length
+        {
+            (0, 0)
+        } else {
+            let max_offset_storage_size = (6 * items.len()) as u64;
+            let max_total_item_storage_size =
+                key_storage_size + value_storage_size + max_offset_storage_size;
+
+            let bytes_per_offset: u8 = match max_total_item_storage_size {
+                i if i < 256 => 1,
+                i if i < (1 << 16) => 2,
+                i if i < (1 << 24) => 3,
+                i if i < (1 << 32) => 4,
+                i if i < (1 << 40) => 5,
+                i if i < (1 << 48) => 6,
+                _ => unreachable!(),
+            };
+
+            (bytes_per_offset as u64 * items.len() as u64, bytes_per_offset)
+        };
+
+        let total_item_storage_size =
+            key_storage_size + value_storage_size + offsets_storage_size;
+
+        println!("allocating size of {}", total_item_storage_size);
+
+        let boxed_slice = aligned_boxed_slice(
+            usize::try_from(total_item_storage_size).unwrap(),
+        );
 
         let mut ret = SSTable(ManuallyDrop::new(boxed_slice));
 
@@ -119,43 +210,141 @@ impl SSTable {
             merging_child: None,
             lo_len: lo.len() as u64,
             hi_len: hi.len() as u64,
+            fixed_key_length,
+            fixed_value_length,
+            offset_bytes,
             children: u16::try_from(items.len()).unwrap(),
             prefix_len: prefix_len,
             merging: false,
             is_index: true,
         };
 
-        let data_buf = &mut ret.0[size_of::<Header>()..];
-        let (offsets, lengths_keys_and_values) =
-            data_buf.split_at_mut(offsets_size);
+        // we use either 0 or 1 offset tables.
+        // - if keys and values are all equal lengths, no offset table is
+        //   required
+        // - if keys are equal length but values are not, we put an offset table
+        //   at the beginning of the data buffer, then put each of the keys
+        //   packed together, then varint-prefixed values which are addressed by
+        //   the offset table
+        // - if keys and values are both different lengths, we put an offset
+        //   table at the beginning of the data buffer, then varint-prefixed
+        //   keys followed inline with varint-prefixed values.
+        //
+        // So, there are 4 possible layouts:
+        // 1. [fixed size keys] [fixed size values]
+        //  - signified by fixed_key_length and fixed_value_length being Some
+        // 2. [offsets] [fixed size keys] [variable values]
+        //  - fixed_key_length: Some, fixed_value_length: None
+        // 3. [offsets] [variable keys] [fixed-length values]
+        //  - fixed_key_length: None, fixed_value_length: Some
+        // 4. [offsets] [variable keys followed by variable values]
+        //  - fixed_key_length: None, fixed_value_length: None
 
-        let bounds = [(lo, 0), (hi, 0)];
-        let iter = bounds.iter().chain(items.into_iter());
+        let mut offset = 0_u64;
+        for (idx, (k, v)) in items.iter().enumerate() {
+            if !keys_equal_length || !values_equal_length {
+                ret.set_offset(idx, usize::try_from(offset).unwrap());
+            }
+            if !keys_equal_length {
+                offset += varint_size(k.len() as u64) + k.len() as u64;
+            }
+            if !values_equal_length {
+                offset += varint_size(v.len() as u64) + v.len() as u64;
+            }
 
-        let mut kv_cursor = 0_usize;
-        for (idx, (key, pid)) in iter.enumerate() {
-            let offsets_cursor = idx * U64_SZ;
-            offsets[offsets_cursor..offsets_cursor + U64_SZ]
-                .copy_from_slice(&kv_cursor.to_le_bytes());
+            ret.key_buf_for_offset_mut(idx).copy_from_slice(k);
 
-            lengths_keys_and_values[kv_cursor..kv_cursor + U64_SZ]
-                .copy_from_slice(&(key.len() as u64).to_le_bytes());
-            kv_cursor += U64_SZ;
-
-            lengths_keys_and_values[kv_cursor..kv_cursor + key.len()]
-                .copy_from_slice(key);
-            kv_cursor += key.len();
-
-            lengths_keys_and_values[kv_cursor..kv_cursor + U64_SZ]
-                .copy_from_slice(&pid.to_le_bytes());
-            kv_cursor += U64_SZ;
-            dbg!(kv_cursor);
+            ret.value_buf_for_offset_mut(idx).copy_from_slice(v);
         }
 
         ret
     }
 
-    pub fn insert(&self, key: &[u8], pid: u64) -> SSTable {
+    // returns the OPEN ENDED buffer where a key may be placed
+    fn key_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
+        match (self.fixed_key_length, self.fixed_value_length) {
+            (Some(k_sz), Some(_)) | (Some(k_sz), None) => {
+                let keys_buf = self.keys_buf_mut();
+                &mut keys_buf[index * usize::try_from(k_sz.get()).unwrap()..]
+            }
+            (None, Some(_)) | (None, None) => {
+                // find offset for key or combined kv offset
+                let offset = self.offset(index);
+                let keys_buf = self.keys_buf_mut();
+                &mut keys_buf[offset..]
+            }
+        }
+    }
+
+    // returns the OPEN ENDED buffer where a value may be placed
+    //
+    // NB: it's important that this is only ever called after setting
+    // the key and its varint length prefix, as this needs to be parsed
+    // for case 4.
+    fn value_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
+        match (self.fixed_key_length, self.fixed_value_length) {
+            (Some(_), Some(v_sz)) | (None, Some(v_sz)) => {
+                let values_buf = self.values_buf_mut();
+                &mut values_buf[index * usize::try_from(v_sz.get()).unwrap()..]
+            }
+            (Some(_), None) | (None, None) => {
+                // find combined kv offset, skip key bytes
+                let offset = self.offset(index);
+                let values_buf = self.values_buf_mut();
+                &mut values_buf[offset..]
+            }
+        }
+    }
+
+    fn offset(&self, index: usize) -> usize {
+        let start = index * self.offset_bytes as usize;
+        let end = start + self.offset_bytes as usize;
+        let buf = &self.offsets_buf()[start..end];
+        let mut le_usize_buf = [0u8; U64_SZ];
+        le_usize_buf[end - start..].copy_from_slice(buf);
+        usize::try_from(u64::from_le_bytes(le_usize_buf)).unwrap()
+    }
+
+    fn set_offset(&mut self, index: usize, offset: usize) {
+        let offset_bytes = self.offset_bytes as usize;
+        let mut buf = self.offset_buf_for_offset_mut(index);
+        let bytes = &offset.to_le_bytes()[..offset_bytes];
+        buf.copy_from_slice(bytes);
+    }
+
+    fn offset_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
+        let start = index * self.offset_bytes as usize;
+        let end = start + self.offset_bytes as usize;
+        &mut self.offsets_buf_mut()[start..end]
+    }
+
+    fn keys_buf_mut(&mut self) -> &mut [u8] {
+        todo!()
+    }
+
+    fn values_buf_mut(&mut self) -> &mut [u8] {
+        todo!()
+    }
+
+    fn offsets_buf(&self) -> &[u8] {
+        let offset_sz = self.children as usize * self.offset_bytes as usize;
+        &self.data_buf()[..offset_sz]
+    }
+
+    fn offsets_buf_mut(&mut self) -> &mut [u8] {
+        let offset_sz = self.children as usize * self.offset_bytes as usize;
+        &mut self.data_buf_mut()[..offset_sz]
+    }
+
+    fn data_buf(&self) -> &[u8] {
+        &self.0[size_of::<Header>()..]
+    }
+
+    fn data_buf_mut(&mut self) -> &mut [u8] {
+        &mut self.0[size_of::<Header>()..]
+    }
+
+    pub fn insert(&self, key: &[u8], value: &[u8]) -> SSTable {
         match self.find(&key[usize::from(self.prefix_len)..]) {
             Ok(offset) => {
                 if self.is_index {
@@ -238,7 +427,7 @@ impl SSTable {
         if cmp == Equal { Ok(base) } else { Err(base + (cmp == Less) as usize) }
     }
 
-    fn get_lub(&self, key: &[u8]) -> u64 {
+    fn get_lub(&self, key: &[u8]) -> &[u8] {
         assert!(key >= self.lo());
         match self.find(key) {
             Ok(idx) => self.index_child(idx).1,
@@ -246,7 +435,7 @@ impl SSTable {
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = (&[u8], u64)> {
+    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
         (2..)
             .take_while(move |idx| *idx < self.len_internal())
             .map(move |idx| self.index(idx))
@@ -260,11 +449,11 @@ impl SSTable {
         self.index(1).0
     }
 
-    fn index_child(&self, idx: usize) -> (&[u8], u64) {
+    fn index_child(&self, idx: usize) -> (&[u8], &[u8]) {
         self.index(idx + 2)
     }
 
-    fn index(&self, idx: usize) -> (&[u8], u64) {
+    fn index(&self, idx: usize) -> (&[u8], &[u8]) {
         assert!(
             idx < self.len_internal(),
             "index {} is not less than internal length of {}",
@@ -278,7 +467,7 @@ impl SSTable {
 
         let (key, pid_bytes) = raw.split_at(pivot);
 
-        (key, u64::from_le_bytes(pid_bytes.try_into().unwrap()))
+        (key, pid_bytes)
     }
 
     fn index_raw_kv(&self, idx: usize) -> &[u8] {
@@ -325,56 +514,76 @@ fn varint_size(int: u64) -> u64 {
     }
 }
 
-fn serialize_varint_into(int: u64, buf: &mut [u8]) {
+// returns how many bytes the varint consumed
+fn serialize_varint_into(int: u64, buf: &mut [u8]) -> usize {
     if int <= 240 {
         buf[0] = u8::try_from(int).unwrap();
+        1
     } else if int <= 2287 {
         buf[0] = u8::try_from((int - 240) / 256 + 241).unwrap();
         buf[1] = u8::try_from((int - 240) % 256).unwrap();
+        2
     } else if int <= 67823 {
         buf[0] = 249;
         buf[1] = u8::try_from((int - 2288) / 256).unwrap();
         buf[2] = u8::try_from((int - 2288) % 256).unwrap();
+        3
     } else if int <= 0x00FF_FFFF {
         buf[0] = 250;
         let bytes = int.to_le_bytes();
         buf[1..4].copy_from_slice(&bytes[..3]);
+        4
     } else if int <= 0xFFFF_FFFF {
         buf[0] = 251;
         let bytes = int.to_le_bytes();
         buf[1..5].copy_from_slice(&bytes[..4]);
+        5
     } else if int <= 0x00FF_FFFF_FFFF {
         buf[0] = 252;
         let bytes = int.to_le_bytes();
         buf[1..6].copy_from_slice(&bytes[..5]);
+        6
     } else if int <= 0xFFFF_FFFF_FFFF {
         buf[0] = 253;
         let bytes = int.to_le_bytes();
         buf[1..7].copy_from_slice(&bytes[..6]);
+        7
     } else if int <= 0x00FF_FFFF_FFFF_FFFF {
         buf[0] = 254;
         let bytes = int.to_le_bytes();
         buf[1..8].copy_from_slice(&bytes[..7]);
+        8
     } else {
         buf[0] = 255;
         let bytes = int.to_le_bytes();
         buf[1..9].copy_from_slice(&bytes[..8]);
-    };
+        9
+    }
 }
 
-fn deserialize_varint(buf: &[u8]) -> crate::Result<u64> {
+// returns the deserialized varint, along with how many bytes
+// were taken up by the varint
+fn deserialize_varint(buf: &[u8]) -> crate::Result<(u64, usize)> {
     if buf.is_empty() {
         return Err(crate::Error::corruption(None));
     }
     let res = match buf[0] {
-        0..=240 => u64::from(buf[0]),
-        241..=248 => 240 + 256 * (u64::from(buf[0]) - 241) + u64::from(buf[1]),
-        249 => 2288 + 256 * u64::from(buf[1]) + u64::from(buf[2]),
+        0..=240 => (u64::from(buf[0]), 1),
+        241..=248 => {
+            let varint =
+                240 + 256 * (u64::from(buf[0]) - 241) + u64::from(buf[1]);
+            (varint, 2)
+        }
+        249 => {
+            let varint = 2288 + 256 * u64::from(buf[1]) + u64::from(buf[2]);
+            (varint, 3)
+        }
         other => {
             let sz = other as usize - 247;
             let mut aligned = [0; 8];
             aligned[..sz].copy_from_slice(&buf[1..=sz]);
-            u64::from_le_bytes(aligned)
+            let varint = u64::from_le_bytes(aligned);
+            (varint, sz)
         }
     };
     Ok(res)
