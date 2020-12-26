@@ -298,11 +298,20 @@ impl SSTable {
                 let values_buf = self.values_buf_mut();
                 &mut values_buf[index * usize::try_from(v_sz.get()).unwrap()..]
             }
-            (Some(_), None) | (None, None) => {
-                // find combined kv offset, skip key bytes
+            (Some(_), None) => {
+                // find combined kv offset
                 let offset = self.offset(index);
                 let values_buf = self.values_buf_mut();
                 &mut values_buf[offset..]
+            }
+            (None, None) => {
+                // find combined kv offset, skip key bytes
+                let offset = self.offset(index);
+                let values_buf = self.values_buf_mut();
+                let slot_buf = &mut values_buf[offset..];
+                let (val_len, varint_sz) =
+                    deserialize_varint(slot_buf).unwrap();
+                &mut values_buf[usize::try_from(val_len).unwrap() + varint_sz..]
             }
         }
     }
