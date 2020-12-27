@@ -208,6 +208,7 @@ mod subscriber;
 mod sys_limits;
 pub mod transaction;
 mod tree;
+mod varint;
 
 /// Functionality for conditionally triggering failpoints under test.
 #[cfg(feature = "failpoints")]
@@ -335,6 +336,7 @@ use {
         sstable::SSTable,
         subscriber::Subscribers,
         tree::TreeInner,
+        varint::{deserialize_varint, serialize_varint_into, varint_size},
     },
     crossbeam_utils::{Backoff, CachePadded},
     log::{debug, error, trace, warn},
