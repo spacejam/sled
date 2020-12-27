@@ -321,7 +321,7 @@ impl SSTable {
         let end = start + self.offset_bytes as usize;
         let buf = &self.offsets_buf()[start..end];
         let mut le_usize_buf = [0u8; U64_SZ];
-        le_usize_buf[end - start..].copy_from_slice(buf);
+        le_usize_buf[..self.offset_bytes as usize].copy_from_slice(buf);
         usize::try_from(u64::from_le_bytes(le_usize_buf)).unwrap()
     }
 
@@ -339,11 +339,29 @@ impl SSTable {
     }
 
     fn keys_buf_mut(&mut self) -> &mut [u8] {
-        todo!()
+        let offset_sz = self.children as usize * self.offset_bytes as usize;
+        &mut self.data_buf_mut()[offset_sz..]
     }
 
     fn values_buf_mut(&mut self) -> &mut [u8] {
-        todo!()
+        let offset_sz = self.children as usize * self.offset_bytes as usize;
+        match (self.fixed_key_length, self.fixed_value_length) {
+            (Some(fixed_key_length), Some(_))
+            | (Some(fixed_key_length), None) => {
+                let start = offset_sz
+                    + (fixed_key_length.get() as usize
+                        * self.children as usize);
+                &mut self.data_buf_mut()[start..]
+            }
+            (None, Some(fixed_value_length)) => {
+                let total_value_size =
+                    fixed_value_length.get() as usize * self.children as usize;
+                let mut data_buf = self.data_buf_mut();
+                let start = data_buf.len() - total_value_size;
+                &mut data_buf[start..]
+            }
+            (None, None) => &mut self.data_buf_mut()[offset_sz..],
+        }
     }
 
     fn offsets_buf(&self) -> &[u8] {
@@ -616,14 +634,14 @@ mod test {
     #[test]
     fn simple() {
         let mut ir =
-            SSTable::new(&[1], &[7], 0, &[(&[1], 42), (&[6, 6, 6], 66)]);
+            SSTable::new(&[1], &[7], 0, &[(&[1], &[42]), (&[6, 6, 6], &[66])]);
         ir.next = Some(NonZeroU64::new(5).unwrap());
         ir.is_index = false;
         dbg!(ir.header());
         println!("ir: {:#?}", ir);
-        assert_eq!(ir.get_lub(&[1]), 42);
-        assert_eq!(ir.get_lub(&[2]), 42);
-        assert_eq!(ir.get_lub(&[6]), 42);
-        assert_eq!(ir.get_lub(&[7]), 66);
+        assert_eq!(ir.get_lub(&[1]), &[42]);
+        assert_eq!(ir.get_lub(&[2]), &[42]);
+        assert_eq!(ir.get_lub(&[6]), &[42]);
+        assert_eq!(ir.get_lub(&[7]), &[66]);
     }
 }
