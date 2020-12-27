@@ -1,14 +1,13 @@
 #![allow(unsafe_code)]
-#![allow(unused)]
 
 use std::{
     alloc::{alloc_zeroed, dealloc, Layout},
     cmp::Ordering::{Equal, Greater, Less},
-    convert::{TryFrom, TryInto},
+    convert::TryFrom,
     fmt,
     mem::{align_of, size_of, ManuallyDrop},
     num::NonZeroU64,
-    ops::{Deref, DerefMut, Index, IndexMut},
+    ops::{Deref, DerefMut},
 };
 
 const ALIGNMENT: usize = align_of::<Header>();
@@ -57,6 +56,8 @@ pub(crate) struct Header {
 }
 
 /// An immutable sorted string table
+#[derive(Clone)]
+#[cfg_attr(feature = "testing", derive(PartialEq))]
 pub(crate) struct SSTable(ManuallyDrop<Box<[u8]>>);
 
 impl Drop for SSTable {
@@ -474,6 +475,7 @@ impl SSTable {
                 todo!()
             }
         }
+        testing_assert!(is_sorted(&index.keys));
     }
 
     pub fn remove(&self, key: &[u8]) -> SSTable {
@@ -517,6 +519,10 @@ impl SSTable {
         usize::from(self.children)
     }
 
+    pub fn contains_key(&self, key: &[u8]) -> bool {
+        self.find(key).is_ok()
+    }
+
     fn find(&self, key: &[u8]) -> Result<usize, usize> {
         let mut size = self.len();
         if size == 0 || key < self.index_key(0) {
@@ -549,10 +555,20 @@ impl SSTable {
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+    fn iter_keys(&self) -> impl Iterator<Item = &[u8]> {
         (0..)
             .take_while(move |idx| *idx < self.len())
-            .map(move |idx| (self.index_key(idx), self.index_value(idx)))
+            .map(move |idx| self.index_key(idx))
+    }
+
+    fn iter_values(&self) -> impl Iterator<Item = &[u8]> {
+        (0..)
+            .take_while(move |idx| *idx < self.len())
+            .map(move |idx| self.index_value(idx))
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+        self.iter_keys().zip(self.iter_values())
     }
 
     fn lo(&self) -> &[u8] {

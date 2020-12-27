@@ -332,6 +332,7 @@ use {
         node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
+        sstable::SSTable,
         subscriber::Subscribers,
         tree::TreeInner,
     },
