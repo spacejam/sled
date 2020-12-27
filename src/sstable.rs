@@ -724,6 +724,9 @@ fn deserialize_varint(buf: &[u8]) -> crate::Result<(u64, usize)> {
 
 #[cfg(test)]
 mod test {
+    use quickcheck::{Arbitrary, Gen};
+    use rand::Rng;
+
     use super::*;
 
     #[test]
@@ -738,5 +741,55 @@ mod test {
         assert_eq!(ir.get_lub(&[2]), &[42]);
         assert_eq!(ir.get_lub(&[6]), &[42]);
         assert_eq!(ir.get_lub(&[7]), &[66]);
+    }
+
+    impl Arbitrary for Header {
+        fn arbitrary<G: Gen>(g: &mut G) -> Header {
+            todo!()
+        }
+    }
+
+    fn prop_indexable(
+        lo: Vec<u8>,
+        hi: Vec<u8>,
+        children: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> bool {
+        let children_ref: Vec<(&[u8], &[u8])> =
+            children.iter().map(|(k, v)| (k.as_ref(), v.as_ref())).collect();
+        let ir = SSTable::new(&lo, &hi, 0, &children_ref);
+
+        assert_eq!(ir.children as usize, children_ref.len());
+
+        for (idx, (k, v)) in children_ref.iter().enumerate() {
+            assert_eq!(ir.index_key(idx), *k);
+            let value = ir.index_value(idx);
+            assert_eq!(
+                value, *v,
+                "expected value index {} to have value {:?} but instead it was {:?}",
+                idx, *v, value,
+            );
+        }
+        true
+    }
+
+    quickcheck::quickcheck! {
+        #[cfg_attr(miri, ignore)]
+        fn indexable(lo: Vec<u8>, hi: Vec<u8>, children: Vec<(Vec<u8>, Vec<u8>)>) -> bool {
+            prop_indexable(lo, hi, children)
+        }
+    }
+
+    #[test]
+    fn sstable_bug_00() {
+        /*
+        assert!(prop_indexable(vec![], vec![], vec![]));
+        assert!(prop_indexable(vec![], vec![], vec![(vec![], vec![])]));
+        assert!(prop_indexable(vec![], vec![], vec![(vec![], vec![])]));
+        */
+        assert!(prop_indexable(
+            vec![],
+            vec![],
+            vec![(vec![], vec![]), (vec![], vec![1]),]
+        ));
     }
 }
