@@ -193,8 +193,11 @@ impl SSTable {
             (bytes_per_offset as u64 * items.len() as u64, bytes_per_offset)
         };
 
-        let total_item_storage_size =
-            key_storage_size + value_storage_size + offsets_storage_size;
+        let total_item_storage_size = hi.len() as u64
+            + lo.len() as u64
+            + key_storage_size
+            + value_storage_size
+            + offsets_storage_size;
 
         println!("allocating size of {}", total_item_storage_size);
 
@@ -781,15 +784,20 @@ mod test {
 
     #[test]
     fn sstable_bug_00() {
-        /*
-        assert!(prop_indexable(vec![], vec![], vec![]));
-        assert!(prop_indexable(vec![], vec![], vec![(vec![], vec![])]));
-        assert!(prop_indexable(vec![], vec![], vec![(vec![], vec![])]));
-        */
+        // postmortem: offsets were not being stored, and the slot buf was not
+        // being considered correctly while writing or reading values in
+        // shared slots.
         assert!(prop_indexable(
             vec![],
             vec![],
             vec![(vec![], vec![]), (vec![], vec![1]),]
         ));
+    }
+
+    #[test]
+    fn sstable_bug_01() {
+        // postmortem: hi and lo keys were not properly being accounted in the
+        // inital allocation
+        assert!(prop_indexable(vec![], vec![0], vec![],));
     }
 }
