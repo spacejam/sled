@@ -199,8 +199,6 @@ impl SSTable {
             + value_storage_size
             + offsets_storage_size;
 
-        println!("allocating size of {}", total_item_storage_size);
-
         let boxed_slice = aligned_boxed_slice(
             usize::try_from(total_item_storage_size).unwrap(),
         );
@@ -327,11 +325,11 @@ impl SSTable {
             }
             (None, None) => {
                 // find combined kv offset, skip key bytes
-                let offset = dbg!(self.offset(index));
+                let offset = self.offset(index);
                 let values_buf = self.values_buf_mut();
                 let slot_buf = &mut values_buf[offset..];
                 let (val_len, varint_sz) =
-                    dbg!(deserialize_varint(slot_buf).unwrap());
+                    deserialize_varint(slot_buf).unwrap();
                 &mut slot_buf[usize::try_from(val_len).unwrap() + varint_sz..]
             }
         }
@@ -356,12 +354,12 @@ impl SSTable {
             }
             (None, None) => {
                 // find combined kv offset, skip key bytes
-                let offset = dbg!(self.offset(index));
-                let values_buf = dbg!(self.values_buf());
-                let slot_buf = dbg!(&values_buf[offset..]);
+                let offset = self.offset(index);
+                let values_buf = self.values_buf();
+                let slot_buf = &values_buf[offset..];
                 let (val_len, varint_sz) =
-                    dbg!(deserialize_varint(slot_buf).unwrap());
-                dbg!(&slot_buf[usize::try_from(val_len).unwrap() + varint_sz..])
+                    deserialize_varint(slot_buf).unwrap();
+                &slot_buf[usize::try_from(val_len).unwrap() + varint_sz..]
             }
         }
     }
