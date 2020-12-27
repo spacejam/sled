@@ -8,13 +8,13 @@ use std::{
 
 use crate::{
     deserialize_varint,
-    node::{Index, Leaf},
+    node::Leaf,
     pagecache::{
         BatchManifest, HeapId, MessageHeader, PageState, SegmentNumber,
         Snapshot,
     },
     serialize_varint_into, varint_size, Data, DiskPtr, Error, IVec, Link, Meta,
-    Node, Result,
+    Node, Result, SSTable,
 };
 
 /// Items that may be serialized and deserialized
@@ -505,6 +505,28 @@ impl Serialize for Snapshot {
     }
 }
 
+impl Serialize for SSTable {
+    fn serialized_size(&self) -> u64 {
+        (self.0.len() as u64).serialized_size() + (self.0.len() as u64)
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        (self.0.len() as u64).serialize_into(buf);
+        buf[..self.0.len()].copy_from_slice(&self.0);
+        scoot(buf, self.0.len());
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<SSTable> {
+        if buf.is_empty() {
+            return Err(Error::corruption(None));
+        }
+        let len = usize::try_from(u64::deserialize(buf)?).unwrap();
+        let sst = SSTable::from_raw(&buf[..len]);
+        *buf = &buf[len..];
+        Ok(sst)
+    }
+}
+
 impl Serialize for Data {
     fn serialized_size(&self) -> u64 {
         match self {
@@ -524,21 +546,7 @@ impl Serialize for Data {
                         })
                         .sum::<u64>()
             }
-            Data::Index(ref index) => {
-                1_u64
-                    + (index.keys.len() as u64).serialized_size()
-                    + index
-                        .keys
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, k)| {
-                            let v = index.pointers[idx];
-                            (k.len() as u64).serialized_size()
-                                + v.serialized_size()
-                                + k.len() as u64
-                        })
-                        .sum::<u64>()
-            }
+            Data::Index(ref index) => 1_u64 + index.serialized_size(),
         }
     }
 
@@ -556,13 +564,7 @@ impl Serialize for Data {
             }
             Data::Index(index) => {
                 1_u8.serialize_into(buf);
-                (index.keys.len() as u64).serialize_into(buf);
-                for key in &index.keys {
-                    key.serialize_into(buf);
-                }
-                for value in &index.pointers {
-                    value.serialize_into(buf);
-                }
+                index.serialize_into(buf);
             }
         }
     }
@@ -579,10 +581,7 @@ impl Serialize for Data {
                 keys: deserialize_bounded_sequence(buf, len)?,
                 values: deserialize_bounded_sequence(buf, len)?,
             }),
-            1 => Data::Index(Index {
-                keys: deserialize_bounded_sequence(buf, len)?,
-                pointers: deserialize_bounded_sequence(buf, len)?,
-            }),
+            1 => Data::Index(SSTable::deserialize(buf)?),
             _ => return Err(Error::corruption(None)),
         })
     }
@@ -1089,6 +1088,11 @@ mod qc {
 
         #[cfg_attr(miri, ignore)]
         fn msg_header(item: MessageHeader) -> bool {
+            prop_serialize(&item)
+        }
+
+        #[cfg_attr(miri, ignore)]
+        fn sstable(item: SSTable) -> bool {
             prop_serialize(&item)
         }
     }
