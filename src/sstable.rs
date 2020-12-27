@@ -120,32 +120,32 @@ impl SSTable {
             }
         }
 
-        let fixed_key_length = if keys_equal_length {
+        let (fixed_key_length, keys_equal_length) = if keys_equal_length {
             if let Some(key_length) = key_lengths.first() {
                 if *key_length > 0 {
-                    Some(NonZeroU64::new(*key_length).unwrap())
+                    (Some(NonZeroU64::new(*key_length).unwrap()), true)
                 } else {
-                    None
+                    (None, false)
                 }
             } else {
-                None
+                (None, false)
             }
         } else {
-            None
+            (None, false)
         };
 
-        let fixed_value_length = if values_equal_length {
+        let (fixed_value_length, values_equal_length) = if values_equal_length {
             if let Some(value_length) = value_lengths.first() {
                 if *value_length > 0 {
-                    Some(NonZeroU64::new(*value_length).unwrap())
+                    (Some(NonZeroU64::new(*value_length).unwrap()), true)
                 } else {
-                    None
+                    (None, false)
                 }
             } else {
-                None
+                (None, false)
             }
         } else {
-            None
+            (None, false)
         };
 
         let key_storage_size = if let Some(key_length) = fixed_key_length {
@@ -324,12 +324,12 @@ impl SSTable {
             }
             (None, None) => {
                 // find combined kv offset, skip key bytes
-                let offset = self.offset(index);
+                let offset = dbg!(self.offset(index));
                 let values_buf = self.values_buf_mut();
                 let slot_buf = &mut values_buf[offset..];
                 let (val_len, varint_sz) =
-                    deserialize_varint(slot_buf).unwrap();
-                &mut values_buf[usize::try_from(val_len).unwrap() + varint_sz..]
+                    dbg!(deserialize_varint(slot_buf).unwrap());
+                &mut slot_buf[usize::try_from(val_len).unwrap() + varint_sz..]
             }
         }
     }
@@ -353,12 +353,12 @@ impl SSTable {
             }
             (None, None) => {
                 // find combined kv offset, skip key bytes
-                let offset = self.offset(index);
-                let values_buf = self.values_buf();
-                let slot_buf = &values_buf[offset..];
+                let offset = dbg!(self.offset(index));
+                let values_buf = dbg!(self.values_buf());
+                let slot_buf = dbg!(&values_buf[offset..]);
                 let (val_len, varint_sz) =
-                    deserialize_varint(slot_buf).unwrap();
-                &values_buf[usize::try_from(val_len).unwrap() + varint_sz..]
+                    dbg!(deserialize_varint(slot_buf).unwrap());
+                dbg!(&slot_buf[usize::try_from(val_len).unwrap() + varint_sz..])
             }
         }
     }
