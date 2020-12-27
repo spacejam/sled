@@ -228,8 +228,12 @@ impl SSTable {
             is_index: true,
         };
 
-        ret.lo_mut().copy_from_slice(lo);
-        ret.hi_mut().copy_from_slice(hi);
+        if let Some(ref mut lo_buf) = ret.lo_mut() {
+            lo_buf.copy_from_slice(lo);
+        }
+        if let Some(ref mut hi_buf) = ret.hi_mut() {
+            hi_buf.copy_from_slice(hi);
+        }
 
         // we use either 0 or 1 offset tables.
         // - if keys and values are all equal lengths, no offset table is
@@ -556,7 +560,7 @@ impl SSTable {
     }
 
     fn get_lub(&self, key: &[u8]) -> &[u8] {
-        assert!(key >= self.lo());
+        assert!(key >= self.lo().unwrap_or(&[]));
         match self.find(key) {
             Ok(idx) => self.index_value(idx),
             Err(idx) => self.index_value(idx - 1),
