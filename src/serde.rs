@@ -1,4 +1,3 @@
-#![allow(clippy::cast_sign_loss, clippy::clippy::cast_possible_wrap)] // all type cases are intentional here
 use std::convert::TryFrom;
 use c_serde::{
     Deserialize, 
@@ -35,9 +34,9 @@ pub fn to_vec<S: c_serde::Serialize>(obj: &S) -> Vec<u8> {
 }
 
 impl IVecSer {
-    #[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)] // this will allow make all serialize functions much shorter...
-    fn put<T: Serialize>(&mut self, v: T) -> Result<(), Error> {
-        let req_sz = self.offset + v.serialized_size() as usize;
+    fn put<T: Serialize + Copy>(&mut self, v: T) -> Result<(), Error> {
+        let req_sz = usize::try_from(self.offset as u64 + v.serialized_size())
+            .expect("object is too big to be serialized");
         if req_sz > self.buf.len() {
             // more space required
             self.buf.resize(req_sz, 0);
@@ -57,7 +56,7 @@ impl IVecSer {
     }
 
     fn put_bytes(&mut self, b: &[u8]) -> Result<(), Error> {
-        let len = b.len() as u64;
+        let len = u32::try_from(b.len()).map_err(|_| Error::Unsupported("can't serialize buffer with length > u32::MAX".to_string()))?;
         self.put(len)?;
         self.buf.extend_from_slice(b);
         self.offset += b.len();
@@ -89,19 +88,19 @@ impl<'a> Serializer for &'a mut IVecSer {
     }
 
     fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
-        self.put(v as u8)
+        self.put(u8::from_ne_bytes(v.to_ne_bytes()))
     }
 
     fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
-        self.serialize_u16(v as u16)
+        self.serialize_u16(u16::from_ne_bytes(v.to_ne_bytes()))
     }
 
     fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
-        self.put(v as u32)
+        self.put(u32::from_ne_bytes(v.to_ne_bytes()))
     }
 
     fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
-        self.put(v as u64)
+        self.put(u64::from_ne_bytes(v.to_ne_bytes()))
     }
 
     fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
@@ -121,12 +120,12 @@ impl<'a> Serializer for &'a mut IVecSer {
     }
 
     fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
-        let e = u32::from_be_bytes(v.to_be_bytes());
+        let e = u32::from_ne_bytes(v.to_ne_bytes());
         self.put(e)
     }
 
     fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
-        let e = u64::from_be_bytes(v.to_be_bytes());
+        let e = u64::from_ne_bytes(v.to_ne_bytes());
         self.put(e)
     }
 
@@ -180,7 +179,10 @@ impl<'a> Serializer for &'a mut IVecSer {
     }
 
     fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        self.serialize_u64(len as u64)?;
+        let l32 = u32::try_from(len)
+            .map_err(|_| Error::Unsupported("tuple is too big to serialize".to_string()))?;
+
+        self.serialize_u32(l32)?;
         Ok(self)
     }
 
@@ -195,7 +197,11 @@ impl<'a> Serializer for &'a mut IVecSer {
 
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
         match len {
-            Some(len) => self.serialize_u64(len as u64)?,
+            Some(len) => {
+                let l32 = u32::try_from(len)
+                    .map_err(|_| Error::Unsupported("map is too big to serialize".to_string()))?;
+                self.serialize_u32(l32)?
+            },
             None => return Err(Error::Unsupported("map length must be known".to_string()))
         }
         
@@ -352,8 +358,9 @@ impl<'de> IVecDe<'de> {
     }
 
     fn take_bytes(&mut self) -> SResult<&'de [u8]> {
-        let len = self.take_u64()? as usize;
+        let len = self.take_u32()? as usize;
         if self.data.len() < len {
+            dbg!(&self.data.len(), len);
             return Err(Error::Unsupported("IVec can't be deserialized".to_string()))
         }
         let res = &self.data[..len];
@@ -374,19 +381,19 @@ impl<'de, 'a> Deserializer<'de> for &'a mut IVecDe<'de> {
     }
 
     fn deserialize_i8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_i8(self.take_u8()? as i8)
+        visitor.visit_i8(i8::from_ne_bytes(self.take_u8()?.to_ne_bytes()))
     }
 
     fn deserialize_i16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_i16(self.take_u16()? as i16)
+        visitor.visit_i16(i16::from_ne_bytes(self.take_u16()?.to_ne_bytes()))
     }
 
     fn deserialize_i32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_i32(self.take_u32()? as i32)
+        visitor.visit_i32(i32::from_ne_bytes(self.take_u32()?.to_ne_bytes()))
     }
 
     fn deserialize_i64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_i64(self.take_u64()? as i64)
+        visitor.visit_i64(i64::from_ne_bytes(self.take_u64()?.to_ne_bytes()))
     }
 
     fn deserialize_u8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -407,12 +414,12 @@ impl<'de, 'a> Deserializer<'de> for &'a mut IVecDe<'de> {
 
     fn deserialize_f32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         let v = self.take_u32()?;
-        visitor.visit_f32(f32::from_be_bytes(v.to_be_bytes()))
+        visitor.visit_f32(f32::from_ne_bytes(v.to_ne_bytes()))
     }
 
     fn deserialize_f64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         let v = self.take_u64()?;
-        visitor.visit_f64(f64::from_be_bytes(v.to_be_bytes()))
+        visitor.visit_f64(f64::from_ne_bytes(v.to_ne_bytes()))
     }
 
     fn deserialize_char<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -462,7 +469,7 @@ impl<'de, 'a> Deserializer<'de> for &'a mut IVecDe<'de> {
     }
 
     fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        let seq_len = usize::try_from(self.take_u64()?).unwrap();
+        let seq_len = self.take_u32()? as usize;
         self.deserialize_tuple(seq_len, visitor)
     }
 
@@ -478,7 +485,7 @@ impl<'de, 'a> Deserializer<'de> for &'a mut IVecDe<'de> {
     }
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        let len = usize::try_from(self.take_u64()?).unwrap();
+        let len = self.take_u32()? as usize;
         visitor.visit_map(MapVisitor{
             de: self,
             len,
@@ -597,21 +604,21 @@ mod qc {
     #[test]
     fn serde_primitives() {
         serde_type(&true);
-        serde_type(&2u8);
-        serde_type(&-2i8);
-        serde_type(&3u16);
-        serde_type(&-3i16);
-        serde_type(&4u32);
-        serde_type(&-4i32);
-        serde_type(&0xffffffffffffffffu64);
-        serde_type(&-5i64);
-        serde_type(&0xffffffffffffffffusize);
-        serde_type(&-6isize);
-        serde_type(&'ש');
-        serde_type(&3.2f32);
-        serde_type(&3.2f64);
+        serde_type(&2_u8);
+        serde_type(&-2_i8);
+        serde_type(&3_u16);
+        serde_type(&-3_i16);
+        serde_type(&4_u32);
+        serde_type(&-4_i32);
+        serde_type(&0xffffffffffffffff_u64);
+        serde_type(&-5_i64);
+        serde_type(&0xffffffffffffffff_usize);
+        serde_type(&-6_isize);
+        serde_type(&'\u{20ac}');
+        serde_type(&3.2_f32);
+        serde_type(&3.2_f64);
         serde_type(&Some(()));
-        serde_type(&String::from("שלום!"));
+        serde_type(&String::from("Hello!"));
         serde_type(&vec!["a".to_string(), "b".to_string(), "c".to_string()]);
         let x: Result<u32, u32> = Ok(1);
         serde_type(&x);
