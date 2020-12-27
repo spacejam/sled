@@ -12,7 +12,6 @@ use std::{
 };
 
 const ALIGNMENT: usize = align_of::<Header>();
-const U64_SZ: usize = size_of::<u64>();
 
 // allocates space for a header struct at the beginning.
 fn aligned_boxed_slice(size: usize) -> Box<[u8]> {
@@ -219,6 +218,9 @@ impl SSTable {
             is_index: true,
         };
 
+        ret.lo_mut().copy_from_slice(lo);
+        ret.hi_mut().copy_from_slice(hi);
+
         // we use either 0 or 1 offset tables.
         // - if keys and values are all equal lengths, no offset table is
         //   required
@@ -287,6 +289,22 @@ impl SSTable {
         }
     }
 
+    // returns the OPEN ENDED buffer where a key may be read
+    fn key_buf_for_offset(&self, index: usize) -> &[u8] {
+        match (self.fixed_key_length, self.fixed_value_length) {
+            (Some(k_sz), Some(_)) | (Some(k_sz), None) => {
+                let keys_buf = self.keys_buf();
+                &keys_buf[index * usize::try_from(k_sz.get()).unwrap()..]
+            }
+            (None, Some(_)) | (None, None) => {
+                // find offset for key or combined kv offset
+                let offset = self.offset(index);
+                let keys_buf = self.keys_buf();
+                &keys_buf[offset..]
+            }
+        }
+    }
+
     // returns the OPEN ENDED buffer where a value may be placed
     //
     // NB: it's important that this is only ever called after setting
@@ -316,11 +334,40 @@ impl SSTable {
         }
     }
 
+    // returns the OPEN ENDED buffer where a value may be read
+    //
+    // NB: it's important that this is only ever called after setting
+    // the key and its varint length prefix, as this needs to be parsed
+    // for case 4.
+    fn value_buf_for_offset(&self, index: usize) -> &[u8] {
+        match (self.fixed_key_length, self.fixed_value_length) {
+            (Some(_), Some(v_sz)) | (None, Some(v_sz)) => {
+                let values_buf = self.values_buf();
+                &values_buf[index * usize::try_from(v_sz.get()).unwrap()..]
+            }
+            (Some(_), None) => {
+                // find combined kv offset
+                let offset = self.offset(index);
+                let values_buf = self.values_buf();
+                &values_buf[offset..]
+            }
+            (None, None) => {
+                // find combined kv offset, skip key bytes
+                let offset = self.offset(index);
+                let values_buf = self.values_buf();
+                let slot_buf = &values_buf[offset..];
+                let (val_len, varint_sz) =
+                    deserialize_varint(slot_buf).unwrap();
+                &values_buf[usize::try_from(val_len).unwrap() + varint_sz..]
+            }
+        }
+    }
+
     fn offset(&self, index: usize) -> usize {
         let start = index * self.offset_bytes as usize;
         let end = start + self.offset_bytes as usize;
         let buf = &self.offsets_buf()[start..end];
-        let mut le_usize_buf = [0u8; U64_SZ];
+        let mut le_usize_buf = [0u8; size_of::<u64>()];
         le_usize_buf[..self.offset_bytes as usize].copy_from_slice(buf);
         usize::try_from(u64::from_le_bytes(le_usize_buf)).unwrap()
     }
@@ -341,6 +388,11 @@ impl SSTable {
     fn keys_buf_mut(&mut self) -> &mut [u8] {
         let offset_sz = self.children as usize * self.offset_bytes as usize;
         &mut self.data_buf_mut()[offset_sz..]
+    }
+
+    fn keys_buf(&self) -> &[u8] {
+        let offset_sz = self.children as usize * self.offset_bytes as usize;
+        &self.data_buf()[offset_sz..]
     }
 
     fn values_buf_mut(&mut self) -> &mut [u8] {
@@ -364,6 +416,27 @@ impl SSTable {
         }
     }
 
+    fn values_buf(&self) -> &[u8] {
+        let offset_sz = self.children as usize * self.offset_bytes as usize;
+        match (self.fixed_key_length, self.fixed_value_length) {
+            (Some(fixed_key_length), Some(_))
+            | (Some(fixed_key_length), None) => {
+                let start = offset_sz
+                    + (fixed_key_length.get() as usize
+                        * self.children as usize);
+                &self.data_buf()[start..]
+            }
+            (None, Some(fixed_value_length)) => {
+                let total_value_size =
+                    fixed_value_length.get() as usize * self.children as usize;
+                let data_buf = self.data_buf();
+                let start = data_buf.len() - total_value_size;
+                &data_buf[start..]
+            }
+            (None, None) => &self.data_buf()[offset_sz..],
+        }
+    }
+
     fn offsets_buf(&self) -> &[u8] {
         let offset_sz = self.children as usize * self.offset_bytes as usize;
         &self.data_buf()[..offset_sz]
@@ -375,11 +448,17 @@ impl SSTable {
     }
 
     fn data_buf(&self) -> &[u8] {
-        &self.0[size_of::<Header>()..]
+        let start = (self.lo_len as usize)
+            + (self.hi_len as usize)
+            + size_of::<Header>();
+        &self.0[start..]
     }
 
     fn data_buf_mut(&mut self) -> &mut [u8] {
-        &mut self.0[size_of::<Header>()..]
+        let start = (self.lo_len as usize)
+            + (self.hi_len as usize)
+            + size_of::<Header>();
+        &mut self.0[start..]
     }
 
     pub fn insert(&self, key: &[u8], value: &[u8]) -> SSTable {
@@ -437,13 +516,9 @@ impl SSTable {
         usize::from(self.children)
     }
 
-    fn len_internal(&self) -> usize {
-        self.len() + 2
-    }
-
     fn find(&self, key: &[u8]) -> Result<usize, usize> {
         let mut size = self.len();
-        if size == 0 || key < self.index_child(0).0 {
+        if size == 0 || key < self.index_key(0) {
             return Err(0);
         }
         let mut base = 0_usize;
@@ -453,13 +528,13 @@ impl SSTable {
             // mid is always in [0, size), that means mid is >= 0 and < size.
             // mid >= 0: by definition
             // mid < size: mid = size / 2 + size / 4 + size / 8 ...
-            let l = self.index_child(mid).0;
+            let l = self.index_key(mid);
             let cmp = crate::fastcmp(l, key);
             base = if cmp == Greater { base } else { mid };
             size -= half;
         }
         // base is always in [0, size) because base <= mid.
-        let l = self.index_child(base).0;
+        let l = self.index_key(base);
         let cmp = crate::fastcmp(l, key);
 
         if cmp == Equal { Ok(base) } else { Err(base + (cmp == Less) as usize) }
@@ -468,65 +543,85 @@ impl SSTable {
     fn get_lub(&self, key: &[u8]) -> &[u8] {
         assert!(key >= self.lo());
         match self.find(key) {
-            Ok(idx) => self.index_child(idx).1,
-            Err(idx) => self.index_child(idx - 1).1,
+            Ok(idx) => self.index_value(idx),
+            Err(idx) => self.index_value(idx - 1),
         }
     }
 
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
-        (2..)
-            .take_while(move |idx| *idx < self.len_internal())
-            .map(move |idx| self.index(idx))
+        (0..)
+            .take_while(move |idx| *idx < self.len())
+            .map(move |idx| (self.index_key(idx), self.index_value(idx)))
     }
 
     fn lo(&self) -> &[u8] {
-        self.index(0).0
+        let start = size_of::<Header>();
+        let end = start + self.lo_len as usize;
+        &self.0[start..end]
+    }
+
+    fn lo_mut(&mut self) -> &mut [u8] {
+        let start = size_of::<Header>();
+        let end = start + self.lo_len as usize;
+        &mut self.0[start..end]
     }
 
     fn hi(&self) -> &[u8] {
-        self.index(1).0
+        let start = (self.lo_len as usize) + size_of::<Header>();
+        let end = start + self.hi_len as usize;
+        &self.0[start..end]
     }
 
-    fn index_child(&self, idx: usize) -> (&[u8], &[u8]) {
-        self.index(idx + 2)
+    fn hi_mut(&mut self) -> &mut [u8] {
+        let start = (self.lo_len as usize) + size_of::<Header>();
+        let end = start + self.hi_len as usize;
+        &mut self.0[start..end]
     }
 
-    fn index(&self, idx: usize) -> (&[u8], &[u8]) {
+    fn index_key(&self, idx: usize) -> &[u8] {
         assert!(
-            idx < self.len_internal(),
+            idx < self.len(),
             "index {} is not less than internal length of {}",
             idx,
-            self.len_internal()
+            self.len()
         );
 
-        let raw = self.index_raw_kv(idx);
+        let buf = self.key_buf_for_offset(idx);
 
-        let pivot = raw.len() - U64_SZ;
+        let (start, end) = if let Some(fixed_key_length) = self.fixed_key_length
+        {
+            (0, fixed_key_length.get() as usize)
+        } else {
+            let (key_len, varint_sz) = deserialize_varint(buf).unwrap();
+            let start = varint_sz;
+            let end = start + usize::try_from(key_len).unwrap();
+            (start, end)
+        };
 
-        let (key, pid_bytes) = raw.split_at(pivot);
-
-        (key, pid_bytes)
+        &buf[start..end]
     }
 
-    fn index_raw_kv(&self, idx: usize) -> &[u8] {
-        assert!(idx <= self.len_internal());
-        let data_buf = &self.0[size_of::<Header>()..];
-        let offsets_len = self.len_internal() * U64_SZ;
-        let (offsets, items) = data_buf.split_at(offsets_len);
+    fn index_value(&self, idx: usize) -> &[u8] {
+        assert!(
+            idx < self.len(),
+            "index {} is not less than internal length of {}",
+            idx,
+            self.len()
+        );
 
-        let offset_buf = &offsets[U64_SZ * idx..U64_SZ * (idx + 1)];
-        let kv_offset =
-            u64::from_le_bytes(offset_buf.try_into().unwrap()) as usize;
+        let buf = self.value_buf_for_offset(idx);
 
-        let item_buf = &items[kv_offset..];
-        let len_buf = &item_buf[..U64_SZ];
-        let key_len = u64::from_le_bytes(len_buf.try_into().unwrap()) as usize;
-        let val_len = U64_SZ;
+        let (start, end) =
+            if let Some(fixed_value_length) = self.fixed_value_length {
+                (0, fixed_value_length.get() as usize)
+            } else {
+                let (value_len, varint_sz) = deserialize_varint(buf).unwrap();
+                let start = varint_sz;
+                let end = start + usize::try_from(value_len).unwrap();
+                (start, end)
+            };
 
-        let start = U64_SZ;
-        let end = (2 * U64_SZ) + key_len;
-
-        &item_buf[start..end]
+        &buf[start..end]
     }
 }
 
