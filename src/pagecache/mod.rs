@@ -332,7 +332,8 @@ impl quickcheck::Arbitrary for CacheInfo {
 
 /// Update<PageLinkment> denotes a state or a change in a sequence of updates
 /// of which a page consists.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "testing", derive(PartialEq))]
 pub(crate) enum Update {
     Link(Link),
     Node(Node),

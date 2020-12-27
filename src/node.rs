@@ -2,7 +2,8 @@ use std::{num::NonZeroU64, ops::Bound};
 
 use super::*;
 
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone)]
+#[cfg_attr(feature = "testing", derive(PartialEq))]
 pub struct Node {
     pub(crate) prefix_len: u8,
     pub(crate) next: Option<NonZeroU64>,
@@ -20,20 +21,27 @@ impl Node {
         right: PageId,
     ) -> Node {
         Node {
-            data: Data::Index(Index {
-                keys: vec![prefix::empty().into(), at],
-                pointers: vec![left, right],
-            }),
+            data: Data::Index(SSTable::new(
+                &[],
+                &[],
+                0,
+                &[
+                    (prefix::empty().into(), &left.to_le_bytes()),
+                    (&at, &right.to_le_bytes()),
+                ],
+            )),
             ..Node::default()
         }
     }
 
     pub(crate) fn new_root(child_pid: PageId) -> Node {
         Node {
-            data: Data::Index(Index {
-                keys: vec![prefix::empty().into()],
-                pointers: vec![child_pid],
-            }),
+            data: Data::Index(SSTable::new(
+                &[],
+                &[],
+                0,
+                &[(prefix::empty().into(), &child_pid.to_le_bytes())],
+            )),
             ..Node::default()
         }
     }
@@ -141,21 +149,16 @@ impl Node {
     pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) -> bool {
         if let Data::Index(ref mut index) = self.data {
             let encoded_sep = &at[self.prefix_len as usize..];
-            match index.keys.binary_search_by(|k| fastcmp(k, encoded_sep)) {
-                Ok(_) => {
-                    debug!(
-                        "parent_split skipped because \
-                         parent already contains child \
-                         at split point due to deep race"
-                    );
-                    return false;
-                }
-                Err(idx) => {
-                    index.keys.insert(idx, IVec::from(encoded_sep));
-                    index.pointers.insert(idx, to)
-                }
+            if index.contains_key(encoded_sep) {
+                debug!(
+                    "parent_split skipped because \
+                     parent already contains child \
+                     at split point due to deep race"
+                );
+                return false;
             }
-            testing_assert!(is_sorted(&index.keys));
+
+            *index = index.insert(encoded_sep, &to.to_le_bytes());
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
         }
@@ -644,9 +647,10 @@ impl Node {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "testing", derive(PartialEq))]
 pub(crate) enum Data {
-    Index(Index),
+    Index(SSTable),
     Leaf(Leaf),
 }
 
@@ -712,13 +716,15 @@ impl Data {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "testing", derive(PartialEq))]
 pub(crate) struct Leaf {
     pub(crate) keys: Vec<IVec>,
     pub(crate) values: Vec<IVec>,
 }
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "testing", derive(PartialEq))]
 pub(crate) struct Index {
     pub(crate) keys: Vec<IVec>,
     pub(crate) pointers: Vec<PageId>,

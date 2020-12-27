@@ -2237,8 +2237,8 @@ impl Tree {
             f.push_str(&format!("{:?}\n", node));
 
             if let Data::Index(ref index) = &node.data {
-                for pid in &index.pointers {
-                    referenced_pids.insert(*pid);
+                for pid in index.iter_index_pids() {
+                    referenced_pids.insert(pid);
                 }
             }
 
@@ -2258,9 +2258,9 @@ impl Tree {
 
                 match &left_node.data {
                     Data::Index(index) => {
-                        if let Some(next_pid) = index.pointers.first() {
-                            pid = *next_pid;
-                            left_most = *next_pid;
+                        if let Some(next_pid) = index.iter_index_pids().next() {
+                            pid = next_pid;
+                            left_most = next_pid;
                             level += 1;
                             f.push_str(&format!("\n\tlevel {}:\n", level));
                             assert!(

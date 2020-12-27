@@ -3,7 +3,7 @@
 use std::{
     alloc::{alloc_zeroed, dealloc, Layout},
     cmp::Ordering::{Equal, Greater, Less},
-    convert::TryFrom,
+    convert::{TryFrom, TryInto},
     fmt,
     mem::{align_of, size_of, ManuallyDrop},
     num::NonZeroU64,
@@ -15,7 +15,7 @@ use crate::{deserialize_varint, serialize_varint_into, varint_size};
 const ALIGNMENT: usize = align_of::<Header>();
 
 // allocates space for a header struct at the beginning.
-fn aligned_boxed_slice(size: usize) -> Box<[u8]> {
+pub(crate) fn aligned_boxed_slice(size: usize) -> Box<[u8]> {
     let size = size + size_of::<Header>();
     let layout = Layout::from_size_align(size, ALIGNMENT).unwrap();
 
@@ -60,7 +60,7 @@ pub(crate) struct Header {
 /// An immutable sorted string table
 #[derive(Clone)]
 #[cfg_attr(feature = "testing", derive(PartialEq))]
-pub(crate) struct SSTable(ManuallyDrop<Box<[u8]>>);
+pub(crate) struct SSTable(pub ManuallyDrop<Box<[u8]>>);
 
 impl Drop for SSTable {
     fn drop(&mut self) {
@@ -98,6 +98,12 @@ impl DerefMut for SSTable {
 }
 
 impl SSTable {
+    pub unsafe fn from_raw(buf: &[u8]) -> SSTable {
+        let mut boxed_slice = aligned_boxed_slice(buf.len());
+        boxed_slice.copy_from_slice(buf);
+        SSTable(ManuallyDrop::new(boxed_slice))
+    }
+
     pub fn new(
         lo: &[u8],
         hi: &[u8],
@@ -557,19 +563,26 @@ impl SSTable {
         }
     }
 
-    fn iter_keys(&self) -> impl Iterator<Item = &[u8]> {
+    pub fn iter_keys(&self) -> impl Iterator<Item = &[u8]> {
         (0..)
             .take_while(move |idx| *idx < self.len())
             .map(move |idx| self.index_key(idx))
     }
 
-    fn iter_values(&self) -> impl Iterator<Item = &[u8]> {
+    pub fn iter_index_pids<'a>(&'a self) -> impl 'a + Iterator<Item = u64> {
+        assert!(self.is_index);
+        self.iter_values().map(move |pid_bytes| {
+            u64::from_le_bytes(pid_bytes.try_into().unwrap())
+        })
+    }
+
+    pub fn iter_values(&self) -> impl Iterator<Item = &[u8]> {
         (0..)
             .take_while(move |idx| *idx < self.len())
             .map(move |idx| self.index_value(idx))
     }
 
-    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+    pub fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
         self.iter_keys().zip(self.iter_values())
     }
 
@@ -665,8 +678,8 @@ mod test {
         assert_eq!(ir.get_lub(&[7]), &[66]);
     }
 
-    impl Arbitrary for Header {
-        fn arbitrary<G: Gen>(g: &mut G) -> Header {
+    impl Arbitrary for SSTable {
+        fn arbitrary<G: Gen>(g: &mut G) -> SSTable {
             todo!()
         }
     }
