@@ -586,28 +586,28 @@ impl SSTable {
         self.iter_keys().zip(self.iter_values())
     }
 
-    fn lo(&self) -> &[u8] {
+    fn lo(&self) -> Option<&[u8]> {
         let start = size_of::<Header>();
         let end = start + self.lo_len as usize;
-        &self.0[start..end]
+        if start == end { None } else { Some(&self.0[start..end]) }
     }
 
-    fn lo_mut(&mut self) -> &mut [u8] {
+    fn lo_mut(&mut self) -> Option<&mut [u8]> {
         let start = size_of::<Header>();
         let end = start + self.lo_len as usize;
-        &mut self.0[start..end]
+        if start == end { None } else { Some(&mut self.0[start..end]) }
     }
 
-    fn hi(&self) -> &[u8] {
+    fn hi(&self) -> Option<&[u8]> {
         let start = (self.lo_len as usize) + size_of::<Header>();
         let end = start + self.hi_len as usize;
-        &self.0[start..end]
+        if start == end { None } else { Some(&self.0[start..end]) }
     }
 
-    fn hi_mut(&mut self) -> &mut [u8] {
+    fn hi_mut(&mut self) -> Option<&mut [u8]> {
         let start = (self.lo_len as usize) + size_of::<Header>();
         let end = start + self.hi_len as usize;
-        &mut self.0[start..end]
+        if start == end { None } else { Some(&mut self.0[start..end]) }
     }
 
     fn index_key(&self, idx: usize) -> &[u8] {

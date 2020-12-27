@@ -663,9 +663,7 @@ impl Default for Data {
 impl Data {
     pub(crate) fn rss(&self) -> u64 {
         match self {
-            Data::Index(ref index) => {
-                index.keys.iter().map(|k| k.len() + 8).sum::<usize>() as u64
-            }
+            Data::Index(ref index) => index.0.len() as u64,
             Data::Leaf(ref leaf) => leaf
                 .keys
                 .iter()
@@ -677,7 +675,7 @@ impl Data {
 
     pub(crate) fn len(&self) -> usize {
         match *self {
-            Data::Index(ref index) => index.keys.len(),
+            Data::Index(ref index) => index.len(),
             Data::Leaf(ref leaf) => leaf.keys.len(),
         }
     }
@@ -686,9 +684,8 @@ impl Data {
         match self {
             Data::Index(ref mut index) => {
                 let idx = index
-                    .pointers
-                    .iter()
-                    .position(|c| *c == merged_child_pid)
+                    .iter_index_pids()
+                    .position(|c| c == merged_child_pid)
                     .unwrap();
                 index.keys.remove(idx);
                 index.pointers.remove(idx);
@@ -719,15 +716,15 @@ impl Data {
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "testing", derive(PartialEq))]
 pub(crate) struct Leaf {
-    pub(crate) keys: Vec<IVec>,
-    pub(crate) values: Vec<IVec>,
+    pub keys: Vec<IVec>,
+    pub values: Vec<IVec>,
 }
 
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "testing", derive(PartialEq))]
 pub(crate) struct Index {
-    pub(crate) keys: Vec<IVec>,
-    pub(crate) pointers: Vec<PageId>,
+    pub keys: Vec<IVec>,
+    pub pointers: Vec<PageId>,
 }
 
 #[cfg(feature = "testing")]
