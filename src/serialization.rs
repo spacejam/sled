@@ -7,12 +7,14 @@ use std::{
 };
 
 use crate::{
+    deserialize_varint,
     node::{Index, Leaf},
     pagecache::{
         BatchManifest, HeapId, MessageHeader, PageState, SegmentNumber,
         Snapshot,
     },
-    Data, DiskPtr, Error, IVec, Link, Meta, Node, Result,
+    serialize_varint_into, varint_size, Data, DiskPtr, Error, IVec, Link, Meta,
+    Node, Result,
 };
 
 /// Items that may be serialized and deserialized
@@ -141,71 +143,11 @@ impl Serialize for IVec {
 
 impl Serialize for u64 {
     fn serialized_size(&self) -> u64 {
-        if *self <= 240 {
-            1
-        } else if *self <= 2287 {
-            2
-        } else if *self <= 67823 {
-            3
-        } else if *self <= 0x00FF_FFFF {
-            4
-        } else if *self <= 0xFFFF_FFFF {
-            5
-        } else if *self <= 0x00FF_FFFF_FFFF {
-            6
-        } else if *self <= 0xFFFF_FFFF_FFFF {
-            7
-        } else if *self <= 0x00FF_FFFF_FFFF_FFFF {
-            8
-        } else {
-            9
-        }
+        varint_size(*self)
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        let sz = if *self <= 240 {
-            buf[0] = u8::try_from(*self).unwrap();
-            1
-        } else if *self <= 2287 {
-            buf[0] = u8::try_from((*self - 240) / 256 + 241).unwrap();
-            buf[1] = u8::try_from((*self - 240) % 256).unwrap();
-            2
-        } else if *self <= 67823 {
-            buf[0] = 249;
-            buf[1] = u8::try_from((*self - 2288) / 256).unwrap();
-            buf[2] = u8::try_from((*self - 2288) % 256).unwrap();
-            3
-        } else if *self <= 0x00FF_FFFF {
-            buf[0] = 250;
-            let bytes = self.to_le_bytes();
-            buf[1..4].copy_from_slice(&bytes[..3]);
-            4
-        } else if *self <= 0xFFFF_FFFF {
-            buf[0] = 251;
-            let bytes = self.to_le_bytes();
-            buf[1..5].copy_from_slice(&bytes[..4]);
-            5
-        } else if *self <= 0x00FF_FFFF_FFFF {
-            buf[0] = 252;
-            let bytes = self.to_le_bytes();
-            buf[1..6].copy_from_slice(&bytes[..5]);
-            6
-        } else if *self <= 0xFFFF_FFFF_FFFF {
-            buf[0] = 253;
-            let bytes = self.to_le_bytes();
-            buf[1..7].copy_from_slice(&bytes[..6]);
-            7
-        } else if *self <= 0x00FF_FFFF_FFFF_FFFF {
-            buf[0] = 254;
-            let bytes = self.to_le_bytes();
-            buf[1..8].copy_from_slice(&bytes[..7]);
-            8
-        } else {
-            buf[0] = 255;
-            let bytes = self.to_le_bytes();
-            buf[1..9].copy_from_slice(&bytes[..8]);
-            9
-        };
+        let sz = serialize_varint_into(*self, buf);
 
         scoot(buf, sz);
     }
@@ -214,19 +156,7 @@ impl Serialize for u64 {
         if buf.is_empty() {
             return Err(Error::corruption(None));
         }
-        let (res, scoot) = match buf[0] {
-            0..=240 => (u64::from(buf[0]), 1),
-            241..=248 => {
-                (240 + 256 * (u64::from(buf[0]) - 241) + u64::from(buf[1]), 2)
-            }
-            249 => (2288 + 256 * u64::from(buf[1]) + u64::from(buf[2]), 3),
-            other => {
-                let sz = other as usize - 247;
-                let mut aligned = [0; 8];
-                aligned[..sz].copy_from_slice(&buf[1..=sz]);
-                (u64::from_le_bytes(aligned), sz + 1)
-            }
-        };
+        let (res, scoot) = deserialize_varint(buf)?;
         *buf = &buf[scoot..];
         Ok(res)
     }
