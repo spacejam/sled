@@ -1492,7 +1492,7 @@ impl Tree {
         trace!("splitting node with pid {}", view.pid);
         // split node
         let (mut lhs, rhs) = view.deref().clone().split();
-        let rhs_lo = rhs.lo().unwrap_or(&[]).to_vec();
+        let rhs_lo = rhs.lo().to_vec();
 
         // install right side
         let (rhs_pid, rhs_ptr) = self.context.pagecache.allocate(rhs, guard)?;
@@ -1697,7 +1697,7 @@ impl Tree {
                 retry!();
             }
 
-            let overshot = key.as_ref() < view.lo().unwrap_or(&[]);
+            let overshot = key.as_ref() < view.lo();
             let undershot = if let Some(hi) = view.hi() {
                 key.as_ref() >= hi
             } else {
@@ -1722,7 +1722,7 @@ impl Tree {
                 ).get();
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
-                } else if parent_view.is_none() && view.lo().is_none() {
+                } else if parent_view.is_none() && view.lo().is_empty() {
                     assert!(unsplit_parent.is_none());
                     assert_eq!(view.pid, root_pid);
                     // we have found a partially-split root
@@ -1741,7 +1741,7 @@ impl Tree {
                 // we have found the proper page for
                 // our cooperative parent split
                 let split_applied =
-                    unsplit_parent.parent_split(view.lo().unwrap_or(&[]), cursor);
+                    unsplit_parent.parent_split(view.lo(), cursor);
 
                 if split_applied .is_none(){
                     // due to deep races, it's possible for the
@@ -2048,7 +2048,7 @@ impl Tree {
                         continue;
                     }
                 }
-            } else if cursor_view.hi() >= child_view.lo() {
+            } else if cursor_view.hi() >= Some(child_view.lo()) {
                 // we overshot the node being merged,
                 trace!(
                     "cursor pid {} has hi key {:?}, which is \

@@ -108,7 +108,7 @@ impl Node {
 
     pub(crate) fn new(
         lo: &[u8],
-        hi: &[u8],
+        hi: Option<&[u8]>,
         prefix_len: u8,
         is_index: bool,
         items: &[(&[u8], &[u8])],
@@ -210,7 +210,7 @@ impl Node {
             )
         };
 
-        let total_item_storage_size = hi.len() as u64
+        let total_item_storage_size = hi.map(|hi| hi.len() as u64).unwrap_or(0)
             + lo.len() as u64
             + key_storage_size
             + value_storage_size
@@ -226,7 +226,7 @@ impl Node {
             next: None,
             merging_child: None,
             lo_len: lo.len() as u64,
-            hi_len: hi.len() as u64,
+            hi_len: hi.map(|hi| hi.len() as u64).unwrap_or(0),
             fixed_key_length,
             fixed_value_length,
             offset_bytes,
@@ -236,11 +236,10 @@ impl Node {
             is_index,
         };
 
-        if let Some(ref mut lo_buf) = ret.lo_mut() {
-            lo_buf.copy_from_slice(lo);
-        }
+        ret.lo_mut().copy_from_slice(lo);
+
         if let Some(ref mut hi_buf) = ret.hi_mut() {
-            hi_buf.copy_from_slice(hi);
+            hi_buf.copy_from_slice(hi.unwrap());
         }
 
         // we use either 0 or 1 offset tables.
@@ -298,7 +297,7 @@ impl Node {
     pub(crate) fn new_root(child_pid: u64) -> Node {
         Node::new(
             &[],
-            &[],
+            None,
             0,
             true,
             &[(prefix::empty(), &child_pid.to_le_bytes())],
@@ -308,7 +307,7 @@ impl Node {
     pub(crate) fn new_hoisted_root(left: u64, at: &[u8], right: u64) -> Node {
         Node::new(
             &[],
-            &[],
+            None,
             0,
             true,
             &[
@@ -612,8 +611,8 @@ impl Node {
         dbg!(&items);
 
         let ret: Node = Node::new(
-            self.lo().unwrap_or(&[]),
-            self.hi().unwrap_or(&[]),
+            self.lo(),
+            self.hi(),
             self.prefix_len,
             self.is_index,
             &items,
@@ -630,13 +629,7 @@ impl Node {
             self.iter().take(index - 1).chain(self.iter().skip(index)).collect()
         };
 
-        Node::new(
-            self.lo().unwrap_or(&[]),
-            self.hi().unwrap_or(&[]),
-            self.prefix_len,
-            self.is_index,
-            &items,
-        )
+        Node::new(self.lo(), self.hi(), self.prefix_len, self.is_index, &items)
     }
 
     pub(crate) fn split(&self) -> (Node, Node) {
@@ -647,8 +640,8 @@ impl Node {
         let right_items: Vec<_> = self.iter().skip(split_point).collect();
 
         let left = Node::new(
-            self.lo().unwrap_or(&[]),
-            &split_key,
+            self.lo(),
+            Some(&split_key),
             0, //todo!(),
             self.is_index,
             &left_items,
@@ -656,7 +649,7 @@ impl Node {
 
         let right = Node::new(
             &split_key,
-            self.hi().unwrap_or(&[]),
+            self.hi(),
             0, //todo!(),
             self.is_index,
             &right_items,
@@ -666,14 +659,14 @@ impl Node {
     }
 
     pub(crate) fn receive_merge(&self, other: &Node) -> Node {
-        assert_eq!(self.hi(), other.lo());
+        assert_eq!(self.hi(), Some(other.lo()));
         assert_eq!(self.is_index, other.is_index);
 
         let items: Vec<_> = self.iter().chain(other.iter()).collect();
 
         Node::new(
-            self.lo().unwrap_or(&[]),
-            other.hi().unwrap_or(&[]),
+            self.lo(),
+            other.hi(),
             0, //todo!(),
             self.is_index,
             &*items,
@@ -763,7 +756,7 @@ impl Node {
     }
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, u64) {
-        assert!(key >= self.lo().unwrap_or(&[]));
+        assert!(key >= self.lo());
         assert!(self.is_index);
         let idx = match self.find(key) {
             Ok(idx) => idx,
@@ -816,16 +809,16 @@ impl Node {
         self.iter_keys().zip(self.iter_values())
     }
 
-    pub(crate) fn lo(&self) -> Option<&[u8]> {
+    pub(crate) fn lo(&self) -> &[u8] {
         let start = size_of::<Header>();
         let end = start + usize::try_from(self.lo_len).unwrap();
-        if start == end { None } else { Some(&self.0[start..end]) }
+        &self.0[start..end]
     }
 
-    fn lo_mut(&mut self) -> Option<&mut [u8]> {
+    fn lo_mut(&mut self) -> &mut [u8] {
         let start = size_of::<Header>();
         let end = start + usize::try_from(self.lo_len).unwrap();
-        if start == end { None } else { Some(&mut self.0[start..end]) }
+        &mut self.0[start..end]
     }
 
     pub(crate) fn hi(&self) -> Option<&[u8]> {
@@ -897,7 +890,7 @@ impl Node {
         &'a self,
         key: &'a [u8],
     ) -> (&'a [u8], Option<&[u8]>) {
-        assert!(Some(key) >= self.lo());
+        assert!(key >= self.lo());
         if self.hi().is_some() {
             assert!(key < self.hi().unwrap());
         }
@@ -941,19 +934,16 @@ impl Node {
         bound: &Bound<IVec>,
         is_forward: bool,
     ) -> bool {
-        if let Some(lo) = self.lo() {
-            match bound {
-                Bound::Excluded(bound)
-                    if lo < &*bound || (is_forward && *bound == lo) =>
-                {
-                    true
-                }
-                Bound::Included(bound) if lo <= &*bound => true,
-                Bound::Unbounded if !is_forward => self.hi().is_none(),
-                _ => false,
+        let lo = self.lo();
+        match bound {
+            Bound::Excluded(bound)
+                if lo < &*bound || (is_forward && *bound == lo) =>
+            {
+                true
             }
-        } else {
-            true
+            Bound::Included(bound) if lo <= &*bound => true,
+            Bound::Unbounded if !is_forward => self.hi().is_none(),
+            _ => lo.is_empty(),
         }
     }
 
@@ -962,7 +952,7 @@ impl Node {
     }
 
     fn prefix_encode<'a>(&self, key: &'a [u8]) -> &'a [u8] {
-        assert!(self.lo().unwrap_or(&[]) <= key);
+        assert!(self.lo() <= key);
         if self.hi().is_some() {
             assert!(self.hi().unwrap() > key);
         }
@@ -971,7 +961,7 @@ impl Node {
     }
 
     fn prefix(&self) -> &[u8] {
-        &self.lo().unwrap_or(&[])[..self.prefix_len as usize]
+        &self.lo()[..self.prefix_len as usize]
     }
 
     pub(crate) fn successor(
@@ -983,9 +973,9 @@ impl Node {
         // This encoding happens this way because
         // keys cannot be lower than the node's lo key.
         let predecessor_key = match bound {
-            Bound::Unbounded => self.prefix_encode(self.lo().unwrap_or(&[])),
+            Bound::Unbounded => self.prefix_encode(self.lo()),
             Bound::Included(b) | Bound::Excluded(b) => {
-                let max = std::cmp::max(&**b, self.lo().unwrap_or(&[]));
+                let max = std::cmp::max(&**b, self.lo());
                 self.prefix_encode(max)
             }
         };
@@ -1102,7 +1092,7 @@ mod test {
     fn simple() {
         let mut ir = Node::new(
             &[1],
-            &7u64.to_le_bytes(),
+            Some(&[7]),
             0,
             false,
             &[
@@ -1133,7 +1123,7 @@ mod test {
     ) -> bool {
         let children_ref: Vec<(&[u8], &[u8])> =
             children.iter().map(|(k, v)| (k.as_ref(), v.as_ref())).collect();
-        let ir = Node::new(&lo, &hi, 0, false, &children_ref);
+        let ir = Node::new(&lo, Some(&hi), 0, false, &children_ref);
 
         assert_eq!(ir.children as usize, children_ref.len());
 
