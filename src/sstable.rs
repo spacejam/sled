@@ -290,12 +290,7 @@ impl Node {
     }
 
     pub(crate) fn new_root(child_pid: u64) -> Node {
-        Node::new(
-            &[],
-            &[],
-            0,
-            &[(prefix::empty().into(), &child_pid.to_le_bytes())],
-        )
+        Node::new(&[], &[], 0, &[(prefix::empty(), &child_pid.to_le_bytes())])
     }
 
     pub(crate) fn new_hoisted_root(left: u64, at: &[u8], right: u64) -> Node {
@@ -304,7 +299,7 @@ impl Node {
             &[],
             0,
             &[
-                (prefix::empty().into(), &left.to_le_bytes()),
+                (prefix::empty(), &left.to_le_bytes()),
                 (&at, &right.to_le_bytes()),
             ],
         )
@@ -552,6 +547,10 @@ impl Node {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    pub(crate) fn rss(&self) -> u64 {
+        self.0.len() as u64
     }
 
     pub(crate) fn len(&self) -> usize {

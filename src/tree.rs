@@ -186,15 +186,15 @@ impl Tree {
 
         let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
 
-        if value == last_value {
+        if value.map(|i| i.as_ref()) == last_value {
             // short-circuit a no-op set or delete
             return Ok(Ok(value))
         }
 
         let frag = if let Some(value) = value.clone() {
-            Link::Set(encoded_key, value)
+            Link::Set(encoded_key.into(), value)
         } else {
-            Link::Del(encoded_key)
+            Link::Del(encoded_key.into())
         };
 
         let link = self.context.pagecache.link(
@@ -218,7 +218,7 @@ impl Tree {
 
             guard.writeset.push(pid);
 
-            Ok(Ok(last_value))
+            Ok(Ok(last_value.map(IVec::from)))
         } else {
             M.tree_looped();
             Ok(Err(Conflict))
@@ -456,7 +456,7 @@ impl Tree {
 
         guard.readset.push(pid);
 
-        Ok(Ok(val))
+        Ok(Ok(val.map(IVec::from)))
     }
 
     #[doc(hidden)]
@@ -576,7 +576,7 @@ impl Tree {
 
             if !matches {
                 return Ok(Err(CompareAndSwapError {
-                    current: current_value,
+                    current: current_value.map(IVec::from),
                     proposed: new,
                 }));
             }
@@ -584,9 +584,9 @@ impl Tree {
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key, new.clone())
+                Link::Set(encoded_key.into(), new.clone())
             } else {
-                Link::Del(encoded_key)
+                Link::Del(encoded_key.into())
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -1725,7 +1725,7 @@ impl Tree {
                     if self.root_hoist(
                         root_pid,
                         view.next.unwrap().get(),
-                        view.hi(),
+                        view.hi().unwrap(),
                         guard,
                     )? {
                         M.tree_root_split_success();

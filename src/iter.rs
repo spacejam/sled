@@ -117,8 +117,7 @@ impl Iter {
                 continue;
             }
 
-            if let Some((key, value)) = node.successor(&self.lo.unwrap_or(&[]))
-            {
+            if let Some((key, value)) = node.successor(&self.lo) {
                 self.lo = Bound::Excluded(key.clone());
                 self.cached_node = Some((pid, node));
                 self.going_forward = true;
@@ -134,11 +133,12 @@ impl Iter {
                     _ => return None,
                 }
             } else {
-                if node.hi.is_empty() {
+                if let Some(hi) = node.hi() {
+                    self.lo = Bound::Included(hi.into());
+                    continue;
+                } else {
                     return None;
                 }
-                self.lo = Bound::Included(node.hi.clone());
-                continue;
             }
         }
         panic!(
@@ -216,11 +216,12 @@ impl DoubleEndedIterator for Iter {
                     _ => return None,
                 }
             } else {
-                if node.lo.is_empty() {
+                if let Some(lo) = node.lo() {
+                    self.hi = Bound::Excluded(lo.into());
+                    continue;
+                } else {
                     return None;
                 }
-                self.hi = Bound::Excluded(node.lo.clone());
-                continue;
             }
         }
         panic!(
