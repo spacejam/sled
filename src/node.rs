@@ -608,8 +608,6 @@ impl Node {
             }
         };
 
-        dbg!(&items);
-
         let ret: Node = Node::new(
             self.lo(),
             self.hi(),
@@ -1102,7 +1100,6 @@ mod test {
         );
         ir.next = Some(NonZeroU64::new(5).unwrap());
         ir.is_index = false;
-        dbg!(ir.header());
         println!("ir: {:#?}", ir);
         assert_eq!(ir.index_next_node(&[1]).1, 42);
         assert_eq!(ir.index_next_node(&[2]).1, 42);
