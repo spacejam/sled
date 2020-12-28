@@ -795,9 +795,9 @@ impl Node {
         (0..self.len()).map(move |idx| self.index_key(idx))
     }
 
-    pub(crate) fn iter_index_pids<'a>(
-        &'a self,
-    ) -> impl 'a + Iterator<Item = u64> + ExactSizeIterator + DoubleEndedIterator
+    pub(crate) fn iter_index_pids(
+        &self,
+    ) -> impl '_ + Iterator<Item = u64> + ExactSizeIterator + DoubleEndedIterator
     {
         assert!(self.is_index);
         self.iter_values().map(move |pid_bytes| {
