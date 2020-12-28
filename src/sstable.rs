@@ -616,25 +616,28 @@ impl Node {
         Some(self.insert(encoded_sep, &to.to_le_bytes()))
     }
 
-    pub(crate) fn iter_keys(&self) -> impl Iterator<Item = &[u8]> {
-        (0..)
-            .take_while(move |idx| *idx < self.len())
-            .map(move |idx| self.index_key(idx))
+    pub(crate) fn iter_keys(
+        &self,
+    ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator
+    {
+        (0..self.len()).map(move |idx| self.index_key(idx))
     }
 
     pub(crate) fn iter_index_pids<'a>(
         &'a self,
-    ) -> impl 'a + Iterator<Item = u64> {
+    ) -> impl 'a + Iterator<Item = u64> + ExactSizeIterator + DoubleEndedIterator
+    {
         assert!(self.is_index);
         self.iter_values().map(move |pid_bytes| {
             u64::from_le_bytes(pid_bytes.try_into().unwrap())
         })
     }
 
-    pub(crate) fn iter_values(&self) -> impl Iterator<Item = &[u8]> {
-        (0..)
-            .take_while(move |idx| *idx < self.len())
-            .map(move |idx| self.index_value(idx))
+    pub(crate) fn iter_values(
+        &self,
+    ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator
+    {
+        (0..self.len()).map(move |idx| self.index_value(idx))
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
