@@ -15,59 +15,11 @@ pub struct Node {
 }
 
 impl Node {
-    pub(crate) fn new_hoisted_root(
-        left: PageId,
-        at: IVec,
-        right: PageId,
-    ) -> Node {
-        Node {
-            data: Data::Index(SSTable::new(
-                &[],
-                &[],
-                0,
-                &[
-                    (prefix::empty().into(), &left.to_le_bytes()),
-                    (&at, &right.to_le_bytes()),
-                ],
-            )),
-            ..Node::default()
-        }
-    }
-
-    pub(crate) fn new_root(child_pid: PageId) -> Node {
-        Node {
-            data: Data::Index(SSTable::new(
-                &[],
-                &[],
-                0,
-                &[(prefix::empty().into(), &child_pid.to_le_bytes())],
-            )),
-            ..Node::default()
-        }
-    }
-
     pub(crate) fn rss(&self) -> u64 {
         std::mem::size_of::<Node>() as u64
             + self.lo.len() as u64
             + self.hi.len() as u64
             + self.data.rss()
-    }
-
-    fn prefix_decode(&self, key: &[u8]) -> IVec {
-        prefix::decode(self.prefix(), key)
-    }
-
-    fn prefix_encode<'a>(&self, key: &'a [u8]) -> &'a [u8] {
-        assert!(*self.lo <= *key);
-        if !self.hi.is_empty() {
-            assert!(*self.hi > *key);
-        }
-
-        &key[self.prefix_len as usize..]
-    }
-
-    fn prefix(&self) -> &[u8] {
-        &self.lo[..self.prefix_len as usize]
     }
 
     pub(crate) fn apply(&mut self, link: &Link) {
@@ -437,155 +389,9 @@ impl Node {
         merged
     }
 
-    pub(crate) fn contains_upper_bound(&self, bound: &Bound<IVec>) -> bool {
-        match bound {
-            Bound::Excluded(bound) if self.hi >= *bound => true,
-            Bound::Included(bound) if self.hi > *bound => true,
-            _ => self.hi.is_empty(),
-        }
-    }
-
-    pub(crate) fn contains_lower_bound(
-        &self,
-        bound: &Bound<IVec>,
-        is_forward: bool,
-    ) -> bool {
-        match bound {
-            Bound::Excluded(bound)
-                if self.lo < *bound || (is_forward && *bound == self.lo) =>
-            {
-                true
-            }
-            Bound::Included(bound) if self.lo <= *bound => true,
-            Bound::Unbounded if !is_forward => self.hi.is_empty(),
-            _ => self.lo.is_empty(),
-        }
-    }
-
-    pub(crate) fn successor(
-        &self,
-        bound: &Bound<IVec>,
-    ) -> Option<(IVec, IVec)> {
-        assert!(!self.data.is_index());
-
-        // This encoding happens this way because
-        // keys cannot be lower than the node's lo key.
-        let predecessor_key = match bound {
-            Bound::Unbounded => self.prefix_encode(&self.lo),
-            Bound::Included(b) | Bound::Excluded(b) => {
-                let max = std::cmp::max(b, &self.lo);
-                self.prefix_encode(max)
-            }
-        };
-
-        let leaf = self.data.leaf_ref().unwrap();
-        let search =
-            leaf.keys.binary_search_by(|k| fastcmp(k, predecessor_key));
-
-        let start = match search {
-            Ok(start) => start,
-            Err(start) if start < leaf.keys.len() => start,
-            _ => return None,
-        };
-
-        for (idx, k) in leaf.keys[start..].iter().enumerate() {
-            match bound {
-                Bound::Excluded(b) if b[self.prefix_len as usize..] == **k => {
-                    // keep going because we wanted to exclude
-                    // this key.
-                    continue;
-                }
-                _ => {}
-            }
-            let decoded_key = self.prefix_decode(k);
-            return Some((decoded_key, leaf.values[start + idx].clone()));
-        }
-
-        None
-    }
-
-    pub(crate) fn predecessor(
-        &self,
-        bound: &Bound<IVec>,
-    ) -> Option<(IVec, IVec)> {
-        assert!(!self.data.is_index());
-
-        // This encoding happens this way because
-        // the rightmost (unbounded) node has
-        // a hi key represented by the empty slice
-        let successor_key = match bound {
-            Bound::Unbounded => {
-                if self.hi.is_empty() {
-                    None
-                } else {
-                    Some(IVec::from(self.prefix_encode(&self.hi)))
-                }
-            }
-            Bound::Included(b) => Some(IVec::from(self.prefix_encode(b))),
-            Bound::Excluded(b) => {
-                // we use manual prefix encoding here because
-                // there is an assertion in `prefix_encode`
-                // that asserts the key is within the node,
-                // and maybe `b` is above the node.
-                let encoded = &b[self.prefix_len as usize..];
-                Some(IVec::from(encoded))
-            }
-        };
-
-        let leaf = self.data.leaf_ref().unwrap();
-        let search = if let Some(successor_key) = successor_key {
-            leaf.keys.binary_search_by(|k| fastcmp(k, &successor_key))
-        } else if leaf.keys.is_empty() {
-            Err(0)
-        } else {
-            Ok(leaf.keys.len() - 1)
-        };
-
-        let end = match search {
-            Ok(end) => end,
-            Err(end) if end > 0 => end - 1,
-            _ => return None,
-        };
-
-        for (idx, k) in leaf.keys[0..=end].iter().enumerate().rev() {
-            match bound {
-                Bound::Excluded(b)
-                    if b.len() >= self.prefix_len as usize
-                        && b[self.prefix_len as usize..] == **k =>
-                {
-                    // keep going because we wanted to exclude
-                    // this key.
-                    continue;
-                }
-                _ => {}
-            }
-            let decoded_key = self.prefix_decode(k);
-
-            return Some((decoded_key, leaf.values[idx].clone()));
-        }
-        None
-    }
-
-    /// `leaf_pair_for_key` finds an existing value pair for a given key.
-    pub(crate) fn leaf_pair_for_key(
-        &self,
-        key: &[u8],
-    ) -> Option<(&IVec, &IVec)> {
-        let leaf = self
-            .data
-            .leaf_ref()
-            .expect("leaf_pair_for_key called on index node");
-
-        let suffix = &key[self.prefix_len as usize..];
-
-        let search = leaf.keys.binary_search_by(|k| fastcmp(k, suffix)).ok();
-
-        search.map(|idx| (&leaf.keys[idx], &leaf.values[idx]))
-    }
-
     /// `node_kv_pair` returns either existing (node/key, value) pair or
     /// (node/key, none) where a node/key is node level encoded key.
-    pub fn node_kv_pair(&self, key: &[u8]) -> (IVec, Option<IVec>) {
+    pub(crate) fn node_kv_pair(&self, key: &[u8]) -> (IVec, Option<IVec>) {
         assert!(key >= self.lo.as_ref());
         if !self.hi.is_empty() {
             assert!(key < self.hi.as_ref());

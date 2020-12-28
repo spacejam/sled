@@ -196,7 +196,6 @@ mod lazy;
 mod lru;
 mod meta;
 mod metrics;
-mod node;
 mod oneshot;
 mod pagecache;
 mod prefix;
@@ -322,7 +321,6 @@ use {
     self::{
         arc::Arc,
         atomic_shim::{AtomicI64 as AtomicLsn, AtomicU64},
-        binary_search::binary_search_lub,
         concurrency_control::Protector,
         context::Context,
         fastcmp::fastcmp,
@@ -330,10 +328,9 @@ use {
         lru::Lru,
         meta::Meta,
         metrics::{clock, Measure, M},
-        node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
-        sstable::SSTable,
+        sstable::Node,
         subscriber::Subscribers,
         tree::TreeInner,
         varint::{deserialize_varint, serialize_varint_into, varint_size},

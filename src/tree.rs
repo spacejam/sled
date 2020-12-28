@@ -1082,9 +1082,9 @@ impl Tree {
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key, new.clone())
+                Link::Set(encoded_key.into(), new.clone())
             } else {
-                Link::Del(encoded_key)
+                Link::Del(encoded_key.into())
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -1491,7 +1491,7 @@ impl Tree {
         trace!("splitting node with pid {}", view.pid);
         // split node
         let (mut lhs, rhs) = view.deref().clone().split();
-        let rhs_lo = rhs.lo.clone();
+        let rhs_lo = rhs.lo().unwrap_or(&[]);
 
         // install right side
         let (rhs_pid, rhs_ptr) = self.context.pagecache.allocate(rhs, guard)?;
@@ -1520,16 +1520,17 @@ impl Tree {
         // either install parent split or hoist root
         if let Some(parent_view) = parent_view {
             M.tree_parent_split_attempt();
-            let mut parent: Node = parent_view.deref().clone();
-            let split_applied = parent.parent_split(&rhs_lo, rhs_pid);
+            let split_applied = parent_view.parent_split(&rhs_lo, rhs_pid);
 
-            if !split_applied {
+            if split_applied.is_none() {
                 // due to deep races, it's possible for the
                 // parent to already have a node for this lo key.
                 // if this is the case, we can skip the parent split
                 // because it's probably going to fail anyway.
                 return Ok(());
             }
+
+            let parent = split_applied.unwrap();
 
             let replace = self.context.pagecache.replace(
                 parent_view.pid,
@@ -1555,7 +1556,7 @@ impl Tree {
         &self,
         from: PageId,
         to: PageId,
-        at: IVec,
+        at: &[u8],
         guard: &Guard,
     ) -> Result<bool> {
         M.tree_root_split_attempt();
@@ -1695,9 +1696,9 @@ impl Tree {
                 retry!();
             }
 
-            let overshot = key.as_ref() < view.lo.as_ref();
+            let overshot = key.as_ref() < view.lo().unwrap_or(&[]);
             let undershot =
-                key.as_ref() >= view.hi.as_ref() && !view.hi.is_empty();
+                key.as_ref() >= view.hi().unwrap_or(&[]) && !view.hi().is_none();
 
             if overshot {
                 // merge interfered, reload root and retry
@@ -1717,14 +1718,14 @@ impl Tree {
                 ).get();
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
-                } else if parent_view.is_none() && view.lo.is_empty() {
+                } else if parent_view.is_none() && view.lo().is_none() {
                     assert!(unsplit_parent.is_none());
                     assert_eq!(view.pid, root_pid);
                     // we have found a partially-split root
                     if self.root_hoist(
                         root_pid,
                         view.next.unwrap().get(),
-                        view.hi.clone(),
+                        view.hi(),
                         guard,
                     )? {
                         M.tree_root_split_success();
@@ -1737,9 +1738,9 @@ impl Tree {
                 // our cooperative parent split
                 let mut parent: Node = unsplit_parent.deref().clone();
                 let split_applied =
-                    parent.parent_split(view.lo.as_ref(), cursor);
+                    parent.parent_split(view.lo().unwrap_or(&[]), cursor);
 
-                if !split_applied {
+                if split_applied .is_none(){
                     // due to deep races, it's possible for the
                     // parent to already have a node for this lo key.
                     // if this is the case, we can skip the parent split
@@ -1788,7 +1789,7 @@ impl Tree {
                 }
             }
 
-            if view.data.is_index() {
+            if view.is_index {
                 let next = view.index_next_node(key.as_ref());
                 took_leftmost_branch = next.0 == 0;
                 parent_view = Some(view);
@@ -1943,9 +1944,9 @@ impl Tree {
             return Ok(());
         };
 
-        let index = parent_view.data.index_ref().unwrap();
+        assert!(parent_view.is_index);
         let child_index =
-            index.pointers.iter().position(|pid| pid == &child_pid).unwrap();
+            parent_view.iter_index_pids().position(|pid| pid == child_pid).unwrap();
 
         assert_ne!(
             child_index, 0,
@@ -1958,7 +1959,7 @@ impl Tree {
         // we assume caller only merges when
         // the node to be merged is not the
         // leftmost child.
-        let mut cursor_pid = index.pointers[merge_index];
+        let mut cursor_pid = parent_view.index_pid(merge_index);
 
         // searching for the left sibling to merge the target page into
         loop {
@@ -1992,7 +1993,7 @@ impl Tree {
                 }
 
                 merge_index -= 1;
-                cursor_pid = index.pointers[merge_index];
+                cursor_pid = parent_view.index_pid(merge_index);
 
                 continue;
             };
@@ -2042,15 +2043,15 @@ impl Tree {
                         continue;
                     }
                 }
-            } else if cursor_view.hi >= child_view.lo {
+            } else if cursor_view.hi() >= child_view.lo() {
                 // we overshot the node being merged,
                 trace!(
                     "cursor pid {} has hi key {:?}, which is \
                      >= merging child pid {}'s lo key of {:?}, breaking",
                     cursor_pid,
-                    cursor_view.hi,
+                    cursor_view.hi(),
                     child_pid,
-                    child_view.lo
+                    child_view.lo()
                 );
                 break;
             } else {
@@ -2236,8 +2237,8 @@ impl Tree {
             f.push_str(&format!("\t\t{}: ", pid));
             f.push_str(&format!("{:?}\n", node));
 
-            if let Data::Index(ref index) = &node.data {
-                for pid in index.iter_index_pids() {
+            if node.is_index {
+                for pid in node.iter_index_pids() {
                     referenced_pids.insert(pid);
                 }
             }
@@ -2256,9 +2257,8 @@ impl Tree {
                     )
                 };
 
-                match &left_node.data {
-                    Data::Index(index) => {
-                        if let Some(next_pid) = index.iter_index_pids().next() {
+                if left_node.is_index {
+                        if let Some(next_pid) = node.iter_index_pids().next() {
                             pid = next_pid;
                             left_most = next_pid;
                             level += 1;
@@ -2273,12 +2273,12 @@ impl Tree {
                         } else {
                             panic!("trying to debug print empty index node");
                         }
-                    }
-                    Data::Leaf(_items) => {
+
+                } else {
                         // we've reached the end of our tree, all leafs are on
                         // the lowest level.
                         break;
-                    }
+
                 }
             }
         }

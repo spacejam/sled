@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{convert::TryInto, ops::Deref};
 
 use crate::*;
 
@@ -185,8 +185,9 @@ impl Db {
         let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
         let mut cursor = root_id.unwrap();
         while let Some(view) = self.view_for_pid(cursor, &guard)? {
-            if let Some(index) = view.data.index_ref() {
-                let leftmost_child = index.pointers[0];
+            if view.is_index {
+                let leftmost_child =
+                    u64::from_le_bytes(view.index_value(0).try_into().unwrap());
                 leftmost_chain.push(leftmost_child);
                 cursor = leftmost_child;
             } else {
