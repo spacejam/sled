@@ -597,6 +597,7 @@ impl Node {
             self.lo().unwrap_or(&[]),
             self.hi().unwrap_or(&[]),
             0, //todo!(),
+            self.is_index,
             &items,
         );
         testing_assert!(ret.is_sorted());
