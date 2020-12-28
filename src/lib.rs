@@ -195,12 +195,12 @@ mod lazy;
 mod lru;
 mod meta;
 mod metrics;
+mod node;
 mod oneshot;
 mod pagecache;
 mod prefix;
 mod result;
 mod serialization;
-mod sstable;
 mod stack;
 mod subscriber;
 mod sys_limits;
@@ -327,9 +327,9 @@ use {
         lru::Lru,
         meta::Meta,
         metrics::{clock, Measure, M},
+        node::Node,
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
-        sstable::Node,
         subscriber::Subscribers,
         tree::TreeInner,
     },
