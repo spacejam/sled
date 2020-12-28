@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 
 /// Returns the number of bytes that this varint will need
-pub fn varint_size(int: u64) -> u64 {
+pub fn size(int: u64) -> u64 {
     if int <= 240 {
         1
     } else if int <= 2287 {
@@ -24,7 +24,7 @@ pub fn varint_size(int: u64) -> u64 {
 }
 
 /// Returns how many bytes the varint consumed while serializing
-pub fn serialize_varint_into(int: u64, buf: &mut [u8]) -> usize {
+pub fn serialize_into(int: u64, buf: &mut [u8]) -> usize {
     if int <= 240 {
         buf[0] = u8::try_from(int).unwrap();
         1
@@ -72,7 +72,7 @@ pub fn serialize_varint_into(int: u64, buf: &mut [u8]) -> usize {
 
 /// Returns the deserialized varint, along with how many bytes
 /// were taken up by the varint.
-pub fn deserialize_varint(buf: &[u8]) -> crate::Result<(u64, usize)> {
+pub fn deserialize(buf: &[u8]) -> crate::Result<(u64, usize)> {
     if buf.is_empty() {
         return Err(crate::Error::corruption(None));
     }

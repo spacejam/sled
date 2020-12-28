@@ -10,15 +10,13 @@ use std::{
     ops::{Bound, Deref, DerefMut},
 };
 
-use crate::{
-    deserialize_varint, prefix, serialize_varint_into, varint_size, IVec, Link,
-};
+use crate::{prefix, varint, IVec, Link};
 
 const ALIGNMENT: usize = align_of::<Header>();
 
 // allocates space for a header struct at the beginning.
-pub(crate) fn aligned_boxed_slice(size: usize) -> Box<[u8]> {
-    let size = size + size_of::<Header>();
+pub(crate) fn aligned_boxed_slice(items_size: usize) -> Box<[u8]> {
+    let size = items_size + size_of::<Header>();
     let layout = Layout::from_size_align(size, ALIGNMENT).unwrap();
 
     unsafe {
@@ -121,20 +119,21 @@ impl Node {
         let mut key_lengths = Vec::with_capacity(items.len());
         let mut value_lengths = Vec::with_capacity(items.len());
 
-        let mut keys_equal_length = true;
-        let mut values_equal_length = true;
+        let mut initial_keys_equal_length = true;
+        let mut initial_values_equal_length = true;
         for (k, v) in items {
             key_lengths.push(k.len() as u64);
             if let Some(first_sz) = key_lengths.first() {
-                keys_equal_length &= *first_sz == k.len() as u64;
+                initial_keys_equal_length &= *first_sz == k.len() as u64;
             }
             value_lengths.push(v.len() as u64);
             if let Some(first_sz) = value_lengths.first() {
-                values_equal_length &= *first_sz == v.len() as u64;
+                initial_values_equal_length &= *first_sz == v.len() as u64;
             }
         }
 
-        let (fixed_key_length, keys_equal_length) = if keys_equal_length {
+        let (fixed_key_length, keys_equal_length) = if initial_keys_equal_length
+        {
             if let Some(key_length) = key_lengths.first() {
                 if *key_length > 0 {
                     (Some(NonZeroU64::new(*key_length).unwrap()), true)
@@ -148,19 +147,20 @@ impl Node {
             (None, false)
         };
 
-        let (fixed_value_length, values_equal_length) = if values_equal_length {
-            if let Some(value_length) = value_lengths.first() {
-                if *value_length > 0 {
-                    (Some(NonZeroU64::new(*value_length).unwrap()), true)
+        let (fixed_value_length, values_equal_length) =
+            if initial_values_equal_length {
+                if let Some(value_length) = value_lengths.first() {
+                    if *value_length > 0 {
+                        (Some(NonZeroU64::new(*value_length).unwrap()), true)
+                    } else {
+                        (None, false)
+                    }
                 } else {
                     (None, false)
                 }
             } else {
                 (None, false)
-            }
-        } else {
-            (None, false)
-        };
+            };
 
         let key_storage_size = if let Some(key_length) = fixed_key_length {
             key_length.get() * (items.len() as u64)
@@ -168,7 +168,7 @@ impl Node {
             let mut sum = 0;
             for key_length in &key_lengths {
                 sum += key_length;
-                sum += varint_size(*key_length);
+                sum += varint::size(*key_length);
             }
             sum
         };
@@ -180,7 +180,7 @@ impl Node {
             let mut sum = 0;
             for value_length in &value_lengths {
                 sum += value_length;
-                sum += varint_size(*value_length);
+                sum += varint::size(*value_length);
             }
             sum
         };
@@ -204,7 +204,10 @@ impl Node {
                 _ => unreachable!(),
             };
 
-            (bytes_per_offset as u64 * items.len() as u64, bytes_per_offset)
+            (
+                u64::try_from(bytes_per_offset).unwrap() * items.len() as u64,
+                bytes_per_offset,
+            )
         };
 
         let total_item_storage_size = hi.len() as u64
@@ -228,7 +231,7 @@ impl Node {
             fixed_value_length,
             offset_bytes,
             children: u16::try_from(items.len()).unwrap(),
-            prefix_len: prefix_len,
+            prefix_len,
             merging: false,
             is_index,
         };
@@ -266,16 +269,16 @@ impl Node {
                 ret.set_offset(idx, usize::try_from(offset).unwrap());
             }
             if !keys_equal_length {
-                offset += varint_size(k.len() as u64) + k.len() as u64;
+                offset += varint::size(k.len() as u64) + k.len() as u64;
             }
             if !values_equal_length {
-                offset += varint_size(v.len() as u64) + v.len() as u64;
+                offset += varint::size(v.len() as u64) + v.len() as u64;
             }
 
             let mut key_buf = ret.key_buf_for_offset_mut(idx);
             if !keys_equal_length {
                 let varint_bytes =
-                    serialize_varint_into(k.len() as u64, key_buf);
+                    varint::serialize_into(k.len() as u64, key_buf);
                 key_buf = &mut key_buf[varint_bytes..];
             }
             key_buf[..k.len()].copy_from_slice(k);
@@ -283,7 +286,7 @@ impl Node {
             let mut value_buf = ret.value_buf_for_offset_mut(idx);
             if !values_equal_length {
                 let varint_bytes =
-                    serialize_varint_into(v.len() as u64, value_buf);
+                    varint::serialize_into(v.len() as u64, value_buf);
                 value_buf = &mut value_buf[varint_bytes..];
             }
             value_buf[..v.len()].copy_from_slice(v);
@@ -310,7 +313,7 @@ impl Node {
             true,
             &[
                 (prefix::empty(), &left.to_le_bytes()),
-                (&at, &right.to_le_bytes()),
+                (at, &right.to_le_bytes()),
             ],
         )
     }
@@ -370,7 +373,7 @@ impl Node {
                 let values_buf = self.values_buf_mut();
                 let slot_buf = &mut values_buf[offset..];
                 let (val_len, varint_sz) =
-                    deserialize_varint(slot_buf).unwrap();
+                    varint::deserialize(slot_buf).unwrap();
                 &mut slot_buf[usize::try_from(val_len).unwrap() + varint_sz..]
             }
         }
@@ -399,7 +402,7 @@ impl Node {
                 let values_buf = self.values_buf();
                 let slot_buf = &values_buf[offset..];
                 let (val_len, varint_sz) =
-                    deserialize_varint(slot_buf).unwrap();
+                    varint::deserialize(slot_buf).unwrap();
                 &slot_buf[usize::try_from(val_len).unwrap() + varint_sz..]
             }
         }
@@ -409,7 +412,7 @@ impl Node {
         let start = index * self.offset_bytes as usize;
         let end = start + self.offset_bytes as usize;
         let buf = &self.offsets_buf()[start..end];
-        let mut le_usize_buf = [0u8; size_of::<u64>()];
+        let mut le_usize_buf = [0_u8; size_of::<u64>()];
         le_usize_buf[..self.offset_bytes as usize].copy_from_slice(buf);
         usize::try_from(u64::from_le_bytes(le_usize_buf)).unwrap()
     }
@@ -443,13 +446,14 @@ impl Node {
             (Some(fixed_key_length), Some(_))
             | (Some(fixed_key_length), None) => {
                 let start = offset_sz
-                    + (fixed_key_length.get() as usize
-                        * self.children as usize);
+                    + usize::try_from(fixed_key_length.get()).unwrap()
+                        * self.children as usize;
                 &mut self.data_buf_mut()[start..]
             }
             (None, Some(fixed_value_length)) => {
                 let total_value_size =
-                    fixed_value_length.get() as usize * self.children as usize;
+                    usize::try_from(fixed_value_length.get()).unwrap()
+                        * self.children as usize;
                 let data_buf = self.data_buf_mut();
                 let start = data_buf.len() - total_value_size;
                 &mut data_buf[start..]
@@ -464,13 +468,14 @@ impl Node {
             (Some(fixed_key_length), Some(_))
             | (Some(fixed_key_length), None) => {
                 let start = offset_sz
-                    + (fixed_key_length.get() as usize
-                        * self.children as usize);
+                    + usize::try_from(fixed_key_length.get()).unwrap()
+                        * self.children as usize;
                 &self.data_buf()[start..]
             }
             (None, Some(fixed_value_length)) => {
                 let total_value_size =
-                    fixed_value_length.get() as usize * self.children as usize;
+                    usize::try_from(fixed_value_length.get()).unwrap()
+                        * self.children as usize;
                 let data_buf = self.data_buf();
                 let start = data_buf.len() - total_value_size;
                 &data_buf[start..]
@@ -490,20 +495,19 @@ impl Node {
     }
 
     fn data_buf(&self) -> &[u8] {
-        let start = (self.lo_len as usize)
-            + (self.hi_len as usize)
+        let start = usize::try_from(self.lo_len).unwrap()
+            + usize::try_from(self.hi_len).unwrap()
             + size_of::<Header>();
         &self.0[start..]
     }
 
     fn data_buf_mut(&mut self) -> &mut [u8] {
-        let start = (self.lo_len as usize)
-            + (self.hi_len as usize)
+        let start = usize::try_from(self.lo_len).unwrap()
+            + usize::try_from(self.hi_len).unwrap()
             + size_of::<Header>();
         &mut self.0[start..]
     }
 
-    #[must_use]
     pub(crate) fn apply(&self, link: &Link) -> Node {
         use self::Link::*;
 
@@ -814,25 +818,25 @@ impl Node {
 
     pub(crate) fn lo(&self) -> Option<&[u8]> {
         let start = size_of::<Header>();
-        let end = start + self.lo_len as usize;
+        let end = start + usize::try_from(self.lo_len).unwrap();
         if start == end { None } else { Some(&self.0[start..end]) }
     }
 
     fn lo_mut(&mut self) -> Option<&mut [u8]> {
         let start = size_of::<Header>();
-        let end = start + self.lo_len as usize;
+        let end = start + usize::try_from(self.lo_len).unwrap();
         if start == end { None } else { Some(&mut self.0[start..end]) }
     }
 
     pub(crate) fn hi(&self) -> Option<&[u8]> {
-        let start = (self.lo_len as usize) + size_of::<Header>();
-        let end = start + self.hi_len as usize;
+        let start = usize::try_from(self.lo_len).unwrap() + size_of::<Header>();
+        let end = start + usize::try_from(self.hi_len).unwrap();
         if start == end { None } else { Some(&self.0[start..end]) }
     }
 
     fn hi_mut(&mut self) -> Option<&mut [u8]> {
-        let start = (self.lo_len as usize) + size_of::<Header>();
-        let end = start + self.hi_len as usize;
+        let start = usize::try_from(self.lo_len).unwrap() + size_of::<Header>();
+        let end = start + usize::try_from(self.hi_len).unwrap();
         if start == end { None } else { Some(&mut self.0[start..end]) }
     }
 
@@ -848,9 +852,9 @@ impl Node {
 
         let (start, end) = if let Some(fixed_key_length) = self.fixed_key_length
         {
-            (0, fixed_key_length.get() as usize)
+            (0, usize::try_from(fixed_key_length.get()).unwrap())
         } else {
-            let (key_len, varint_sz) = deserialize_varint(buf).unwrap();
+            let (key_len, varint_sz) = varint::deserialize(buf).unwrap();
             let start = varint_sz;
             let end = start + usize::try_from(key_len).unwrap();
             (start, end)
@@ -871,9 +875,9 @@ impl Node {
 
         let (start, end) =
             if let Some(fixed_value_length) = self.fixed_value_length {
-                (0, fixed_value_length.get() as usize)
+                (0, usize::try_from(fixed_value_length.get()).unwrap())
             } else {
-                let (value_len, varint_sz) = deserialize_varint(buf).unwrap();
+                let (value_len, varint_sz) = varint::deserialize(buf).unwrap();
                 let start = varint_sz;
                 let end = start + usize::try_from(value_len).unwrap();
                 (start, end)
@@ -898,7 +902,7 @@ impl Node {
             assert!(key < self.hi().unwrap());
         }
         if let Some((k, v)) = self.leaf_pair_for_key(key.as_ref()) {
-            (k, Some(v.clone()))
+            (k, Some(v))
         } else {
             let encoded_key = &key[self.prefix_len as usize..];
             let encoded_val = None;
@@ -979,7 +983,7 @@ impl Node {
         // This encoding happens this way because
         // keys cannot be lower than the node's lo key.
         let predecessor_key = match bound {
-            Bound::Unbounded => self.prefix_encode(&self.lo().unwrap_or(&[])),
+            Bound::Unbounded => self.prefix_encode(self.lo().unwrap_or(&[])),
             Bound::Included(b) | Bound::Excluded(b) => {
                 let max = std::cmp::max(&**b, self.lo().unwrap_or(&[]));
                 self.prefix_encode(max)

@@ -7,13 +7,11 @@ use std::{
 };
 
 use crate::{
-    deserialize_varint,
     pagecache::{
         BatchManifest, HeapId, MessageHeader, PageState, SegmentNumber,
         Snapshot,
     },
-    serialize_varint_into, varint_size, DiskPtr, Error, IVec, Link, Meta, Node,
-    Result,
+    varint, DiskPtr, Error, IVec, Link, Meta, Node, Result,
 };
 
 /// Items that may be serialized and deserialized
@@ -142,11 +140,11 @@ impl Serialize for IVec {
 
 impl Serialize for u64 {
     fn serialized_size(&self) -> u64 {
-        varint_size(*self)
+        varint::size(*self)
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        let sz = serialize_varint_into(*self, buf);
+        let sz = varint::serialize_into(*self, buf);
 
         scoot(buf, sz);
     }
@@ -155,7 +153,7 @@ impl Serialize for u64 {
         if buf.is_empty() {
             return Err(Error::corruption(None));
         }
-        let (res, scoot) = deserialize_varint(buf)?;
+        let (res, scoot) = varint::deserialize(buf)?;
         *buf = &buf[scoot..];
         Ok(res)
     }

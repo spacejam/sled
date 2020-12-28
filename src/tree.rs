@@ -453,7 +453,7 @@ impl Tree {
         let View { node_view, pid, .. } = self.view_for_key(key.as_ref(), guard)?;
 
         let pair = node_view.leaf_pair_for_key(key.as_ref());
-        let val = pair.map(|kv| kv.1.clone()).map(IVec::from);
+        let val = pair.map(|kv| kv.1).map(IVec::from);
 
         guard.readset.push(pid);
 
@@ -571,7 +571,7 @@ impl Tree {
                 node_view.node_kv_pair(key.as_ref());
             let matches = match (old.as_ref(), &current_value) {
                 (None, None) => true,
-                (Some(o), Some(ref c)) => o.as_ref() == &**c,
+                (Some(o), Some(c)) => o.as_ref() == &**c,
                 _ => false,
             };
 
@@ -1698,8 +1698,11 @@ impl Tree {
             }
 
             let overshot = key.as_ref() < view.lo().unwrap_or(&[]);
-            let undershot =
-                key.as_ref() >= view.hi().unwrap_or(&[]) && !view.hi().is_none();
+            let undershot = if let Some(hi) = view.hi() {
+                key.as_ref() >= hi
+            } else {
+                false
+            };
 
             if overshot {
                 // merge interfered, reload root and retry

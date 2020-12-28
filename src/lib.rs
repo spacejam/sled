@@ -332,7 +332,6 @@ use {
         sstable::Node,
         subscriber::Subscribers,
         tree::TreeInner,
-        varint::{deserialize_varint, serialize_varint_into, varint_size},
     },
     crossbeam_utils::{Backoff, CachePadded},
     log::{debug, error, trace, warn},

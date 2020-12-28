@@ -132,13 +132,11 @@ impl Iter {
                     }
                     _ => return None,
                 }
+            } else if let Some(hi) = node.hi() {
+                self.lo = Bound::Included(hi.into());
+                continue;
             } else {
-                if let Some(hi) = node.hi() {
-                    self.lo = Bound::Included(hi.into());
-                    continue;
-                } else {
-                    return None;
-                }
+                return None;
             }
         }
         panic!(
@@ -215,13 +213,11 @@ impl DoubleEndedIterator for Iter {
                     }
                     _ => return None,
                 }
+            } else if let Some(lo) = node.lo() {
+                self.hi = Bound::Excluded(lo.into());
+                continue;
             } else {
-                if let Some(lo) = node.lo() {
-                    self.hi = Bound::Excluded(lo.into());
-                    continue;
-                } else {
-                    return None;
-                }
+                return None;
             }
         }
         panic!(
