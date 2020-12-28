@@ -568,44 +568,33 @@ impl Node {
         let items: Vec<_> = match self
             .find(&key[usize::from(self.prefix_len)..])
         {
-            Ok(0) => {
-                println!("src/sstable.rs:568");
-                Some((key, value))
-                    .into_iter()
-                    .chain(self.iter().skip(1))
-                    .collect()
-            }
-            Ok(existing_offset) if existing_offset == self.len() - 1 => {
-                println!("src/sstable.rs:575");
-                self.iter()
-                    .take(self.len() - 1)
-                    .chain(Some((key, value)))
-                    .collect()
-            }
-            Ok(existing_offset) => {
-                println!("src/sstable.rs:583");
-                self.iter()
-                    .take(existing_offset - 1)
-                    .chain(Some((key, value)))
-                    .chain(self.iter().skip(existing_offset - 1))
-                    .collect()
-            }
+            Ok(0) => Some((key, value))
+                .into_iter()
+                .chain(self.iter().skip(1))
+                .collect(),
+            Ok(existing_offset) if existing_offset == self.len() - 1 => self
+                .iter()
+                .take(self.len() - 1)
+                .chain(Some((key, value)))
+                .collect(),
+            Ok(existing_offset) => self
+                .iter()
+                .take(existing_offset - 1)
+                .chain(Some((key, value)))
+                .chain(self.iter().skip(existing_offset - 1))
+                .collect(),
             Err(0) => {
-                println!("src/sstable.rs:592");
                 Some((key, value)).into_iter().chain(self.iter()).collect()
             }
             Err(prospective_offset) if prospective_offset == self.len() => {
-                println!("src/sstable.rs:596");
                 self.iter().chain(Some((key, value))).collect()
             }
-            Err(prospective_offset) => {
-                println!("src/sstable.rs:600, offset: {}", prospective_offset);
-                self.iter()
-                    .take(prospective_offset)
-                    .chain(Some((key, value)))
-                    .chain(self.iter().skip(prospective_offset))
-                    .collect()
-            }
+            Err(prospective_offset) => self
+                .iter()
+                .take(prospective_offset)
+                .chain(Some((key, value)))
+                .chain(self.iter().skip(prospective_offset))
+                .collect(),
         };
 
         let ret: Node = Node::new(
@@ -1144,7 +1133,7 @@ mod test {
     }
 
     #[test]
-    fn sstable_bug_00() {
+    fn node_bug_00() {
         // postmortem: offsets were not being stored, and the slot buf was not
         // being considered correctly while writing or reading values in
         // shared slots.
@@ -1156,7 +1145,7 @@ mod test {
     }
 
     #[test]
-    fn sstable_bug_01() {
+    fn node_bug_01() {
         // postmortem: hi and lo keys were not properly being accounted in the
         // inital allocation
         assert!(prop_indexable(vec![], vec![0], vec![],));
