@@ -2512,3 +2512,16 @@ fn tree_bug_46() {
         assert!(prop_tree_matches_btreemap(vec![Restart], false, true, 0, 0))
     }
 }
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_47() {
+    // postmortem:
+    assert!(prop_tree_matches_btreemap(
+        vec![Set(Key(vec![88; 1]), 40), Restart, Get(Key(vec![88; 1]))],
+        false,
+        false,
+        0,
+        0
+    ))
+}
