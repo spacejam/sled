@@ -416,7 +416,7 @@ impl<'a> RecoveryGuard<'a> {
 /// with associated storage parameters like disk pos, lsn, time.
 #[derive(Debug, Clone)]
 pub struct Page {
-    pub(crate) update: Option<Box<Update>>,
+    pub(crate) update: Option<Update>,
     pub(crate) cache_infos: Vec<CacheInfo>,
 }
 
@@ -812,7 +812,7 @@ impl PageCache {
         }
 
         let mut new_page = Some(Owned::new(Page {
-            update: Some(Box::new(Update::Node(node))),
+            update: Some(Update::Node(node)),
             cache_infos: Vec::default(),
         }));
 
@@ -1579,13 +1579,13 @@ impl PageCacheInner {
         trace!("cas_page on pid {} has log kind: {:?}", pid, log_kind);
 
         let mut new_page = Some(Owned::new(Page {
-            update: Some(Box::new(update)),
+            update: Some(update),
             cache_infos: Vec::default(),
         }));
 
         loop {
             let mut page_ptr = new_page.take().unwrap();
-            let log_reservation = match &**page_ptr.update.as_ref().unwrap() {
+            let log_reservation = match &*page_ptr.update.as_ref().unwrap() {
                 Update::Counter(ref c) => {
                     self.log.reserve(log_kind, pid, c, guard)?
                 }
@@ -1686,7 +1686,7 @@ impl PageCacheInner {
                     if actual_ts != old.ts() || is_rewrite {
                         return Ok(Err(Some((
                             PageView { read: current, entry: old.entry },
-                            *returned_update.update.take().unwrap(),
+                            returned_update.update.take().unwrap(),
                         ))));
                     }
                     trace!(
@@ -1850,7 +1850,7 @@ impl PageCacheInner {
         let base = updates.pop().unwrap();
 
         let page = Owned::new(Page {
-            update: Some(Box::new(base)),
+            update: Some(base),
             cache_infos: page_view.cache_infos.clone(),
         });
 
@@ -2233,9 +2233,9 @@ impl PageCacheInner {
             let update = if pid == META_PID || pid == COUNTER_PID {
                 let update =
                     self.pull(pid, cache_infos[0].lsn, cache_infos[0].pointer)?;
-                Some(Box::new(update))
+                Some(update)
             } else if state.is_free() {
-                Some(Box::new(Update::Free))
+                Some(Update::Free)
             } else {
                 None
             };
