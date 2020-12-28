@@ -596,7 +596,7 @@ impl Node {
         let ret: Node = Node::new(
             self.lo().unwrap_or(&[]),
             self.hi().unwrap_or(&[]),
-            0, //todo!(),
+            self.prefix_len,
             self.is_index,
             &items,
         );
@@ -615,7 +615,7 @@ impl Node {
         Node::new(
             self.lo().unwrap_or(&[]),
             self.hi().unwrap_or(&[]),
-            0, //todo!(),
+            self.prefix_len,
             self.is_index,
             &items,
         )
