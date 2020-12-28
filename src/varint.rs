@@ -92,7 +92,7 @@ pub fn deserialize(buf: &[u8]) -> crate::Result<(u64, usize)> {
             let mut aligned = [0; 8];
             aligned[..sz].copy_from_slice(&buf[1..=sz]);
             let varint = u64::from_le_bytes(aligned);
-            (varint, sz)
+            (varint, sz + 1)
         }
     };
     Ok(res)
