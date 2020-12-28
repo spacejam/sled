@@ -22,50 +22,6 @@ impl Node {
             + self.data.rss()
     }
 
-    pub(crate) fn apply(&mut self, link: &Link) {
-        use self::Link::*;
-
-        assert!(
-            !self.merging,
-            "somehow a link was applied to a node after it was merged"
-        );
-
-        match *link {
-            Set(ref k, ref v) => {
-                self.set_leaf(k.clone(), v.clone());
-            }
-            Del(ref k) => {
-                self.del_leaf(k);
-            }
-            ParentMergeIntention(pid) => {
-                assert!(
-                    self.merging_child.is_none(),
-                    "trying to merge {:?} into node {:?} which \
-                     is already merging another child",
-                    link,
-                    self
-                );
-                self.merging_child = Some(NonZeroU64::new(pid).unwrap());
-            }
-            ParentMergeConfirm => {
-                assert!(self.merging_child.is_some());
-                let merged_child = self
-                    .merging_child
-                    .take()
-                    .expect(
-                        "we should have a specific \
-                     child that was merged if this \
-                     link appears here",
-                    )
-                    .get();
-                self.data.parent_merge_confirm(merged_child);
-            }
-            ChildMergeCap => {
-                self.merging = true;
-            }
-        }
-    }
-
     pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
         if !self.hi.is_empty() {
             assert!(*key < self.hi[self.prefix_len as usize..]);

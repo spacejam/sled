@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    deserialize_varint, prefix, serialize_varint_into, varint_size, IVec,
+    deserialize_varint, prefix, serialize_varint_into, varint_size, IVec, Link,
 };
 
 const ALIGNMENT: usize = align_of::<Header>();
@@ -493,6 +493,56 @@ impl Node {
         &mut self.0[start..]
     }
 
+    #[must_use]
+    pub(crate) fn apply(&self, link: &Link) -> Node {
+        use self::Link::*;
+
+        assert!(
+            !self.merging,
+            "somehow a link was applied to a node after it was merged"
+        );
+
+        match *link {
+            Set(ref k, ref v) => self.insert(k, v),
+            Del(ref k) => self.remove(k),
+            ParentMergeIntention(pid) => {
+                assert!(
+                    self.merging_child.is_none(),
+                    "trying to merge {:?} into node {:?} which \
+                     is already merging another child",
+                    link,
+                    self
+                );
+                let mut clone = self.clone();
+                clone.merging_child = Some(NonZeroU64::new(pid).unwrap());
+                clone
+            }
+            ParentMergeConfirm => {
+                assert!(self.merging_child.is_some());
+                let merged_child = self
+                    .merging_child
+                    .expect(
+                        "we should have a specific \
+                     child that was merged if this \
+                     link appears here",
+                    )
+                    .get();
+                let idx = self
+                    .iter_index_pids()
+                    .position(|pid| pid == merged_child)
+                    .unwrap();
+                let mut ret = self.remove_index(idx);
+                ret.merging_child = None;
+                ret
+            }
+            ChildMergeCap => {
+                let mut ret = self.clone();
+                ret.merging = true;
+                ret
+            }
+        }
+    }
+
     pub(crate) fn insert(&self, key: &[u8], value: &[u8]) -> Node {
         match self.find(&key[usize::from(self.prefix_len)..]) {
             Ok(offset) => {
@@ -508,17 +558,16 @@ impl Node {
         testing_assert!(is_sorted(&index.keys));
     }
 
+    fn remove_index(&self, index: usize) -> Node {
+        todo!()
+    }
+
     pub(crate) fn remove(&self, key: &[u8]) -> Node {
-        let offset = self
+        let index = self
             .find(&key[usize::from(self.prefix_len)..])
             .expect("called remove for non-present key");
 
-        //
-
-        //
-
-        //
-        todo!()
+        self.remove_index(index)
     }
 
     pub(crate) fn split(&self) -> (Node, Node) {
