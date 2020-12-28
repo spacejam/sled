@@ -488,7 +488,10 @@ impl Serialize for Node {
             return Err(Error::corruption(None));
         }
         let len = usize::try_from(u64::deserialize(buf)?).unwrap();
-        let sst = Node::from_raw(&buf[..len]);
+
+        #[allow(unsafe_code)]
+        let sst = unsafe { Node::from_raw(&buf[..len]) };
+
         *buf = &buf[len..];
         Ok(sst)
     }

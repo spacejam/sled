@@ -43,7 +43,7 @@ fn fatten(data: *const u8, len: usize) -> *mut [u8] {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Header {
+pub struct Header {
     // NB always lay out fields from largest to smallest
     // to properly pack the struct
     pub next: Option<NonZeroU64>,
@@ -60,9 +60,10 @@ pub(crate) struct Header {
 }
 
 /// An immutable sorted string table
+#[must_use]
 #[derive(Clone)]
 #[cfg_attr(feature = "testing", derive(PartialEq))]
-pub(crate) struct Node(pub ManuallyDrop<Box<[u8]>>);
+pub struct Node(pub ManuallyDrop<Box<[u8]>>);
 
 impl Drop for Node {
     fn drop(&mut self) {
@@ -493,7 +494,6 @@ impl Node {
         &mut self.0[start..]
     }
 
-    #[must_use]
     pub(crate) fn apply(&self, link: &Link) -> Node {
         use self::Link::*;
 

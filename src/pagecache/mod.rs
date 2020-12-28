@@ -803,8 +803,7 @@ impl PageCache {
             }
         }
 
-        let mut node: Node = old.as_node().clone();
-        node.apply(&new);
+        let node = old.as_node().apply(&new);
 
         // see if we should short-circuit replace
         if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {

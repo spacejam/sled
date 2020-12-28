@@ -185,8 +185,9 @@ impl Tree {
         };
 
         let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
+        let last_value = last_value.map(IVec::from);
 
-        if value.map(|i| i.as_ref()) == last_value {
+        if value == last_value {
             // short-circuit a no-op set or delete
             return Ok(Ok(value))
         }
@@ -218,7 +219,7 @@ impl Tree {
 
             guard.writeset.push(pid);
 
-            Ok(Ok(last_value.map(IVec::from)))
+            Ok(Ok(last_value))
         } else {
             M.tree_looped();
             Ok(Err(Conflict))
@@ -452,11 +453,11 @@ impl Tree {
         let View { node_view, pid, .. } = self.view_for_key(key.as_ref(), guard)?;
 
         let pair = node_view.leaf_pair_for_key(key.as_ref());
-        let val = pair.map(|kv| kv.1.clone());
+        let val = pair.map(|kv| kv.1.clone()).map(IVec::from);
 
         guard.readset.push(pid);
 
-        Ok(Ok(val.map(IVec::from)))
+        Ok(Ok(val))
     }
 
     #[doc(hidden)]
@@ -555,7 +556,7 @@ impl Tree {
         trace!("cas'ing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
 
-        let guard = pin();
+        let mut guard = pin();
         let _cc = concurrency_control::read();
 
         let new = new.map(Into::into);
@@ -1491,7 +1492,7 @@ impl Tree {
         trace!("splitting node with pid {}", view.pid);
         // split node
         let (mut lhs, rhs) = view.deref().clone().split();
-        let rhs_lo = rhs.lo().unwrap_or(&[]);
+        let rhs_lo = rhs.lo().unwrap_or(&[]).to_vec();
 
         // install right side
         let (rhs_pid, rhs_ptr) = self.context.pagecache.allocate(rhs, guard)?;
@@ -1546,7 +1547,7 @@ impl Tree {
                 // failed.
             }
         } else {
-            let _ = self.root_hoist(root_pid, rhs_pid, rhs_lo, guard)?;
+            let _ = self.root_hoist(root_pid, rhs_pid, &rhs_lo, guard)?;
         }
 
         Ok(())
@@ -1736,9 +1737,8 @@ impl Tree {
             } else if let Some(unsplit_parent) = unsplit_parent.take() {
                 // we have found the proper page for
                 // our cooperative parent split
-                let mut parent: Node = unsplit_parent.deref().clone();
                 let split_applied =
-                    parent.parent_split(view.lo().unwrap_or(&[]), cursor);
+                    unsplit_parent.parent_split(view.lo().unwrap_or(&[]), cursor);
 
                 if split_applied .is_none(){
                     // due to deep races, it's possible for the
@@ -1747,6 +1747,8 @@ impl Tree {
                     // because it's probably going to fail anyway.
                     retry!();
                 }
+
+                let parent: Node = split_applied.unwrap();
 
                 M.tree_parent_split_attempt();
                 let replace = self.context.pagecache.replace(
