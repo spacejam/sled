@@ -60,10 +60,6 @@ impl<T> FastLock<T> {
         // otherwise the current value. If we succeed, it should return false.
         let success = !lock_result;
 
-        if success {
-            Some(FastLockGuard { mu: self })
-        } else {
-            None
-        }
+        if success { Some(FastLockGuard { mu: self }) } else { None }
     }
 }
