@@ -102,7 +102,8 @@ impl DerefMut for Node {
 
 impl Node {
     pub unsafe fn from_raw(buf: &[u8]) -> Node {
-        let mut boxed_slice = aligned_boxed_slice(buf.len());
+        let mut boxed_slice =
+            aligned_boxed_slice(buf.len() - size_of::<Header>());
         boxed_slice.copy_from_slice(buf);
         Node(ManuallyDrop::new(boxed_slice))
     }
