@@ -503,6 +503,7 @@ impl Node {
         &mut self.0[start..]
     }
 
+    #[must_use]
     pub(crate) fn apply(&self, link: &Link) -> Node {
         use self::Link::*;
 

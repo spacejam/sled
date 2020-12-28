@@ -1843,7 +1843,7 @@ impl PageCacheInner {
 
         for link_update in links {
             let link: &Link = link_update.as_link();
-            base.apply(link);
+            *base = base.apply(link);
         }
 
         updates.truncate(1);
