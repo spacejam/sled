@@ -644,6 +644,8 @@ impl IoBufs {
                 crc32: 0,
             };
 
+            trace!("writing segment cap {:?}", header);
+
             let header_bytes = header.serialize();
 
             // initialize the remainder of this buffer (only pad_len of this

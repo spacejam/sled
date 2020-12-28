@@ -381,6 +381,11 @@ fn crc32(buf: &[u8]) -> u32 {
 }
 
 fn calculate_message_crc32(header: &[u8], body: &[u8]) -> u32 {
+    trace!(
+        "calculating crc32 for header len {} body len {}",
+        header.len(),
+        body.len()
+    );
     let mut hasher = crc32fast::Hasher::new();
     hasher.update(body);
     hasher.update(&header[4..]);

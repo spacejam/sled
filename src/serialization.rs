@@ -92,10 +92,10 @@ impl Serialize for () {
 
 impl Serialize for MessageHeader {
     fn serialized_size(&self) -> u64 {
-        1 + 4
+        4 + 1
+            + self.len.serialized_size()
             + self.segment_number.serialized_size()
             + self.pid.serialized_size()
-            + self.len.serialized_size()
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {

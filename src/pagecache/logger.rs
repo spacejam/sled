@@ -743,8 +743,13 @@ pub(crate) fn read_message<R: ReadAt>(
     let len_before = header_cursor.len();
     let header = MessageHeader::deserialize(header_cursor)?;
     let len_after = header_cursor.len();
-    trace!("read message header at lid {}: {:?}", lid, header);
     let message_offset = len_before - len_after;
+    trace!(
+        "read message header at lid {} with header length {}: {:?}",
+        lid,
+        message_offset,
+        header
+    );
 
     let ceiling = seg_start + segment_len as LogOffset;
 
@@ -788,7 +793,13 @@ pub(crate) fn read_message<R: ReadAt>(
     );
 
     if crc32 != header.crc32 {
-        trace!("read a message with a bad checksum with header {:?}", header);
+        trace!(
+            "read a message with a bad checksum with header {:?} msg len: {} expected: {} actual: {}",
+            header,
+            header_len,
+            header.crc32,
+            crc32
+        );
         return Ok(LogRead::Corrupted);
     }
 
