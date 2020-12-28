@@ -897,11 +897,6 @@ mod qc {
         }
 
         #[cfg_attr(miri, ignore)]
-        fn data(item: Data) -> bool {
-            prop_serialize(&item)
-        }
-
-        #[cfg_attr(miri, ignore)]
         fn link(item: Link) -> bool {
             prop_serialize(&item)
         }

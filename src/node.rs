@@ -444,13 +444,6 @@ impl Data {
 
     pub(crate) fn parent_merge_confirm(&mut self, merged_child_pid: PageId) {
         match self {
-            Data::Index(ref mut index) => {
-                let idx = index
-                    .iter_index_pids()
-                    .position(|c| c == merged_child_pid)
-                    .unwrap();
-                index.keys.remove(idx);
-                index.pointers.remove(idx);
             }
             _ => panic!("parent_merge_confirm called on leaf data"),
         }
@@ -487,11 +480,6 @@ pub(crate) struct Leaf {
 pub(crate) struct Index {
     pub keys: Vec<IVec>,
     pub pointers: Vec<PageId>,
-}
-
-#[cfg(feature = "testing")]
-fn is_sorted<T: PartialOrd>(xs: &[T]) -> bool {
-    xs.windows(2).all(|pair| pair[0] <= pair[1])
 }
 
 #[test]

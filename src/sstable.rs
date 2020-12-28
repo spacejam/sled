@@ -555,7 +555,9 @@ impl Node {
                 todo!()
             }
         }
-        testing_assert!(is_sorted(&index.keys));
+        let ret: Node = todo!();
+        testing_assert!(ret.is_sorted());
+        ret
     }
 
     fn remove_index(&self, index: usize) -> Node {
@@ -950,6 +952,21 @@ impl Node {
         }
         None
     }
+
+    #[cfg(feature = "testing")]
+    fn is_sorted(&self) -> bool {
+        if self.len() < 2 {
+            return true;
+        }
+
+        for i in 0..self.len() - 2 {
+            if self.index_key(i) >= self.index_key(i + 1) {
+                return false;
+            }
+        }
+
+        true
+    }
 }
 
 #[cfg(test)]
@@ -961,16 +978,23 @@ mod test {
 
     #[test]
     fn simple() {
-        let mut ir =
-            Node::new(&[1], &[7], 0, &[(&[1], &[42]), (&[6, 6, 6], &[66])]);
+        let mut ir = Node::new(
+            &[1],
+            &7u64.to_le_bytes(),
+            0,
+            &[
+                (&[1], &42_u64.to_le_bytes()),
+                (&[6, 6, 6], &66_u64.to_le_bytes()),
+            ],
+        );
         ir.next = Some(NonZeroU64::new(5).unwrap());
         ir.is_index = false;
         dbg!(ir.header());
         println!("ir: {:#?}", ir);
-        assert_eq!(ir.get_lub(&[1]), &[42]);
-        assert_eq!(ir.get_lub(&[2]), &[42]);
-        assert_eq!(ir.get_lub(&[6]), &[42]);
-        assert_eq!(ir.get_lub(&[7]), &[66]);
+        assert_eq!(ir.index_next_node(&[1]).1, 42);
+        assert_eq!(ir.index_next_node(&[2]).1, 42);
+        assert_eq!(ir.index_next_node(&[6]).1, 42);
+        assert_eq!(ir.index_next_node(&[7]).1, 66);
     }
 
     impl Arbitrary for Node {
