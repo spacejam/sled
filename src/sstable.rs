@@ -605,7 +605,20 @@ impl Node {
     }
 
     fn remove_index(&self, index: usize) -> Node {
-        todo!()
+        assert!(self.len() > index);
+        let items: Vec<_> = if index == 0 {
+            self.iter().skip(1).collect()
+        } else {
+            self.iter().take(index - 1).chain(self.iter().skip(index)).collect()
+        };
+
+        Node::new(
+            self.lo().unwrap_or(&[]),
+            self.hi().unwrap_or(&[]),
+            0, //todo!(),
+            self.is_index,
+            &items,
+        )
     }
 
     pub(crate) fn split(&self) -> (Node, Node) {
@@ -618,7 +631,7 @@ impl Node {
         let left = Node::new(
             self.lo().unwrap_or(&[]),
             &split_key,
-            todo!(),
+            0, //todo!(),
             self.is_index,
             &left_items,
         );
@@ -626,7 +639,7 @@ impl Node {
         let right = Node::new(
             &split_key,
             self.hi().unwrap_or(&[]),
-            todo!(),
+            0, //todo!(),
             self.is_index,
             &right_items,
         );
@@ -643,7 +656,7 @@ impl Node {
         Node::new(
             self.lo().unwrap_or(&[]),
             other.hi().unwrap_or(&[]),
-            todo!(),
+            0, //todo!(),
             self.is_index,
             &*items,
         )
@@ -888,7 +901,7 @@ impl Node {
 
         let suffix = &key[self.prefix_len as usize..];
 
-        let search = self.find(key).ok();
+        let search = self.find(suffix).ok();
 
         search.map(|idx| (self.index_key(idx), self.index_value(idx)))
     }
@@ -1073,6 +1086,7 @@ mod test {
             &[1],
             &7u64.to_le_bytes(),
             0,
+            false,
             &[
                 (&[1], &42_u64.to_le_bytes()),
                 (&[6, 6, 6], &66_u64.to_le_bytes()),
@@ -1101,7 +1115,7 @@ mod test {
     ) -> bool {
         let children_ref: Vec<(&[u8], &[u8])> =
             children.iter().map(|(k, v)| (k.as_ref(), v.as_ref())).collect();
-        let ir = Node::new(&lo, &hi, 0, &children_ref);
+        let ir = Node::new(&lo, &hi, 0, false, &children_ref);
 
         assert_eq!(ir.children as usize, children_ref.len());
 
