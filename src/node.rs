@@ -54,26 +54,6 @@ impl Node {
         }
     }
 
-    pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) -> bool {
-        if let Data::Index(ref mut index) = self.data {
-            let encoded_sep = &at[self.prefix_len as usize..];
-            if index.contains_key(encoded_sep) {
-                debug!(
-                    "parent_split skipped because \
-                     parent already contains child \
-                     at split point due to deep race"
-                );
-                return false;
-            }
-
-            *index = index.insert(encoded_sep, &to.to_le_bytes());
-        } else {
-            panic!("tried to attach a ParentSplit to a Leaf chain");
-        }
-
-        true
-    }
-
     pub(crate) fn split(mut self) -> (Node, Node) {
         fn split_inner<T>(
             keys: &mut Vec<IVec>,
@@ -343,69 +323,6 @@ impl Node {
         merged.hi = right.hi.clone();
         merged.next = right.next;
         merged
-    }
-
-    /// `node_kv_pair` returns either existing (node/key, value) pair or
-    /// (node/key, none) where a node/key is node level encoded key.
-    pub(crate) fn node_kv_pair(&self, key: &[u8]) -> (IVec, Option<IVec>) {
-        assert!(key >= self.lo.as_ref());
-        if !self.hi.is_empty() {
-            assert!(key < self.hi.as_ref());
-        }
-        if let Some((k, v)) = self.leaf_pair_for_key(key.as_ref()) {
-            (k.clone(), Some(v.clone()))
-        } else {
-            let encoded_key = IVec::from(&key[self.prefix_len as usize..]);
-            let encoded_val = None;
-            (encoded_key, encoded_val)
-        }
-    }
-
-    pub(crate) fn should_split(&self) -> bool {
-        let threshold = if cfg!(any(test, feature = "lock_free_delays")) {
-            2
-        } else if self.data.is_index() {
-            256
-        } else {
-            16
-        };
-
-        let size_checks = self.data.len() > threshold;
-        let safety_checks = self.merging_child.is_none() && !self.merging;
-
-        size_checks && safety_checks
-    }
-
-    pub(crate) fn should_merge(&self) -> bool {
-        let threshold = if cfg!(any(test, feature = "lock_free_delays")) {
-            1
-        } else if self.data.is_index() {
-            64
-        } else {
-            4
-        };
-
-        let size_checks = self.data.len() < threshold;
-        let safety_checks = self.merging_child.is_none() && !self.merging;
-
-        size_checks && safety_checks
-    }
-
-    pub(crate) fn can_merge_child(&self) -> bool {
-        self.merging_child.is_none() && !self.merging
-    }
-
-    pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, PageId) {
-        let index =
-            self.data.index_ref().expect("index_next_node called on leaf");
-
-        let suffix = &key[self.prefix_len as usize..];
-
-        let search = binary_search_lub(suffix, &index.keys);
-
-        let pos = search.expect("failed to traverse index");
-
-        (pos, index.pointers[pos])
     }
 }
 

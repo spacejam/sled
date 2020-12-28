@@ -181,7 +181,6 @@ macro_rules! testing_assert {
 mod arc;
 mod atomic_shim;
 mod batch;
-mod binary_search;
 mod concurrency_control;
 mod config;
 mod context;

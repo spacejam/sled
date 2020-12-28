@@ -112,6 +112,7 @@ impl Node {
         lo: &[u8],
         hi: &[u8],
         prefix_len: u8,
+        is_index: bool,
         items: &[(&[u8], &[u8])],
     ) -> Node {
         // determine if we need to use varints and offset
@@ -229,7 +230,7 @@ impl Node {
             children: u16::try_from(items.len()).unwrap(),
             prefix_len: prefix_len,
             merging: false,
-            is_index: true,
+            is_index,
         };
 
         if let Some(ref mut lo_buf) = ret.lo_mut() {
@@ -292,7 +293,13 @@ impl Node {
     }
 
     pub(crate) fn new_root(child_pid: u64) -> Node {
-        Node::new(&[], &[], 0, &[(prefix::empty(), &child_pid.to_le_bytes())])
+        Node::new(
+            &[],
+            &[],
+            0,
+            true,
+            &[(prefix::empty(), &child_pid.to_le_bytes())],
+        )
     }
 
     pub(crate) fn new_hoisted_root(left: u64, at: &[u8], right: u64) -> Node {
@@ -300,6 +307,7 @@ impl Node {
             &[],
             &[],
             0,
+            true,
             &[
                 (prefix::empty(), &left.to_le_bytes()),
                 (&at, &right.to_le_bytes()),
@@ -408,7 +416,7 @@ impl Node {
 
     fn set_offset(&mut self, index: usize, offset: usize) {
         let offset_bytes = self.offset_bytes as usize;
-        let mut buf = self.offset_buf_for_offset_mut(index);
+        let buf = self.offset_buf_for_offset_mut(index);
         let bytes = &offset.to_le_bytes()[..offset_bytes];
         buf.copy_from_slice(bytes);
     }
@@ -442,7 +450,7 @@ impl Node {
             (None, Some(fixed_value_length)) => {
                 let total_value_size =
                     fixed_value_length.get() as usize * self.children as usize;
-                let mut data_buf = self.data_buf_mut();
+                let data_buf = self.data_buf_mut();
                 let start = data_buf.len() - total_value_size;
                 &mut data_buf[start..]
             }
@@ -544,27 +552,6 @@ impl Node {
         }
     }
 
-    pub(crate) fn insert(&self, key: &[u8], value: &[u8]) -> Node {
-        match self.find(&key[usize::from(self.prefix_len)..]) {
-            Ok(offset) => {
-                if self.is_index {
-                    panic!("already contained key being merged into index");
-                }
-                todo!()
-            }
-            Err(prospective_offset) => {
-                todo!()
-            }
-        }
-        let ret: Node = todo!();
-        testing_assert!(ret.is_sorted());
-        ret
-    }
-
-    fn remove_index(&self, index: usize) -> Node {
-        todo!()
-    }
-
     pub(crate) fn remove(&self, key: &[u8]) -> Node {
         let index = self
             .find(&key[usize::from(self.prefix_len)..])
@@ -573,20 +560,122 @@ impl Node {
         self.remove_index(index)
     }
 
-    pub(crate) fn split(&self) -> (Node, Node) {
+    pub(crate) fn insert(&self, key: &[u8], value: &[u8]) -> Node {
+        let items: Vec<_> = match self
+            .find(&key[usize::from(self.prefix_len)..])
+        {
+            Ok(0) => Some((key, value))
+                .into_iter()
+                .chain(self.iter().skip(1))
+                .collect(),
+            Ok(existing_offset) if existing_offset == self.len() - 1 => self
+                .iter()
+                .take(self.len() - 1)
+                .chain(Some((key, value)))
+                .collect(),
+            Ok(existing_offset) => self
+                .iter()
+                .take(existing_offset - 1)
+                .chain(Some((key, value)))
+                .chain(self.iter().skip(existing_offset - 1))
+                .collect(),
+            Err(0) => {
+                Some((key, value)).into_iter().chain(self.iter()).collect()
+            }
+            Err(prospective_offset) if prospective_offset == self.len() => {
+                self.iter().chain(Some((key, value))).collect()
+            }
+            Err(prospective_offset) => self
+                .iter()
+                .take(prospective_offset - 1)
+                .chain(Some((key, value)))
+                .chain(self.iter().skip(prospective_offset - 1))
+                .collect(),
+        };
+
+        let ret: Node = Node::new(
+            self.lo().unwrap_or(&[]),
+            self.hi().unwrap_or(&[]),
+            0, //todo!(),
+            &items,
+        );
+        testing_assert!(ret.is_sorted());
+        ret
+    }
+
+    fn remove_index(&self, index: usize) -> Node {
         todo!()
+    }
+
+    pub(crate) fn split(&self) -> (Node, Node) {
+        assert!(self.len() >= 2);
+        let split_point = self.len() / 2;
+        let split_key = self.prefix_decode(self.index_key(split_point));
+        let left_items: Vec<_> = self.iter().take(split_point).collect();
+        let right_items: Vec<_> = self.iter().skip(split_point).collect();
+
+        let left = Node::new(
+            self.lo().unwrap_or(&[]),
+            &split_key,
+            todo!(),
+            self.is_index,
+            &left_items,
+        );
+
+        let right = Node::new(
+            &split_key,
+            self.hi().unwrap_or(&[]),
+            todo!(),
+            self.is_index,
+            &right_items,
+        );
+
+        (left, right)
     }
 
     pub(crate) fn receive_merge(&self, other: &Node) -> Node {
-        todo!()
+        assert_eq!(self.hi(), other.lo());
+        assert_eq!(self.is_index, other.is_index);
+
+        let items: Vec<_> = self.iter().chain(other.iter()).collect();
+
+        Node::new(
+            self.lo().unwrap_or(&[]),
+            other.hi().unwrap_or(&[]),
+            todo!(),
+            self.is_index,
+            &*items,
+        )
     }
 
     pub(crate) fn should_split(&self) -> bool {
-        todo!()
+        let threshold = if cfg!(any(test, feature = "lock_free_delays")) {
+            2
+        } else if self.is_index {
+            256
+        } else {
+            16
+        };
+
+        let size_checks = self.len() > threshold;
+        let safety_checks = self.merging_child.is_none() && !self.merging;
+
+        size_checks && safety_checks
     }
 
     pub(crate) fn should_merge(&self) -> bool {
-        todo!()
+        let threshold = if cfg!(any(test, feature = "lock_free_delays")) {
+            1
+        } else if self.is_index {
+            64
+        } else {
+            4
+        };
+
+        let size_checks = self.len() < threshold;
+        let safety_checks = self.merging_child.is_none() && !self.merging;
+
+        size_checks && safety_checks
     }
 
     fn header(&self) -> &Header {

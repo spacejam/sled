@@ -556,7 +556,7 @@ impl Tree {
         trace!("cas'ing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
 
-        let mut guard = pin();
+        let guard = pin();
         let _cc = concurrency_control::read();
 
         let new = new.map(Into::into);
