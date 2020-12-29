@@ -1132,7 +1132,7 @@ mod test {
             &[1],
             Some(&[7]),
             0,
-            false,
+            true,
             None,
             &[
                 (&[1], &42_u64.to_le_bytes()),
@@ -1140,8 +1140,7 @@ mod test {
             ],
         );
         ir.next = Some(NonZeroU64::new(5).unwrap());
-        ir.is_index = false;
-        println!("ir: {:#?}", ir);
+        format!("this is for miri to run the format code: {:#?}", ir);
         assert_eq!(ir.index_next_node(&[1]).1, 42);
         assert_eq!(ir.index_next_node(&[2]).1, 42);
         assert_eq!(ir.index_next_node(&[6]).1, 42);
@@ -1150,7 +1149,14 @@ mod test {
 
     impl Arbitrary for Node {
         fn arbitrary<G: Gen>(g: &mut G) -> Node {
-            todo!()
+            let lo: Vec<u8> = Arbitrary::arbitrary(g);
+            let hi: Vec<u8> = Arbitrary::arbitrary(g);
+            let children: Vec<(Vec<u8>, Vec<u8>)> = Arbitrary::arbitrary(g);
+            let children_ref: Vec<(&[u8], &[u8])> = children
+                .iter()
+                .map(|(k, v)| (k.as_ref(), v.as_ref()))
+                .collect();
+            Node::new(&lo, Some(&hi), 0, false, None, &children_ref)
         }
     }
 
