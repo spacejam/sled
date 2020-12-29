@@ -456,7 +456,7 @@ impl Page {
     }
 
     pub(crate) fn is_free(&self) -> bool {
-        self.update.as_ref().map_or(false, |u| u.is_free())
+        self.update.as_ref().map_or(false, Update::is_free)
             || self.cache_infos.is_empty()
     }
 
