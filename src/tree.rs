@@ -592,7 +592,7 @@ impl Tree {
                 }));
             }
 
-            if current_value == new.as_ref().map(|iv| iv.as_ref()) {
+            if current_value == new.as_ref().map(AsRef::as_ref) {
                 // short-circuit no-op write. this is still correct
                 // because we verified that the input matches, so
                 // doing the work has the same semantic effect as not
@@ -1099,7 +1099,7 @@ impl Tree {
             let tmp = current_value.as_ref().map(AsRef::as_ref);
             let new = merge_operator(key, tmp, value).map(IVec::from);
 
-            if new.as_ref().map(|iv| iv.as_ref()) == current_value {
+            if new.as_ref().map(AsRef::as_ref) == current_value {
                 // short-circuit no-op write
                 return Ok(Ok(new));
             }
