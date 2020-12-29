@@ -373,8 +373,8 @@ pub fn setup_logger() {
         })
         .filter(None, log::LevelFilter::Info);
 
-    if let Ok(env_var) = std::env::var("RUST_LOG") {
-        builder.parse(env_var);
+    if let Ok(env) = std::env::var("RUST_LOG") {
+        builder.parse_filters(&env);
     }
 
     let _r = builder.try_init();
