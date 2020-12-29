@@ -13,7 +13,7 @@ pub const SEG_HEADER_LEN: usize = 20;
 
 /// During testing, this should never be exceeded.
 #[allow(unused)]
-pub const MAX_SPACE_AMPLIFICATION: f64 = 5.;
+pub const MAX_SPACE_AMPLIFICATION: f64 = 6.;
 
 pub(crate) const META_PID: PageId = 0;
 pub(crate) const COUNTER_PID: PageId = 1;
