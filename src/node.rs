@@ -83,12 +83,25 @@ impl Deref for Node {
 
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Node")
-            .field("header", self.header())
+        let mut ds = f.debug_struct("Node");
+
+        ds.field("header", self.header())
             .field("lo", &self.lo())
-            .field("hi", &self.hi())
-            .field("items", &self.iter().collect::<crate::Map<_, _>>())
+            .field("hi", &self.hi());
+
+        if self.is_index {
+            ds.field(
+                "items",
+                &self
+                    .iter_keys()
+                    .zip(self.iter_index_pids())
+                    .collect::<crate::Map<_, _>>(),
+            )
             .finish()
+        } else {
+            ds.field("items", &self.iter().collect::<crate::Map<_, _>>())
+                .finish()
+        }
     }
 }
 
@@ -111,6 +124,7 @@ impl Node {
         hi: Option<&[u8]>,
         prefix_len: u8,
         is_index: bool,
+        next: Option<NonZeroU64>,
         items: &[(&[u8], &[u8])],
     ) -> Node {
         // determine if we need to use varints and offset
@@ -128,6 +142,9 @@ impl Node {
             }
             value_lengths.push(v.len() as u64);
             if let Some(first_sz) = value_lengths.first() {
+                if is_index {
+                    assert_eq!(*first_sz, size_of::<u64>() as u64);
+                }
                 initial_values_equal_length &= *first_sz == v.len() as u64;
             }
         }
@@ -223,7 +240,6 @@ impl Node {
         let mut ret = Node(ManuallyDrop::new(boxed_slice));
 
         *ret.header_mut() = Header {
-            next: None,
             merging_child: None,
             lo_len: lo.len() as u64,
             hi_len: hi.map(|hi| hi.len() as u64).unwrap_or(0),
@@ -232,6 +248,7 @@ impl Node {
             offset_bytes,
             children: u16::try_from(items.len()).unwrap(),
             prefix_len,
+            next,
             merging: false,
             is_index,
         };
@@ -300,6 +317,7 @@ impl Node {
             None,
             0,
             true,
+            None,
             &[(prefix::empty(), &child_pid.to_le_bytes())],
         )
     }
@@ -310,6 +328,7 @@ impl Node {
             None,
             0,
             true,
+            None,
             &[
                 (prefix::empty(), &left.to_le_bytes()),
                 (at, &right.to_le_bytes()),
@@ -602,8 +621,10 @@ impl Node {
             self.hi(),
             self.prefix_len,
             self.is_index,
+            self.next,
             &items,
         );
+
         testing_assert!(ret.is_sorted());
         ret
     }
@@ -616,7 +637,14 @@ impl Node {
             self.iter().take(index - 1).chain(self.iter().skip(index)).collect()
         };
 
-        Node::new(self.lo(), self.hi(), self.prefix_len, self.is_index, &items)
+        Node::new(
+            self.lo(),
+            self.hi(),
+            self.prefix_len,
+            self.is_index,
+            self.next,
+            &items,
+        )
     }
 
     pub(crate) fn split(&self) -> (Node, Node) {
@@ -631,15 +659,26 @@ impl Node {
             Some(&split_key),
             0, //todo!(),
             self.is_index,
+            self.next,
             &left_items,
         );
 
-        let right = Node::new(
+        let mut right = Node::new(
             &split_key,
             self.hi(),
             0, //todo!(),
             self.is_index,
+            self.next,
             &right_items,
+        );
+
+        right.next = self.next;
+
+        log::trace!(
+            "splitting node {:?} into left: {:?} and right: {:?}",
+            self,
+            left,
+            right
         );
 
         (left, right)
@@ -656,6 +695,7 @@ impl Node {
             other.hi(),
             0, //todo!(),
             self.is_index,
+            other.next,
             &*items,
         )
     }
@@ -1082,6 +1122,7 @@ mod test {
             Some(&[7]),
             0,
             false,
+            None,
             &[
                 (&[1], &42_u64.to_le_bytes()),
                 (&[6, 6, 6], &66_u64.to_le_bytes()),
@@ -1109,7 +1150,7 @@ mod test {
     ) -> bool {
         let children_ref: Vec<(&[u8], &[u8])> =
             children.iter().map(|(k, v)| (k.as_ref(), v.as_ref())).collect();
-        let ir = Node::new(&lo, Some(&hi), 0, false, &children_ref);
+        let ir = Node::new(&lo, Some(&hi), 0, false, None, &children_ref);
 
         assert_eq!(ir.children as usize, children_ref.len());
 

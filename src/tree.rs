@@ -1502,7 +1502,7 @@ impl Tree {
     ) -> Result<()> {
         trace!("splitting node with pid {}", view.pid);
         // split node
-        let (mut lhs, rhs) = view.deref().clone().split();
+        let (mut lhs, rhs) = view.deref().split();
         let rhs_lo = rhs.lo().to_vec();
 
         // install right side
@@ -2271,8 +2271,7 @@ impl Tree {
                 }
             };
 
-            f.push_str(&format!("\t\t{}: ", pid));
-            f.push_str(&format!("{:?}\n", node));
+            f.push_str(&format!("\t\t{}: {:?}\n", pid, node));
 
             if node.is_index {
                 for pid in node.iter_index_pids() {
@@ -2295,9 +2294,10 @@ impl Tree {
                 };
 
                 if left_node.is_index {
-                    if let Some(next_pid) = node.iter_index_pids().next() {
+                    if let Some(next_pid) = left_node.iter_index_pids().next() {
                         pid = next_pid;
                         left_most = next_pid;
+                        log::trace!("set left_most to {}", next_pid);
                         level += 1;
                         f.push_str(&format!("\n\tlevel {}:\n", level));
                         assert!(
