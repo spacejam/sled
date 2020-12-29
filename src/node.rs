@@ -576,6 +576,9 @@ impl Node {
     }
 
     pub(crate) fn remove(&self, key: &[u8]) -> Node {
+        assert!(!self.merging);
+        assert!(self.merging_child.is_none());
+
         let index = self
             .find(&key[usize::from(self.prefix_len)..])
             .expect("called remove for non-present key");
@@ -635,8 +638,6 @@ impl Node {
     fn remove_index(&self, index: usize) -> Node {
         log::trace!("removing index {} for node {:?}", index, self);
         assert!(self.len() > index);
-        assert!(!self.merging);
-        assert!(self.merging_child.is_none());
         let items: Vec<_> = if index == 0 {
             self.iter().skip(1).collect()
         } else {
