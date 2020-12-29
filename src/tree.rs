@@ -592,6 +592,14 @@ impl Tree {
                 }));
             }
 
+            if current_value == new.as_ref().map(|iv| iv.as_ref()) {
+                // short-circuit no-op write. this is still correct
+                // because we verified that the input matches, so
+                // doing the work has the same semantic effect as not
+                // doing it in this case.
+                return Ok(Ok(()))
+            }
+
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
@@ -1090,6 +1098,11 @@ impl Tree {
                 node_view.node_kv_pair(key.as_ref());
             let tmp = current_value.as_ref().map(AsRef::as_ref);
             let new = merge_operator(key, tmp, value).map(IVec::from);
+
+            if new.as_ref().map(|iv| iv.as_ref()) == current_value {
+                // short-circuit no-op write
+                return Ok(Ok(new));
+            }
 
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
