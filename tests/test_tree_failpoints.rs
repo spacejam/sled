@@ -62,6 +62,7 @@ impl Arbitrary for Op {
             "snap write crc",
             "snap write post",
             "snap write mv",
+            "snap write dir fsync",
             "snap write mv post",
             "snap write rm old",
             "blob blob write",

@@ -607,6 +607,8 @@ pub(in crate::pagecache) fn write_snapshot(
 
     io_fail!(config, "snap write mv");
     std::fs::rename(&path_1, &path_2)?;
+    io_fail!(config, "snap write dir fsync");
+    maybe_fsync_directory(config.get_path())?;
     io_fail!(config, "snap write mv post");
 
     trace!("renamed snapshot to {}", path_2.to_string_lossy());
