@@ -992,8 +992,13 @@ impl Node {
 
     fn prefix_encode<'a>(&self, key: &'a [u8]) -> &'a [u8] {
         assert!(self.lo() <= key);
-        if self.hi().is_some() {
-            assert!(self.hi().unwrap() > key);
+        if let Some(hi) = self.hi() {
+            assert!(
+                hi > key,
+                "key being encoded {:?} >= self.hi {:?}",
+                key,
+                hi
+            );
         }
 
         &key[self.prefix_len as usize..]
