@@ -241,6 +241,7 @@ impl Node {
 
         *ret.header_mut() = Header {
             merging_child: None,
+            merging: false,
             lo_len: lo.len() as u64,
             hi_len: hi.map(|hi| hi.len() as u64).unwrap_or(0),
             fixed_key_length,
@@ -249,7 +250,6 @@ impl Node {
             children: u16::try_from(items.len()).unwrap(),
             prefix_len,
             next,
-            merging: false,
             is_index,
         };
 
@@ -584,6 +584,9 @@ impl Node {
     }
 
     pub(crate) fn insert(&self, key: &[u8], value: &[u8]) -> Node {
+        assert!(!self.merging);
+        assert!(self.merging_child.is_none());
+
         let items: Vec<_> = match self
             .find(&key[usize::from(self.prefix_len)..])
         {
@@ -630,11 +633,14 @@ impl Node {
     }
 
     fn remove_index(&self, index: usize) -> Node {
+        log::trace!("removing index {} for node {:?}", index, self);
         assert!(self.len() > index);
+        assert!(!self.merging);
+        assert!(self.merging_child.is_none());
         let items: Vec<_> = if index == 0 {
             self.iter().skip(1).collect()
         } else {
-            self.iter().take(index - 1).chain(self.iter().skip(index)).collect()
+            self.iter().take(index).chain(self.iter().skip(index + 1)).collect()
         };
 
         Node::new(
@@ -649,6 +655,9 @@ impl Node {
 
     pub(crate) fn split(&self) -> (Node, Node) {
         assert!(self.len() >= 2);
+        assert!(!self.merging);
+        assert!(self.merging_child.is_none());
+
         let split_point = self.len() / 2;
         let split_key = self.prefix_decode(self.index_key(split_point));
         let left_items: Vec<_> = self.iter().take(split_point).collect();
@@ -687,6 +696,8 @@ impl Node {
     pub(crate) fn receive_merge(&self, other: &Node) -> Node {
         assert_eq!(self.hi(), Some(other.lo()));
         assert_eq!(self.is_index, other.is_index);
+        assert!(!self.merging);
+        assert!(self.merging_child.is_none());
 
         let items: Vec<_> = self.iter().chain(other.iter()).collect();
 
@@ -918,8 +929,8 @@ impl Node {
         key: &'a [u8],
     ) -> (&'a [u8], Option<&[u8]>) {
         assert!(key >= self.lo());
-        if self.hi().is_some() {
-            assert!(key < self.hi().unwrap());
+        if let Some(hi) = self.hi() {
+            assert!(key < hi);
         }
         if let Some((k, v)) = self.leaf_pair_for_key(key.as_ref()) {
             (k, Some(v))
