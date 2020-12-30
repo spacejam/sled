@@ -316,7 +316,6 @@ fn main() {
                 .spawn(move || report(shutdown))
                 .unwrap()
         } else {
-            let args = args.clone();
             thread::spawn(move || run(args, tree, shutdown))
         };
 
