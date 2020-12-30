@@ -713,33 +713,27 @@ impl Node {
     }
 
     pub(crate) fn should_split(&self) -> bool {
-        let threshold = if cfg!(any(test, feature = "lock_free_delays")) {
-            2
-        } else if self.is_index {
-            256
+        let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
+            self.len() > 4
         } else {
-            16
+            self.0.len() > 128 * 1024
         };
 
-        let size_checks = self.len() > threshold;
         let safety_checks = self.merging_child.is_none() && !self.merging;
 
-        size_checks && safety_checks
+        safety_checks && size_check
     }
 
     pub(crate) fn should_merge(&self) -> bool {
-        let threshold = if cfg!(any(test, feature = "lock_free_delays")) {
-            1
-        } else if self.is_index {
-            64
+        let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
+            self.len() < 2
         } else {
-            4
+            self.0.len() < 64 * 1024
         };
 
-        let size_checks = self.len() < threshold;
         let safety_checks = self.merging_child.is_none() && !self.merging;
 
-        size_checks && safety_checks
+        safety_checks && size_check
     }
 
     fn header(&self) -> &Header {

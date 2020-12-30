@@ -32,6 +32,47 @@ fn kv(i: usize) -> Vec<u8> {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn sequential_inserts() {
+    common::setup_logger();
+
+    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+
+    for len in [1, 16, 32, u16::MAX].into_iter() {
+        for i in 0..*len {
+            db.insert(&i.to_le_bytes(), &[]).unwrap();
+        }
+
+        let count = db.iter().count();
+        assert_eq!(count, *len as usize);
+
+        let count2 = db.iter().rev().count();
+        assert_eq!(count2, *len as usize);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn reverse_inserts() {
+    common::setup_logger();
+
+    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+
+    for len in [1, 16, 32, u16::MAX].into_iter() {
+        for i in 0..*len {
+            let i2 = u16::MAX - i;
+            db.insert(&i2.to_le_bytes(), &[]).unwrap();
+        }
+
+        let count = db.iter().count();
+        assert_eq!(count, *len as usize);
+
+        let count2 = db.iter().rev().count();
+        assert_eq!(count2, *len as usize);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn very_large_reverse_tree_iterator() {
     let mut a = vec![255; 1024 * 1024];
     a.push(0);
