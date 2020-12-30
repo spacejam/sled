@@ -604,9 +604,9 @@ impl Node {
                 .collect(),
             Ok(existing_offset) => self
                 .iter()
-                .take(existing_offset - 1)
+                .take(existing_offset)
                 .chain(Some((key, value)))
-                .chain(self.iter().skip(existing_offset - 1))
+                .chain(self.iter().skip(existing_offset + 1))
                 .collect(),
             Err(0) => {
                 Some((key, value)).into_iter().chain(self.iter()).collect()
@@ -622,7 +622,7 @@ impl Node {
                 .collect(),
         };
 
-        let ret: Node = Node::new(
+        let ret = Node::new(
             self.lo(),
             self.hi(),
             self.prefix_len,
@@ -631,7 +631,8 @@ impl Node {
             &items,
         );
 
-        testing_assert!(ret.is_sorted());
+        testing_assert!(ret.is_sorted(), "tried to insert key {:?} into node {:?}, which resulted in non-sorted node {:?}", key, self, ret);
+
         ret
     }
 
@@ -644,14 +645,18 @@ impl Node {
             self.iter().take(index).chain(self.iter().skip(index + 1)).collect()
         };
 
-        Node::new(
+        let ret = Node::new(
             self.lo(),
             self.hi(),
             self.prefix_len,
             self.is_index,
             self.next,
             &items,
-        )
+        );
+
+        testing_assert!(ret.is_sorted());
+
+        ret
     }
 
     pub(crate) fn split(&self) -> (Node, Node) {
@@ -691,6 +696,9 @@ impl Node {
             right
         );
 
+        testing_assert!(left.is_sorted());
+        testing_assert!(right.is_sorted());
+
         (left, right)
     }
 
@@ -702,14 +710,18 @@ impl Node {
 
         let items: Vec<_> = self.iter().chain(other.iter()).collect();
 
-        Node::new(
+        let ret = Node::new(
             self.lo(),
             other.hi(),
             0, //todo!(),
             self.is_index,
             other.next,
             &*items,
-        )
+        );
+
+        testing_assert!(ret.is_sorted());
+
+        ret
     }
 
     pub(crate) fn should_split(&self) -> bool {
