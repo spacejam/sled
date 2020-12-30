@@ -26,7 +26,6 @@ use rand::{thread_rng, Rng};
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 static TOTAL: AtomicUsize = AtomicUsize::new(0);
-static SEQ: AtomicUsize = AtomicUsize::new(0);
 
 const USAGE: &str = "
 Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
@@ -156,7 +155,7 @@ fn concatenate_merge(
     merged_bytes: &[u8],      // the new bytes being merged in
 ) -> Option<Vec<u8>> {
     // set the new value, return None to delete
-    let mut ret = old_value.map(|ov| ov.to_vec()).unwrap_or_else(|| vec![]);
+    let mut ret = old_value.map(|ov| ov.to_vec()).unwrap_or_else(Vec::new);
 
     ret.extend_from_slice(merged_bytes);
 
@@ -172,6 +171,7 @@ fn run(args: Args, tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     let scan_max = merge_max + args.scan_prop;
 
     let keygen = |len| -> sled::IVec {
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
         let i = if args.sequential {
             SEQ.fetch_add(1, Ordering::Relaxed)
         } else {
