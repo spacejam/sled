@@ -728,7 +728,7 @@ impl Node {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.len() > 4
         } else {
-            self.0.len() > 128 * 1024
+            self.0.len() > 128 * 1024 && self.len() > 1
         };
 
         let safety_checks = self.merging_child.is_none() && !self.merging;
