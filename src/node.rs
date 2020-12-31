@@ -631,7 +631,13 @@ impl Node {
             &items,
         );
 
-        testing_assert!(ret.is_sorted(), "tried to insert key {:?} into node {:?}, which resulted in non-sorted node {:?}", key, self, ret);
+        testing_assert!(
+            ret.is_sorted(),
+            "tried to insert key {:?} into node {:?}, which resulted in non-sorted node {:?}",
+            key,
+            self,
+            ret
+        );
 
         ret
     }
@@ -665,9 +671,48 @@ impl Node {
         assert!(self.merging_child.is_none());
 
         let split_point = self.len() / 2;
-        let split_key = self.prefix_decode(self.index_key(split_point));
+
         let left_items: Vec<_> = self.iter().take(split_point).collect();
+        let left_max = left_items.last().unwrap().0;
+
         let right_items: Vec<_> = self.iter().skip(split_point).collect();
+        let right_min = right_items.first().unwrap().0;
+
+        // see if we can reduce the splitpoint length to reduce
+        // the number of bytes that end up in index nodes
+        let splitpoint_length = if !self.is_index {
+            // we can only perform suffix truncation when
+            // choosing the split points for leaf nodes.
+            // split points bubble up into indexes, but
+            // an important invariant is that for indexes
+            // the first item always matches the lo key,
+            // otherwise ranges would be permanently
+            // inaccessible by falling into the gap
+            // during a split.
+            right_min
+                .iter()
+                .zip(left_max.iter())
+                .take_while(|(a, b)| a == b)
+                .count()
+                + 1
+        } else {
+            right_min.len()
+        };
+
+        let untruncated_split_key = self.index_key(split_point);
+
+        let possibly_truncated_split_key =
+            &untruncated_split_key[..splitpoint_length];
+
+        let split_key = self.prefix_decode(possibly_truncated_split_key);
+
+        if untruncated_split_key.len() != possibly_truncated_split_key.len() {
+            log::trace!(
+                "shaved off {} bytes for split key",
+                untruncated_split_key.len()
+                    - possibly_truncated_split_key.len()
+            );
+        }
 
         let left = Node::new(
             self.lo(),
