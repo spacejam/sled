@@ -672,11 +672,8 @@ impl Node {
 
         let split_point = self.len() / 2;
 
-        let left_items: Vec<_> = self.iter().take(split_point).collect();
-        let left_max = left_items.last().unwrap().0;
-
-        let right_items: Vec<_> = self.iter().skip(split_point).collect();
-        let right_min = right_items.first().unwrap().0;
+        let left_max = self.index_key(split_point - 1);
+        let right_min = self.index_key(split_point);
 
         // see if we can reduce the splitpoint length to reduce
         // the number of bytes that end up in index nodes
@@ -713,6 +710,9 @@ impl Node {
                     - possibly_truncated_split_key.len()
             );
         }
+
+        let left_items: Vec<_> = self.iter().take(split_point).collect();
+        let right_items: Vec<_> = self.iter().skip(split_point).collect();
 
         let left = Node::new(
             self.lo(),
@@ -1276,17 +1276,15 @@ mod prefix {
 
     pub(crate) fn reencode(
         old_prefix: &[u8],
-        old_encoded_key: &IVec,
+        old_encoded_key: &[u8],
         new_prefix_length: usize,
     ) -> IVec {
-        let new_encoded_key: Vec<u8> = old_prefix
+        old_prefix
             .iter()
             .chain(old_encoded_key.iter())
             .skip(new_prefix_length)
             .copied()
-            .collect();
-
-        IVec::from(new_encoded_key)
+            .collect()
     }
 
     pub(crate) fn decode(old_prefix: &[u8], old_encoded_key: &[u8]) -> IVec {

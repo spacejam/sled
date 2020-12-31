@@ -32,6 +32,50 @@ fn kv(i: usize) -> Vec<u8> {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn monotonic_inserts() {
+    common::setup_logger();
+
+    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+
+    for len in [1_usize, 16, 32, 1024].into_iter() {
+        for i in 0_usize..*len {
+            let mut k = vec![];
+            for c in 0_usize..i {
+                k.push((c % 256) as u8);
+            }
+            db.insert(&k, &[]).unwrap();
+        }
+
+        let count = db.iter().count();
+        assert_eq!(count, *len as usize);
+
+        let count2 = db.iter().rev().count();
+        assert_eq!(count2, *len as usize);
+
+        db.clear().unwrap();
+    }
+
+    for len in [1_usize, 16, 32, 1024].into_iter() {
+        for i in (0_usize..*len).rev() {
+            let mut k = vec![];
+            for c in (0_usize..i).rev() {
+                k.push((c % 256) as u8);
+            }
+            db.insert(&k, &[]).unwrap();
+        }
+
+        let count3 = db.iter().count();
+        assert_eq!(count3, *len as usize);
+
+        let count4 = db.iter().rev().count();
+        assert_eq!(count4, *len as usize);
+
+        db.clear().unwrap();
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn sequential_inserts() {
     common::setup_logger();
 
