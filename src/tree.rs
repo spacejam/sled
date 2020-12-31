@@ -448,6 +448,43 @@ impl Tree {
         }
     }
 
+    /// Pass the result of getting a key's value to a closure
+    /// without making a new allocation. This effectively
+    /// "pushes" your provided code to the data without ever copying
+    /// the data, rather than "pulling" a copy of the data to whatever code
+    /// is calling `get`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[0], vec![0])?;
+    /// assert_eq!(db.get(&[0]), Ok(Some(sled::IVec::from(vec![0]))));
+    /// assert_eq!(db.get(&[1]), Ok(None));
+    /// # Ok(()) }
+    /// ```
+    pub fn get_zero_copy<K: AsRef<[u8]>, B, F: FnOnce(Option<&[u8]>) -> B>(&self, key: K, f: F) -> Result<B> {
+        let mut guard = pin();
+        let _cc = concurrency_control::read();
+
+        let _measure = Measure::new(&M.tree_get);
+
+        trace!("getting key {:?}", key.as_ref());
+
+        let View { node_view, pid, .. } =
+            self.view_for_key(key.as_ref(), &guard)?;
+
+        let pair = node_view.node_kv_pair(key.as_ref());
+
+        let ret = f(pair.1);
+
+        guard.readset.push(pid);
+
+        Ok(ret)
+    }
+
     pub(crate) fn get_inner(
         &self,
         key: &[u8],
