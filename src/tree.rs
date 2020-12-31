@@ -187,7 +187,7 @@ impl Tree {
             Some(self.subscribers.reserve(&key))
         };
 
-        let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
+        let (encoded_key, last_value, current_idx) = node_view.node_kv_pair(key.as_ref());
         let last_value = last_value.map(IVec::from);
 
         if value == last_value {
@@ -198,7 +198,7 @@ impl Tree {
         let frag = if let Some(value) = value.clone() {
             Link::Set(encoded_key.into(), value)
         } else {
-            Link::Del(encoded_key.into())
+            Link::Del(current_idx)
         };
 
         let link =
@@ -460,8 +460,8 @@ impl Tree {
         let View { node_view, pid, .. } =
             self.view_for_key(key.as_ref(), guard)?;
 
-        let pair = node_view.leaf_pair_for_key(key.as_ref());
-        let val = pair.map(|kv| kv.1).map(IVec::from);
+        let pair = node_view.node_kv_pair(key.as_ref());
+        let val = pair.1.map(IVec::from);
 
         guard.readset.push(pid);
 
@@ -577,7 +577,7 @@ impl Tree {
             let View { pid, node_view, .. } =
                 self.view_for_key(key.as_ref(), &guard)?;
 
-            let (encoded_key, current_value) =
+            let (encoded_key, current_value, current_idx) =
                 node_view.node_kv_pair(key.as_ref());
             let matches = match (old.as_ref(), &current_value) {
                 (None, None) => true,
@@ -605,7 +605,7 @@ impl Tree {
             let frag = if let Some(ref new) = new {
                 Link::Set(encoded_key.into(), new.clone())
             } else {
-                Link::Del(encoded_key.into())
+                Link::Del(current_idx)
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -1094,7 +1094,7 @@ impl Tree {
             let View { pid, node_view, .. } =
                 self.view_for_key(key.as_ref(), &guard)?;
 
-            let (encoded_key, current_value) =
+            let (encoded_key, current_value, current_idx) =
                 node_view.node_kv_pair(key.as_ref());
             let tmp = current_value.as_ref().map(AsRef::as_ref);
             let new = merge_operator(key, tmp, value).map(IVec::from);
@@ -1109,7 +1109,7 @@ impl Tree {
             let frag = if let Some(ref new) = new {
                 Link::Set(encoded_key.into(), new.clone())
             } else {
-                Link::Del(encoded_key.into())
+                Link::Del(current_idx)
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -1775,6 +1775,11 @@ impl Tree {
             } else if let Some(unsplit_parent) = unsplit_parent.take() {
                 // we have found the proper page for
                 // our cooperative parent split
+                trace!(
+                    "trying to apply split of child with \
+                    lo key of {:?} to parent pid {}",
+                    view.lo(), unsplit_parent.pid
+                );
                 let split_applied =
                     unsplit_parent.parent_split(view.lo(), cursor);
 

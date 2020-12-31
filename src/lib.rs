@@ -410,9 +410,8 @@ const fn debug_delay() {}
 pub(crate) enum Link {
     /// A new value is set for a given key
     Set(IVec, IVec),
-    /// The associated value is removed for a given key
-    // TODO this can be a simple index offset
-    Del(IVec),
+    /// The kv pair at a particular index is removed
+    Del(usize),
     /// A child of this Index node is marked as mergable
     ParentMergeIntention(PageId),
     /// The merging child has been completely merged into its left sibling

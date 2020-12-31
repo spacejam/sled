@@ -536,7 +536,7 @@ impl Node {
 
         match *link {
             Set(ref k, ref v) => self.insert(k, v),
-            Del(ref k) => self.remove(k),
+            Del(index) => self.remove_index(index),
             ParentMergeIntention(pid) => {
                 assert!(
                     self.merging_child.is_none(),
@@ -573,15 +573,6 @@ impl Node {
                 ret
             }
         }
-    }
-
-    fn remove(&self, key: &[u8]) -> Node {
-        assert!(!self.merging);
-        assert!(self.merging_child.is_none());
-
-        let index = self.find(key).expect("called remove for non-present key");
-
-        self.remove_index(index)
     }
 
     pub(crate) fn insert(&self, key: &[u8], value: &[u8]) -> Node {
@@ -1042,32 +1033,24 @@ impl Node {
     pub(crate) fn node_kv_pair<'a>(
         &'a self,
         key: &'a [u8],
-    ) -> (&'a [u8], Option<&[u8]>) {
+    ) -> (&'a [u8], Option<&[u8]>, usize) {
         assert!(key >= self.lo());
         if let Some(hi) = self.hi() {
             assert!(key < hi);
         }
-        if let Some((k, v)) = self.leaf_pair_for_key(key.as_ref()) {
-            (k, Some(v))
-        } else {
-            let encoded_key = &key[self.prefix_len as usize..];
-            let encoded_val = None;
-            (encoded_key, encoded_val)
-        }
-    }
-
-    /// `leaf_pair_for_key` finds an existing value pair for a given key.
-    pub(crate) fn leaf_pair_for_key(
-        &self,
-        key: &[u8],
-    ) -> Option<(&[u8], &[u8])> {
-        assert!(!self.is_index, "leaf_pair_for_key called on index node");
 
         let suffix = &key[self.prefix_len as usize..];
 
-        let search = self.find(suffix).ok();
+        let search = self.find(suffix);
 
-        search.map(|idx| (self.index_key(idx), self.index_value(idx)))
+        match search {
+            Ok(idx) => (self.index_key(idx), Some(self.index_value(idx)), idx),
+            Err(idx) => {
+                let encoded_key = &key[self.prefix_len as usize..];
+                let encoded_val = None;
+                (encoded_key, encoded_val, idx)
+            }
+        }
     }
 
     pub(crate) fn contains_upper_bound(&self, bound: &Bound<IVec>) -> bool {

@@ -320,10 +320,7 @@ impl Serialize for Link {
                     + u64::try_from(key.len()).unwrap()
                     + u64::try_from(value.len()).unwrap()
             }
-            Link::Del(key) => {
-                1 + (key.len() as u64).serialized_size()
-                    + u64::try_from(key.len()).unwrap()
-            }
+            Link::Del(index) => 1 + (*index as u64).serialized_size(),
             Link::ParentMergeIntention(a) => 1 + a.serialized_size(),
             Link::ParentMergeConfirm | Link::ChildMergeCap => 1,
         }
@@ -336,9 +333,9 @@ impl Serialize for Link {
                 key.serialize_into(buf);
                 value.serialize_into(buf);
             }
-            Link::Del(key) => {
+            Link::Del(index) => {
                 1_u8.serialize_into(buf);
-                key.serialize_into(buf);
+                (*index as u64).serialize_into(buf);
             }
             Link::ParentMergeIntention(pid) => {
                 2_u8.serialize_into(buf);
@@ -361,7 +358,7 @@ impl Serialize for Link {
         *buf = &buf[1..];
         Ok(match discriminant {
             0 => Link::Set(IVec::deserialize(buf)?, IVec::deserialize(buf)?),
-            1 => Link::Del(IVec::deserialize(buf)?),
+            1 => Link::Del(usize::try_from(u64::deserialize(buf)?).unwrap()),
             2 => Link::ParentMergeIntention(u64::deserialize(buf)?),
             3 => Link::ParentMergeConfirm,
             4 => Link::ChildMergeCap,
@@ -730,7 +727,7 @@ mod qc {
             let discriminant = g.gen_range(0, 5);
             match discriminant {
                 0 => Link::Set(IVec::arbitrary(g), IVec::arbitrary(g)),
-                1 => Link::Del(IVec::arbitrary(g)),
+                1 => Link::Del(usize::arbitrary(g)),
                 2 => Link::ParentMergeIntention(u64::arbitrary(g)),
                 3 => Link::ParentMergeConfirm,
                 4 => Link::ChildMergeCap,
