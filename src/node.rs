@@ -791,10 +791,8 @@ impl Node {
                     )
                 })
                 .collect();
-            let left_items = extended_keys
-                .iter()
-                .map(|k| k.as_ref())
-                .zip(self.iter_values());
+            let left_items =
+                extended_keys.iter().map(AsRef::as_ref).zip(self.iter_values());
             left_items.chain(other.iter()).collect()
         } else {
             // self.prefix_len < other.prefix_len
@@ -810,7 +808,7 @@ impl Node {
                 .collect();
             let right_items = extended_keys
                 .iter()
-                .map(|k| k.as_ref())
+                .map(AsRef::as_ref)
                 .zip(other.iter_values());
             self.iter().chain(right_items).collect()
         };
