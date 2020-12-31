@@ -198,7 +198,6 @@ mod metrics;
 mod node;
 mod oneshot;
 mod pagecache;
-mod prefix;
 mod result;
 mod serialization;
 mod stack;
