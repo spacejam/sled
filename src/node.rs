@@ -711,7 +711,7 @@ impl Node {
         let additional_left_prefix = self.lo()[self.prefix_len as usize..]
             .iter()
             .zip(split_key[self.prefix_len as usize..].iter())
-            .take((u8::MAX - self.prefix_len) as usize)
+            .take((std::u8::MAX - self.prefix_len) as usize)
             .take_while(|(a, b)| a == b)
             .count();
 
@@ -719,7 +719,7 @@ impl Node {
             split_key[self.prefix_len as usize..]
                 .iter()
                 .zip(hi[self.prefix_len as usize..].iter())
-                .take((u8::MAX - self.prefix_len) as usize)
+                .take((std::u8::MAX - self.prefix_len) as usize)
                 .take_while(|(a, b)| a == b)
                 .count()
         } else {
