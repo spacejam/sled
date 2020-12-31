@@ -575,13 +575,11 @@ impl Node {
         }
     }
 
-    pub(crate) fn remove(&self, key: &[u8]) -> Node {
+    fn remove(&self, key: &[u8]) -> Node {
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
 
-        let index = self
-            .find(&key[usize::from(self.prefix_len)..])
-            .expect("called remove for non-present key");
+        let index = self.find(key).expect("called remove for non-present key");
 
         self.remove_index(index)
     }
@@ -590,9 +588,7 @@ impl Node {
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
 
-        let items: Vec<_> = match self
-            .find(&key[usize::from(self.prefix_len)..])
-        {
+        let items: Vec<_> = match self.find(key) {
             Ok(0) => Some((key, value))
                 .into_iter()
                 .chain(self.iter().skip(1))
@@ -711,13 +707,41 @@ impl Node {
             );
         }
 
-        let left_items: Vec<_> = self.iter().take(split_point).collect();
-        let right_items: Vec<_> = self.iter().skip(split_point).collect();
+        // prefix encoded length can only grow or stay the same
+        let additional_left_prefix = self.lo()[self.prefix_len as usize..]
+            .iter()
+            .zip(split_key[self.prefix_len as usize..].iter())
+            .take((u8::MAX - self.prefix_len) as usize)
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        let additional_right_prefix = if let Some(hi) = self.hi() {
+            split_key[self.prefix_len as usize..]
+                .iter()
+                .zip(hi[self.prefix_len as usize..].iter())
+                .take((u8::MAX - self.prefix_len) as usize)
+                .take_while(|(a, b)| a == b)
+                .count()
+        } else {
+            0
+        };
+
+        let left_items: Vec<_> = self
+            .iter()
+            .take(split_point)
+            .map(|(k, v)| (&k[additional_left_prefix..], v))
+            .collect();
+
+        let right_items: Vec<_> = self
+            .iter()
+            .skip(split_point)
+            .map(|(k, v)| (&k[additional_right_prefix..], v))
+            .collect();
 
         let left = Node::new(
             self.lo(),
             Some(&split_key),
-            0, //todo!(),
+            self.prefix_len + u8::try_from(additional_left_prefix).unwrap(),
             self.is_index,
             self.next,
             &left_items,
@@ -726,7 +750,7 @@ impl Node {
         let mut right = Node::new(
             &split_key,
             self.hi(),
-            0, //todo!(),
+            self.prefix_len + u8::try_from(additional_right_prefix).unwrap(),
             self.is_index,
             self.next,
             &right_items,
@@ -753,12 +777,48 @@ impl Node {
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
 
-        let items: Vec<_> = self.iter().chain(other.iter()).collect();
+        let extended_keys: Vec<_>;
+        let items: Vec<_> = if self.prefix_len == other.prefix_len {
+            self.iter().chain(other.iter()).collect()
+        } else if self.prefix_len > other.prefix_len {
+            extended_keys = self
+                .iter_keys()
+                .map(|k| {
+                    prefix::reencode(
+                        self.prefix(),
+                        k,
+                        other.prefix_len as usize,
+                    )
+                })
+                .collect();
+            let left_items = extended_keys
+                .iter()
+                .map(|k| k.as_ref())
+                .zip(self.iter_values());
+            left_items.chain(other.iter()).collect()
+        } else {
+            // self.prefix_len < other.prefix_len
+            extended_keys = other
+                .iter_keys()
+                .map(|k| {
+                    prefix::reencode(
+                        other.prefix(),
+                        k,
+                        self.prefix_len as usize,
+                    )
+                })
+                .collect();
+            let right_items = extended_keys
+                .iter()
+                .map(|k| k.as_ref())
+                .zip(other.iter_values());
+            self.iter().chain(right_items).collect()
+        };
 
         let ret = Node::new(
             self.lo(),
             other.hi(),
-            0, //todo!(),
+            self.prefix_len.min(other.prefix_len),
             self.is_index,
             other.next,
             &*items,
@@ -847,8 +907,12 @@ impl Node {
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, u64) {
         assert!(key >= self.lo());
+        if let Some(hi) = self.hi() {
+            assert!(hi > key);
+        }
         assert!(self.is_index);
-        let idx = match self.find(key) {
+        log::trace!("index_next_node for key {:?} on node {:?}", key, self);
+        let idx = match self.find(&key[self.prefix_len as usize..]) {
             Ok(idx) => idx,
             Err(idx) => idx - 1,
         };
@@ -862,8 +926,9 @@ impl Node {
         if self.contains_key(encoded_sep) {
             log::debug!(
                 "parent_split skipped because \
-                     parent already contains child \
-                     at split point due to deep race"
+                parent already contains child with key {:?} \
+                at split point due to deep race",
+                at
             );
             return None;
         }
@@ -1179,7 +1244,6 @@ impl Node {
 #[cfg(test)]
 mod test {
     use quickcheck::{Arbitrary, Gen};
-    use rand::Rng;
 
     use super::*;
 
@@ -1201,7 +1265,7 @@ mod test {
         assert_eq!(ir.index_next_node(&[1]).1, 42);
         assert_eq!(ir.index_next_node(&[2]).1, 42);
         assert_eq!(ir.index_next_node(&[6]).1, 42);
-        assert_eq!(ir.index_next_node(&[7]).1, 66);
+        assert_eq!(ir.index_next_node(&[6, 6, 6, 6, 6]).1, 66);
     }
 
     impl Arbitrary for Node {

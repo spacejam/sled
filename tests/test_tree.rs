@@ -37,7 +37,7 @@ fn monotonic_inserts() {
 
     let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
 
-    for len in [1_usize, 16, 32, 1024].into_iter() {
+    for len in [1_usize, 16, 32, 1024].iter() {
         for i in 0_usize..*len {
             let mut k = vec![];
             for c in 0_usize..i {
@@ -55,7 +55,7 @@ fn monotonic_inserts() {
         db.clear().unwrap();
     }
 
-    for len in [1_usize, 16, 32, 1024].into_iter() {
+    for len in [1_usize, 16, 32, 1024].iter() {
         for i in (0_usize..*len).rev() {
             let mut k = vec![];
             for c in (0_usize..i).rev() {
@@ -81,7 +81,7 @@ fn sequential_inserts() {
 
     let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
 
-    for len in [1, 16, 32, u16::MAX].into_iter() {
+    for len in [1, 16, 32, u16::MAX].iter() {
         for i in 0..*len {
             db.insert(&i.to_le_bytes(), &[]).unwrap();
         }
@@ -101,7 +101,7 @@ fn reverse_inserts() {
 
     let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
 
-    for len in [1, 16, 32, u16::MAX].into_iter() {
+    for len in [1, 16, 32, u16::MAX].iter() {
         for i in 0..*len {
             let i2 = u16::MAX - i;
             db.insert(&i2.to_le_bytes(), &[]).unwrap();
