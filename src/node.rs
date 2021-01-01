@@ -70,6 +70,8 @@ pub struct Header {
     pub children: u16,
     offset_bytes: u8,
     pub prefix_len: u8,
+    activity_sketch: u8,
+    probation_ops_remaining: u8,
     pub merging: bool,
     pub is_index: bool,
 }
@@ -257,6 +259,8 @@ impl Node {
         let mut ret = Node(ManuallyDrop::new(boxed_slice));
 
         *ret.header_mut() = Header {
+            activity_sketch: 0,
+            probation_ops_remaining: 0,
             merging_child: None,
             merging: false,
             lo_len: lo.len() as u64,
@@ -596,37 +600,47 @@ impl Node {
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
 
-        let items: Vec<_> = match self.find(key) {
-            Ok(0) => Some((key, value))
-                .into_iter()
-                .chain(self.iter().skip(1))
-                .collect(),
-            Ok(existing_offset) if existing_offset == self.len() - 1 => self
-                .iter()
-                .take(self.len() - 1)
-                .chain(Some((key, value)))
-                .collect(),
-            Ok(existing_offset) => self
-                .iter()
-                .take(existing_offset)
-                .chain(Some((key, value)))
-                .chain(self.iter().skip(existing_offset + 1))
-                .collect(),
+        let (items, idx): (Vec<_>, usize) = match self.find(key) {
+            Ok(0) => (
+                Some((key, value))
+                    .into_iter()
+                    .chain(self.iter().skip(1))
+                    .collect(),
+                0,
+            ),
+            Ok(existing_offset) if existing_offset == self.len() - 1 => (
+                self.iter()
+                    .take(self.len() - 1)
+                    .chain(Some((key, value)))
+                    .collect(),
+                existing_offset,
+            ),
+            Ok(existing_offset) => (
+                self.iter()
+                    .take(existing_offset)
+                    .chain(Some((key, value)))
+                    .chain(self.iter().skip(existing_offset + 1))
+                    .collect(),
+                existing_offset,
+            ),
             Err(0) => {
-                Some((key, value)).into_iter().chain(self.iter()).collect()
+                (Some((key, value)).into_iter().chain(self.iter()).collect(), 0)
             }
-            Err(prospective_offset) if prospective_offset == self.len() => {
-                self.iter().chain(Some((key, value))).collect()
-            }
-            Err(prospective_offset) => self
-                .iter()
-                .take(prospective_offset)
-                .chain(Some((key, value)))
-                .chain(self.iter().skip(prospective_offset))
-                .collect(),
+            Err(prospective_offset) if prospective_offset == self.len() => (
+                self.iter().chain(Some((key, value))).collect(),
+                prospective_offset,
+            ),
+            Err(prospective_offset) => (
+                self.iter()
+                    .take(prospective_offset)
+                    .chain(Some((key, value)))
+                    .chain(self.iter().skip(prospective_offset))
+                    .collect(),
+                prospective_offset,
+            ),
         };
 
-        let ret = Node::new(
+        let mut ret = Node::new(
             self.lo(),
             self.hi(),
             self.prefix_len,
@@ -643,7 +657,47 @@ impl Node {
             ret
         );
 
+        if ret.children > 1 {
+            // if we have 1 existing child and our insert index is 1,
+            // we want to set the max activity bit. if the index is 0
+            // we want to set the min activity bit. as we get more
+            // items, we generally want to set the bit that is
+            // proportionally
+            let activity_sketch_bit = if idx == self.children as usize {
+                7
+            } else {
+                (idx * 8) / self.children as usize
+            };
+            assert!(activity_sketch_bit <= 7);
+            let activity_byte = 1_u8 << activity_sketch_bit;
+            ret.activity_sketch = activity_byte | self.activity_sketch;
+        }
+
+        ret.probation_ops_remaining =
+            self.probation_ops_remaining.saturating_sub(1);
+
         ret
+    }
+
+    fn weighted_split_point(&self) -> usize {
+        let bits_set = self.activity_sketch.count_ones() as usize;
+
+        if bits_set == 0 {
+            // this shouldn't happen often, but it could happen
+            // if we burn through our probation_ops_remaining
+            // with just removals and no inserts, which don't tick
+            // the activity sketch.
+            return self.len() / 2;
+        }
+
+        let mut weighted_count = 0_usize;
+        for bit in 0..8 {
+            if (1 << bit) & self.activity_sketch != 0 {
+                weighted_count += bit + 1;
+            }
+        }
+        let average_bit = weighted_count / bits_set;
+        (average_bit * self.children as usize / 8).min(self.len() - 1)
     }
 
     fn remove_index(&self, index: usize) -> Node {
@@ -655,7 +709,7 @@ impl Node {
             self.iter().take(index).chain(self.iter().skip(index + 1)).collect()
         };
 
-        let ret = Node::new(
+        let mut ret = Node::new(
             self.lo(),
             self.hi(),
             self.prefix_len,
@@ -663,6 +717,9 @@ impl Node {
             self.next,
             &items,
         );
+
+        ret.probation_ops_remaining =
+            self.probation_ops_remaining.saturating_sub(1);
 
         testing_assert!(ret.is_sorted());
 
@@ -674,7 +731,7 @@ impl Node {
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
 
-        let split_point = self.len() / 2;
+        let split_point = self.weighted_split_point();
 
         let left_max = self.index_key(split_point - 1);
         let right_min = self.index_key(split_point);
@@ -765,6 +822,8 @@ impl Node {
         );
 
         right.next = self.next;
+        right.probation_ops_remaining =
+            u8::try_from((self.len() / 2).min(std::u8::MAX as usize)).unwrap();
 
         log::trace!(
             "splitting node {:?} into left: {:?} and right: {:?}",
@@ -858,7 +917,9 @@ impl Node {
             self.0.len() < *LEAF_SZ / 2 * 1024
         };
 
-        let safety_checks = self.merging_child.is_none() && !self.merging;
+        let safety_checks = self.merging_child.is_none()
+            && !self.merging
+            && self.probation_ops_remaining == 0;
 
         safety_checks && size_check
     }
