@@ -14,6 +14,23 @@ use crate::{varint, IVec, Link};
 
 const ALIGNMENT: usize = align_of::<Header>();
 
+static INDEX_SZ: crate::Lazy<usize, fn() -> usize> = crate::Lazy::new(|| {
+    std::env::var("SLED_INDEX_SZ")
+        .unwrap_or_else(|_| "64".into())
+        .parse()
+        .expect(
+            "SLED_INDEX_SZ must be set to a \
+             non-negative integer",
+        )
+});
+
+static LEAF_SZ: crate::Lazy<usize, fn() -> usize> = crate::Lazy::new(|| {
+    std::env::var("SLED_LEAF_SZ").unwrap_or_else(|_| "1".into()).parse().expect(
+        "SLED_LEAF_SZ must be set to a \
+             non-negative integer",
+    )
+});
+
 // allocates space for a header struct at the beginning.
 pub(crate) fn aligned_boxed_slice(items_size: usize) -> Box<[u8]> {
     let size = items_size + size_of::<Header>();
@@ -821,8 +838,10 @@ impl Node {
     pub(crate) fn should_split(&self) -> bool {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.len() > 4
+        } else if self.is_index {
+            self.0.len() > *INDEX_SZ * 2 * 1024 && self.len() > 1
         } else {
-            self.0.len() > 128 * 1024 && self.len() > 1
+            self.0.len() > *LEAF_SZ * 2 * 1024 && self.len() > 1
         };
 
         let safety_checks = self.merging_child.is_none() && !self.merging;
@@ -833,8 +852,10 @@ impl Node {
     pub(crate) fn should_merge(&self) -> bool {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.len() < 2
+        } else if self.is_index {
+            self.0.len() < *INDEX_SZ / 2 * 1024
         } else {
-            self.0.len() < 32 * 1024
+            self.0.len() < *LEAF_SZ / 2 * 1024
         };
 
         let safety_checks = self.merging_child.is_none() && !self.merging;
