@@ -1,7 +1,7 @@
 use std::fs::File;
 
 use super::{
-    arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, decompress, header,
+    arr_to_lsn, arr_to_u32, assert_usize, decompress, header,
     iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr,
     Arc, BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
     MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
@@ -364,9 +364,10 @@ impl Log {
                 reservation_lid,
             );
 
-            bump_atomic_lsn(
+            AtomicLsn::fetch_max(
                 &self.iobufs.max_reserved_lsn,
                 reservation_lsn + inline_buf_len as Lsn - 1,
+                SeqCst
             );
 
             let (heap_reservation, heap_id) = if over_heap_threshold {

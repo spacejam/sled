@@ -95,6 +95,7 @@ durability model
       * return None if last_lsn_in_batch >= self.max_lsn
     * batch requirement set to last reservation base + inline len - 1
       * reserve bumps
+	  	* TODO: Change this
         * bump_atomic_lsn(&self.iobufs.max_reserved_lsn, reservation_lsn + inline_buf_len as Lsn - 1);
 
 lock-free linearizability model

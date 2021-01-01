@@ -206,22 +206,6 @@ where
     usize::try_from(from).expect("lost data cast while converting to usize")
 }
 
-// TODO remove this when atomic fetch_max stabilizes in #48655
-fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
-    let mut current = atomic_lsn.load(Acquire);
-    loop {
-        if current >= to {
-            return;
-        }
-        let last = atomic_lsn.compare_and_swap(current, to, SeqCst);
-        if last == current {
-            // we succeeded.
-            return;
-        }
-        current = last;
-    }
-}
-
 use std::convert::{TryFrom, TryInto};
 
 #[inline]
@@ -992,7 +976,7 @@ impl PageCache {
         snapshot::write_snapshot(&self.config, &snapshot)?;
 
         // NB: this must only happen after writing the snapshot to disk
-        bump_atomic_lsn(&self.snapshot_min_lsn, stable_lsn_before);
+        AtomicLsn::fetch_max(&self.snapshot_min_lsn, stable_lsn_before, SeqCst);
 
         // explicitly drop this to make it clear that it needs to
         // be held for the duration of the snapshot operation.
