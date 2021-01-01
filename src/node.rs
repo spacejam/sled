@@ -18,17 +18,14 @@ static INDEX_SZ: crate::Lazy<usize, fn() -> usize> = crate::Lazy::new(|| {
     std::env::var("SLED_INDEX_SZ")
         .unwrap_or_else(|_| "64".into())
         .parse()
-        .expect(
-            "SLED_INDEX_SZ must be set to a \
-             non-negative integer",
-        )
+        .expect("SLED_INDEX_SZ must be set to a non-negative integer")
 });
 
 static LEAF_SZ: crate::Lazy<usize, fn() -> usize> = crate::Lazy::new(|| {
-    std::env::var("SLED_LEAF_SZ").unwrap_or_else(|_| "1".into()).parse().expect(
-        "SLED_LEAF_SZ must be set to a \
-             non-negative integer",
-    )
+    std::env::var("SLED_LEAF_SZ")
+        .unwrap_or_else(|_| "1".into())
+        .parse()
+        .expect("SLED_LEAF_SZ must be set to a non-negative integer")
 });
 
 // allocates space for a header struct at the beginning.
@@ -146,6 +143,8 @@ impl Node {
         next: Option<NonZeroU64>,
         items: &[(&[u8], &[u8])],
     ) -> Node {
+        assert!(items.len() <= std::u16::MAX as usize);
+
         // determine if we need to use varints and offset
         // indirection tables, or if everything is equal
         // size we can skip this.
@@ -451,9 +450,9 @@ impl Node {
         let start = index * self.offset_bytes as usize;
         let end = start + self.offset_bytes as usize;
         let buf = &self.offsets_buf()[start..end];
-        let mut le_usize_buf = [0_u8; size_of::<u64>()];
+        let mut le_usize_buf = [0_u8; size_of::<usize>()];
         le_usize_buf[..self.offset_bytes as usize].copy_from_slice(buf);
-        usize::try_from(u64::from_le_bytes(le_usize_buf)).unwrap()
+        usize::from_le_bytes(le_usize_buf)
     }
 
     fn set_offset(&mut self, index: usize, offset: usize) {
