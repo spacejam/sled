@@ -696,7 +696,7 @@ impl Node {
             }
         }
         let average_bit = weighted_count / bits_set;
-        (average_bit * self.children as usize / 8).min(self.len() - 1)
+        (average_bit * self.children as usize / 8).min(self.len() - 1).max(1)
     }
 
     fn remove_index(&self, index: usize) -> Node {
