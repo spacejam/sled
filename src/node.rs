@@ -897,10 +897,10 @@ impl Node {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.len() > 4
         } else if self.is_index {
-            self.0.len() > *INDEX_SZ * 2 * 1024 && self.len() > 1
+            self.0.len() > *INDEX_SZ * 1024 * 2 && self.len() > 1
         } else {
-            self.0.len() > *LEAF_SZ * 2 * 1024 && self.len() > 1
-        };
+            self.0.len() > *LEAF_SZ * 1024 * 2 && self.len() > 1
+        } || self.len() == std::u16::MAX as usize;
 
         let safety_checks = self.merging_child.is_none() && !self.merging;
 
@@ -911,9 +911,9 @@ impl Node {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.len() < 2
         } else if self.is_index {
-            self.0.len() < *INDEX_SZ / 2 * 1024
+            self.0.len() < *INDEX_SZ * 1024 / 2
         } else {
-            self.0.len() < *LEAF_SZ / 2 * 1024
+            self.0.len() < *LEAF_SZ * 1024 / 2
         };
 
         let safety_checks = self.merging_child.is_none()
