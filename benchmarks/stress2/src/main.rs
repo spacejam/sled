@@ -178,15 +178,11 @@ fn run(args: Args, tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
             thread_rng().gen::<usize>()
         } % args.entries;
 
-        let i_keygen = i.to_be_bytes();
+        let start = if len < 8 { 8 - len } else { 0 };
 
-        i_keygen
-            .iter()
-            .skip_while(|v| **v == 0)
-            .cycle()
-            .take(len)
-            .copied()
-            .collect()
+        let i_keygen = &i.to_be_bytes()[start..];
+
+        i_keygen.iter().cycle().take(len).copied().collect()
     };
 
     let valgen = |len| -> sled::IVec {
