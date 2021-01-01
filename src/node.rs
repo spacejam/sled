@@ -522,6 +522,7 @@ impl Node {
         }
     }
 
+    #[inline]
     fn offsets_buf(&self) -> &[u8] {
         let offset_sz = self.children as usize * self.offset_bytes as usize;
         &self.data_buf()[..offset_sz]
@@ -532,6 +533,7 @@ impl Node {
         &mut self.data_buf_mut()[..offset_sz]
     }
 
+    #[inline]
     fn data_buf(&self) -> &[u8] {
         let start = usize::try_from(self.lo_len).unwrap()
             + usize::try_from(self.hi_len).unwrap()
