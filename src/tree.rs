@@ -461,8 +461,13 @@ impl Tree {
     /// # let config = sled::Config::new().temporary(true);
     /// # let db = config.open()?;
     /// db.insert(&[0], vec![0])?;
-    /// assert_eq!(db.get(&[0]), Ok(Some(sled::IVec::from(vec![0]))));
-    /// assert_eq!(db.get(&[1]), Ok(None));
+    /// db.get_zero_copy(&[0], |value_opt| {
+    ///     assert_eq!(
+    ///         value_opt,
+    ///         Some(&[0][..])
+    ///     )
+    /// });
+    /// db.get_zero_copy(&[1], |value_opt| assert!(value_opt.is_none()));
     /// # Ok(()) }
     /// ```
     pub fn get_zero_copy<K: AsRef<[u8]>, B, F: FnOnce(Option<&[u8]>) -> B>(&self, key: K, f: F) -> Result<B> {
