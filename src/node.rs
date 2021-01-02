@@ -990,7 +990,11 @@ impl Node {
         let l = self.index_key(base);
         let cmp = crate::fastcmp(l, key);
 
-        if cmp == Equal { Ok(base) } else { Err(base + (cmp == Less) as usize) }
+        if cmp == Equal {
+            Ok(base)
+        } else {
+            Err(base + (cmp == Less) as usize)
+        }
     }
 
     pub(crate) fn can_merge_child(&self, pid: u64) -> bool {
@@ -1073,13 +1077,21 @@ impl Node {
     pub(crate) fn hi(&self) -> Option<&[u8]> {
         let start = usize::try_from(self.lo_len).unwrap() + size_of::<Header>();
         let end = start + usize::try_from(self.hi_len).unwrap();
-        if start == end { None } else { Some(&self.0[start..end]) }
+        if start == end {
+            None
+        } else {
+            Some(&self.0[start..end])
+        }
     }
 
     fn hi_mut(&mut self) -> Option<&mut [u8]> {
         let start = usize::try_from(self.lo_len).unwrap() + size_of::<Header>();
         let end = start + usize::try_from(self.hi_len).unwrap();
-        if start == end { None } else { Some(&mut self.0[start..end]) }
+        if start == end {
+            None
+        } else {
+            Some(&mut self.0[start..end])
+        }
     }
 
     pub(crate) fn index_key(&self, idx: usize) -> &[u8] {
