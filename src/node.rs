@@ -14,20 +14,6 @@ use crate::{varint, IVec, Link};
 
 const ALIGNMENT: usize = align_of::<Header>();
 
-static INDEX_SZ: crate::Lazy<usize, fn() -> usize> = crate::Lazy::new(|| {
-    std::env::var("SLED_INDEX_SZ")
-        .unwrap_or_else(|_| "64".into())
-        .parse()
-        .expect("SLED_INDEX_SZ must be set to a non-negative integer")
-});
-
-static LEAF_SZ: crate::Lazy<usize, fn() -> usize> = crate::Lazy::new(|| {
-    std::env::var("SLED_LEAF_SZ")
-        .unwrap_or_else(|_| "1".into())
-        .parse()
-        .expect("SLED_LEAF_SZ must be set to a non-negative integer")
-});
-
 // allocates space for a header struct at the beginning.
 pub(crate) fn aligned_boxed_slice(items_size: usize) -> Box<[u8]> {
     let size = items_size + size_of::<Header>();
@@ -258,6 +244,7 @@ impl Node {
         let mut ret = Node(ManuallyDrop::new(boxed_slice));
 
         *ret.header_mut() = Header {
+            rewrite_generations: 0,
             activity_sketch: 0,
             probation_ops_remaining: 0,
             merging_child: None,
@@ -677,6 +664,8 @@ impl Node {
         ret.probation_ops_remaining =
             self.probation_ops_remaining.saturating_sub(1);
 
+        ret.rewrite_generations = self.rewrite_generations;
+
         ret
     }
 
@@ -721,6 +710,7 @@ impl Node {
 
         ret.probation_ops_remaining =
             self.probation_ops_remaining.saturating_sub(1);
+        ret.rewrite_generations = self.rewrite_generations;
 
         testing_assert!(ret.is_sorted());
 
@@ -804,7 +794,7 @@ impl Node {
             .map(|(k, v)| (&k[additional_right_prefix..], v))
             .collect();
 
-        let left = Node::new(
+        let mut left = Node::new(
             self.lo(),
             Some(&split_key),
             self.prefix_len + u8::try_from(additional_left_prefix).unwrap(),
@@ -812,6 +802,8 @@ impl Node {
             self.next,
             &left_items,
         );
+
+        left.rewrite_generations = self.rewrite_generations;
 
         let mut right = Node::new(
             &split_key,
@@ -822,6 +814,7 @@ impl Node {
             &right_items,
         );
 
+        right.rewrite_generations = self.rewrite_generations;
         right.next = self.next;
         right.probation_ops_remaining =
             u8::try_from((self.len() / 2).min(std::u8::MAX as usize)).unwrap();
@@ -881,7 +874,7 @@ impl Node {
             self.iter().chain(right_items).collect()
         };
 
-        let ret = Node::new(
+        let mut ret = Node::new(
             self.lo(),
             other.hi(),
             self.prefix_len.min(other.prefix_len),
@@ -889,6 +882,9 @@ impl Node {
             other.next,
             &*items,
         );
+
+        ret.rewrite_generations =
+            self.rewrite_generations.min(other.rewrite_generations);
 
         testing_assert!(ret.is_sorted());
 
@@ -899,10 +895,21 @@ impl Node {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.len() > 4
         } else if self.is_index {
-            self.0.len() > *INDEX_SZ * 1024 * 2 && self.len() > 1
+            self.0.len() > 128 * 1024 && self.len() > 1
         } else {
-            self.0.len() > *LEAF_SZ * 1024 * 2 && self.len() > 1
-        } || self.len() == std::u16::MAX as usize;
+            let threshold = match self.rewrite_generations {
+                0 => 24 * 1024,
+                1 => {
+                    println!("1, sz: {}", self.0.len());
+                    64 * 1024
+                }
+                other => {
+                    println!("{}, sz: {}", other, self.0.len());
+                    128 * 1024
+                }
+            };
+            self.0.len() > threshold && self.len() > 1
+        };
 
         let safety_checks = self.merging_child.is_none() && !self.merging;
 
@@ -913,9 +920,24 @@ impl Node {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.len() < 2
         } else if self.is_index {
-            self.0.len() < *INDEX_SZ * 1024 / 2
+            self.0.len() < 32 * 1024
         } else {
-            self.0.len() < *LEAF_SZ * 1024 / 2
+            let threshold = match self.rewrite_generations {
+                0 => 10 * 1024,
+                1 => 30 * 1024,
+                other => {
+                    println!(
+                        "merge {}, sz: {}, {} {} {}",
+                        other,
+                        self.0.len(),
+                        !self.merging,
+                        self.merging_child.is_none(),
+                        self.probation_ops_remaining
+                    );
+                    64 * 1024
+                }
+            };
+            self.0.len() < threshold
         };
 
         let safety_checks = self.merging_child.is_none()
