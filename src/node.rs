@@ -609,28 +609,34 @@ impl Node {
         assert!(self.merging_child.is_none());
 
         let (items, idx): (Vec<_>, usize) = match self.find(key) {
-            Ok(0) => (
-                Some((key, value))
-                    .into_iter()
-                    .chain(self.iter().skip(1))
-                    .collect(),
-                0,
-            ),
-            Ok(existing_offset) if existing_offset == self.len() - 1 => (
-                self.iter()
-                    .take(self.len() - 1)
-                    .chain(Some((key, value)))
-                    .collect(),
-                existing_offset,
-            ),
-            Ok(existing_offset) => (
-                self.iter()
-                    .take(existing_offset)
-                    .chain(Some((key, value)))
-                    .chain(self.iter().skip(existing_offset + 1))
-                    .collect(),
-                existing_offset,
-            ),
+            Ok(existing_offset) => {
+                // possibly short-circuit more expensive node recreation logic
+                if self.index_value(existing_offset).len() == value.len() {
+                    let mut ret = self.clone();
+                    let requires_varint = ret.fixed_value_length.is_none();
+                    let mut value_buf =
+                        ret.value_buf_for_offset_mut(existing_offset);
+                    if requires_varint {
+                        // skip the varint bytes, which will be unchanged
+                        let varint_bytes =
+                            usize::try_from(varint::size(value.len() as u64))
+                                .unwrap();
+                        value_buf = &mut value_buf[varint_bytes..];
+                    }
+
+                    value_buf[..value.len()].copy_from_slice(value);
+
+                    return ret;
+                }
+                (
+                    self.iter()
+                        .take(existing_offset)
+                        .chain(Some((key, value)))
+                        .chain(self.iter().skip(existing_offset + 1))
+                        .collect(),
+                    existing_offset,
+                )
+            }
             Err(0) => {
                 (Some((key, value)).into_iter().chain(self.iter()).collect(), 0)
             }
