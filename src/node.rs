@@ -447,7 +447,9 @@ impl Node {
 
         let start = offsets_buf_start + (index * self.offset_bytes as usize);
         let mask = std::usize::MAX
-            >> (8 * (size_of::<usize>() as u32 - self.offset_bytes as u32));
+            >> (8
+                * (u32::try_from(size_of::<usize>()).unwrap()
+                    - u32::from(self.offset_bytes)));
 
         // we use unsafe code here because it cuts around 5% of CPU cycles
         // on a simple insertion workload compared to using the more
@@ -1032,7 +1034,7 @@ impl Node {
     pub(crate) fn can_merge_child(&self, pid: u64) -> bool {
         self.merging_child.is_none()
             && !self.merging
-            && self.iter_index_pids().position(|p| p == pid).is_some()
+            && self.iter_index_pids().any(|p| p == pid)
     }
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, u64) {
