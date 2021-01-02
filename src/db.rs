@@ -186,8 +186,7 @@ impl Db {
         let mut cursor = root_id.unwrap();
         while let Some(view) = self.view_for_pid(cursor, &guard)? {
             if view.is_index {
-                let leftmost_child =
-                    u64::from_le_bytes(view.index_value(0).try_into().unwrap());
+                let leftmost_child = view.index_pid(0);
                 leftmost_chain.push(leftmost_child);
                 cursor = leftmost_child;
             } else {
