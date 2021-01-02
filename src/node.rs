@@ -637,13 +637,6 @@ impl Node {
                     existing_offset,
                 )
             }
-            Err(0) => {
-                (Some((key, value)).into_iter().chain(self.iter()).collect(), 0)
-            }
-            Err(prospective_offset) if prospective_offset == self.len() => (
-                self.iter().chain(Some((key, value))).collect(),
-                prospective_offset,
-            ),
             Err(prospective_offset) => (
                 self.iter()
                     .take(prospective_offset)
