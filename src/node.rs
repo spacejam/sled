@@ -454,11 +454,17 @@ impl Node {
     }
 
     fn offset(&self, index: usize) -> usize {
-        let start = index * self.offset_bytes as usize;
+        let offsets_buf_start = usize::try_from(self.lo_len).unwrap()
+            + usize::try_from(self.hi_len).unwrap()
+            + size_of::<Header>();
+
+        let start = offsets_buf_start + (index * self.offset_bytes as usize);
         let end = start + self.offset_bytes as usize;
-        let buf = &self.offsets_buf()[start..end];
+
+        let offset_buf = &self.0[start..end];
+
         let mut le_usize_buf = [0_u8; size_of::<usize>()];
-        le_usize_buf[..self.offset_bytes as usize].copy_from_slice(buf);
+        le_usize_buf[..self.offset_bytes as usize].copy_from_slice(offset_buf);
         usize::from_le_bytes(le_usize_buf)
     }
 
@@ -472,7 +478,7 @@ impl Node {
     fn offset_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
         let start = index * self.offset_bytes as usize;
         let end = start + self.offset_bytes as usize;
-        &mut self.offsets_buf_mut()[start..end]
+        &mut self.data_buf_mut()[start..end]
     }
 
     fn keys_buf_mut(&mut self) -> &mut [u8] {
@@ -527,17 +533,6 @@ impl Node {
             }
             (None, None) => &self.data_buf()[offset_sz..],
         }
-    }
-
-    #[inline]
-    fn offsets_buf(&self) -> &[u8] {
-        let offset_sz = self.children as usize * self.offset_bytes as usize;
-        &self.data_buf()[..offset_sz]
-    }
-
-    fn offsets_buf_mut(&mut self) -> &mut [u8] {
-        let offset_sz = self.children as usize * self.offset_bytes as usize;
-        &mut self.data_buf_mut()[..offset_sz]
     }
 
     #[inline]
