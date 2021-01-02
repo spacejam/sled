@@ -1393,6 +1393,8 @@ impl Node {
 
 #[cfg(test)]
 mod test {
+    use std::collections::BTreeMap;
+
     use quickcheck::{Arbitrary, Gen};
 
     use super::*;
@@ -1423,8 +1425,7 @@ mod test {
             let lo: Vec<u8> = Arbitrary::arbitrary(g);
             let hi: Vec<u8> = Arbitrary::arbitrary(g);
 
-            let children: std::collections::BTreeMap<Vec<u8>, Vec<u8>> =
-                Arbitrary::arbitrary(g);
+            let children: BTreeMap<Vec<u8>, Vec<u8>> = Arbitrary::arbitrary(g);
 
             let children_ref: Vec<(&[u8], &[u8])> = children
                 .iter()
@@ -1459,8 +1460,8 @@ mod test {
 
     quickcheck::quickcheck! {
         #[cfg_attr(miri, ignore)]
-        fn indexable(lo: Vec<u8>, hi: Vec<u8>, children: Vec<(Vec<u8>, Vec<u8>)>) -> bool {
-            prop_indexable(lo, hi, children)
+        fn indexable(lo: Vec<u8>, hi: Vec<u8>, children: BTreeMap<Vec<u8>, Vec<u8>>) -> bool {
+            prop_indexable(lo, hi, children.into_iter().collect())
         }
     }
 
