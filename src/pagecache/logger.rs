@@ -422,15 +422,13 @@ impl Log {
         // Decrement writer count, retrying until successful.
         loop {
             let new_hv = header::decr_writers(header);
-            match iobuf.cas_header(header, new_hv) {
-                Ok(new) => {
-                    header = new;
-                    break;
-                }
-                Err(new) => {
-                    // we failed to decr, retry
-                    header = new;
-                }
+            if let Err(current) = iobuf.cas_header(header, new_hv) {
+                // we failed to decr, retry
+                header = current;
+            } else {
+                // success
+                header = new_hv;
+                break;
             }
         }
 

@@ -155,9 +155,11 @@ impl IoBuf {
         &self,
         old: Header,
         new: Header,
-    ) -> std::result::Result<Header, Header> {
+    ) -> std::result::Result<(), Header> {
         debug_delay();
-        self.header.compare_exchange(old, new, SeqCst, SeqCst)
+        let res = self.header.compare_exchange(old, new, SeqCst, SeqCst);
+
+        res.map(|_| ())
     }
 }
 
