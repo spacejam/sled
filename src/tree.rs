@@ -1854,24 +1854,23 @@ impl Tree {
             // would be merged into a different index, which
             // would add considerable complexity to this already
             // fairly complex implementation.
-            if view.should_merge() && !took_leftmost_branch {
-                if let Some(ref mut parent) = parent_view {
-                    assert!(parent.merging_child.is_none());
-                    if parent.can_merge_child() {
-                        let frag = Link::ParentMergeIntention(cursor);
+            if !took_leftmost_branch && parent_view.is_some() && view.should_merge() {
+                let parent = parent_view.as_mut().unwrap();
+                assert!(parent.merging_child.is_none());
+                if parent.can_merge_child() {
+                    let frag = Link::ParentMergeIntention(cursor);
 
-                        let link = self.context.pagecache.link(
-                            parent.pid,
-                            parent.node_view.0,
-                            frag,
-                            guard,
-                        )?;
+                    let link = self.context.pagecache.link(
+                        parent.pid,
+                        parent.node_view.0,
+                        frag,
+                        guard,
+                    )?;
 
-                        if let Ok(new_parent_ptr) = link {
-                            parent.node_view = NodeView(new_parent_ptr);
-                            self.merge_node(parent, cursor, guard)?;
-                            retry!();
-                        }
+                    if let Ok(new_parent_ptr) = link {
+                        parent.node_view = NodeView(new_parent_ptr);
+                        self.merge_node(parent, cursor, guard)?;
+                        retry!();
                     }
                 }
             }
