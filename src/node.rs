@@ -1102,19 +1102,32 @@ impl Node {
             self.len()
         );
 
-        let buf = self.key_buf_for_offset(idx);
+        let offset_sz = self.children as usize * self.offset_bytes as usize;
+        let keys_buf = &self.data_buf()[offset_sz..];
+        let key_buf = {
+            match (self.fixed_key_length, self.fixed_value_length) {
+                (Some(k_sz), Some(_)) | (Some(k_sz), None) => {
+                    &keys_buf[idx * usize::try_from(k_sz.get()).unwrap()..]
+                }
+                (None, Some(_)) | (None, None) => {
+                    // find offset for key or combined kv offset
+                    let offset = self.offset(idx);
+                    &keys_buf[offset..]
+                }
+            }
+        };
 
         let (start, end) = if let Some(fixed_key_length) = self.fixed_key_length
         {
             (0, usize::try_from(fixed_key_length.get()).unwrap())
         } else {
-            let (key_len, varint_sz) = varint::deserialize(buf).unwrap();
+            let (key_len, varint_sz) = varint::deserialize(key_buf).unwrap();
             let start = varint_sz;
             let end = start + usize::try_from(key_len).unwrap();
             (start, end)
         };
 
-        &buf[start..end]
+        &key_buf[start..end]
     }
 
     pub(crate) fn index_value(&self, idx: usize) -> &[u8] {
