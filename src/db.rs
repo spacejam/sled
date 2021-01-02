@@ -293,6 +293,10 @@ impl Db {
     /// new.import(export);
     ///
     /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # drop(old);
+    /// # drop(new);
+    /// # std::fs::remove_file("my_old_db");
+    /// # std::fs::remove_file("my_new_db");
     /// # Ok(()) }
     /// ```
     pub fn export(
@@ -355,6 +359,10 @@ impl Db {
     /// new.import(export);
     ///
     /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # drop(old);
+    /// # drop(new);
+    /// # std::fs::remove_file("my_old_db");
+    /// # std::fs::remove_file("my_new_db");
     /// # Ok(()) }
     /// ```
     pub fn import(
