@@ -365,32 +365,17 @@ impl Node {
 
     // returns the OPEN ENDED buffer where a key may be placed
     fn key_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
+        let offset_sz = self.children as usize * self.offset_bytes as usize;
         match (self.fixed_key_length, self.fixed_value_length) {
             (Some(k_sz), Some(_)) | (Some(k_sz), None) => {
-                let keys_buf = self.keys_buf_mut();
+                let keys_buf = &mut self.data_buf_mut()[offset_sz..];
                 &mut keys_buf[index * usize::try_from(k_sz.get()).unwrap()..]
             }
             (None, Some(_)) | (None, None) => {
                 // find offset for key or combined kv offset
                 let offset = self.offset(index);
-                let keys_buf = self.keys_buf_mut();
+                let keys_buf = &mut self.data_buf_mut()[offset_sz..];
                 &mut keys_buf[offset..]
-            }
-        }
-    }
-
-    // returns the OPEN ENDED buffer where a key may be read
-    fn key_buf_for_offset(&self, index: usize) -> &[u8] {
-        match (self.fixed_key_length, self.fixed_value_length) {
-            (Some(k_sz), Some(_)) | (Some(k_sz), None) => {
-                let keys_buf = self.keys_buf();
-                &keys_buf[index * usize::try_from(k_sz.get()).unwrap()..]
-            }
-            (None, Some(_)) | (None, None) => {
-                // find offset for key or combined kv offset
-                let offset = self.offset(index);
-                let keys_buf = self.keys_buf();
-                &keys_buf[offset..]
             }
         }
     }
@@ -459,36 +444,35 @@ impl Node {
             + size_of::<Header>();
 
         let start = offsets_buf_start + (index * self.offset_bytes as usize);
-        let end = start + self.offset_bytes as usize;
+        let mask = std::usize::MAX
+            >> (8 * (size_of::<usize>() as u32 - self.offset_bytes as u32));
 
-        let offset_buf = &self.0[start..end];
-
-        let mut le_usize_buf = [0_u8; size_of::<usize>()];
-        le_usize_buf[..self.offset_bytes as usize].copy_from_slice(offset_buf);
-        usize::from_le_bytes(le_usize_buf)
+        // we use unsafe code here because it cuts around 5% of CPU cycles
+        // on a simple insertion workload compared to using the more
+        // idiomatic approach of copying the correct number of bytes into
+        // a buffer initialized with zeroes. the seemingly "less" unsafe
+        // approach of using ptr::copy_nonoverlapping did not improve matters.
+        // using a match statement on offest_bytes and performing simpler
+        // casting for one or two bytes slowed things down due to increasing
+        // code size. this approach is branch-free and cut CPU usage of this
+        // function from 7-11% down to 2-3% in a monotonic insertion workload.
+        #[allow(unsafe_code)]
+        unsafe {
+            let ptr: *const u8 = self.0.as_ptr().add(start);
+            let cast_ptr = ptr as *const usize;
+            cast_ptr.read_unaligned() & mask
+        }
     }
 
     fn set_offset(&mut self, index: usize, offset: usize) {
         let offset_bytes = self.offset_bytes as usize;
-        let buf = self.offset_buf_for_offset_mut(index);
+        let buf = {
+            let start = index * self.offset_bytes as usize;
+            let end = start + offset_bytes;
+            &mut self.data_buf_mut()[start..end]
+        };
         let bytes = &offset.to_le_bytes()[..offset_bytes];
         buf.copy_from_slice(bytes);
-    }
-
-    fn offset_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
-        let start = index * self.offset_bytes as usize;
-        let end = start + self.offset_bytes as usize;
-        &mut self.data_buf_mut()[start..end]
-    }
-
-    fn keys_buf_mut(&mut self) -> &mut [u8] {
-        let offset_sz = self.children as usize * self.offset_bytes as usize;
-        &mut self.data_buf_mut()[offset_sz..]
-    }
-
-    fn keys_buf(&self) -> &[u8] {
-        let offset_sz = self.children as usize * self.offset_bytes as usize;
-        &self.data_buf()[offset_sz..]
     }
 
     fn values_buf_mut(&mut self) -> &mut [u8] {
