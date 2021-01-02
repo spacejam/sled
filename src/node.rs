@@ -45,17 +45,37 @@ pub struct Header {
     // NB always lay out fields from largest to smallest
     // to properly pack the struct
     pub next: Option<NonZeroU64>,
+    // could probably be Option<u16> w/ child index
+    // rather than the pid
     pub merging_child: Option<NonZeroU64>,
+    // could be replaced by a varint, w/ data buf offset stored instead
     lo_len: u64,
+    // could be replaced by a varint, w/ data buf offset stored instead
     hi_len: u64,
+    // can probably be NonZeroU16
     fixed_key_length: Option<NonZeroU64>,
+    // can probably be NonZeroU16
     fixed_value_length: Option<NonZeroU64>,
     pub children: u16,
-    offset_bytes: u8,
     pub prefix_len: u8,
-    activity_sketch: u8,
     probation_ops_remaining: u8,
+    // this can be 3 bits. 111 = 7, but we
+    // will never need 7 bytes for storing offsets.
+    // address spaces cap out at 2 ** 48 (256 ** 6)
+    // so as long as we can represent the numbers 1-6,
+    // we can reach the full linux address space currently
+    // supported as of 2021.
+    offset_bytes: u8,
+    // can be 2 bits
+    pub rewrite_generations: u8,
+    // this can really be 2 bits, representing
+    // 00: all updates have been at the end
+    // 01: mixed updates
+    // 10: all updates have been at the beginning
+    activity_sketch: u8,
+    // can be 1 bit
     pub merging: bool,
+    // can be 1 bit
     pub is_index: bool,
 }
 
