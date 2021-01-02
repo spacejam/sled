@@ -37,9 +37,10 @@ impl<'a, T> DerefMut for FastLockGuard<'a, T> {
     }
 }
 
+#[repr(C)]
 pub struct FastLock<T> {
-    lock: AtomicBool,
     inner: UnsafeCell<T>,
+    lock: AtomicBool,
 }
 
 #[allow(unsafe_code)]
@@ -54,11 +55,10 @@ impl<T> FastLock<T> {
     }
 
     pub fn try_lock(&self) -> Option<FastLockGuard<'_, T>> {
-        let lock_result = self.lock.compare_and_swap(false, true, Acquire);
+        let lock_result =
+            self.lock.compare_exchange_weak(false, true, Acquire, Acquire);
 
-        // `compare_and_swap` returns the last value if successful,
-        // otherwise the current value. If we succeed, it should return false.
-        let success = !lock_result;
+        let success = lock_result.is_ok();
 
         if success { Some(FastLockGuard { mu: self }) } else { None }
     }

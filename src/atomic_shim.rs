@@ -41,21 +41,6 @@ mod shim {
         }
 
         #[allow(dead_code)]
-        pub fn compare_and_swap(
-            &self,
-            current: u64,
-            new: u64,
-            _: Ordering,
-        ) -> u64 {
-            let mut lock = self.value.write();
-            let prev = *lock;
-            if prev == current {
-                *lock = new;
-            };
-            prev
-        }
-
-        #[allow(dead_code)]
         pub fn compare_exchange(
             &self,
             current: u64,
@@ -165,21 +150,6 @@ mod shim {
             let mut lock = self.value.write();
             let prev = *lock;
             *lock = value;
-            prev
-        }
-
-        #[allow(dead_code)]
-        pub fn compare_and_swap(
-            &self,
-            current: i64,
-            new: i64,
-            _: Ordering,
-        ) -> i64 {
-            let mut lock = self.value.write();
-            let prev = *lock;
-            if prev == current {
-                *lock = new;
-            };
             prev
         }
 

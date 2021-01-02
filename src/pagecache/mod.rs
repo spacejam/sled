@@ -206,19 +206,20 @@ where
     usize::try_from(from).expect("lost data cast while converting to usize")
 }
 
-// TODO remove this when atomic fetch_max stabilizes in #48655
+// TODO remove this with atomic fetch_max if we increase MSRV to 1.45 or higher
 fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
     let mut current = atomic_lsn.load(Acquire);
     loop {
         if current >= to {
             return;
         }
-        let last = atomic_lsn.compare_and_swap(current, to, SeqCst);
-        if last == current {
+        let last =
+            atomic_lsn.compare_exchange_weak(current, to, SeqCst, SeqCst);
+        if last.is_ok() {
             // we succeeded.
             return;
         }
-        current = last;
+        current = last.unwrap_err();
     }
 }
 

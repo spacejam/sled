@@ -157,8 +157,7 @@ impl IoBuf {
         new: Header,
     ) -> std::result::Result<Header, Header> {
         debug_delay();
-        let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old { Ok(new) } else { Err(res) }
+        self.header.compare_exchange(old, new, SeqCst, SeqCst)
     }
 }
 
