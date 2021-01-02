@@ -1453,7 +1453,10 @@ impl PageCacheInner {
                     let (key, counter) = self.get_idgen(guard)?;
                     (key, Update::Counter(counter))
                 } else if let Some(node_view) = self.get(pid, guard)? {
-                    (node_view.0, Update::Node(node_view.deref().clone()))
+                    let mut node = node_view.deref().clone();
+                    node.rewrite_generations =
+                        node.rewrite_generations.saturating_add(1);
+                    (node_view.0, Update::Node(node))
                 } else {
                     let page_view = match self.inner.get(pid, guard) {
                         None => panic!("expected page missing in rewrite"),
