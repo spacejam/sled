@@ -335,6 +335,8 @@ impl Node {
             value_buf[..v.len()].copy_from_slice(v);
         }
 
+        testing_assert!(ret.is_sorted());
+
         ret
     }
 
@@ -1344,6 +1346,13 @@ impl Node {
 
         for i in 0..self.len() - 2 {
             if self.index_key(i) >= self.index_key(i + 1) {
+                log::error!(
+                    "key {:?} at index {} >= key {:?} at index {}",
+                    self.index_key(i),
+                    i,
+                    self.index_key(i + 1),
+                    i + 1
+                );
                 return false;
             }
         }
@@ -1383,7 +1392,10 @@ mod test {
         fn arbitrary<G: Gen>(g: &mut G) -> Node {
             let lo: Vec<u8> = Arbitrary::arbitrary(g);
             let hi: Vec<u8> = Arbitrary::arbitrary(g);
-            let children: Vec<(Vec<u8>, Vec<u8>)> = Arbitrary::arbitrary(g);
+
+            let children: std::collections::BTreeMap<Vec<u8>, Vec<u8>> =
+                Arbitrary::arbitrary(g);
+
             let children_ref: Vec<(&[u8], &[u8])> = children
                 .iter()
                 .map(|(k, v)| (k.as_ref(), v.as_ref()))
