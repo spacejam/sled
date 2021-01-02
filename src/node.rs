@@ -546,6 +546,7 @@ impl Node {
 
         match *link {
             Set(ref k, ref v) => self.insert(k, v),
+            Replace(index, ref v) => self.replace(index, v),
             Del(index) => self.remove_index(index),
             ParentMergeIntention(pid) => {
                 assert!(
@@ -585,48 +586,33 @@ impl Node {
         }
     }
 
-    pub(crate) fn insert(&self, key: &[u8], value: &[u8]) -> Node {
+    fn replace(&self, index: usize, value: &[u8]) -> Node {
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
 
-        let (items, idx): (Vec<_>, usize) = match self.find(key) {
-            Ok(existing_offset) => {
-                // possibly short-circuit more expensive node recreation logic
-                if self.index_value(existing_offset).len() == value.len() {
-                    let mut ret = self.clone();
-                    let requires_varint = ret.fixed_value_length.is_none();
-                    let mut value_buf =
-                        ret.value_buf_for_offset_mut(existing_offset);
-                    if requires_varint {
-                        // skip the varint bytes, which will be unchanged
-                        let varint_bytes =
-                            usize::try_from(varint::size(value.len() as u64))
-                                .unwrap();
-                        value_buf = &mut value_buf[varint_bytes..];
-                    }
-
-                    value_buf[..value.len()].copy_from_slice(value);
-
-                    return ret;
-                }
-                (
-                    self.iter()
-                        .take(existing_offset)
-                        .chain(Some((key, value)))
-                        .chain(self.iter().skip(existing_offset + 1))
-                        .collect(),
-                    existing_offset,
-                )
+        // possibly short-circuit more expensive node recreation logic
+        if self.index_value(index).len() == value.len() {
+            let mut ret = self.clone();
+            let requires_varint = ret.fixed_value_length.is_none();
+            let mut value_buf = ret.value_buf_for_offset_mut(index);
+            if requires_varint {
+                // skip the varint bytes, which will be unchanged
+                let varint_bytes =
+                    usize::try_from(varint::size(value.len() as u64)).unwrap();
+                value_buf = &mut value_buf[varint_bytes..];
             }
-            Err(prospective_offset) => (
-                self.iter()
-                    .take(prospective_offset)
-                    .chain(Some((key, value)))
-                    .chain(self.iter().skip(prospective_offset))
-                    .collect(),
-                prospective_offset,
-            ),
-        };
+
+            value_buf[..value.len()].copy_from_slice(value);
+
+            return ret;
+        }
+
+        let items: Vec<_> = self
+            .iter()
+            .take(index)
+            .chain(Some((self.index_key(index), value)))
+            .chain(self.iter().skip(index + 1))
+            .collect();
 
         let mut ret = Node::new(
             self.lo(),
@@ -637,12 +623,56 @@ impl Node {
             &items,
         );
 
-        testing_assert!(
-            ret.is_sorted(),
-            "tried to insert key {:?} into node {:?}, which resulted in non-sorted node {:?}",
-            key,
-            self,
-            ret
+        if ret.children > 1 {
+            // if we have 1 existing child and our insert index is 1,
+            // we want to set the max activity bit. if the index is 0
+            // we want to set the min activity bit. as we get more
+            // items, we generally want to set the bit that is
+            // proportionally
+            let activity_sketch_bit = if index == self.children as usize {
+                7
+            } else {
+                (index * 8) / self.children as usize
+            };
+            assert!(activity_sketch_bit <= 7);
+            let activity_byte = 1_u8 << activity_sketch_bit;
+            ret.activity_sketch = activity_byte | self.activity_sketch;
+        }
+
+        ret.probation_ops_remaining =
+            self.probation_ops_remaining.saturating_sub(1);
+
+        ret.rewrite_generations = self.rewrite_generations;
+
+        ret
+    }
+
+    fn insert(&self, key: &[u8], value: &[u8]) -> Node {
+        assert!(!self.merging);
+        assert!(self.merging_child.is_none());
+
+        let index = if let Err(prospective_offset) = self.find(key) {
+            prospective_offset
+        } else {
+            panic!(
+                "trying to insert key into node that already contains that key"
+            );
+        };
+
+        let items: Vec<_> = self
+            .iter()
+            .take(index)
+            .chain(Some((key, value)))
+            .chain(self.iter().skip(index))
+            .collect();
+
+        let mut ret = Node::new(
+            self.lo(),
+            self.hi(),
+            self.prefix_len,
+            self.is_index,
+            self.next,
+            &items,
         );
 
         if ret.children > 1 {
@@ -651,10 +681,10 @@ impl Node {
             // we want to set the min activity bit. as we get more
             // items, we generally want to set the bit that is
             // proportionally
-            let activity_sketch_bit = if idx == self.children as usize {
+            let activity_sketch_bit = if index == self.children as usize {
                 7
             } else {
-                (idx * 8) / self.children as usize
+                (index * 8) / self.children as usize
             };
             assert!(activity_sketch_bit <= 7);
             let activity_byte = 1_u8 << activity_sketch_bit;

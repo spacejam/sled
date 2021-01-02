@@ -196,7 +196,11 @@ impl Tree {
         }
 
         let frag = if let Some(value) = value.clone() {
-            Link::Set(encoded_key.into(), value)
+            if last_value.is_none() {
+                Link::Set(encoded_key.into(), value)
+            } else {
+                Link::Replace(current_idx, value)
+            }
         } else {
             Link::Del(current_idx)
         };
@@ -645,7 +649,11 @@ impl Tree {
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key.into(), new.clone())
+                if current_value.is_none() {
+                    Link::Set(encoded_key.into(), new.clone())
+                } else {
+                    Link::Replace(current_idx, new.clone())
+                }
             } else {
                 Link::Del(current_idx)
             };
@@ -1149,7 +1157,11 @@ impl Tree {
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key.into(), new.clone())
+                if current_value.is_none() {
+                    Link::Set(encoded_key.into(), new.clone())
+                } else {
+                    Link::Replace(current_idx, new.clone())
+                }
             } else {
                 Link::Del(current_idx)
             };

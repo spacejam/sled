@@ -320,6 +320,11 @@ impl Serialize for Link {
                     + u64::try_from(key.len()).unwrap()
                     + u64::try_from(value.len()).unwrap()
             }
+            Link::Replace(index, value) => {
+                1 + (*index as u64).serialized_size()
+                    + (value.len() as u64).serialized_size()
+                    + u64::try_from(value.len()).unwrap()
+            }
             Link::Del(index) => 1 + (*index as u64).serialized_size(),
             Link::ParentMergeIntention(a) => 1 + a.serialized_size(),
             Link::ParentMergeConfirm | Link::ChildMergeCap => 1,
@@ -331,6 +336,11 @@ impl Serialize for Link {
             Link::Set(key, value) => {
                 0_u8.serialize_into(buf);
                 key.serialize_into(buf);
+                value.serialize_into(buf);
+            }
+            Link::Replace(index, value) => {
+                5_u8.serialize_into(buf);
+                (*index as u64).serialize_into(buf);
                 value.serialize_into(buf);
             }
             Link::Del(index) => {
@@ -358,6 +368,10 @@ impl Serialize for Link {
         *buf = &buf[1..];
         Ok(match discriminant {
             0 => Link::Set(IVec::deserialize(buf)?, IVec::deserialize(buf)?),
+            5 => Link::Replace(
+                usize::try_from(u64::deserialize(buf)?).unwrap(),
+                IVec::deserialize(buf)?,
+            ),
             1 => Link::Del(usize::try_from(u64::deserialize(buf)?).unwrap()),
             2 => Link::ParentMergeIntention(u64::deserialize(buf)?),
             3 => Link::ParentMergeConfirm,
@@ -418,7 +432,11 @@ impl Serialize for Option<i64> {
 
 fn shift_i64_opt(value_opt: &Option<i64>) -> i64 {
     if let Some(value) = value_opt {
-        if value.signum() == -1 { *value } else { value + 1 }
+        if value.signum() == -1 {
+            *value
+        } else {
+            value + 1
+        }
     } else {
         0
     }
