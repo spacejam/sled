@@ -172,7 +172,9 @@ impl Log {
 
         M.reserve_sz.measure(max_buf_len);
 
-        let max_buf_size = self.config.segment_size - SEG_HEADER_LEN;
+        let max_buf_size = usize::try_from(super::heap::MIN_SZ)
+            .unwrap()
+            .min(self.config.segment_size - SEG_HEADER_LEN);
 
         let over_heap_threshold =
             max_buf_len > u64::try_from(max_buf_size).unwrap();
