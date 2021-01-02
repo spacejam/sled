@@ -723,6 +723,9 @@ impl PageCache {
             let idgen_recovery = if was_recovered {
                 counter + (2 * pc.config.idgen_persist_interval)
             } else {
+                // persist the meta and idgen pages now, so that we don't hand
+                // out id 0 again if we crash and recover
+                pc.flush()?;
                 0
             };
             let idgen_persists = counter / pc.config.idgen_persist_interval
