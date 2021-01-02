@@ -1857,7 +1857,7 @@ impl Tree {
             if !took_leftmost_branch && parent_view.is_some() && view.should_merge() {
                 let parent = parent_view.as_mut().unwrap();
                 assert!(parent.merging_child.is_none());
-                if parent.can_merge_child() {
+                if parent.can_merge_child(cursor) {
                     let frag = Link::ParentMergeIntention(cursor);
 
                     let link = self.context.pagecache.link(

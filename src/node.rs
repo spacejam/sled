@@ -568,9 +568,9 @@ impl Node {
             Del(index) => self.remove_index(index),
             ParentMergeIntention(pid) => {
                 assert!(
-                    self.merging_child.is_none(),
+                    self.can_merge_child(pid),
                     "trying to merge {:?} into node {:?} which \
-                     is already merging another child",
+                     is not a valid merge target",
                     link,
                     self
                 );
@@ -1015,8 +1015,10 @@ impl Node {
         if cmp == Equal { Ok(base) } else { Err(base + (cmp == Less) as usize) }
     }
 
-    pub(crate) fn can_merge_child(&self) -> bool {
-        self.merging_child.is_none() && !self.merging
+    pub(crate) fn can_merge_child(&self, pid: u64) -> bool {
+        self.merging_child.is_none()
+            && !self.merging
+            && self.iter_index_pids().position(|p| p == pid).is_some()
     }
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, u64) {
