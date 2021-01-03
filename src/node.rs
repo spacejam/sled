@@ -622,6 +622,8 @@ impl Node {
             self.children + 1
         };
 
+        dbg!(children);
+
         let take_slow_path = if let Some((k, v)) = new_item {
             let new_max_sz = self.0.len()
                 + varint::size(k.len() as u64) as usize
@@ -837,7 +839,9 @@ impl Node {
             };
 
             // set offset at index to previous index + previous size
-            ret.set_offset(index, previous_offset + previous_item_size);
+            if children > 0 {
+                ret.set_offset(index, previous_offset + previous_item_size);
+            }
 
             for i in 0..self.children as usize {
                 println!("self offset {}: {}", i, self.offset(i));
@@ -851,8 +855,15 @@ impl Node {
                 for i in (index + 1)..ret.children as usize {
                     // shift the old index down
                     dbg!(i);
-                    let old_offset =
-                        dbg!(self.offset(if replace { i } else { i - 1 }));
+                    let old_offset = dbg!(self.offset(if replace {
+                        if new_item.is_some() {
+                            i
+                        } else {
+                            i + 1
+                        }
+                    } else {
+                        i - 1
+                    }));
                     let shifted_offset =
                         (old_offset as isize + offset_shift) as usize;
                     println!(
