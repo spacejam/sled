@@ -140,7 +140,7 @@ impl Serialize for IVec {
 
 impl Serialize for u64 {
     fn serialized_size(&self) -> u64 {
-        varint::size(*self)
+        varint::size(*self) as u64
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
