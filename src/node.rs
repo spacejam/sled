@@ -443,6 +443,7 @@ impl Node {
 
     fn offset(&self, index: usize) -> usize {
         assert!(index < self.children as usize);
+        assert!(self.offset_bytes > 0);
         let offsets_buf_start = usize::try_from(self.lo_len).unwrap()
             + usize::try_from(self.hi_len).unwrap()
             + size_of::<Header>();
@@ -861,10 +862,10 @@ impl Node {
                     ret.set_offset(i, shifted_offset);
                 }
             }
-        }
 
-        for i in 0..ret.children as usize {
-            println!("post-shift offset {}: {}", i, ret.offset(i));
+            for i in 0..ret.children as usize {
+                println!("post-shift offset {}: {}", i, ret.offset(i));
+            }
         }
 
         // write keys, possibly performing some copy optimizations
