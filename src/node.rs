@@ -1425,8 +1425,10 @@ impl Node {
     pub(crate) fn should_split(&self) -> bool {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.len() > 4
+        /*
         } else if self.is_index {
-            self.0.len() > 128 * 1024 && self.len() > 1
+            self.0.len() > 32 * 1024 && self.len() > 1
+        */
         } else {
             /*
             let threshold = match self.rewrite_generations {
@@ -1441,7 +1443,7 @@ impl Node {
                 }
             };
             */
-            let threshold = 2048;
+            let threshold = (4 * 1024) - crate::MAX_MSG_HEADER_LEN;
             self.0.len() > threshold && self.len() > 1
         };
 
@@ -1453,8 +1455,10 @@ impl Node {
     pub(crate) fn should_merge(&self) -> bool {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.len() < 2
+        /*
         } else if self.is_index {
-            self.0.len() < 32 * 1024
+            self.0.len() < 4 * 1024
+        */
         } else {
             /*
             let threshold = match self.rewrite_generations {
@@ -1475,7 +1479,7 @@ impl Node {
                 }
             };
             */
-            let threshold = 512;
+            let threshold = (1 * 1024) - crate::MAX_MSG_HEADER_LEN;
             self.0.len() < threshold
         };
 
