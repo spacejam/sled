@@ -1,5 +1,7 @@
 #![allow(unsafe_code)]
 
+// TODO we can skip the first offset because it's always 0
+
 use std::{
     alloc::{alloc_zeroed, dealloc, Layout},
     cmp::Ordering::{Equal, Greater, Less},
@@ -117,12 +119,11 @@ impl fmt::Debug for Node {
                 &self
                     .iter_keys()
                     .zip(self.iter_index_pids())
-                    .collect::<crate::Map<_, _>>(),
+                    .collect::<Vec<_>>(),
             )
             .finish()
         } else {
-            ds.field("items", &self.iter().collect::<crate::Map<_, _>>())
-                .finish()
+            ds.field("items", &self.iter().collect::<Vec<_>>()).finish()
         }
     }
 }
@@ -441,6 +442,7 @@ impl Node {
     }
 
     fn offset(&self, index: usize) -> usize {
+        assert!(index < self.children as usize);
         let offsets_buf_start = usize::try_from(self.lo_len).unwrap()
             + usize::try_from(self.hi_len).unwrap()
             + size_of::<Header>();
@@ -588,6 +590,461 @@ impl Node {
         }
     }
 
+    fn stitch(
+        &self,
+        index: usize,
+        new_item: Option<(&[u8], &[u8])>,
+        replace: bool,
+    ) -> Node {
+        println!(
+            "stitching item {:?} replace: {} index: {} \
+            into node {:?}",
+            new_item, replace, index, self,
+        );
+
+        // possible optimizations:
+        // if replace && length remains the same
+        //  simple copy self bytes
+        // if fixed lengths and new item matches
+        //  simple copy of predecessors, new item,
+        //
+        //
+        // things that change
+        //   fixed lengths
+        //   offset
+
+        let children = if new_item.is_none() {
+            self.children - 1
+        } else if replace {
+            self.children
+        } else {
+            self.children + 1
+        };
+
+        let take_slow_path = if let Some((k, v)) = new_item {
+            let new_max_sz = self.0.len()
+                + varint::size(k.len() as u64) as usize
+                + k.len()
+                + varint::size(v.len() as u64) as usize
+                + v.len()
+                + 6;
+
+            let new_offset_bytes = match new_max_sz {
+                i if i < 256 => 1,
+                i if i < (1 << 16) => 2,
+                i if i < (1 << 24) => 3,
+                i if i < (1 << 32) => 4,
+                i if i < (1 << 40) => 5,
+                i if i < (1 << 48) => 6,
+                _ => unreachable!(),
+            };
+
+            let requires_offset_expansion =
+                new_offset_bytes > self.offset_bytes;
+
+            let violates_fixed_key_length =
+                if let Some(fkl) = self.fixed_key_length {
+                    fkl.get() != k.len() as u64
+                } else {
+                    false
+                };
+
+            let violates_fixed_value_length =
+                if let Some(fvl) = self.fixed_value_length {
+                    fvl.get() != v.len() as u64
+                } else {
+                    false
+                };
+
+            requires_offset_expansion
+                || violates_fixed_key_length
+                || violates_fixed_value_length
+        } else {
+            false
+        };
+
+        if take_slow_path {
+            let items: Vec<_> = self
+                .iter()
+                .take(index)
+                .chain(new_item)
+                .chain(self.iter().skip(index + if replace { 1 } else { 0 }))
+                .collect();
+
+            let mut ret = Node::new(
+                self.lo(),
+                self.hi(),
+                self.prefix_len,
+                self.is_index,
+                self.next,
+                &items,
+            );
+
+            if ret.children > 1 {
+                // if we have 1 existing child and our insert index is 1,
+                // we want to set the max activity bit. if the index is 0
+                // we want to set the min activity bit. as we get more
+                // items, we generally want to set the bit that is
+                // proportionally
+                let activity_sketch_bit = if index == self.children as usize {
+                    7
+                } else {
+                    (index * 8) / self.children as usize
+                };
+                assert!(activity_sketch_bit <= 7);
+                let activity_byte = 1_u8 << activity_sketch_bit;
+                ret.activity_sketch = activity_byte | self.activity_sketch;
+            }
+
+            testing_assert!(ret.is_sorted());
+
+            return ret;
+        }
+
+        let existing_item_size = if replace {
+            let k = self.index_key(index);
+            let v = self.index_value(index);
+
+            self.offset_bytes as usize
+                + k.len()
+                + v.len()
+                + if self.fixed_key_length.is_some() {
+                    0
+                } else {
+                    varint::size(k.len() as u64) as usize
+                }
+                + if self.fixed_value_length.is_some() {
+                    0
+                } else {
+                    varint::size(v.len() as u64) as usize
+                }
+        } else {
+            0
+        };
+
+        let new_item_size = if let Some((k, v)) = new_item {
+            self.offset_bytes as usize
+                + k.len()
+                + v.len()
+                + if self.fixed_key_length.is_some() {
+                    0
+                } else {
+                    varint::size(k.len() as u64) as usize
+                }
+                + if self.fixed_value_length.is_some() {
+                    0
+                } else {
+                    varint::size(v.len() as u64) as usize
+                }
+        } else {
+            0
+        };
+
+        let diff: isize = new_item_size as isize - existing_item_size as isize;
+
+        let allocation_size = (self.0.len() as isize + diff) as usize;
+
+        let mut ret = Node(ManuallyDrop::new(aligned_boxed_slice(
+            allocation_size - size_of::<Header>(),
+        )));
+
+        *ret.header_mut() = Header {
+            children,
+            probation_ops_remaining: self
+                .probation_ops_remaining
+                .saturating_sub(1),
+            ..**self
+        };
+
+        // set lo and hi keys
+        ret.lo_mut().copy_from_slice(self.lo());
+        if let Some(ref mut hi_buf) = ret.hi_mut() {
+            hi_buf.copy_from_slice(self.hi().unwrap());
+        }
+
+        if ret.offset_bytes > 0 {
+            // set offsets, properly shifted after index
+            let mut offset_shift: isize = if self.fixed_key_length.is_none() {
+                let old_key_bytes = if replace {
+                    let old_key = self.index_key(index);
+                    old_key.len() + varint::size(old_key.len() as u64) as usize
+                } else {
+                    0
+                };
+
+                let new_key_bytes = if let Some((new_key, _)) = new_item {
+                    new_key.len() + varint::size(new_key.len() as u64) as usize
+                } else {
+                    0
+                };
+
+                dbg!(new_key_bytes as isize - old_key_bytes as isize)
+            } else {
+                0
+            };
+
+            if self.fixed_value_length.is_none() {
+                let old_value_bytes = if replace {
+                    let old_value = self.index_value(index);
+                    old_value.len()
+                        + varint::size(old_value.len() as u64) as usize
+                } else {
+                    0
+                };
+
+                let new_value_bytes = if let Some((_, new_value)) = new_item {
+                    new_value.len()
+                        + varint::size(new_value.len() as u64) as usize
+                } else {
+                    0
+                };
+
+                let value_shift =
+                    new_value_bytes as isize - old_value_bytes as isize;
+
+                offset_shift += dbg!(value_shift)
+            };
+
+            println!("offset_shift: {}", offset_shift);
+
+            // just copy the offsets before the index
+            let start = usize::try_from(ret.lo_len).unwrap()
+                + usize::try_from(ret.hi_len).unwrap()
+                + size_of::<Header>();
+            let end = start + (index * ret.offset_bytes as usize);
+
+            ret.0[start..end].copy_from_slice(&self.0[start..end]);
+
+            let previous_offset =
+                if index > 0 { ret.offset(index - 1) } else { 0 };
+
+            let previous_item_size = if index > 0 {
+                let mut previous_item_size = 0;
+                if ret.fixed_key_length.is_none() {
+                    let prev_key = self.index_key(index - 1);
+                    previous_item_size += prev_key.len()
+                        + varint::size(prev_key.len() as u64) as usize;
+                }
+                if ret.fixed_value_length.is_none() {
+                    let prev_value = self.index_value(index - 1);
+                    previous_item_size += prev_value.len()
+                        + varint::size(prev_value.len() as u64) as usize;
+                }
+                previous_item_size
+            } else {
+                0
+            };
+
+            // set offset at index to previous index + previous size
+            ret.set_offset(index, previous_offset + previous_item_size);
+
+            for i in 0..self.children as usize {
+                println!("self offset {}: {}", i, self.offset(i));
+            }
+
+            for i in 0..ret.children as usize {
+                println!("pre-shift offset {}: {}", i, ret.offset(i));
+            }
+
+            if ret.children > 0 {
+                for i in (index + 1)..ret.children as usize {
+                    // shift the old index down
+                    dbg!(i);
+                    let old_offset =
+                        dbg!(self.offset(if replace { i } else { i - 1 }));
+                    let shifted_offset =
+                        (old_offset as isize + offset_shift) as usize;
+                    println!(
+                        "shifted offset at index {} from {} to {}",
+                        i, old_offset, shifted_offset
+                    );
+                    ret.set_offset(i, shifted_offset);
+                }
+            }
+        }
+
+        for i in 0..ret.children as usize {
+            println!("post-shift offset {}: {}", i, ret.offset(i));
+        }
+
+        // write keys, possibly performing some copy optimizations
+        if let Some(fixed_key_length) = self.fixed_key_length {
+            let fixed_key_length = fixed_key_length.get() as usize;
+
+            let self_offset_sz =
+                self.children as usize * self.offset_bytes as usize;
+            let self_keys_buf = &self.data_buf()[self_offset_sz..];
+
+            let ret_offset_sz =
+                ret.children as usize * ret.offset_bytes as usize;
+            let ret_keys_buf = &mut ret.data_buf_mut()[ret_offset_sz..];
+
+            let prelude = index * fixed_key_length;
+            ret_keys_buf[..prelude].copy_from_slice(&self_keys_buf[..prelude]);
+
+            let item_end =
+                prelude + if new_item.is_some() { fixed_key_length } else { 0 };
+
+            if let Some((k, _)) = new_item {
+                ret_keys_buf[prelude..item_end].copy_from_slice(k);
+            }
+
+            let remaining_items =
+                (self.children as usize) - index - if replace { 1 } else { 0 };
+
+            let ret_prologue_start = item_end;
+            let ret_prologue_end =
+                item_end + (remaining_items * fixed_key_length);
+
+            let self_prologue_end = (self.children as usize) * fixed_key_length;
+            let self_prologue_start = self_prologue_end
+                - ((self.children as usize - remaining_items)
+                    * fixed_key_length);
+
+            ret_keys_buf[ret_prologue_start..ret_prologue_end].copy_from_slice(
+                &self_keys_buf[self_prologue_start..self_prologue_end],
+            );
+        } else {
+            for idx in 0..index {
+                let k = self.index_key(idx);
+                let mut key_buf = ret.key_buf_for_offset_mut(idx);
+                println!("1 writing key {:?} at {:?}", k, key_buf.as_ptr());
+                let varint_bytes =
+                    varint::serialize_into(k.len() as u64, key_buf);
+                key_buf = &mut key_buf[varint_bytes..];
+                key_buf[..k.len()].copy_from_slice(k);
+            }
+
+            if let Some((k, _)) = new_item {
+                let mut key_buf = ret.key_buf_for_offset_mut(index);
+                println!("2 writing key {:?} at {:?}", k, key_buf.as_ptr());
+                let varint_bytes =
+                    varint::serialize_into(k.len() as u64, key_buf);
+                key_buf = &mut key_buf[varint_bytes..];
+                key_buf[..k.len()].copy_from_slice(k);
+            }
+
+            let start = index + if replace { 1 } else { 0 };
+
+            dbg!(start);
+            for idx in start..self.children as usize {
+                let self_idx = dbg!(idx);
+                let ret_idx = dbg!(if replace { idx } else { idx + 1 });
+                let k = self.index_key(self_idx);
+                let mut key_buf = ret.key_buf_for_offset_mut(ret_idx);
+                println!("3 writing key {:?} at {:?}", k, key_buf.as_ptr());
+                let varint_bytes =
+                    varint::serialize_into(k.len() as u64, key_buf);
+                key_buf = &mut key_buf[varint_bytes..];
+                key_buf[..k.len()].copy_from_slice(k);
+            }
+        }
+
+        // write values, possibly performing some copy optimizations
+        if let Some(fixed_value_length) = self.fixed_value_length {
+            let fixed_value_length = fixed_value_length.get() as usize;
+
+            let self_offset_sz =
+                self.children as usize * self.offset_bytes as usize;
+            let self_values_buf = &self.data_buf()[self_offset_sz..];
+
+            let ret_offset_sz =
+                ret.children as usize * ret.offset_bytes as usize;
+            let ret_values_buf = &mut ret.data_buf_mut()[ret_offset_sz..];
+
+            let prelude = index * fixed_value_length;
+            ret_values_buf[..prelude]
+                .copy_from_slice(&self_values_buf[..prelude]);
+
+            let item_end = prelude
+                + if new_item.is_some() { fixed_value_length } else { 0 };
+
+            if let Some((_, v)) = new_item {
+                ret_values_buf[prelude..item_end].copy_from_slice(v);
+            }
+
+            let remaining_items =
+                (self.children as usize) - index - if replace { 1 } else { 0 };
+
+            let ret_prologue_start = item_end;
+            let ret_prologue_end =
+                item_end + (remaining_items * fixed_value_length);
+
+            let self_prologue_end =
+                (self.children as usize) * fixed_value_length;
+            let self_prologue_start = self_prologue_end
+                - ((self.children as usize - remaining_items)
+                    * fixed_value_length);
+
+            ret_values_buf[ret_prologue_start..ret_prologue_end]
+                .copy_from_slice(
+                    &self_values_buf[self_prologue_start..self_prologue_end],
+                );
+        } else {
+            for idx in 0..index {
+                let v = self.index_value(idx);
+                let mut value_buf = ret.value_buf_for_offset_mut(idx);
+                let varint_bytes =
+                    varint::serialize_into(v.len() as u64, value_buf);
+                value_buf = &mut value_buf[varint_bytes..];
+                value_buf[..v.len()].copy_from_slice(v);
+            }
+
+            if let Some((_, v)) = new_item {
+                let mut value_buf = ret.value_buf_for_offset_mut(index);
+                let varint_bytes =
+                    varint::serialize_into(v.len() as u64, value_buf);
+                value_buf = &mut value_buf[varint_bytes..];
+                value_buf[..v.len()].copy_from_slice(v);
+            }
+
+            let start = index + if replace { 1 } else { 0 };
+
+            for idx in start..self.children as usize {
+                let v = self.index_value(idx);
+                let mut value_buf = ret.value_buf_for_offset_mut(idx);
+                let varint_bytes =
+                    varint::serialize_into(v.len() as u64, value_buf);
+                value_buf = &mut value_buf[varint_bytes..];
+                value_buf[..v.len()].copy_from_slice(v);
+            }
+        }
+
+        testing_assert!(
+            ret.is_sorted(),
+            "after stitching item {:?} replace: {} index: {} \
+            into node {:?}, ret is not sorted: {:?}",
+            new_item,
+            replace,
+            index,
+            self,
+            ret
+        );
+
+        ret
+    }
+
+    fn remove_index(&self, index: usize) -> Node {
+        log::trace!("removing index {} for node {:?}", index, self);
+        assert!(self.len() > index);
+        self.stitch(index, None, true)
+    }
+
+    fn insert(&self, key: &[u8], value: &[u8]) -> Node {
+        assert!(!self.merging);
+        assert!(self.merging_child.is_none());
+
+        let index = if let Err(prospective_offset) = self.find(key) {
+            prospective_offset
+        } else {
+            panic!(
+                "trying to insert key into node that already contains that key"
+            );
+        };
+
+        self.stitch(index, Some((key, value)), false)
+    }
+
     fn replace(&self, index: usize, value: &[u8]) -> Node {
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
@@ -606,100 +1063,119 @@ impl Node {
 
             value_buf[..value.len()].copy_from_slice(value);
 
+            testing_assert!(
+                ret.is_sorted(),
+                "after replacing in-place item {:?} index: {} \
+                into node {:?}, ret is not sorted: {:?}",
+                value,
+                index,
+                self,
+                ret
+            );
+
             return ret;
         }
 
-        let items: Vec<_> = self
-            .iter()
-            .take(index)
-            .chain(Some((self.index_key(index), value)))
-            .chain(self.iter().skip(index + 1))
-            .collect();
-
-        let mut ret = Node::new(
-            self.lo(),
-            self.hi(),
-            self.prefix_len,
-            self.is_index,
-            self.next,
-            &items,
-        );
-
-        if ret.children > 1 {
-            // if we have 1 existing child and our insert index is 1,
-            // we want to set the max activity bit. if the index is 0
-            // we want to set the min activity bit. as we get more
-            // items, we generally want to set the bit that is
-            // proportionally
-            let activity_sketch_bit = if index == self.children as usize {
-                7
-            } else {
-                (index * 8) / self.children as usize
-            };
-            assert!(activity_sketch_bit <= 7);
-            let activity_byte = 1_u8 << activity_sketch_bit;
-            ret.activity_sketch = activity_byte | self.activity_sketch;
-        }
-
-        ret.probation_ops_remaining =
-            self.probation_ops_remaining.saturating_sub(1);
-
-        ret.rewrite_generations = self.rewrite_generations;
-
-        ret
+        self.stitch(index, Some((self.index_key(index), value)), true)
     }
 
-    fn insert(&self, key: &[u8], value: &[u8]) -> Node {
-        assert!(!self.merging);
-        assert!(self.merging_child.is_none());
+    /*
+        let removed_key = self.index_key(index);
+        let removed_value = self.index_value(index);
 
-        let index = if let Err(prospective_offset) = self.find(key) {
-            prospective_offset
+        let mut offset_shift = 0;
+
+        let removed_key_bytes = if self.fixed_key_length.is_some() {
+            removed_key.len()
         } else {
-            panic!(
-                "trying to insert key into node that already contains that key"
-            );
+            let removed_key_bytes = removed_key.len()
+                + varint::size(removed_key.len() as u64) as usize;
+            offset_shift += removed_key_bytes;
+            removed_key_bytes
         };
 
-        let items: Vec<_> = self
-            .iter()
-            .take(index)
-            .chain(Some((key, value)))
-            .chain(self.iter().skip(index))
-            .collect();
+        let removed_value_bytes = if self.fixed_value_length.is_some() {
+            removed_value.len()
+        } else {
+            let removed_value_bytes = removed_value.len()
+                + varint::size(removed_value.len() as u64) as usize;
+            offset_shift += removed_value_bytes;
+            removed_value_bytes
+        };
 
-        let mut ret = Node::new(
-            self.lo(),
-            self.hi(),
-            self.prefix_len,
-            self.is_index,
-            self.next,
-            &items,
-        );
+        let new_sz = self.0.len()
+            - self.offset_bytes as usize
+            - removed_key_bytes
+            - removed_value_bytes
+            - size_of::<Header>();
 
-        if ret.children > 1 {
-            // if we have 1 existing child and our insert index is 1,
-            // we want to set the max activity bit. if the index is 0
-            // we want to set the min activity bit. as we get more
-            // items, we generally want to set the bit that is
-            // proportionally
-            let activity_sketch_bit = if index == self.children as usize {
-                7
-            } else {
-                (index * 8) / self.children as usize
-            };
-            assert!(activity_sketch_bit <= 7);
-            let activity_byte = 1_u8 << activity_sketch_bit;
-            ret.activity_sketch = activity_byte | self.activity_sketch;
-        }
-
+        // allocate node and set header info
+        let mut ret = Node(ManuallyDrop::new(aligned_boxed_slice(new_sz)));
+        *ret.header_mut() = *self.header();
         ret.probation_ops_remaining =
             self.probation_ops_remaining.saturating_sub(1);
-
         ret.rewrite_generations = self.rewrite_generations;
+        ret.children -= 1;
+
+        // set lo and hi keys
+        ret.lo_mut().copy_from_slice(self.lo());
+        if let Some(ref mut hi_buf) = ret.hi_mut() {
+            hi_buf.copy_from_slice(self.hi().unwrap());
+        }
+
+        // set offsets, properly shifted after index
+        if ret.offset_bytes > 0 {
+            // just copy the offsets before the index
+            let start = usize::try_from(ret.lo_len).unwrap()
+                + usize::try_from(ret.hi_len).unwrap()
+                + size_of::<Header>();
+            let end = start + (index * ret.offset_bytes as usize);
+
+            ret.0[start..end].copy_from_slice(&self.0[start..end]);
+
+            if ret.children > 0 {
+                for i in (index + 1)..ret.children as usize {
+                    // shift the old index down
+                    let old_offset = self.offset(i + 1);
+                    let shifted_offset = old_offset - offset_shift;
+                    ret.set_offset(i, shifted_offset);
+                }
+            }
+        }
+
+        if ret.fixed_key_length.is_none() && ret.fixed_value_length.is_none() {
+            // just iterate over keys and values
+            for (mut idx, (k, v)) in self.iter().enumerate() {
+                if idx == index {
+                    continue;
+                }
+                if idx > index {
+                    idx -= 1;
+                }
+                // skip the removed index and shift all other indices down by one
+                let mut key_buf = ret.key_buf_for_offset_mut(idx);
+                if self.fixed_key_length.is_none() {
+                    let varint_bytes =
+                        varint::serialize_into(k.len() as u64, key_buf);
+                    key_buf = &mut key_buf[varint_bytes..];
+                }
+                key_buf[..k.len()].copy_from_slice(k);
+
+                let mut value_buf = ret.value_buf_for_offset_mut(idx);
+                if self.fixed_value_length.is_none() {
+                    let varint_bytes =
+                        varint::serialize_into(v.len() as u64, value_buf);
+                    value_buf = &mut value_buf[varint_bytes..];
+                }
+                value_buf[..v.len()].copy_from_slice(v);
+            }
+        }
+
+        testing_assert!(ret.is_sorted());
 
         ret
     }
+    */
 
     fn weighted_split_point(&self) -> usize {
         let bits_set = self.activity_sketch.count_ones() as usize;
@@ -722,33 +1198,6 @@ impl Node {
         (average_bit * self.children as usize / 8).min(self.len() - 1).max(1)
     }
 
-    fn remove_index(&self, index: usize) -> Node {
-        log::trace!("removing index {} for node {:?}", index, self);
-        assert!(self.len() > index);
-        let items: Vec<_> = if index == 0 {
-            self.iter().skip(1).collect()
-        } else {
-            self.iter().take(index).chain(self.iter().skip(index + 1)).collect()
-        };
-
-        let mut ret = Node::new(
-            self.lo(),
-            self.hi(),
-            self.prefix_len,
-            self.is_index,
-            self.next,
-            &items,
-        );
-
-        ret.probation_ops_remaining =
-            self.probation_ops_remaining.saturating_sub(1);
-        ret.rewrite_generations = self.rewrite_generations;
-
-        testing_assert!(ret.is_sorted());
-
-        ret
-    }
-
     pub(crate) fn split(&self) -> (Node, Node) {
         assert!(self.len() >= 2);
         assert!(!self.merging);
@@ -761,8 +1210,10 @@ impl Node {
 
         // see if we can reduce the splitpoint length to reduce
         // the number of bytes that end up in index nodes
-        let splitpoint_length = if self.is_index {
-            right_min.len()
+        let splitpoint_length = right_min.len();
+        /*
+            if self.is_index {
+            right_min.len();
         } else {
             // we can only perform suffix truncation when
             // choosing the split points for leaf nodes.
@@ -779,6 +1230,7 @@ impl Node {
                 .count()
                 + 1
         };
+        */
 
         let untruncated_split_key = self.index_key(split_point);
 
@@ -929,17 +1381,20 @@ impl Node {
         } else if self.is_index {
             self.0.len() > 128 * 1024 && self.len() > 1
         } else {
+            /*
             let threshold = match self.rewrite_generations {
                 0 => 24 * 1024,
                 1 => {
-                    println!("1, sz: {}", self.0.len());
+                    //println!("1, sz: {}", self.0.len());
                     64 * 1024
                 }
                 other => {
-                    println!("{}, sz: {}", other, self.0.len());
+                    //println!("{}, sz: {}", other, self.0.len());
                     128 * 1024
                 }
             };
+            */
+            let threshold = 2048;
             self.0.len() > threshold && self.len() > 1
         };
 
@@ -954,10 +1409,12 @@ impl Node {
         } else if self.is_index {
             self.0.len() < 32 * 1024
         } else {
+            /*
             let threshold = match self.rewrite_generations {
                 0 => 10 * 1024,
                 1 => 30 * 1024,
                 other => {
+                    /*
                     println!(
                         "merge {}, sz: {}, {} {} {}",
                         other,
@@ -966,9 +1423,12 @@ impl Node {
                         self.merging_child.is_none(),
                         self.probation_ops_remaining
                     );
+                    */
                     64 * 1024
                 }
             };
+            */
+            let threshold = 512;
             self.0.len() < threshold
         };
 
@@ -1372,11 +1832,11 @@ impl Node {
 
     #[cfg(feature = "testing")]
     fn is_sorted(&self) -> bool {
-        if self.len() < 2 {
+        if self.len() <= 1 {
             return true;
         }
 
-        for i in 0..self.len() - 2 {
+        for i in 0..self.len() - 1 {
             if self.index_key(i) >= self.index_key(i + 1) {
                 log::error!(
                     "key {:?} at index {} >= key {:?} at index {}",
@@ -1387,6 +1847,13 @@ impl Node {
                 );
                 return false;
             }
+            println!(
+                "key {:?} at index {} < key {:?} at index {}",
+                self.index_key(i),
+                i,
+                self.index_key(i + 1),
+                i + 1
+            );
         }
 
         true
