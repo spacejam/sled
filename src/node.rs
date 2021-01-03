@@ -1116,6 +1116,12 @@ impl Node {
         let left_max = self.index_key(split_point - 1);
         let right_min = self.index_key(split_point);
 
+        assert_ne!(
+            left_max, right_min,
+            "split point: {} node: {:?}",
+            split_point, self
+        );
+
         // see if we can reduce the splitpoint length to reduce
         // the number of bytes that end up in index nodes
         let splitpoint_length = if self.is_index {
@@ -1779,18 +1785,82 @@ mod test {
         assert_eq!(ir.index_next_node(&[6, 6, 6, 6, 6]).1, 66);
     }
 
+    #[test]
+    fn insert_regression() {
+        let node = Node::new(
+            &[0, 0, 0, 0, 0, 0, 162, 211],
+            Some(&[0, 0, 0, 0, 0, 0, 163, 21]),
+            6,
+            false,
+            Some(NonZeroU64::new(220).unwrap()),
+            &[(&[162, 211, 0, 0], &[]), (&[163, 15, 0, 0], &[])],
+        );
+
+        let new_item = Some((&[162, 211, 0, 0][..], &[][..]));
+        let _ = node.stitch(0, new_item, true);
+    }
+
     impl Arbitrary for Node {
         fn arbitrary<G: Gen>(g: &mut G) -> Node {
+            use rand::Rng;
+
             let lo: Vec<u8> = Arbitrary::arbitrary(g);
             let hi: Vec<u8> = Arbitrary::arbitrary(g);
 
             let children: BTreeMap<Vec<u8>, Vec<u8>> = Arbitrary::arbitrary(g);
 
+            let equal_length_keys =
+                g.gen::<Option<usize>>().map(|kl| (kl % 32).max(1));
+
+            let min_key_length = equal_length_keys.unwrap_or(0);
+
+            let equal_length_values =
+                g.gen::<Option<usize>>().map(|vl| (vl % 32).max(1));
+
+            let min_value_length = equal_length_values.unwrap_or(0);
+
             let children_ref: Vec<(&[u8], &[u8])> = children
                 .iter()
-                .map(|(k, v)| (k.as_ref(), v.as_ref()))
+                .filter(|(k, v)| {
+                    k.len() >= min_key_length && v.len() >= min_value_length
+                })
+                .map(|(k, v)| {
+                    (
+                        if let Some(kl) = equal_length_keys {
+                            &k[..kl]
+                        } else {
+                            k.as_ref()
+                        },
+                        if let Some(vl) = equal_length_values {
+                            &v[..vl]
+                        } else {
+                            v.as_ref()
+                        },
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
                 .collect();
+
             Node::new(&lo, Some(&hi), 0, false, None, &children_ref)
+        }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            Box::new({
+                let node = self.clone();
+                let no_bounds = Node::new(
+                    &[],
+                    None,
+                    0,
+                    node.is_index,
+                    node.next,
+                    &node.iter().collect::<Vec<_>>(),
+                );
+
+                Some(no_bounds)
+                    .into_iter()
+                    .chain((0..node.len()).map(move |i| node.remove_index(i)))
+            })
         }
     }
 
@@ -1817,11 +1887,42 @@ mod test {
         true
     }
 
+    fn prop_insert_split_merge(
+        node: Node,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> bool {
+        let node2 = if let Ok(idx) = node.find(&key) {
+            node.apply(&Link::Replace(idx, value.into()))
+        } else {
+            node.apply(&Link::Set((&*key).into(), value.into()))
+        };
+
+        if node2.len() > 2 {
+            let (left, right) = node2.split();
+            let node3 = left.receive_merge(&right);
+            assert_eq!(node3, node2);
+        }
+
+        let idx = node2.find(&key).unwrap();
+        let node4 = node2.remove_index(idx);
+        assert_eq!(node, node4);
+
+        true
+    }
+
     quickcheck::quickcheck! {
         #[cfg_attr(miri, ignore)]
         fn indexable(lo: Vec<u8>, hi: Vec<u8>, children: BTreeMap<Vec<u8>, Vec<u8>>) -> bool {
             prop_indexable(lo, hi, children.into_iter().collect())
         }
+
+        #[cfg_attr(miri, ignore)]
+        fn insert_split_merge(node: Node, key: Vec<u8>, value: Vec<u8>) -> bool {
+
+            prop_insert_split_merge(node, key, value)
+        }
+
     }
 
     #[test]
