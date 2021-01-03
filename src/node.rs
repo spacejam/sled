@@ -1225,10 +1225,8 @@ impl Node {
 
         // see if we can reduce the splitpoint length to reduce
         // the number of bytes that end up in index nodes
-        let splitpoint_length = right_min.len();
-        /*
-            if self.is_index {
-            right_min.len();
+        let splitpoint_length = if self.is_index {
+            right_min.len()
         } else {
             // we can only perform suffix truncation when
             // choosing the split points for leaf nodes.
@@ -1245,7 +1243,6 @@ impl Node {
                 .count()
                 + 1
         };
-        */
 
         let untruncated_split_key = self.index_key(split_point);
 
