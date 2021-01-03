@@ -540,3 +540,13 @@ mod compile_time_assertions {
 
     fn _assert_send_sync<S: Send + Sync>(_: &S) {}
 }
+
+#[cfg(all(unix, not(miri)))]
+fn maybe_fsync_directory<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+#[cfg(any(not(unix), miri))]
+fn maybe_fsync_directory<P: AsRef<std::path::Path>>(_: P) -> std::io::Result<()> {
+    Ok(())
+}
