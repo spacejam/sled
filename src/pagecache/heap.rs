@@ -1,4 +1,3 @@
-// TODO rm allow(unused)
 #![allow(unsafe_code)]
 
 use std::{

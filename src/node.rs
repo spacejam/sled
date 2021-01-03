@@ -625,8 +625,6 @@ impl Node {
             self.children + 1
         };
 
-        // dbg!(children);
-
         let take_slow_path = if let Some((k, v)) = new_item {
             let new_max_sz = self.0.len()
                 + varint::size(k.len() as u64) as usize
@@ -811,8 +809,6 @@ impl Node {
                 offset_shift += value_shift
             };
 
-            // println!("offset_shift: {}", offset_shift);
-
             // just copy the offsets before the index
             let start = usize::try_from(ret.lo_len).unwrap()
                 + usize::try_from(ret.hi_len).unwrap()
@@ -846,20 +842,9 @@ impl Node {
                 ret.set_offset(index, previous_offset + previous_item_size);
             }
 
-            /*
-            for i in 0..self.children as usize {
-                println!("self offset {}: {}", i, self.offset(i));
-            }
-
-            for i in 0..ret.children as usize {
-                println!("pre-shift offset {}: {}", i, ret.offset(i));
-            }
-            */
-
             if ret.children > 0 {
                 for i in (index + 1)..ret.children as usize {
                     // shift the old index down
-                    //dbg!(i);
                     let old_offset = self.offset(if replace {
                         if new_item.is_some() {
                             i
@@ -871,21 +856,9 @@ impl Node {
                     });
                     let shifted_offset =
                         (old_offset as isize + offset_shift) as usize;
-                    /*
-                    println!(
-                        "shifted offset at index {} from {} to {}",
-                        i, old_offset, shifted_offset
-                    );
-                    */
                     ret.set_offset(i, shifted_offset);
                 }
             }
-
-            /*
-            for i in 0..ret.children as usize {
-                println!("post-shift offset {}: {}", i, ret.offset(i));
-            }
-            */
         }
 
         // write keys, possibly performing some copy optimizations
@@ -928,7 +901,6 @@ impl Node {
             for idx in 0..index {
                 let k = self.index_key(idx);
                 let mut key_buf = ret.key_buf_for_offset_mut(idx);
-                //println!("1 writing key {:?} at {:?}", k, key_buf.as_ptr());
                 let varint_bytes =
                     varint::serialize_into(k.len() as u64, key_buf);
                 key_buf = &mut key_buf[varint_bytes..];
@@ -937,7 +909,6 @@ impl Node {
 
             if let Some((k, _)) = new_item {
                 let mut key_buf = ret.key_buf_for_offset_mut(index);
-                //println!("2 writing key {:?} at {:?}", k, key_buf.as_ptr());
                 let varint_bytes =
                     varint::serialize_into(k.len() as u64, key_buf);
                 key_buf = &mut key_buf[varint_bytes..];
@@ -946,7 +917,6 @@ impl Node {
 
             let start = index + if replace { 1 } else { 0 };
 
-            // dbg!(start);
             for idx in start..self.children as usize {
                 let self_idx = idx;
                 let ret_idx = if replace {
@@ -960,7 +930,6 @@ impl Node {
                 };
                 let k = self.index_key(self_idx);
                 let mut key_buf = ret.key_buf_for_offset_mut(ret_idx);
-                // println!("3 writing key {:?} at {:?}", k, key_buf.as_ptr());
                 let varint_bytes =
                     varint::serialize_into(k.len() as u64, key_buf);
                 key_buf = &mut key_buf[varint_bytes..];
@@ -1042,7 +1011,6 @@ impl Node {
                 };
                 let v = self.index_value(self_idx);
                 let mut value_buf = ret.value_buf_for_offset_mut(ret_idx);
-                // println!("3 writing value {:?} at {:?}", v, value_buf.as_ptr());
                 let varint_bytes =
                     varint::serialize_into(v.len() as u64, value_buf);
                 value_buf = &mut value_buf[varint_bytes..];
@@ -1434,11 +1402,9 @@ impl Node {
             let threshold = match self.rewrite_generations {
                 0 => 24 * 1024,
                 1 => {
-                    //println!("1, sz: {}", self.0.len());
                     64 * 1024
                 }
                 other => {
-                    //println!("{}, sz: {}", other, self.0.len());
                     128 * 1024
                 }
             };
@@ -1465,16 +1431,6 @@ impl Node {
                 0 => 10 * 1024,
                 1 => 30 * 1024,
                 other => {
-                    /*
-                    println!(
-                        "merge {}, sz: {}, {} {} {}",
-                        other,
-                        self.0.len(),
-                        !self.merging,
-                        self.merging_child.is_none(),
-                        self.probation_ops_remaining
-                    );
-                    */
                     64 * 1024
                 }
             };
@@ -1898,15 +1854,6 @@ impl Node {
                 );
                 return false;
             }
-            /*
-            println!(
-                "key {:?} at index {} < key {:?} at index {}",
-                self.index_key(i),
-                i,
-                self.index_key(i + 1),
-                i + 1
-            );
-            */
         }
 
         true
