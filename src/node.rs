@@ -16,6 +16,15 @@ use crate::{varint, IVec, Link};
 
 const ALIGNMENT: usize = align_of::<Header>();
 
+macro_rules! tf {
+    ($e:expr) => {
+        usize::try_from($e).unwrap()
+    };
+    ($e:expr, $t:ty) => {
+        <$t>::try_from($e).unwrap()
+    };
+}
+
 // allocates space for a header struct at the beginning.
 pub(crate) fn aligned_boxed_slice(items_size: usize) -> Box<[u8]> {
     let size = items_size + size_of::<Header>();
@@ -35,7 +44,7 @@ pub(crate) fn aligned_boxed_slice(items_size: usize) -> Box<[u8]> {
 fn fatten(data: *const u8, len: usize) -> *mut [u8] {
     // Requirements of slice::from_raw_parts.
     assert!(!data.is_null());
-    assert!(isize::try_from(len).is_ok());
+    tf!(len, isize);
 
     let slice = unsafe { core::slice::from_raw_parts(data as *const (), len) };
     slice as *const [()] as *mut _
@@ -246,10 +255,7 @@ impl Node {
                 _ => unreachable!(),
             };
 
-            (
-                u64::try_from(bytes_per_offset).unwrap() * items.len() as u64,
-                bytes_per_offset,
-            )
+            (tf!(bytes_per_offset, u64) * items.len() as u64, bytes_per_offset)
         };
 
         let total_item_storage_size = hi.map(|hi| hi.len() as u64).unwrap_or(0)
@@ -258,9 +264,7 @@ impl Node {
             + value_storage_size
             + offsets_storage_size;
 
-        let boxed_slice = aligned_boxed_slice(
-            usize::try_from(total_item_storage_size).unwrap(),
-        );
+        let boxed_slice = aligned_boxed_slice(tf!(total_item_storage_size));
 
         let mut ret = Node(ManuallyDrop::new(boxed_slice));
 
@@ -275,7 +279,7 @@ impl Node {
             fixed_key_length,
             fixed_value_length,
             offset_bytes,
-            children: u16::try_from(items.len()).unwrap(),
+            children: tf!(items.len(), u16),
             prefix_len,
             next,
             is_index,
@@ -310,7 +314,7 @@ impl Node {
         let mut offset = 0_u64;
         for (idx, (k, v)) in items.iter().enumerate() {
             if !keys_equal_length || !values_equal_length {
-                ret.set_offset(idx, usize::try_from(offset).unwrap());
+                ret.set_offset(idx, tf!(offset));
             }
             if !keys_equal_length {
                 offset += varint::size(k.len() as u64) + k.len() as u64;
@@ -372,7 +376,7 @@ impl Node {
         match (self.fixed_key_length, self.fixed_value_length) {
             (Some(k_sz), Some(_)) | (Some(k_sz), None) => {
                 let keys_buf = &mut self.data_buf_mut()[offset_sz..];
-                &mut keys_buf[index * usize::try_from(k_sz.get()).unwrap()..]
+                &mut keys_buf[index * tf!(k_sz.get())..]
             }
             (None, Some(_)) | (None, None) => {
                 // find offset for key or combined kv offset
@@ -392,7 +396,7 @@ impl Node {
         match (self.fixed_key_length, self.fixed_value_length) {
             (Some(_), Some(v_sz)) | (None, Some(v_sz)) => {
                 let values_buf = self.values_buf_mut();
-                &mut values_buf[index * usize::try_from(v_sz.get()).unwrap()..]
+                &mut values_buf[index * tf!(v_sz.get())..]
             }
             (Some(_), None) => {
                 // find combined kv offset
@@ -407,7 +411,7 @@ impl Node {
                 let slot_buf = &mut values_buf[offset..];
                 let (val_len, varint_sz) =
                     varint::deserialize(slot_buf).unwrap();
-                &mut slot_buf[usize::try_from(val_len).unwrap() + varint_sz..]
+                &mut slot_buf[tf!(val_len) + varint_sz..]
             }
         }
     }
@@ -421,7 +425,7 @@ impl Node {
         match (self.fixed_key_length, self.fixed_value_length) {
             (Some(_), Some(v_sz)) | (None, Some(v_sz)) => {
                 let values_buf = self.values_buf();
-                &values_buf[index * usize::try_from(v_sz.get()).unwrap()..]
+                &values_buf[index * tf!(v_sz.get())..]
             }
             (Some(_), None) => {
                 // find combined kv offset
@@ -436,7 +440,7 @@ impl Node {
                 let slot_buf = &values_buf[offset..];
                 let (val_len, varint_sz) =
                     varint::deserialize(slot_buf).unwrap();
-                &slot_buf[usize::try_from(val_len).unwrap() + varint_sz..]
+                &slot_buf[tf!(val_len) + varint_sz..]
             }
         }
     }
@@ -444,14 +448,13 @@ impl Node {
     fn offset(&self, index: usize) -> usize {
         assert!(index < self.children as usize);
         assert!(self.offset_bytes > 0);
-        let offsets_buf_start = usize::try_from(self.lo_len).unwrap()
-            + usize::try_from(self.hi_len).unwrap()
-            + size_of::<Header>();
+        let offsets_buf_start =
+            tf!(self.lo_len) + tf!(self.hi_len) + size_of::<Header>();
 
         let start = offsets_buf_start + (index * self.offset_bytes as usize);
         let mask = std::usize::MAX
             >> (8
-                * (u32::try_from(size_of::<usize>()).unwrap()
+                * (tf!(size_of::<usize>(), u32)
                     - u32::from(self.offset_bytes)));
 
         // we use unsafe code here because it cuts around 5% of CPU cycles
@@ -488,14 +491,12 @@ impl Node {
             (Some(fixed_key_length), Some(_))
             | (Some(fixed_key_length), None) => {
                 let start = offset_sz
-                    + usize::try_from(fixed_key_length.get()).unwrap()
-                        * self.children as usize;
+                    + tf!(fixed_key_length.get()) * self.children as usize;
                 &mut self.data_buf_mut()[start..]
             }
             (None, Some(fixed_value_length)) => {
                 let total_value_size =
-                    usize::try_from(fixed_value_length.get()).unwrap()
-                        * self.children as usize;
+                    tf!(fixed_value_length.get()) * self.children as usize;
                 let data_buf = self.data_buf_mut();
                 let start = data_buf.len() - total_value_size;
                 &mut data_buf[start..]
@@ -510,14 +511,12 @@ impl Node {
             (Some(fixed_key_length), Some(_))
             | (Some(fixed_key_length), None) => {
                 let start = offset_sz
-                    + usize::try_from(fixed_key_length.get()).unwrap()
-                        * self.children as usize;
+                    + tf!(fixed_key_length.get()) * self.children as usize;
                 &self.data_buf()[start..]
             }
             (None, Some(fixed_value_length)) => {
                 let total_value_size =
-                    usize::try_from(fixed_value_length.get()).unwrap()
-                        * self.children as usize;
+                    tf!(fixed_value_length.get()) * self.children as usize;
                 let data_buf = self.data_buf();
                 let start = data_buf.len() - total_value_size;
                 &data_buf[start..]
@@ -528,16 +527,12 @@ impl Node {
 
     #[inline]
     fn data_buf(&self) -> &[u8] {
-        let start = usize::try_from(self.lo_len).unwrap()
-            + usize::try_from(self.hi_len).unwrap()
-            + size_of::<Header>();
+        let start = tf!(self.lo_len) + tf!(self.hi_len) + size_of::<Header>();
         &self.0[start..]
     }
 
     fn data_buf_mut(&mut self) -> &mut [u8] {
-        let start = usize::try_from(self.lo_len).unwrap()
-            + usize::try_from(self.hi_len).unwrap()
-            + size_of::<Header>();
+        let start = tf!(self.lo_len) + tf!(self.hi_len) + size_of::<Header>();
         &mut self.0[start..]
     }
 
@@ -810,9 +805,7 @@ impl Node {
             };
 
             // just copy the offsets before the index
-            let start = usize::try_from(ret.lo_len).unwrap()
-                + usize::try_from(ret.hi_len).unwrap()
-                + size_of::<Header>();
+            let start = tf!(ret.lo_len) + tf!(ret.hi_len) + size_of::<Header>();
             let end = start + (index * ret.offset_bytes as usize);
 
             ret.0[start..end].copy_from_slice(&self.0[start..end]);
@@ -939,7 +932,7 @@ impl Node {
 
         // write values, possibly performing some copy optimizations
         if let Some(fixed_value_length) = self.fixed_value_length {
-            let fixed_value_length = fixed_value_length.get() as usize;
+            let fixed_value_length = tf!(fixed_value_length.get());
 
             let self_values_sz = self.children as usize * fixed_value_length;
             let self_data_buf = self.data_buf();
@@ -1071,8 +1064,7 @@ impl Node {
             let mut value_buf = ret.value_buf_for_offset_mut(index);
             if requires_varint {
                 // skip the varint bytes, which will be unchanged
-                let varint_bytes =
-                    usize::try_from(varint::size(value.len() as u64)).unwrap();
+                let varint_bytes = tf!(varint::size(value.len() as u64));
                 value_buf = &mut value_buf[varint_bytes..];
             }
 
@@ -1293,7 +1285,7 @@ impl Node {
         let mut left = Node::new(
             self.lo(),
             Some(&split_key),
-            self.prefix_len + u8::try_from(additional_left_prefix).unwrap(),
+            self.prefix_len + tf!(additional_left_prefix, u8),
             self.is_index,
             self.next,
             &left_items,
@@ -1304,7 +1296,7 @@ impl Node {
         let mut right = Node::new(
             &split_key,
             self.hi(),
-            self.prefix_len + u8::try_from(additional_right_prefix).unwrap(),
+            self.prefix_len + tf!(additional_right_prefix, u8),
             self.is_index,
             self.next,
             &right_items,
@@ -1313,7 +1305,7 @@ impl Node {
         right.rewrite_generations = self.rewrite_generations;
         right.next = self.next;
         right.probation_ops_remaining =
-            u8::try_from((self.len() / 2).min(std::u8::MAX as usize)).unwrap();
+            tf!((self.len() / 2).min(std::u8::MAX as usize), u8);
 
         log::trace!(
             "splitting node {:?} into left: {:?} and right: {:?}",
@@ -1562,19 +1554,19 @@ impl Node {
 
     pub(crate) fn lo(&self) -> &[u8] {
         let start = size_of::<Header>();
-        let end = start + usize::try_from(self.lo_len).unwrap();
+        let end = start + tf!(self.lo_len);
         &self.0[start..end]
     }
 
     fn lo_mut(&mut self) -> &mut [u8] {
         let start = size_of::<Header>();
-        let end = start + usize::try_from(self.lo_len).unwrap();
+        let end = start + tf!(self.lo_len);
         &mut self.0[start..end]
     }
 
     pub(crate) fn hi(&self) -> Option<&[u8]> {
-        let start = usize::try_from(self.lo_len).unwrap() + size_of::<Header>();
-        let end = start + usize::try_from(self.hi_len).unwrap();
+        let start = tf!(self.lo_len) + size_of::<Header>();
+        let end = start + tf!(self.hi_len);
         if start == end {
             None
         } else {
@@ -1583,8 +1575,8 @@ impl Node {
     }
 
     fn hi_mut(&mut self) -> Option<&mut [u8]> {
-        let start = usize::try_from(self.lo_len).unwrap() + size_of::<Header>();
-        let end = start + usize::try_from(self.hi_len).unwrap();
+        let start = tf!(self.lo_len) + size_of::<Header>();
+        let end = start + tf!(self.hi_len);
         if start == end {
             None
         } else {
@@ -1605,7 +1597,7 @@ impl Node {
         let key_buf = {
             match (self.fixed_key_length, self.fixed_value_length) {
                 (Some(k_sz), Some(_)) | (Some(k_sz), None) => {
-                    &keys_buf[idx * usize::try_from(k_sz.get()).unwrap()..]
+                    &keys_buf[idx * tf!(k_sz.get())..]
                 }
                 (None, Some(_)) | (None, None) => {
                     // find offset for key or combined kv offset
@@ -1617,11 +1609,11 @@ impl Node {
 
         let (start, end) = if let Some(fixed_key_length) = self.fixed_key_length
         {
-            (0, usize::try_from(fixed_key_length.get()).unwrap())
+            (0, tf!(fixed_key_length.get()))
         } else {
             let (key_len, varint_sz) = varint::deserialize(key_buf).unwrap();
             let start = varint_sz;
-            let end = start + usize::try_from(key_len).unwrap();
+            let end = start + tf!(key_len);
             (start, end)
         };
 
@@ -1640,11 +1632,11 @@ impl Node {
 
         let (start, end) =
             if let Some(fixed_value_length) = self.fixed_value_length {
-                (0, usize::try_from(fixed_value_length.get()).unwrap())
+                (0, tf!(fixed_value_length.get()))
             } else {
                 let (value_len, varint_sz) = varint::deserialize(buf).unwrap();
                 let start = varint_sz;
-                let end = start + usize::try_from(value_len).unwrap();
+                let end = start + tf!(value_len);
                 (start, end)
             };
 
