@@ -890,16 +890,15 @@ impl Node {
             }
 
             let remaining_items =
-                (self.children as usize) - index - if replace { 1 } else { 0 };
+                (children as usize) - (index + if replace { 0 } else { 1 });
 
             let ret_prologue_start = item_end;
             let ret_prologue_end =
                 item_end + (remaining_items * fixed_key_length);
 
             let self_prologue_end = (self.children as usize) * fixed_key_length;
-            let self_prologue_start = self_prologue_end
-                - ((self.children as usize - remaining_items)
-                    * fixed_key_length);
+            let self_prologue_start =
+                self_prologue_end - (remaining_items * fixed_key_length);
 
             ret_keys_buf[ret_prologue_start..ret_prologue_end].copy_from_slice(
                 &self_keys_buf[self_prologue_start..self_prologue_end],
@@ -944,13 +943,15 @@ impl Node {
         if let Some(fixed_value_length) = self.fixed_value_length {
             let fixed_value_length = fixed_value_length.get() as usize;
 
-            let self_offset_sz =
-                self.children as usize * self.offset_bytes as usize;
-            let self_values_buf = &self.data_buf()[self_offset_sz..];
+            let self_values_sz = self.children as usize * fixed_value_length;
+            let self_data_buf = self.data_buf();
+            let self_values_buf =
+                &self_data_buf[self_data_buf.len() - self_values_sz..];
 
-            let ret_offset_sz =
-                ret.children as usize * ret.offset_bytes as usize;
-            let ret_values_buf = &mut ret.data_buf_mut()[ret_offset_sz..];
+            let ret_values_sz = ret.children as usize * fixed_value_length;
+            let ret_data_buf = ret.data_buf_mut();
+            let ret_dbl = ret_data_buf.len();
+            let ret_values_buf = &mut ret_data_buf[ret_dbl - ret_values_sz..];
 
             let prelude = index * fixed_value_length;
             ret_values_buf[..prelude]
@@ -964,7 +965,7 @@ impl Node {
             }
 
             let remaining_items =
-                (self.children as usize) - index - if replace { 1 } else { 0 };
+                (children as usize) - (index + if replace { 0 } else { 1 });
 
             let ret_prologue_start = item_end;
             let ret_prologue_end =
@@ -972,9 +973,8 @@ impl Node {
 
             let self_prologue_end =
                 (self.children as usize) * fixed_value_length;
-            let self_prologue_start = self_prologue_end
-                - ((self.children as usize - remaining_items)
-                    * fixed_value_length);
+            let self_prologue_start =
+                self_prologue_end - (remaining_items * fixed_value_length);
 
             ret_values_buf[ret_prologue_start..ret_prologue_end]
                 .copy_from_slice(
