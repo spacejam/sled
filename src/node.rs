@@ -929,7 +929,15 @@ impl Node {
             dbg!(start);
             for idx in start..self.children as usize {
                 let self_idx = dbg!(idx);
-                let ret_idx = dbg!(if replace { idx } else { idx + 1 });
+                let ret_idx = dbg!(if replace {
+                    if new_item.is_some() {
+                        idx
+                    } else {
+                        idx - 1
+                    }
+                } else {
+                    idx + 1
+                });
                 let k = self.index_key(self_idx);
                 let mut key_buf = ret.key_buf_for_offset_mut(ret_idx);
                 println!("3 writing key {:?} at {:?}", k, key_buf.as_ptr());
@@ -1003,7 +1011,15 @@ impl Node {
 
             for idx in start..self.children as usize {
                 let self_idx = dbg!(idx);
-                let ret_idx = dbg!(if replace { idx } else { idx + 1 });
+                let ret_idx = dbg!(if replace {
+                    if new_item.is_some() {
+                        idx
+                    } else {
+                        idx - 1
+                    }
+                } else {
+                    idx + 1
+                });
                 let v = self.index_value(self_idx);
                 let mut value_buf = ret.value_buf_for_offset_mut(ret_idx);
                 println!("3 writing value {:?} at {:?}", v, value_buf.as_ptr());
