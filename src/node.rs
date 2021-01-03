@@ -1001,8 +1001,11 @@ impl Node {
             let start = index + if replace { 1 } else { 0 };
 
             for idx in start..self.children as usize {
-                let v = self.index_value(idx);
-                let mut value_buf = ret.value_buf_for_offset_mut(idx);
+                let self_idx = dbg!(idx);
+                let ret_idx = dbg!(if replace { idx } else { idx + 1 });
+                let v = self.index_value(self_idx);
+                let mut value_buf = ret.value_buf_for_offset_mut(ret_idx);
+                println!("3 writing value {:?} at {:?}", v, value_buf.as_ptr());
                 let varint_bytes =
                     varint::serialize_into(v.len() as u64, value_buf);
                 value_buf = &mut value_buf[varint_bytes..];
@@ -1020,6 +1023,13 @@ impl Node {
             self,
             ret
         );
+
+        if let Some((k, v)) = new_item {
+            assert_eq!(k, ret.index_key(index));
+            assert_eq!(v, ret.index_value(index));
+        } else if index < ret.len() {
+            assert_ne!(self.index_key(index), ret.index_key(index));
+        }
 
         ret
     }
