@@ -594,25 +594,9 @@ impl Node {
     ) -> Node {
         log::trace!(
             "stitching item {:?} replace: {} index: {} \
-            into node {:?} with fk: {:?} fv: {:?}",
-            new_item,
-            replace,
-            index,
-            self.iter().collect::<std::collections::BTreeMap<_, _>>(),
-            self.fixed_key_length,
-            self.fixed_value_length,
+            into node {:?}",
+            new_item, replace, index, self
         );
-
-        // possible optimizations:
-        // if replace && length remains the same
-        //  simple copy self bytes
-        // if fixed lengths and new item matches
-        //  simple copy of predecessors, new item,
-        //
-        //
-        // things that change
-        //   fixed lengths
-        //   offset
 
         let children = if new_item.is_none() {
             self.children - 1
@@ -1904,9 +1888,40 @@ mod test {
                     &node.iter().collect::<Vec<_>>(),
                 );
 
+                let item_removals = (0..node.len()).map({
+                    let node = self.clone();
+                    move |i| node.remove_index(i)
+                });
+                let item_reductions = (0..node.len()).flat_map({
+                    let node = self.clone();
+                    move |i| {
+                        let (k, v) = (
+                            node.index_key(i).to_vec(),
+                            node.index_value(i).to_vec(),
+                        );
+                        let k_shrink = k.shrink().flat_map({
+                            let node2 = node.remove_index(i);
+                            let v = v.clone();
+                            move |k| {
+                                if node2.contains_key(&k) {
+                                    None
+                                } else {
+                                    Some(node2.insert(&k, &v))
+                                }
+                            }
+                        });
+                        let v_shrink = v.shrink().map({
+                            let node3 = node.clone();
+                            move |v| node3.replace(i, &v)
+                        });
+                        k_shrink.chain(v_shrink)
+                    }
+                });
+
                 Some(no_bounds)
                     .into_iter()
-                    .chain((0..node.len()).map(move |i| node.remove_index(i)))
+                    .chain(item_removals)
+                    .chain(item_reductions)
             })
         }
     }
@@ -1971,7 +1986,9 @@ mod test {
 
             assert_eq!(
                 node.iter().collect::<Vec<_>>(),
-                node4.iter().collect::<Vec<_>>()
+                node4.iter().collect::<Vec<_>>(),
+                "we expected that removing item at index {} would return the node to its original pre-insertion state",
+                idx
             );
         }
 
@@ -2011,7 +2028,7 @@ mod test {
 
     #[test]
     fn node_bug_02() {
-        // postmortem:
+        // postmortem: the test code had some issues with handling invalid keys for nodes
         let node = Node::new(
             &[47, 97][..],
             None,
