@@ -340,7 +340,12 @@ impl Node {
             value_buf[..v.len()].copy_from_slice(v);
         }
 
-        testing_assert!(ret.is_sorted());
+        testing_assert!(
+            ret.is_sorted(),
+            "created new node is not sorted: {:?}, had items passed in: {:?}",
+            ret,
+            items
+        );
 
         ret
     }
@@ -1219,8 +1224,16 @@ impl Node {
             right
         );
 
-        testing_assert!(left.is_sorted());
-        testing_assert!(right.is_sorted());
+        testing_assert!(
+            left.is_sorted(),
+            "split node left is not sorted: {:?}",
+            left
+        );
+        testing_assert!(
+            right.is_sorted(),
+            "split node right is not sorted: {:?}",
+            right
+        );
 
         (left, right)
     }
