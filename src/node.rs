@@ -1846,7 +1846,13 @@ mod test {
                 .into_iter()
                 .collect();
 
-            Node::new(&lo, Some(&hi), 0, false, None, &children_ref)
+            let mut ret =
+                Node::new(&lo, Some(&hi), 0, false, None, &children_ref);
+            ret.activity_sketch = g.gen();
+            if g.gen_bool(1. / 30.) {
+                ret.probation_ops_remaining = g.gen();
+            }
+            ret
         }
 
         fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
@@ -1896,21 +1902,32 @@ mod test {
         key: Vec<u8>,
         value: Vec<u8>,
     ) -> bool {
-        let node2 = if let Ok(idx) = node.find(&key) {
-            node.apply(&Link::Replace(idx, value.into()))
+        let node2 = if !node.contains_key(&key) {
+            if let Ok(idx) = node.find(&key) {
+                node.apply(&Link::Replace(idx, value.into()))
+            } else {
+                node.apply(&Link::Set((&*key).into(), value.into()))
+            }
         } else {
-            node.apply(&Link::Set((&*key).into(), value.into()))
+            node.clone()
         };
 
         if node2.len() > 2 {
             let (left, right) = node2.split();
             let node3 = left.receive_merge(&right);
-            assert_eq!(node3, node2);
+            assert_eq!(
+                node3.iter().collect::<Vec<_>>(),
+                node2.iter().collect::<Vec<_>>()
+            );
         }
 
         let idx = node2.find(&key).unwrap();
         let node4 = node2.remove_index(idx);
-        assert_eq!(node, node4);
+
+        assert_eq!(
+            node.iter().collect::<Vec<_>>(),
+            node4.iter().collect::<Vec<_>>()
+        );
 
         true
     }
