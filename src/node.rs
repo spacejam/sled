@@ -466,25 +466,33 @@ impl Node {
             tf!(self.lo_len) + tf!(self.hi_len) + size_of::<Header>();
 
         let start = offsets_buf_start + (index * self.offset_bytes as usize);
+
         let mask = std::usize::MAX
             >> (8
                 * (tf!(size_of::<usize>(), u32)
                     - u32::from(self.offset_bytes)));
 
-        // we use unsafe code here because it cuts around 5% of CPU cycles
-        // on a simple insertion workload compared to using the more
-        // idiomatic approach of copying the correct number of bytes into
+        let mut tmp = std::mem::MaybeUninit::<usize>::uninit();
+        let len = size_of::<usize>();
+
+        // we use unsafe code here because it cuts a significant number of
+        // CPU cycles on a simple insertion workload compared to using the
+        // more idiomatic approach of copying the correct number of bytes into
         // a buffer initialized with zeroes. the seemingly "less" unsafe
         // approach of using ptr::copy_nonoverlapping did not improve matters.
         // using a match statement on offest_bytes and performing simpler
         // casting for one or two bytes slowed things down due to increasing
         // code size. this approach is branch-free and cut CPU usage of this
-        // function from 7-11% down to 2-3% in a monotonic insertion workload.
+        // function from 7-11% down to 0.5-2% in a monotonic insertion workload.
         #[allow(unsafe_code)]
         unsafe {
             let ptr: *const u8 = self.0.as_ptr().add(start);
-            let cast_ptr = ptr as *const usize;
-            cast_ptr.read_unaligned() & mask
+            std::ptr::copy_nonoverlapping(
+                ptr,
+                tmp.as_mut_ptr() as *mut u8,
+                len,
+            );
+            tmp.assume_init() & mask
         }
     }
 
@@ -942,8 +950,8 @@ impl Node {
 
             let ret_values_sz = ret.children as usize * fixed_value_length;
             let ret_data_buf = ret.data_buf_mut();
-            let ret_dbl = ret_data_buf.len();
-            let ret_values_buf = &mut ret_data_buf[ret_dbl - ret_values_sz..];
+            let ret_values_start = ret_data_buf.len() - ret_values_sz;
+            let ret_values_buf = &mut ret_data_buf[ret_values_start..];
 
             let prelude = index * fixed_value_length;
             ret_values_buf[..prelude]
@@ -959,20 +967,13 @@ impl Node {
             let remaining_items = (children as usize)
                 - index
                 - if new_item.is_some() { 1 } else { 0 };
+            let remaining_length = remaining_items * fixed_value_length;
 
-            let ret_prologue_start = item_end;
-            let ret_prologue_end =
-                item_end + (remaining_items * fixed_value_length);
+            let ret_prologue_start = ret_values_buf.len() - remaining_length;
+            let self_prologue_start = self_values_buf.len() - remaining_length;
 
-            let self_prologue_end =
-                (self.children as usize) * fixed_value_length;
-            let self_prologue_start =
-                self_prologue_end - (remaining_items * fixed_value_length);
-
-            ret_values_buf[ret_prologue_start..ret_prologue_end]
-                .copy_from_slice(
-                    &self_values_buf[self_prologue_start..self_prologue_end],
-                );
+            ret_values_buf[ret_prologue_start..]
+                .copy_from_slice(&self_values_buf[self_prologue_start..]);
         } else {
             for idx in 0..index {
                 let v = self.index_value(idx);
