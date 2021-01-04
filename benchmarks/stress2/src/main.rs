@@ -6,6 +6,7 @@ use std::{
     thread,
 };
 
+use num_format::{Locale, ToFormattedString};
 use rand::{thread_rng, Rng};
 
 #[cfg_attr(
@@ -143,7 +144,11 @@ fn report(shutdown: Arc<AtomicBool>) {
         thread::sleep(std::time::Duration::from_secs(1));
         let total = TOTAL.load(Ordering::Acquire);
 
-        println!("did {} ops, {}mb RSS", total - last, rss() / (1024 * 1024));
+        println!(
+            "did {} ops, {}mb RSS",
+            (total - last).to_formatted_string(&Locale::en),
+            rss() / (1024 * 1024)
+        );
 
         last = total;
     }
@@ -332,15 +337,14 @@ fn main() {
     for t in threads.into_iter() {
         t.join().unwrap();
     }
-
     let ops = TOTAL.load(Ordering::SeqCst);
     let time = now.elapsed().as_secs() as usize;
 
     println!(
         "did {} total ops in {} seconds. {} ops/s",
-        ops,
+        ops.to_formatted_string(&Locale::en),
         time,
-        (ops * 1_000) / (time * 1_000)
+        ((ops * 1_000) / (time * 1_000)).to_formatted_string(&Locale::en)
     );
 }
 
