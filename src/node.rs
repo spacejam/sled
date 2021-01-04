@@ -1760,6 +1760,36 @@ impl Node {
     }
 }
 
+mod prefix {
+    use crate::IVec;
+
+    pub(crate) fn empty() -> &'static [u8] {
+        &[]
+    }
+
+    pub(crate) fn reencode(
+        old_prefix: &[u8],
+        old_encoded_key: &[u8],
+        new_prefix_length: usize,
+    ) -> IVec {
+        old_prefix
+            .iter()
+            .chain(old_encoded_key.iter())
+            .skip(new_prefix_length)
+            .copied()
+            .collect()
+    }
+
+    pub(crate) fn decode(old_prefix: &[u8], old_encoded_key: &[u8]) -> IVec {
+        let mut decoded_key =
+            Vec::with_capacity(old_prefix.len() + old_encoded_key.len());
+        decoded_key.extend_from_slice(old_prefix);
+        decoded_key.extend_from_slice(old_encoded_key);
+
+        IVec::from(decoded_key)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::collections::BTreeMap;
@@ -1848,10 +1878,17 @@ mod test {
 
             let mut ret =
                 Node::new(&lo, Some(&hi), 0, false, None, &children_ref);
+
             ret.activity_sketch = g.gen();
+
             if g.gen_bool(1. / 30.) {
                 ret.probation_ops_remaining = g.gen();
             }
+
+            if g.gen_bool(1. / 4.) {
+                ret.rewrite_generations = g.gen();
+            }
+
             ret
         }
 
@@ -1902,7 +1939,14 @@ mod test {
         key: Vec<u8>,
         value: Vec<u8>,
     ) -> bool {
-        let node2 = if !node.contains_key(&key) {
+        // the inserted key must have its bytes after the prefix len
+        // be greater than the node's lo key after the prefix len
+        let skip_key_ops = !node
+            .contains_upper_bound(&Bound::Included((&*key).into()))
+            || !node
+                .contains_lower_bound(&Bound::Included((&*key).into()), true);
+
+        let node2 = if !node.contains_key(&key) && !skip_key_ops {
             if let Ok(idx) = node.find(&key) {
                 node.apply(&Link::Replace(idx, value.into()))
             } else {
@@ -1921,13 +1965,15 @@ mod test {
             );
         }
 
-        let idx = node2.find(&key).unwrap();
-        let node4 = node2.remove_index(idx);
+        if !skip_key_ops {
+            let idx = node2.find(&key).unwrap();
+            let node4 = node2.remove_index(idx);
 
-        assert_eq!(
-            node.iter().collect::<Vec<_>>(),
-            node4.iter().collect::<Vec<_>>()
-        );
+            assert_eq!(
+                node.iter().collect::<Vec<_>>(),
+                node4.iter().collect::<Vec<_>>()
+            );
+        }
 
         true
     }
@@ -1940,7 +1986,6 @@ mod test {
 
         #[cfg_attr(miri, ignore)]
         fn insert_split_merge(node: Node, key: Vec<u8>, value: Vec<u8>) -> bool {
-
             prop_insert_split_merge(node, key, value)
         }
 
@@ -1957,41 +2002,25 @@ mod test {
             vec![(vec![], vec![]), (vec![1], vec![1]),]
         ));
     }
-
     #[test]
     fn node_bug_01() {
         // postmortem: hi and lo keys were not properly being accounted in the
         // inital allocation
         assert!(prop_indexable(vec![], vec![0], vec![],));
     }
-}
 
-mod prefix {
-    use crate::IVec;
+    #[test]
+    fn node_bug_02() {
+        // postmortem:
+        let node = Node::new(
+            &[47, 97][..],
+            None,
+            0,
+            false,
+            None,
+            &[(&[47], &[]), (&[99], &[])],
+        );
 
-    pub(crate) fn empty() -> &'static [u8] {
-        &[]
-    }
-
-    pub(crate) fn reencode(
-        old_prefix: &[u8],
-        old_encoded_key: &[u8],
-        new_prefix_length: usize,
-    ) -> IVec {
-        old_prefix
-            .iter()
-            .chain(old_encoded_key.iter())
-            .skip(new_prefix_length)
-            .copied()
-            .collect()
-    }
-
-    pub(crate) fn decode(old_prefix: &[u8], old_encoded_key: &[u8]) -> IVec {
-        let mut decoded_key =
-            Vec::with_capacity(old_prefix.len() + old_encoded_key.len());
-        decoded_key.extend_from_slice(old_prefix);
-        decoded_key.extend_from_slice(old_encoded_key);
-
-        IVec::from(decoded_key)
+        assert!(prop_insert_split_merge(node, vec![], vec![]));
     }
 }
