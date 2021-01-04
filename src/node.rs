@@ -1888,6 +1888,33 @@ mod test {
                     &node.iter().collect::<Vec<_>>(),
                 );
 
+                let shrink_lo = node.lo().to_vec().shrink().map({
+                    let node = node.clone();
+                    move |lo| {
+                        Node::new(
+                            &lo,
+                            node.hi(),
+                            node.prefix_len,
+                            node.is_index,
+                            node.next,
+                            &node.iter().collect::<Vec<_>>(),
+                        )
+                    }
+                });
+
+                let shrink_hi = if let Some(hi) = node.hi() {
+                    Some(Node::new(
+                        node.lo(),
+                        Some(&hi[..hi.len() - 1]),
+                        node.prefix_len,
+                        node.is_index,
+                        node.next,
+                        &node.iter().collect::<Vec<_>>(),
+                    ))
+                } else {
+                    None
+                };
+
                 let item_removals = (0..node.len()).map({
                     let node = self.clone();
                     move |i| node.remove_index(i)
@@ -1918,7 +1945,8 @@ mod test {
                     }
                 });
 
-                Some(no_bounds)
+                shrink_lo
+                    .chain(shrink_hi)
                     .into_iter()
                     .chain(item_removals)
                     .chain(item_reductions)
@@ -1980,7 +2008,7 @@ mod test {
             );
         }
 
-        if !skip_key_ops {
+        if !node.contains_key(&key) && !skip_key_ops {
             let idx = node2.find(&key).unwrap();
             let node4 = node2.remove_index(idx);
 
