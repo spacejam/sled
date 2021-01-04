@@ -595,7 +595,10 @@ impl Node {
         log::trace!(
             "stitching item {:?} replace: {} index: {} \
             into node {:?}",
-            new_item, replace, index, self
+            new_item,
+            replace,
+            index,
+            self
         );
 
         let children = if new_item.is_none() {
@@ -1140,11 +1143,18 @@ impl Node {
 
         if untruncated_split_key.len() != possibly_truncated_split_key.len() {
             log::trace!(
-                "shaved off {} bytes for split key",
+                "shaving off {} bytes for split key",
                 untruncated_split_key.len()
                     - possibly_truncated_split_key.len()
             );
         }
+
+        log::trace!(
+            "splitting node with lo: {:?} split_key: {:?} hi: {:?}",
+            self.lo(),
+            split_key,
+            self.hi()
+        );
 
         // prefix encoded length can only grow or stay the same
         let additional_left_prefix = self.lo()[self.prefix_len as usize..]
@@ -1822,10 +1832,25 @@ mod test {
         fn arbitrary<G: Gen>(g: &mut G) -> Node {
             use rand::Rng;
 
-            let lo: Vec<u8> = Arbitrary::arbitrary(g);
-            let hi: Vec<u8> = Arbitrary::arbitrary(g);
+            let mut lo: Vec<u8> = Arbitrary::arbitrary(g);
+            let mut hi: Option<Vec<u8>> = Some(Arbitrary::arbitrary(g));
 
             let children: BTreeMap<Vec<u8>, Vec<u8>> = Arbitrary::arbitrary(g);
+
+            if let Some((min_k, _)) = children.iter().next() {
+                if *min_k < lo {
+                    lo = min_k.clone();
+                }
+            }
+
+            if let Some((max_k, _)) = children.iter().next_back() {
+                if Some(max_k) >= hi.as_ref() {
+                    hi = None
+                }
+            }
+
+            let hi: Option<&[u8]> =
+                if let Some(ref hi) = hi { Some(hi) } else { None };
 
             let equal_length_keys =
                 g.gen::<Option<usize>>().map(|kl| (kl % 32).max(1));
@@ -1861,7 +1886,7 @@ mod test {
                 .collect();
 
             let mut ret =
-                Node::new(&lo, Some(&hi), 0, false, None, &children_ref);
+                Node::new(&lo, hi.map(|h| &*h), 0, false, None, &children_ref);
 
             ret.activity_sketch = g.gen();
 
@@ -1879,33 +1904,35 @@ mod test {
         fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
             Box::new({
                 let node = self.clone();
-                let no_bounds = Node::new(
-                    &[],
-                    None,
-                    0,
-                    node.is_index,
-                    node.next,
-                    &node.iter().collect::<Vec<_>>(),
-                );
-
-                let shrink_lo = node.lo().to_vec().shrink().map({
-                    let node = node.clone();
-                    move |lo| {
-                        Node::new(
-                            &lo,
-                            node.hi(),
-                            node.prefix_len,
-                            node.is_index,
-                            node.next,
-                            &node.iter().collect::<Vec<_>>(),
-                        )
-                    }
-                });
+                let lo = node.lo();
+                let shrink_lo = if lo.is_empty() {
+                    None
+                } else {
+                    Some(Node::new(
+                        &lo[..lo.len() - 1],
+                        node.hi(),
+                        node.prefix_len,
+                        node.is_index,
+                        node.next,
+                        &node.iter().collect::<Vec<_>>(),
+                    ))
+                };
 
                 let shrink_hi = if let Some(hi) = node.hi() {
+                    let new_hi = if !node.is_empty() {
+                        let max_k = node.index_key(node.len() - 1);
+                        if max_k >= &hi[..hi.len() - 1] {
+                            None
+                        } else {
+                            Some(&hi[..hi.len() - 1])
+                        }
+                    } else {
+                        Some(&hi[..hi.len() - 1])
+                    };
+
                     Some(Node::new(
                         node.lo(),
-                        Some(&hi[..hi.len() - 1]),
+                        new_hi,
                         node.prefix_len,
                         node.is_index,
                         node.next,
@@ -1946,6 +1973,7 @@ mod test {
                 });
 
                 shrink_lo
+                    .into_iter()
                     .chain(shrink_hi)
                     .into_iter()
                     .chain(item_removals)
