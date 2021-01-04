@@ -7,7 +7,7 @@ use std::{
     cmp::Ordering::{Equal, Greater, Less},
     convert::{TryFrom, TryInto},
     fmt,
-    mem::{align_of, size_of, ManuallyDrop},
+    mem::{align_of, size_of},
     num::NonZeroU64,
     ops::{Bound, Deref, DerefMut},
 };
@@ -26,28 +26,13 @@ macro_rules! tf {
 }
 
 // allocates space for a header struct at the beginning.
-pub(crate) fn aligned_boxed_slice(items_size: usize) -> Box<[u8]> {
-    let size = items_size + size_of::<Header>();
-    let layout = Layout::from_size_align(size, ALIGNMENT).unwrap();
+pub(crate) fn uninitialized_node(len: usize) -> Node {
+    let layout = Layout::from_size_align(len, ALIGNMENT).unwrap();
 
     unsafe {
         let ptr = alloc_zeroed(layout);
-        let fat_ptr = fatten(ptr, size);
-        let ret = Box::from_raw(fat_ptr);
-        assert_eq!(ret.len(), size);
-        ret
+        Node { ptr, len }
     }
-}
-
-/// <https://users.rust-lang.org/t/construct-fat-pointer-to-struct/29198/9>
-#[allow(trivial_casts)]
-fn fatten(data: *const u8, len: usize) -> *mut [u8] {
-    // Requirements of slice::from_raw_parts.
-    assert!(!data.is_null());
-    tf!(len, isize);
-
-    let slice = unsafe { core::slice::from_raw_parts(data as *const (), len) };
-    slice as *const [()] as *mut _
 }
 
 #[repr(C)]
@@ -92,17 +77,39 @@ pub struct Header {
 
 /// An immutable sorted string table
 #[must_use]
-#[derive(Clone)]
 #[cfg_attr(feature = "testing", derive(PartialEq))]
-pub struct Node(pub ManuallyDrop<Box<[u8]>>);
+pub struct Node {
+    ptr: *mut u8,
+    pub len: usize,
+}
+
+impl Clone for Node {
+    fn clone(&self) -> Node {
+        unsafe { Node::from_raw(self.as_ref()) }
+    }
+}
+
+unsafe impl Sync for Node {}
+unsafe impl Send for Node {}
 
 impl Drop for Node {
     fn drop(&mut self) {
-        let box_ptr = self.0.as_mut_ptr();
-        let layout = Layout::from_size_align(self.0.len(), ALIGNMENT).unwrap();
+        let layout = Layout::from_size_align(self.len, ALIGNMENT).unwrap();
         unsafe {
-            dealloc(box_ptr, layout);
+            dealloc(self.ptr, layout);
         }
+    }
+}
+
+impl AsRef<[u8]> for Node {
+    fn as_ref(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
+
+impl AsMut<[u8]> for Node {
+    fn as_mut(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
     }
 }
 
@@ -145,10 +152,9 @@ impl DerefMut for Node {
 
 impl Node {
     pub unsafe fn from_raw(buf: &[u8]) -> Node {
-        let mut boxed_slice =
-            aligned_boxed_slice(buf.len() - size_of::<Header>());
-        boxed_slice.copy_from_slice(buf);
-        Node(ManuallyDrop::new(boxed_slice))
+        let mut ret = uninitialized_node(buf.len());
+        ret.as_mut().copy_from_slice(buf);
+        ret
     }
 
     pub(crate) fn new(
@@ -267,15 +273,14 @@ impl Node {
             (tf!(bytes_per_offset, u64) * items.len() as u64, bytes_per_offset)
         };
 
-        let total_item_storage_size = hi.map(|hi| hi.len() as u64).unwrap_or(0)
+        let total_node_storage_size = size_of::<Header>() as u64
+            + hi.map(|hi| hi.len() as u64).unwrap_or(0)
             + lo.len() as u64
             + key_storage_size
             + value_storage_size
             + offsets_storage_size;
 
-        let boxed_slice = aligned_boxed_slice(tf!(total_item_storage_size));
-
-        let mut ret = Node(ManuallyDrop::new(boxed_slice));
+        let mut ret = uninitialized_node(tf!(total_node_storage_size));
 
         *ret.header_mut() = Header {
             rewrite_generations: 0,
@@ -486,7 +491,7 @@ impl Node {
         // function from 7-11% down to 0.5-2% in a monotonic insertion workload.
         #[allow(unsafe_code)]
         unsafe {
-            let ptr: *const u8 = self.0.as_ptr().add(start);
+            let ptr: *const u8 = self.ptr.add(start);
             std::ptr::copy_nonoverlapping(
                 ptr,
                 tmp.as_mut_ptr() as *mut u8,
@@ -548,12 +553,12 @@ impl Node {
     #[inline]
     fn data_buf(&self) -> &[u8] {
         let start = tf!(self.lo_len) + tf!(self.hi_len) + size_of::<Header>();
-        &self.0[start..]
+        &self.as_ref()[start..]
     }
 
     fn data_buf_mut(&mut self) -> &mut [u8] {
         let start = tf!(self.lo_len) + tf!(self.hi_len) + size_of::<Header>();
-        &mut self.0[start..]
+        &mut self.as_mut()[start..]
     }
 
     pub(crate) fn apply(&self, link: &Link) -> Node {
@@ -630,7 +635,7 @@ impl Node {
         };
 
         let take_slow_path = if let Some((k, v)) = new_item {
-            let new_max_sz = self.0.len()
+            let new_max_sz = self.len
                 + varint::size(k.len() as u64)
                 + k.len()
                 + varint::size(v.len() as u64)
@@ -751,11 +756,9 @@ impl Node {
         let diff: isize =
             tf!(new_item_size, isize) - tf!(existing_item_size, isize);
 
-        let allocation_size = tf!(tf!(self.0.len(), isize) + diff);
+        let allocation_size = tf!(tf!(self.len, isize) + diff);
 
-        let mut ret = Node(ManuallyDrop::new(aligned_boxed_slice(
-            allocation_size - size_of::<Header>(),
-        )));
+        let mut ret = uninitialized_node(allocation_size);
 
         *ret.header_mut() = Header {
             children,
@@ -816,7 +819,8 @@ impl Node {
             let start = tf!(ret.lo_len) + tf!(ret.hi_len) + size_of::<Header>();
             let end = start + (index * ret.offset_bytes as usize);
 
-            ret.0[start..end].copy_from_slice(&self.0[start..end]);
+            ret.as_mut()[start..end]
+                .copy_from_slice(&self.as_ref()[start..end]);
 
             let previous_offset =
                 if index > 0 { ret.offset(index - 1) } else { 0 };
@@ -1028,7 +1032,7 @@ impl Node {
         if let Some((k, v)) = new_item {
             assert_eq!(k, ret.index_key(index));
             assert_eq!(v, ret.index_value(index));
-        } else if index < ret.len() {
+        } else if index < ret.children() {
             assert_ne!(self.index_key(index), ret.index_key(index));
         }
 
@@ -1037,7 +1041,7 @@ impl Node {
 
     fn remove_index(&self, index: usize) -> Node {
         log::trace!("removing index {} for node {:?}", index, self);
-        assert!(self.len() > index);
+        assert!(self.children() > index);
         self.stitch(index, None, true)
     }
 
@@ -1097,7 +1101,7 @@ impl Node {
             // if we burn through our probation_ops_remaining
             // with just removals and no inserts, which don't tick
             // the activity sketch.
-            return self.len() / 2;
+            return self.children() / 2;
         }
 
         let mut weighted_count = 0_usize;
@@ -1107,11 +1111,13 @@ impl Node {
             }
         }
         let average_bit = weighted_count / bits_set;
-        (average_bit * self.children as usize / 8).min(self.len() - 1).max(1)
+        (average_bit * self.children as usize / 8)
+            .min(self.children() - 1)
+            .max(1)
     }
 
     pub(crate) fn split(&self) -> (Node, Node) {
-        assert!(self.len() >= 2);
+        assert!(self.children() >= 2);
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
 
@@ -1223,7 +1229,7 @@ impl Node {
         right.rewrite_generations = self.rewrite_generations;
         right.next = self.next;
         right.probation_ops_remaining =
-            tf!((self.len() / 2).min(std::u8::MAX as usize), u8);
+            tf!((self.children() / 2).min(std::u8::MAX as usize), u8);
 
         log::trace!(
             "splitting node {:?} into left: {:?} and right: {:?}",
@@ -1307,10 +1313,10 @@ impl Node {
 
     pub(crate) fn should_split(&self) -> bool {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
-            self.len() > 4
+            self.children() > 4
         /*
         } else if self.is_index {
-            self.0.len() > 32 * 1024 && self.len() > 1
+            self.len > 32 * 1024 && self.len() > 1
         */
         } else {
             /*
@@ -1324,8 +1330,8 @@ impl Node {
                 }
             };
             */
-            let threshold = (4 * 1024) - crate::MAX_MSG_HEADER_LEN;
-            self.0.len() > threshold && self.len() > 1
+            let threshold = 1024 - crate::MAX_MSG_HEADER_LEN;
+            self.len > threshold && self.children() > 1
         };
 
         let safety_checks = self.merging_child.is_none() && !self.merging;
@@ -1335,10 +1341,10 @@ impl Node {
 
     pub(crate) fn should_merge(&self) -> bool {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
-            self.len() < 2
+            self.children() < 2
         /*
         } else if self.is_index {
-            self.0.len() < 4 * 1024
+            self.len < 4 * 1024
         */
         } else {
             /*
@@ -1350,8 +1356,8 @@ impl Node {
                 }
             };
             */
-            let threshold = (1 * 1024) - crate::MAX_MSG_HEADER_LEN;
-            self.0.len() < threshold
+            let threshold = 256 - crate::MAX_MSG_HEADER_LEN;
+            self.len < threshold
         };
 
         let safety_checks = self.merging_child.is_none()
@@ -1362,22 +1368,23 @@ impl Node {
     }
 
     fn header(&self) -> &Header {
-        unsafe { &*(self.0.as_ptr() as *mut Header) }
+        assert_eq!(self.ptr as usize % 8, 0);
+        unsafe { &*(self.ptr as *mut u64 as *mut Header) }
     }
 
     fn header_mut(&mut self) -> &mut Header {
-        unsafe { &mut *(self.0.as_mut_ptr() as *mut Header) }
+        unsafe { &mut *(self.ptr as *mut Header) }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.children() == 0
     }
 
     pub(crate) fn rss(&self) -> u64 {
-        self.0.len() as u64
+        self.len as u64
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub(crate) fn children(&self) -> usize {
         usize::from(self.children)
     }
 
@@ -1386,7 +1393,7 @@ impl Node {
     }
 
     fn find(&self, key: &[u8]) -> Result<usize, usize> {
-        let mut size = self.len();
+        let mut size = self.children();
         if size == 0 || key < self.index_key(0) {
             return Err(0);
         }
@@ -1454,7 +1461,7 @@ impl Node {
         &self,
     ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator
     {
-        (0..self.len()).map(move |idx| self.index_key(idx))
+        (0..self.children()).map(move |idx| self.index_key(idx))
     }
 
     pub(crate) fn iter_index_pids(
@@ -1471,7 +1478,7 @@ impl Node {
         &self,
     ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator
     {
-        (0..self.len()).map(move |idx| self.index_value(idx))
+        (0..self.children()).map(move |idx| self.index_value(idx))
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
@@ -1481,13 +1488,13 @@ impl Node {
     pub(crate) fn lo(&self) -> &[u8] {
         let start = size_of::<Header>();
         let end = start + tf!(self.lo_len);
-        &self.0[start..end]
+        &self.as_ref()[start..end]
     }
 
     fn lo_mut(&mut self) -> &mut [u8] {
         let start = size_of::<Header>();
         let end = start + tf!(self.lo_len);
-        &mut self.0[start..end]
+        &mut self.as_mut()[start..end]
     }
 
     pub(crate) fn hi(&self) -> Option<&[u8]> {
@@ -1496,7 +1503,7 @@ impl Node {
         if start == end {
             None
         } else {
-            Some(&self.0[start..end])
+            Some(&self.as_ref()[start..end])
         }
     }
 
@@ -1506,16 +1513,16 @@ impl Node {
         if start == end {
             None
         } else {
-            Some(&mut self.0[start..end])
+            Some(&mut self.as_mut()[start..end])
         }
     }
 
     pub(crate) fn index_key(&self, idx: usize) -> &[u8] {
         assert!(
-            idx < self.len(),
+            idx < self.children(),
             "index {} is not less than internal length of {}",
             idx,
-            self.len()
+            self.children()
         );
 
         let offset_sz = self.children as usize * self.offset_bytes as usize;
@@ -1548,10 +1555,10 @@ impl Node {
 
     pub(crate) fn index_value(&self, idx: usize) -> &[u8] {
         assert!(
-            idx < self.len(),
+            idx < self.children(),
             "index {} is not less than internal length of {}",
             idx,
-            self.len()
+            self.children()
         );
 
         let buf = self.value_buf_for_offset(idx);
@@ -1671,7 +1678,7 @@ impl Node {
 
         let start = match search {
             Ok(start) => start,
-            Err(start) if start < self.len() => start,
+            Err(start) if start < self.children() => start,
             _ => return None,
         };
 
@@ -1724,7 +1731,7 @@ impl Node {
         } else if self.is_empty() {
             Err(0)
         } else {
-            Ok(self.len() - 1)
+            Ok(self.children() - 1)
         };
 
         let end = match search {
@@ -1754,11 +1761,11 @@ impl Node {
 
     #[cfg(feature = "testing")]
     fn is_sorted(&self) -> bool {
-        if self.len() <= 1 {
+        if self.children() <= 1 {
             return true;
         }
 
-        for i in 0..self.len() - 1 {
+        for i in 0..self.children() - 1 {
             if self.index_key(i) >= self.index_key(i + 1) {
                 log::error!(
                     "key {:?} at index {} >= key {:?} at index {}",
@@ -1941,7 +1948,7 @@ mod test {
 
                 let shrink_hi = if let Some(hi) = node.hi() {
                     let new_hi = if !node.is_empty() {
-                        let max_k = node.index_key(node.len() - 1);
+                        let max_k = node.index_key(node.children() - 1);
                         if max_k >= &hi[..hi.len() - 1] {
                             None
                         } else {
@@ -1963,11 +1970,11 @@ mod test {
                     None
                 };
 
-                let item_removals = (0..node.len()).map({
+                let item_removals = (0..node.children()).map({
                     let node = self.clone();
                     move |i| node.remove_index(i)
                 });
-                let item_reductions = (0..node.len()).flat_map({
+                let item_reductions = (0..node.children()).flat_map({
                     let node = self.clone();
                     move |i| {
                         let (k, v) = (
@@ -2048,7 +2055,7 @@ mod test {
             node.clone()
         };
 
-        if node2.len() > 2 {
+        if node2.children() > 2 {
             let (left, right) = node2.split();
             let node3 = left.receive_merge(&right);
             assert_eq!(
@@ -2112,7 +2119,7 @@ mod test {
             0,
             false,
             None,
-            &[(&[47], &[]), (&[99], &[])],
+            &[(&[47, 97], &[]), (&[99], &[])],
         );
 
         assert!(prop_insert_split_merge(node, vec![], vec![]));

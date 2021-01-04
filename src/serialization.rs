@@ -487,13 +487,13 @@ impl Serialize for Snapshot {
 
 impl Serialize for Node {
     fn serialized_size(&self) -> u64 {
-        (self.0.len() as u64).serialized_size() + (self.0.len() as u64)
+        (self.len as u64).serialized_size() + (self.len as u64)
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        (self.0.len() as u64).serialize_into(buf);
-        buf[..self.0.len()].copy_from_slice(&self.0);
-        scoot(buf, self.0.len());
+        (self.len as u64).serialize_into(buf);
+        buf[..self.len].copy_from_slice(self.as_ref());
+        scoot(buf, self.len);
     }
 
     fn deserialize(buf: &mut &[u8]) -> Result<Node> {
