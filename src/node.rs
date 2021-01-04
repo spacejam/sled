@@ -594,11 +594,13 @@ impl Node {
     ) -> Node {
         log::trace!(
             "stitching item {:?} replace: {} index: {} \
-            into node {:?}",
+            into node {:?} with fk: {:?} fv: {:?}",
             new_item,
             replace,
             index,
-            self,
+            self.iter().collect::<std::collections::BTreeMap<_, _>>(),
+            self.fixed_key_length,
+            self.fixed_value_length,
         );
 
         // possible optimizations:
@@ -875,8 +877,9 @@ impl Node {
                 ret_keys_buf[prelude..item_end].copy_from_slice(k);
             }
 
-            let remaining_items =
-                (children as usize) - (index + if replace { 0 } else { 1 });
+            let remaining_items = (children as usize)
+                - index
+                - if new_item.is_some() { 1 } else { 0 };
 
             let ret_prologue_start = item_end;
             let ret_prologue_end =
@@ -954,8 +957,9 @@ impl Node {
                 ret_values_buf[prelude..item_end].copy_from_slice(v);
             }
 
-            let remaining_items =
-                (children as usize) - (index + if replace { 0 } else { 1 });
+            let remaining_items = (children as usize)
+                - index
+                - if new_item.is_some() { 1 } else { 0 };
 
             let ret_prologue_start = item_end;
             let ret_prologue_end =
