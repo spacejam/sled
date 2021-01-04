@@ -217,7 +217,7 @@ fn run(args: Args, tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
 
         match choice {
             v if v <= get_max => {
-                tree.get(&key).unwrap();
+                tree.get_zero_copy(&key, |_| {}).unwrap();
             }
             v if v > get_max && v <= set_max => {
                 let value = valgen(args.val_len);
