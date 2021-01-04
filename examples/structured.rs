@@ -190,7 +190,8 @@ fn hash_join(db: &sled::Db) -> sled::Result<()> {
     let mut join = std::collections::HashMap::new();
 
     for name_value_res in &cats {
-        // cats are stored as name -> favorite_number + battles_won + home name variable bytes
+        // cats are stored as name -> favorite_number + battles_won + home name
+        // variable bytes
         let (name, value_bytes) = name_value_res?;
         let (_, home_name): (LayoutVerified<&[u8], CatValue>, &[u8]) =
             LayoutVerified::new_from_prefix(&*value_bytes).unwrap();
@@ -200,7 +201,8 @@ fn hash_join(db: &sled::Db) -> sled::Result<()> {
     }
 
     for name_value_res in &dogs {
-        // dogs are stored as name -> home name variable bytes + woof count + postal code
+        // dogs are stored as name -> home name variable bytes + woof count +
+        // postal code
         let (name, value_bytes) = name_value_res?;
 
         // note that this is reversed from the cat example above, where

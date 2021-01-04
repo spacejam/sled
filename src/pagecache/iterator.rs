@@ -311,7 +311,7 @@ fn scan_segment_headers_and_tail(
             );
             None
         }
-    };
+    }
 
     let segment_len = LogOffset::try_from(config.segment_size).unwrap();
 

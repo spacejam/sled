@@ -110,7 +110,7 @@ impl Iter {
                 continue;
             } else if !node.contains_lower_bound(&self.lo, true) {
                 // node too high (maybe split, maybe exhausted?)
-                let seek_key = possible_predecessor(&node.lo)?;
+                let seek_key = possible_predecessor(node.lo())?;
                 let view = iter_try!(self.tree.view_for_key(seek_key, &guard));
                 pid = view.pid;
                 node = view.deref().clone();
@@ -132,12 +132,11 @@ impl Iter {
                     }
                     _ => return None,
                 }
-            } else {
-                if node.hi.is_empty() {
-                    return None;
-                }
-                self.lo = Bound::Included(node.hi.clone());
+            } else if let Some(hi) = node.hi() {
+                self.lo = Bound::Included(hi.into());
                 continue;
+            } else {
+                return None;
             }
         }
         panic!(
@@ -192,7 +191,7 @@ impl DoubleEndedIterator for Iter {
                 continue;
             } else if !node.contains_lower_bound(&self.hi, false) {
                 // node too high (maybe split, maybe exhausted?)
-                let seek_key = possible_predecessor(&node.lo)?;
+                let seek_key = possible_predecessor(node.lo())?;
                 let view = iter_try!(self.tree.view_for_key(seek_key, &guard));
                 pid = view.pid;
                 node = view.deref().clone();
@@ -214,11 +213,10 @@ impl DoubleEndedIterator for Iter {
                     }
                     _ => return None,
                 }
+            } else if node.lo().is_empty() {
+                return None;
             } else {
-                if node.lo.is_empty() {
-                    return None;
-                }
-                self.hi = Bound::Excluded(node.lo.clone());
+                self.hi = Bound::Excluded(node.lo().into());
                 continue;
             }
         }

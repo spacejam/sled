@@ -12,8 +12,9 @@ pub const MAX_MSG_HEADER_LEN: usize = 32;
 pub const SEG_HEADER_LEN: usize = 20;
 
 /// During testing, this should never be exceeded.
+// TODO drop this to 3 over time
 #[allow(unused)]
-pub const MAX_SPACE_AMPLIFICATION: f64 = 5.;
+pub const MAX_SPACE_AMPLIFICATION: f64 = 10.;
 
 pub(crate) const META_PID: PageId = 0;
 pub(crate) const COUNTER_PID: PageId = 1;

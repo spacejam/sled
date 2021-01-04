@@ -206,19 +206,20 @@ where
     usize::try_from(from).expect("lost data cast while converting to usize")
 }
 
-// TODO remove this when atomic fetch_max stabilizes in #48655
+// TODO remove this with atomic fetch_max if we increase MSRV to 1.45 or higher
 fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
     let mut current = atomic_lsn.load(Acquire);
     loop {
         if current >= to {
             return;
         }
-        let last = atomic_lsn.compare_and_swap(current, to, SeqCst);
-        if last == current {
+        let last =
+            atomic_lsn.compare_exchange_weak(current, to, SeqCst, SeqCst);
+        if last.is_ok() {
             // we succeeded.
             return;
         }
-        current = last;
+        current = last.unwrap_err();
     }
 }
 
@@ -332,7 +333,8 @@ impl quickcheck::Arbitrary for CacheInfo {
 
 /// Update<PageLinkment> denotes a state or a change in a sequence of updates
 /// of which a page consists.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "testing", derive(PartialEq))]
 pub(crate) enum Update {
     Link(Link),
     Node(Node),
@@ -415,7 +417,7 @@ impl<'a> RecoveryGuard<'a> {
 /// with associated storage parameters like disk pos, lsn, time.
 #[derive(Debug, Clone)]
 pub struct Page {
-    pub(crate) update: Option<Box<Update>>,
+    pub(crate) update: Option<Update>,
     pub(crate) cache_infos: Vec<CacheInfo>,
 }
 
@@ -455,7 +457,7 @@ impl Page {
     }
 
     pub(crate) fn is_free(&self) -> bool {
-        self.update.as_ref().map_or(false, |u| u.is_free())
+        self.update.as_ref().map_or(false, Update::is_free)
             || self.cache_infos.is_empty()
     }
 
@@ -819,8 +821,7 @@ impl PageCache {
             }
         }
 
-        let mut node: Node = old.as_node().clone();
-        node.apply(&new);
+        let node = old.as_node().apply(&new);
 
         // see if we should short-circuit replace
         if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {
@@ -829,7 +830,7 @@ impl PageCache {
         }
 
         let mut new_page = Some(Owned::new(Page {
-            update: Some(Box::new(Update::Node(node))),
+            update: Some(Update::Node(node)),
             cache_infos: Vec::default(),
         }));
 
@@ -1469,7 +1470,10 @@ impl PageCacheInner {
                     let (key, counter) = self.get_idgen(guard)?;
                     (key, Update::Counter(counter))
                 } else if let Some(node_view) = self.get(pid, guard)? {
-                    (node_view.0, Update::Node(node_view.deref().clone()))
+                    let mut node = node_view.deref().clone();
+                    node.rewrite_generations =
+                        node.rewrite_generations.saturating_add(1);
+                    (node_view.0, Update::Node(node))
                 } else {
                     let page_view = match self.inner.get(pid, guard) {
                         None => panic!("expected page missing in rewrite"),
@@ -1596,13 +1600,13 @@ impl PageCacheInner {
         trace!("cas_page on pid {} has log kind: {:?}", pid, log_kind);
 
         let mut new_page = Some(Owned::new(Page {
-            update: Some(Box::new(update)),
+            update: Some(update),
             cache_infos: Vec::default(),
         }));
 
         loop {
             let mut page_ptr = new_page.take().unwrap();
-            let log_reservation = match &**page_ptr.update.as_ref().unwrap() {
+            let log_reservation = match &*page_ptr.update.as_ref().unwrap() {
                 Update::Counter(ref c) => {
                     self.log.reserve(log_kind, pid, c, guard)?
                 }
@@ -1703,7 +1707,7 @@ impl PageCacheInner {
                     if actual_ts != old.ts() || is_rewrite {
                         return Ok(Err(Some((
                             PageView { read: current, entry: old.entry },
-                            *returned_update.update.take().unwrap(),
+                            returned_update.update.take().unwrap(),
                         ))));
                     }
                     trace!(
@@ -1860,14 +1864,14 @@ impl PageCacheInner {
 
         for link_update in links {
             let link: &Link = link_update.as_link();
-            base.apply(link);
+            *base = base.apply(link);
         }
 
         updates.truncate(1);
         let base = updates.pop().unwrap();
 
         let page = Owned::new(Page {
-            update: Some(Box::new(base)),
+            update: Some(base),
             cache_infos: page_view.cache_infos.clone(),
         });
 
@@ -2250,9 +2254,9 @@ impl PageCacheInner {
             let update = if pid == META_PID || pid == COUNTER_PID {
                 let update =
                     self.pull(pid, cache_infos[0].lsn, cache_infos[0].pointer)?;
-                Some(Box::new(update))
+                Some(update)
             } else if state.is_free() {
-                Some(Box::new(Update::Free))
+                Some(Update::Free)
             } else {
                 None
             };

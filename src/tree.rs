@@ -1,7 +1,7 @@
 use std::{
-    num::NonZeroU64,
     borrow::Cow,
     fmt::{self, Debug},
+    num::NonZeroU64,
     ops::{self, Deref, RangeBounds},
     sync::atomic::Ordering::SeqCst,
 };
@@ -105,8 +105,8 @@ impl Drop for TreeInner {
                 Ok(_) => continue,
                 Err(e) => {
                     error!("failed to flush data to disk: {:?}", e);
-                    return
-                },
+                    return;
+                }
             }
         }
     }
@@ -154,9 +154,12 @@ impl Tree {
         let _cc = concurrency_control::read();
         loop {
             trace!("setting key {:?}", key.as_ref());
-            if let Ok(res) =
-                self.insert_inner(key.as_ref(), Some(value.clone()),false,  &mut guard)?
-            {
+            if let Ok(res) = self.insert_inner(
+                key.as_ref(),
+                Some(value.clone()),
+                false,
+                &mut guard,
+            )? {
                 return Ok(res);
             }
         }
@@ -184,25 +187,26 @@ impl Tree {
             Some(self.subscribers.reserve(&key))
         };
 
-        let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
+        let (encoded_key, last_value, current_idx) = node_view.node_kv_pair(key.as_ref());
+        let last_value = last_value.map(IVec::from);
 
         if value == last_value {
             // short-circuit a no-op set or delete
-            return Ok(Ok(value))
+            return Ok(Ok(value));
         }
 
         let frag = if let Some(value) = value.clone() {
-            Link::Set(encoded_key, value)
+            if last_value.is_none() {
+                Link::Set(encoded_key.into(), value)
+            } else {
+                Link::Replace(current_idx, value)
+            }
         } else {
-            Link::Del(encoded_key)
+            Link::Del(current_idx)
         };
 
-        let link = self.context.pagecache.link(
-            pid,
-            node_view.0,
-            frag,
-            guard,
-        )?;
+        let link =
+            self.context.pagecache.link(pid, node_view.0, frag, guard)?;
 
         if link.is_ok() {
             // success
@@ -393,7 +397,15 @@ impl Tree {
 
         for (k, v_opt) in &batch.writes {
             loop {
-                if self.insert_inner(k, v_opt.clone(), transaction_batch.is_some(), guard)?.is_ok() {
+                if self
+                    .insert_inner(
+                        k,
+                        v_opt.clone(),
+                        transaction_batch.is_some(),
+                        guard,
+                    )?
+                    .is_ok()
+                {
                     break;
                 }
             }
@@ -440,6 +452,48 @@ impl Tree {
         }
     }
 
+    /// Pass the result of getting a key's value to a closure
+    /// without making a new allocation. This effectively
+    /// "pushes" your provided code to the data without ever copying
+    /// the data, rather than "pulling" a copy of the data to whatever code
+    /// is calling `get`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[0], vec![0])?;
+    /// db.get_zero_copy(&[0], |value_opt| {
+    ///     assert_eq!(
+    ///         value_opt,
+    ///         Some(&[0][..])
+    ///     )
+    /// });
+    /// db.get_zero_copy(&[1], |value_opt| assert!(value_opt.is_none()));
+    /// # Ok(()) }
+    /// ```
+    pub fn get_zero_copy<K: AsRef<[u8]>, B, F: FnOnce(Option<&[u8]>) -> B>(&self, key: K, f: F) -> Result<B> {
+        let mut guard = pin();
+        let _cc = concurrency_control::read();
+
+        let _measure = Measure::new(&M.tree_get);
+
+        trace!("getting key {:?}", key.as_ref());
+
+        let View { node_view, pid, .. } =
+            self.view_for_key(key.as_ref(), &guard)?;
+
+        let pair = node_view.node_kv_pair(key.as_ref());
+
+        let ret = f(pair.1);
+
+        guard.readset.push(pid);
+
+        Ok(ret)
+    }
+
     pub(crate) fn get_inner(
         &self,
         key: &[u8],
@@ -449,10 +503,11 @@ impl Tree {
 
         trace!("getting key {:?}", key);
 
-        let View { node_view, pid, .. } = self.view_for_key(key.as_ref(), guard)?;
+        let View { node_view, pid, .. } =
+            self.view_for_key(key.as_ref(), guard)?;
 
-        let pair = node_view.leaf_pair_for_key(key.as_ref());
-        let val = pair.map(|kv| kv.1.clone());
+        let pair = node_view.node_kv_pair(key.as_ref());
+        let val = pair.1.map(IVec::from);
 
         guard.readset.push(pid);
 
@@ -484,7 +539,9 @@ impl Tree {
         loop {
             trace!("removing key {:?}", key.as_ref());
 
-            if let Ok(res) = self.insert_inner(key.as_ref(), None, false, &mut guard)? {
+            if let Ok(res) =
+                self.insert_inner(key.as_ref(), None, false, &mut guard)?
+            {
                 return Ok(res);
             }
         }
@@ -566,27 +623,39 @@ impl Tree {
             let View { pid, node_view, .. } =
                 self.view_for_key(key.as_ref(), &guard)?;
 
-            let (encoded_key, current_value) =
+            let (encoded_key, current_value, current_idx) =
                 node_view.node_kv_pair(key.as_ref());
             let matches = match (old.as_ref(), &current_value) {
                 (None, None) => true,
-                (Some(o), Some(ref c)) => o.as_ref() == &**c,
+                (Some(o), Some(c)) => o.as_ref() == &**c,
                 _ => false,
             };
 
             if !matches {
                 return Ok(Err(CompareAndSwapError {
-                    current: current_value,
+                    current: current_value.map(IVec::from),
                     proposed: new,
                 }));
+            }
+
+            if current_value == new.as_ref().map(AsRef::as_ref) {
+                // short-circuit no-op write. this is still correct
+                // because we verified that the input matches, so
+                // doing the work has the same semantic effect as not
+                // doing it in this case.
+                return Ok(Ok(()))
             }
 
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key, new.clone())
+                if current_value.is_none() {
+                    Link::Set(encoded_key.into(), new.clone())
+                } else {
+                    Link::Replace(current_idx, new.clone())
+                }
             } else {
-                Link::Del(encoded_key)
+                Link::Del(current_idx)
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -596,7 +665,7 @@ impl Tree {
                     let event = subscriber::Event::single_update(
                         self.clone(),
                         key.as_ref().into(),
-                        new
+                        new,
                     );
 
                     res.complete(&event);
@@ -843,7 +912,8 @@ impl Tree {
     #[allow(clippy::used_underscore_binding)]
     pub async fn flush_async(&self) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
-        if let Some(result) = threadpool::spawn(move || pagecache.flush())?.await
+        if let Some(result) =
+            threadpool::spawn(move || pagecache.flush())?.await
         {
             result
         } else {
@@ -1074,17 +1144,26 @@ impl Tree {
             let View { pid, node_view, .. } =
                 self.view_for_key(key.as_ref(), &guard)?;
 
-            let (encoded_key, current_value) =
+            let (encoded_key, current_value, current_idx) =
                 node_view.node_kv_pair(key.as_ref());
             let tmp = current_value.as_ref().map(AsRef::as_ref);
             let new = merge_operator(key, tmp, value).map(IVec::from);
 
+            if new.as_ref().map(AsRef::as_ref) == current_value {
+                // short-circuit no-op write
+                return Ok(Ok(new));
+            }
+
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key, new.clone())
+                if current_value.is_none() {
+                    Link::Set(encoded_key.into(), new.clone())
+                } else {
+                    Link::Replace(current_idx, new.clone())
+                }
             } else {
-                Link::Del(encoded_key)
+                Link::Del(current_idx)
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -1094,7 +1173,7 @@ impl Tree {
                     let event = subscriber::Event::single_update(
                         self.clone(),
                         key.as_ref().into(),
-                        new.clone()
+                        new.clone(),
                     );
 
                     res.complete(&event);
@@ -1490,8 +1569,8 @@ impl Tree {
     ) -> Result<()> {
         trace!("splitting node with pid {}", view.pid);
         // split node
-        let (mut lhs, rhs) = view.deref().clone().split();
-        let rhs_lo = rhs.lo.clone();
+        let (mut lhs, rhs) = view.deref().split();
+        let rhs_lo = rhs.lo().to_vec();
 
         // install right side
         let (rhs_pid, rhs_ptr) = self.context.pagecache.allocate(rhs, guard)?;
@@ -1520,16 +1599,17 @@ impl Tree {
         // either install parent split or hoist root
         if let Some(parent_view) = parent_view {
             M.tree_parent_split_attempt();
-            let mut parent: Node = parent_view.deref().clone();
-            let split_applied = parent.parent_split(&rhs_lo, rhs_pid);
+            let split_applied = parent_view.parent_split(&rhs_lo, rhs_pid);
 
-            if !split_applied {
+            if split_applied.is_none() {
                 // due to deep races, it's possible for the
                 // parent to already have a node for this lo key.
                 // if this is the case, we can skip the parent split
                 // because it's probably going to fail anyway.
                 return Ok(());
             }
+
+            let parent = split_applied.unwrap();
 
             let replace = self.context.pagecache.replace(
                 parent_view.pid,
@@ -1545,7 +1625,7 @@ impl Tree {
                 // failed.
             }
         } else {
-            let _ = self.root_hoist(root_pid, rhs_pid, rhs_lo, guard)?;
+            let _ = self.root_hoist(root_pid, rhs_pid, &rhs_lo, guard)?;
         }
 
         Ok(())
@@ -1555,7 +1635,7 @@ impl Tree {
         &self,
         from: PageId,
         to: PageId,
-        at: IVec,
+        at: &[u8],
         guard: &Guard,
     ) -> Result<bool> {
         M.tree_root_split_attempt();
@@ -1583,8 +1663,8 @@ impl Tree {
             // 2 threads are at this point, and we don't want
             // to cause roots to diverge between meta and
             // our version.
-            while self.root.compare_and_swap(from, new_root_pid, SeqCst) != from
-            {
+            while self.root.compare_exchange(from, new_root_pid, SeqCst, SeqCst).is_err() {
+                std::sync::atomic::spin_loop_hint();
             }
 
             Ok(true)
@@ -1615,7 +1695,11 @@ impl Tree {
                 let size = node_view.0.log_size();
                 let view = View { node_view: *node_view, pid, size };
                 if view.merging_child.is_some() {
-                    self.merge_node(&view, view.merging_child.unwrap().get(), guard)?;
+                    self.merge_node(
+                        &view,
+                        view.merging_child.unwrap().get(),
+                        guard,
+                    )?;
                 } else {
                     return Ok(Some(view));
                 }
@@ -1687,7 +1771,11 @@ impl Tree {
 
             // When we encounter a merge intention, we collaboratively help out
             if view.merging_child.is_some() {
-                self.merge_node(&view, view.merging_child.unwrap().get(), guard)?;
+                self.merge_node(
+                    &view,
+                    view.merging_child.unwrap().get(),
+                    guard,
+                )?;
                 retry!();
             } else if view.merging {
                 // we missed the parent merge intention due to a benign race,
@@ -1695,9 +1783,12 @@ impl Tree {
                 retry!();
             }
 
-            let overshot = key.as_ref() < view.lo.as_ref();
-            let undershot =
-                key.as_ref() >= view.hi.as_ref() && !view.hi.is_empty();
+            let overshot = key.as_ref() < view.lo();
+            let undershot = if let Some(hi) = view.hi() {
+                key.as_ref() >= hi
+            } else {
+                false
+            };
 
             if overshot {
                 // merge interfered, reload root and retry
@@ -1711,20 +1802,23 @@ impl Tree {
 
             if undershot {
                 // half-complete split detect & completion
-                cursor = view.next.expect(
-                    "if our hi bound is not Inf (inity), \
+                cursor = view
+                    .next
+                    .expect(
+                        "if our hi bound is not Inf (inity), \
                      we should have a right sibling",
-                ).get();
+                    )
+                    .get();
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
-                } else if parent_view.is_none() && view.lo.is_empty() {
+                } else if parent_view.is_none() && view.lo().is_empty() {
                     assert!(unsplit_parent.is_none());
                     assert_eq!(view.pid, root_pid);
                     // we have found a partially-split root
                     if self.root_hoist(
                         root_pid,
                         view.next.unwrap().get(),
-                        view.hi.clone(),
+                        view.hi().unwrap(),
                         guard,
                     )? {
                         M.tree_root_split_success();
@@ -1735,17 +1829,23 @@ impl Tree {
             } else if let Some(unsplit_parent) = unsplit_parent.take() {
                 // we have found the proper page for
                 // our cooperative parent split
-                let mut parent: Node = unsplit_parent.deref().clone();
+                trace!(
+                    "trying to apply split of child with \
+                    lo key of {:?} to parent pid {}",
+                    view.lo(), unsplit_parent.pid
+                );
                 let split_applied =
-                    parent.parent_split(view.lo.as_ref(), cursor);
+                    unsplit_parent.parent_split(view.lo(), cursor);
 
-                if !split_applied {
+                if split_applied.is_none() {
                     // due to deep races, it's possible for the
                     // parent to already have a node for this lo key.
                     // if this is the case, we can skip the parent split
                     // because it's probably going to fail anyway.
                     retry!();
                 }
+
+                let parent: Node = split_applied.unwrap();
 
                 M.tree_parent_split_attempt();
                 let replace = self.context.pagecache.replace(
@@ -1766,29 +1866,28 @@ impl Tree {
             // would be merged into a different index, which
             // would add considerable complexity to this already
             // fairly complex implementation.
-            if view.should_merge() && !took_leftmost_branch {
-                if let Some(ref mut parent) = parent_view {
-                    assert!(parent.merging_child.is_none());
-                    if parent.can_merge_child() {
-                        let frag = Link::ParentMergeIntention(cursor);
+            if !took_leftmost_branch && parent_view.is_some() && view.should_merge() {
+                let parent = parent_view.as_mut().unwrap();
+                assert!(parent.merging_child.is_none());
+                if parent.can_merge_child(cursor) {
+                    let frag = Link::ParentMergeIntention(cursor);
 
-                        let link = self.context.pagecache.link(
-                            parent.pid,
-                            parent.node_view.0,
-                            frag,
-                            guard,
-                        )?;
+                    let link = self.context.pagecache.link(
+                        parent.pid,
+                        parent.node_view.0,
+                        frag,
+                        guard,
+                    )?;
 
-                        if let Ok(new_parent_ptr) = link {
-                            parent.node_view = NodeView(new_parent_ptr);
-                            self.merge_node(parent, cursor, guard)?;
-                            retry!();
-                        }
+                    if let Ok(new_parent_ptr) = link {
+                        parent.node_view = NodeView(new_parent_ptr);
+                        self.merge_node(parent, cursor, guard)?;
+                        retry!();
                     }
                 }
             }
 
-            if view.data.is_index() {
+            if view.is_index {
                 let next = view.index_next_node(key.as_ref());
                 took_leftmost_branch = next.0 == 0;
                 parent_view = Some(view);
@@ -1906,7 +2005,9 @@ impl Tree {
                         return Ok(false);
                     };
 
-                    if new_parent_view.merging_child.map(NonZeroU64::get) != Some(child_pid) {
+                    if new_parent_view.merging_child.map(NonZeroU64::get)
+                        != Some(child_pid)
+                    {
                         trace!(
                             "someone else must have already \
                              completed the merge, and now the \
@@ -1943,9 +2044,11 @@ impl Tree {
             return Ok(());
         };
 
-        let index = parent_view.data.index_ref().unwrap();
-        let child_index =
-            index.pointers.iter().position(|pid| pid == &child_pid).unwrap();
+        assert!(parent_view.is_index);
+        let child_index = parent_view
+            .iter_index_pids()
+            .position(|pid| pid == child_pid)
+            .unwrap();
 
         assert_ne!(
             child_index, 0,
@@ -1958,7 +2061,7 @@ impl Tree {
         // we assume caller only merges when
         // the node to be merged is not the
         // leftmost child.
-        let mut cursor_pid = index.pointers[merge_index];
+        let mut cursor_pid = parent_view.index_pid(merge_index);
 
         // searching for the left sibling to merge the target page into
         loop {
@@ -1992,7 +2095,7 @@ impl Tree {
                 }
 
                 merge_index -= 1;
-                cursor_pid = index.pointers[merge_index];
+                cursor_pid = parent_view.index_pid(merge_index);
 
                 continue;
             };
@@ -2042,15 +2145,15 @@ impl Tree {
                         continue;
                     }
                 }
-            } else if cursor_view.hi >= child_view.lo {
+            } else if cursor_view.hi() >= Some(child_view.lo()) {
                 // we overshot the node being merged,
                 trace!(
                     "cursor pid {} has hi key {:?}, which is \
                      >= merging child pid {}'s lo key of {:?}, breaking",
                     cursor_pid,
-                    cursor_view.hi,
+                    cursor_view.hi(),
                     child_pid,
-                    child_view.lo
+                    child_view.lo()
                 );
                 break;
             } else {
@@ -2134,7 +2237,10 @@ impl Tree {
                     if let Some(view) = self.view_for_pid(pid, &guard)? {
                         view
                     } else {
-                        trace!("encountered Free node pid {} while GC'ing tree", pid);
+                        trace!(
+                            "encountered Free node pid {} while GC'ing tree",
+                            pid
+                        );
                         break;
                     };
 
@@ -2228,17 +2334,19 @@ impl Tree {
                     break;
                 }
                 Err(e) => {
-                    error!("hit error while trying to pull pid {}: {:?}", pid, e);
-                    return Err(e)
+                    error!(
+                        "hit error while trying to pull pid {}: {:?}",
+                        pid, e
+                    );
+                    return Err(e);
                 }
             };
 
-            f.push_str(&format!("\t\t{}: ", pid));
-            f.push_str(&format!("{:?}\n", node));
+            f.push_str(&format!("\t\t{}: {:?}\n", pid, node));
 
-            if let Data::Index(ref index) = &node.data {
-                for pid in &index.pointers {
-                    referenced_pids.insert(*pid);
+            if node.is_index {
+                for pid in node.iter_index_pids() {
+                    referenced_pids.insert(pid);
                 }
             }
 
@@ -2256,29 +2364,31 @@ impl Tree {
                     )
                 };
 
-                match &left_node.data {
-                    Data::Index(index) => {
-                        if let Some(next_pid) = index.pointers.first() {
-                            pid = *next_pid;
-                            left_most = *next_pid;
-                            level += 1;
-                            f.push_str(&format!("\n\tlevel {}:\n", level));
-                            assert!(
-                                expected_pids.is_empty(),
-                                "expected pids {:?} but never \
-                                saw them on this level",
-                                expected_pids
-                            );
-                            std::mem::swap(&mut expected_pids, &mut referenced_pids);
-                        } else {
-                            panic!("trying to debug print empty index node");
-                        }
+                if left_node.is_index {
+                    if let Some(next_pid) = left_node.iter_index_pids().next() {
+                        pid = next_pid;
+                        left_most = next_pid;
+                        log::trace!("set left_most to {}", next_pid);
+                        level += 1;
+                        f.push_str(&format!("\n\tlevel {}:\n", level));
+                        assert!(
+                            expected_pids.is_empty(),
+                            "expected pids {:?} but never \
+                                saw them on this level. tree so far: {}",
+                            expected_pids,
+                            f
+                        );
+                        std::mem::swap(
+                            &mut expected_pids,
+                            &mut referenced_pids,
+                        );
+                    } else {
+                        panic!("trying to debug print empty index node");
                     }
-                    Data::Leaf(_items) => {
-                        // we've reached the end of our tree, all leafs are on
-                        // the lowest level.
-                        break;
-                    }
+                } else {
+                    // we've reached the end of our tree, all leafs are on
+                    // the lowest level.
+                    break;
                 }
             }
         }
@@ -2301,9 +2411,13 @@ impl Debug for Tree {
         }
 
         if cfg!(feature = "testing") {
-            panic!("failed to fmt Tree due to expected page disappearing part-way through");
+            panic!(
+                "failed to fmt Tree due to expected page disappearing part-way through"
+            );
         } else {
-            log::error!("failed to fmt Tree due to expected page disappearing part-way through");
+            log::error!(
+                "failed to fmt Tree due to expected page disappearing part-way through"
+            );
             Ok(())
         }
     }

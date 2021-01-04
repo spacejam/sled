@@ -185,8 +185,8 @@ impl Db {
         let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
         let mut cursor = root_id.unwrap();
         while let Some(view) = self.view_for_pid(cursor, &guard)? {
-            if let Some(index) = view.data.index_ref() {
-                let leftmost_child = index.pointers[0];
+            if view.is_index {
+                let leftmost_child = view.index_pid(0);
                 leftmost_chain.push(leftmost_child);
                 cursor = leftmost_child;
             } else {
@@ -293,6 +293,10 @@ impl Db {
     /// new.import(export);
     ///
     /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # drop(old);
+    /// # drop(new);
+    /// # std::fs::remove_file("my_old_db");
+    /// # std::fs::remove_file("my_new_db");
     /// # Ok(()) }
     /// ```
     pub fn export(
@@ -355,6 +359,10 @@ impl Db {
     /// new.import(export);
     ///
     /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # drop(old);
+    /// # drop(new);
+    /// # std::fs::remove_file("my_old_db");
+    /// # std::fs::remove_file("my_new_db");
     /// # Ok(()) }
     /// ```
     pub fn import(
