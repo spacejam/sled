@@ -502,18 +502,17 @@ impl Node {
     fn values_buf_mut(&mut self) -> &mut [u8] {
         let offset_sz = self.children as usize * self.offset_bytes as usize;
         match (self.fixed_key_length, self.fixed_value_length) {
-            (Some(fixed_key_length), Some(_))
-            | (Some(fixed_key_length), None) => {
-                let start = offset_sz
-                    + tf!(fixed_key_length.get()) * self.children as usize;
-                &mut self.data_buf_mut()[start..]
-            }
-            (None, Some(fixed_value_length)) => {
+            (_, Some(fixed_value_length)) => {
                 let total_value_size =
                     tf!(fixed_value_length.get()) * self.children as usize;
                 let data_buf = self.data_buf_mut();
                 let start = data_buf.len() - total_value_size;
                 &mut data_buf[start..]
+            }
+            (Some(fixed_key_length), _) => {
+                let start = offset_sz
+                    + tf!(fixed_key_length.get()) * self.children as usize;
+                &mut self.data_buf_mut()[start..]
             }
             (None, None) => &mut self.data_buf_mut()[offset_sz..],
         }
@@ -522,18 +521,17 @@ impl Node {
     fn values_buf(&self) -> &[u8] {
         let offset_sz = self.children as usize * self.offset_bytes as usize;
         match (self.fixed_key_length, self.fixed_value_length) {
-            (Some(fixed_key_length), Some(_))
-            | (Some(fixed_key_length), None) => {
-                let start = offset_sz
-                    + tf!(fixed_key_length.get()) * self.children as usize;
-                &self.data_buf()[start..]
-            }
-            (None, Some(fixed_value_length)) => {
+            (_, Some(fixed_value_length)) => {
                 let total_value_size =
                     tf!(fixed_value_length.get()) * self.children as usize;
                 let data_buf = self.data_buf();
                 let start = data_buf.len() - total_value_size;
                 &data_buf[start..]
+            }
+            (Some(fixed_key_length), _) => {
+                let start = offset_sz
+                    + tf!(fixed_key_length.get()) * self.children as usize;
+                &self.data_buf()[start..]
             }
             (None, None) => &self.data_buf()[offset_sz..],
         }
