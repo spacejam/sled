@@ -464,6 +464,7 @@ impl Node {
         }
     }
 
+    #[inline]
     fn offset(&self, index: usize) -> usize {
         assert!(index < self.children as usize);
         assert!(self.offset_bytes > 0);
