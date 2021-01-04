@@ -224,6 +224,14 @@ impl Node {
             sum
         };
 
+        // we max the value size with the size of a u64 because
+        // when we retrieve offset sizes, we may actually read
+        // over the end of the offset array and into the keys
+        // and values data, and for nodes that only store tiny
+        // items, it's possible that this would extend beyond the
+        // allocation. This is why we always make the value buffer
+        // 8 bytes or more, so any overlap from the offset array
+        // does not extend beyond the allocation.
         let value_storage_size = if let Some(value_length) = fixed_value_length
         {
             value_length.get() * (items.len() as u64)
@@ -234,7 +242,8 @@ impl Node {
                 sum += varint::size(*value_length) as u64;
             }
             sum
-        };
+        }
+        .max(size_of::<u64>() as u64);
 
         let (offsets_storage_size, offset_bytes) = if keys_equal_length
             && values_equal_length
