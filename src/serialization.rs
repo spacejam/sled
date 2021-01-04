@@ -855,8 +855,8 @@ mod qc {
             true
         } else {
             eprintln!(
-                "round-trip serialization failed. original:\n\n{:?}\n\n \
-                 deserialized(serialized(original)):\n\n{:?}",
+                "\nround-trip serialization failed. original:\n\n{:?}\n\n \
+                 deserialized(serialized(original)):\n\n{:?}\n",
                 item, deserialized
             );
             false

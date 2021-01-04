@@ -77,10 +77,15 @@ pub struct Header {
 
 /// An immutable sorted string table
 #[must_use]
-#[cfg_attr(feature = "testing", derive(PartialEq))]
 pub struct Node {
     ptr: *mut u8,
     pub len: usize,
+}
+
+impl PartialEq<Node> for Node {
+    fn eq(&self, other: &Node) -> bool {
+        self.as_ref().eq(other.as_ref())
+    }
 }
 
 impl Clone for Node {
