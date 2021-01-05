@@ -81,9 +81,13 @@ impl AccessQueue {
                 // install new writer
                 let new = Box::into_raw(Box::new(AccessBlock::default()));
                 debug_delay();
-                let prev =
-                    self.writing.compare_and_swap(head, new, Ordering::Release);
-                if prev != head {
+                let res = self.writing.compare_exchange_weak(
+                    head,
+                    new,
+                    Ordering::Release,
+                    Ordering::Relaxed,
+                );
+                if res.is_err() {
                     // we lost the CAS, free the new item that was
                     // never published to other threads
                     unsafe {
@@ -100,14 +104,15 @@ impl AccessQueue {
                     // we loop because maybe other threads are pushing stuff too
                     block.next.store(full_list_ptr, Ordering::Release);
                     debug_delay();
-                    ret = self.full_list.compare_and_swap(
+                    ret = self.full_list.compare_exchange_weak(
                         full_list_ptr,
                         head,
                         Ordering::Release,
+                        Ordering::Relaxed,
                     );
-                    ret != full_list_ptr
+                    ret.is_err()
                 } {
-                    full_list_ptr = ret;
+                    full_list_ptr = ret.unwrap_err();
                 }
                 filled = true;
             }

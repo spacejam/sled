@@ -32,6 +32,91 @@ fn kv(i: usize) -> Vec<u8> {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn monotonic_inserts() {
+    common::setup_logger();
+
+    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+
+    for len in [1_usize, 16, 32, 1024].iter() {
+        for i in 0_usize..*len {
+            let mut k = vec![];
+            for c in 0_usize..i {
+                k.push((c % 256) as u8);
+            }
+            db.insert(&k, &[]).unwrap();
+        }
+
+        let count = db.iter().count();
+        assert_eq!(count, *len as usize);
+
+        let count2 = db.iter().rev().count();
+        assert_eq!(count2, *len as usize);
+
+        db.clear().unwrap();
+    }
+
+    for len in [1_usize, 16, 32, 1024].iter() {
+        for i in (0_usize..*len).rev() {
+            let mut k = vec![];
+            for c in (0_usize..i).rev() {
+                k.push((c % 256) as u8);
+            }
+            db.insert(&k, &[]).unwrap();
+        }
+
+        let count3 = db.iter().count();
+        assert_eq!(count3, *len as usize);
+
+        let count4 = db.iter().rev().count();
+        assert_eq!(count4, *len as usize);
+
+        db.clear().unwrap();
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn sequential_inserts() {
+    common::setup_logger();
+
+    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+
+    for len in [1, 16, 32, u16::MAX].iter() {
+        for i in 0..*len {
+            db.insert(&i.to_le_bytes(), &[]).unwrap();
+        }
+
+        let count = db.iter().count();
+        assert_eq!(count, *len as usize);
+
+        let count2 = db.iter().rev().count();
+        assert_eq!(count2, *len as usize);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn reverse_inserts() {
+    common::setup_logger();
+
+    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+
+    for len in [1, 16, 32, u16::MAX].iter() {
+        for i in 0..*len {
+            let i2 = u16::MAX - i;
+            db.insert(&i2.to_le_bytes(), &[]).unwrap();
+        }
+
+        let count = db.iter().count();
+        assert_eq!(count, *len as usize);
+
+        let count2 = db.iter().rev().count();
+        assert_eq!(count2, *len as usize);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn very_large_reverse_tree_iterator() {
     let mut a = vec![255; 1024 * 1024];
     a.push(0);
@@ -2511,4 +2596,40 @@ fn tree_bug_46() {
     for _ in 0..1 {
         assert!(prop_tree_matches_btreemap(vec![Restart], false, true, 0, 0))
     }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_47() {
+    // postmortem:
+    assert!(prop_tree_matches_btreemap(
+        vec![Set(Key(vec![88; 1]), 40), Restart, Get(Key(vec![88; 1]))],
+        false,
+        false,
+        0,
+        0
+    ))
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_48() {
+    // postmortem: node value buffer calculations were failing to
+    // account for potential padding added to avoid buffer overreads
+    // while looking up offsets.
+    assert!(prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![23; 1]), 78),
+            Set(Key(vec![120; 1]), 223),
+            Set(Key(vec![123; 1]), 235),
+            Set(Key(vec![60; 1]), 234),
+            Set(Key(vec![]), 71),
+            Del(Key(vec![120; 1])),
+            Scan(Key(vec![]), -9)
+        ],
+        false,
+        false,
+        0,
+        0
+    ))
 }

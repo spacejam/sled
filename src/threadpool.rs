@@ -145,7 +145,7 @@ fn maybe_spawn_new_thread() -> Result<()> {
         return Ok(());
     }
 
-    if !SPAWNING.compare_and_swap(false, true, SeqCst) {
+    if SPAWNING.compare_exchange_weak(false, true, Acquire, Acquire).is_ok() {
         spawn_new_thread(false)?;
     }
 
@@ -187,7 +187,7 @@ fn spawn_new_thread(is_immortal: bool) -> Result<()> {
 
         SPAWNING.store(false, SeqCst);
 
-        if !E.compare_and_swap(false, true, Relaxed) {
+        if E.compare_exchange(false, true, Relaxed, Relaxed).is_ok() {
             // only execute this once
             warn!(
                 "Failed to dynamically increase the threadpool size: {:?}.",

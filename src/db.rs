@@ -151,7 +151,7 @@ impl Db {
         Ok(tree)
     }
 
-    /// Remove a disk-backed collection.
+    /// Remove a disk-backed collection. This is blocking and fairly slow.
     pub fn drop_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<bool> {
         let name_ref = name.as_ref();
         if name_ref == DEFAULT_TREE_ID {
@@ -169,7 +169,15 @@ impl Db {
             return Ok(false);
         };
 
+        let _cc = concurrency_control::write();
         let guard = pin();
+
+        // peg is for atomic recovery in case we crash
+        // half-way through this cleaning operation.
+        let peg = self.context.pin_log(&guard)?;
+
+        // signal to all threads that this tree is no longer valid
+        tree.root.store(u64::max_value(), SeqCst);
 
         let mut root_id =
             Some(self.context.pagecache.meta_pid_for_name(name_ref, &guard)?);
@@ -177,8 +185,8 @@ impl Db {
         let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
         let mut cursor = root_id.unwrap();
         while let Some(view) = self.view_for_pid(cursor, &guard)? {
-            if let Some(index) = view.data.index_ref() {
-                let leftmost_child = index.pointers[0];
+            if view.is_index {
+                let leftmost_child = view.index_pid(0);
                 leftmost_chain.push(leftmost_child);
                 cursor = leftmost_child;
             } else {
@@ -199,7 +207,8 @@ impl Db {
             }
         }
 
-        tree.root.store(u64::max_value(), SeqCst);
+        // record atomic recovery information into the log
+        peg.seal_batch()?;
 
         // drop writer lock
         drop(tenants);
@@ -284,6 +293,10 @@ impl Db {
     /// new.import(export);
     ///
     /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # drop(old);
+    /// # drop(new);
+    /// # std::fs::remove_file("my_old_db");
+    /// # std::fs::remove_file("my_new_db");
     /// # Ok(()) }
     /// ```
     pub fn export(
@@ -346,6 +359,10 @@ impl Db {
     /// new.import(export);
     ///
     /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # drop(old);
+    /// # drop(new);
+    /// # std::fs::remove_file("my_old_db");
+    /// # std::fs::remove_file("my_new_db");
     /// # Ok(()) }
     /// ```
     pub fn import(
@@ -397,9 +414,7 @@ impl Db {
         let tenants: BTreeMap<_, _> = tenants_mu.iter().collect();
 
         let mut hasher = crc32fast::Hasher::new();
-        let mut locks = vec![];
-
-        locks.push(concurrency_control::write());
+        let _cc = concurrency_control::write();
 
         for (name, tree) in &tenants {
             hasher.update(name);

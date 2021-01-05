@@ -3,12 +3,18 @@
 ## New Features
 
 * #1178 batches and transactions are now unified for subscribers.
+* #1231 `Tree::get_zero_copy` allows for reading a value directly
+  in-place without making an `IVec` first.
 
 ## Improvements
 
 * #1214 a new slab-style storage engine has been added which
   replaces the previous file-per-blob technique for storing
   large pages.
+* #1231 implemented single-allocation tree nodes which use
+  several types of length compression, significantly
+  improving efficiency across the board: memory, disk,
+  latency, and throughput.
 
 ## Breaking Changes
 
@@ -26,6 +32,8 @@
 
 * #1202 Fix a space leak where blobs were not
   removed when replaced by another blob.
+* #1229 the powerful ALICE crash consistency tool has been
+  used to discover several crash vulnerabilities, now fixed.
 
 # 0.34.6
 

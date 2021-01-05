@@ -6,6 +6,7 @@ use std::{
     thread,
 };
 
+use num_format::{Locale, ToFormattedString};
 use rand::{thread_rng, Rng};
 
 #[cfg_attr(
@@ -26,7 +27,6 @@ use rand::{thread_rng, Rng};
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 static TOTAL: AtomicUsize = AtomicUsize::new(0);
-static SEQ: AtomicUsize = AtomicUsize::new(0);
 
 const USAGE: &str = "
 Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
@@ -144,7 +144,11 @@ fn report(shutdown: Arc<AtomicBool>) {
         thread::sleep(std::time::Duration::from_secs(1));
         let total = TOTAL.load(Ordering::Acquire);
 
-        println!("did {} ops, {}mb RSS", total - last, rss() / (1024 * 1024));
+        println!(
+            "did {} ops, {}mb RSS",
+            (total - last).to_formatted_string(&Locale::en),
+            rss() / (1024 * 1024)
+        );
 
         last = total;
     }
@@ -156,7 +160,7 @@ fn concatenate_merge(
     merged_bytes: &[u8],      // the new bytes being merged in
 ) -> Option<Vec<u8>> {
     // set the new value, return None to delete
-    let mut ret = old_value.map(|ov| ov.to_vec()).unwrap_or_else(|| vec![]);
+    let mut ret = old_value.map(|ov| ov.to_vec()).unwrap_or_else(Vec::new);
 
     ret.extend_from_slice(merged_bytes);
 
@@ -172,21 +176,18 @@ fn run(args: Args, tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     let scan_max = merge_max + args.scan_prop;
 
     let keygen = |len| -> sled::IVec {
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
         let i = if args.sequential {
             SEQ.fetch_add(1, Ordering::Relaxed)
         } else {
             thread_rng().gen::<usize>()
         } % args.entries;
 
-        let i_keygen = i.to_be_bytes();
+        let start = if len < 8 { 8 - len } else { 0 };
 
-        i_keygen
-            .iter()
-            .skip_while(|v| **v == 0)
-            .cycle()
-            .take(len)
-            .copied()
-            .collect()
+        let i_keygen = &i.to_be_bytes()[start..];
+
+        i_keygen.iter().cycle().take(len).copied().collect()
     };
 
     let valgen = |len| -> sled::IVec {
@@ -216,7 +217,7 @@ fn run(args: Args, tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
 
         match choice {
             v if v <= get_max => {
-                tree.get(&key).unwrap();
+                tree.get_zero_copy(&key, |_| {}).unwrap();
             }
             v if v > get_max && v <= set_max => {
                 let value = valgen(args.val_len);
@@ -316,7 +317,6 @@ fn main() {
                 .spawn(move || report(shutdown))
                 .unwrap()
         } else {
-            let args = args.clone();
             thread::spawn(move || run(args, tree, shutdown))
         };
 
@@ -337,15 +337,14 @@ fn main() {
     for t in threads.into_iter() {
         t.join().unwrap();
     }
-
     let ops = TOTAL.load(Ordering::SeqCst);
     let time = now.elapsed().as_secs() as usize;
 
     println!(
         "did {} total ops in {} seconds. {} ops/s",
-        ops,
+        ops.to_formatted_string(&Locale::en),
         time,
-        (ops * 1_000) / (time * 1_000)
+        ((ops * 1_000) / (time * 1_000)).to_formatted_string(&Locale::en)
     );
 }
 
@@ -373,8 +372,8 @@ pub fn setup_logger() {
         })
         .filter(None, log::LevelFilter::Info);
 
-    if let Ok(env_var) = std::env::var("RUST_LOG") {
-        builder.parse(env_var);
+    if let Ok(env) = std::env::var("RUST_LOG") {
+        builder.parse_filters(&env);
     }
 
     let _r = builder.try_init();

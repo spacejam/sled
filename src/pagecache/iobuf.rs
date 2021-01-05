@@ -155,10 +155,11 @@ impl IoBuf {
         &self,
         old: Header,
         new: Header,
-    ) -> std::result::Result<Header, Header> {
+    ) -> std::result::Result<(), Header> {
         debug_delay();
-        let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old { Ok(new) } else { Err(res) }
+        let res = self.header.compare_exchange(old, new, SeqCst, SeqCst);
+
+        res.map(|_| ())
     }
 }
 
@@ -643,6 +644,8 @@ impl IoBufs {
                 len: u64::try_from(pad_len).unwrap(),
                 crc32: 0,
             };
+
+            trace!("writing segment cap {:?}", header);
 
             let header_bytes = header.serialize();
 

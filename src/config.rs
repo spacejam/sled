@@ -351,7 +351,8 @@ impl Config {
         let file = config.open_file()?;
 
         let heap_path = config.get_path().join("heap");
-        let heap = Heap::start(heap_path)?;
+        let heap = Heap::start(&heap_path)?;
+        maybe_fsync_directory(heap_path)?;
 
         // seal config in a Config
         let config = RunningConfig {
@@ -558,7 +559,9 @@ impl Config {
             self.get_path().join("DO_NOT_USE_THIS_DIRECTORY_FOR_ANYTHING"),
         );
 
-        self.try_lock(options.open(&self.db_path())?)
+        let file = self.try_lock(options.open(&self.db_path())?)?;
+        maybe_fsync_directory(self.get_path())?;
+        Ok(file)
     }
 
     fn try_lock(&self, file: File) -> Result<File> {
@@ -653,15 +656,22 @@ impl Config {
         let crc: u32 = crc32(&*bytes);
         let crc_arr = u32_to_arr(crc);
 
-        let path = self.config_path();
+        let temp_path = self.get_path().join("conf.tmp");
+        let final_path = self.config_path();
 
         let mut f =
-            fs::OpenOptions::new().write(true).create(true).open(path)?;
+            fs::OpenOptions::new().write(true).create(true).open(&temp_path)?;
 
         io_fail!(self, "write_config bytes");
         f.write_all(&*bytes)?;
         io_fail!(self, "write_config crc");
         f.write_all(&crc_arr)?;
+        io_fail!(self, "write_config fsync");
+        f.sync_all()?;
+        io_fail!(self, "write_config rename");
+        fs::rename(temp_path, final_path)?;
+        io_fail!(self, "write_config dir fsync");
+        maybe_fsync_directory(self.get_path())?;
         io_fail!(self, "write_config post");
         Ok(())
     }

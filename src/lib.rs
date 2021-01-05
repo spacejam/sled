@@ -177,7 +177,6 @@ macro_rules! testing_assert {
 mod arc;
 mod atomic_shim;
 mod batch;
-mod binary_search;
 mod concurrency_control;
 mod config;
 mod context;
@@ -195,7 +194,6 @@ mod metrics;
 mod node;
 mod oneshot;
 mod pagecache;
-mod prefix;
 mod result;
 mod serialization;
 mod stack;
@@ -203,6 +201,7 @@ mod subscriber;
 mod sys_limits;
 pub mod transaction;
 mod tree;
+mod varint;
 
 /// Functionality for conditionally triggering failpoints under test.
 #[cfg(feature = "failpoints")]
@@ -316,7 +315,6 @@ use {
     self::{
         arc::Arc,
         atomic_shim::{AtomicI64 as AtomicLsn, AtomicU64},
-        binary_search::binary_search_lub,
         concurrency_control::Protector,
         context::Context,
         fastcmp::fastcmp,
@@ -324,7 +322,7 @@ use {
         lru::Lru,
         meta::Meta,
         metrics::{clock, Measure, M},
-        node::{Data, Node},
+        node::Node,
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
         subscriber::Subscribers,
@@ -379,6 +377,11 @@ fn crc32(buf: &[u8]) -> u32 {
 }
 
 fn calculate_message_crc32(header: &[u8], body: &[u8]) -> u32 {
+    trace!(
+        "calculating crc32 for header len {} body len {}",
+        header.len(),
+        body.len()
+    );
     let mut hasher = crc32fast::Hasher::new();
     hasher.update(body);
     hasher.update(&header[4..]);
@@ -404,8 +407,10 @@ const fn debug_delay() {}
 pub(crate) enum Link {
     /// A new value is set for a given key
     Set(IVec, IVec),
-    /// The associated value is removed for a given key
-    Del(IVec),
+    /// Replace an existing key with a new value
+    Replace(usize, IVec),
+    /// The kv pair at a particular index is removed
+    Del(usize),
     /// A child of this Index node is marked as mergable
     ParentMergeIntention(PageId),
     /// The merging child has been completely merged into its left sibling
@@ -536,4 +541,14 @@ mod compile_time_assertions {
     fn _assert_send<S: Send>(_: &S) {}
 
     fn _assert_send_sync<S: Send + Sync>(_: &S) {}
+}
+
+#[cfg(all(unix, not(miri)))]
+fn maybe_fsync_directory<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+#[cfg(any(not(unix), miri))]
+fn maybe_fsync_directory<P: AsRef<std::path::Path>>(_: P) -> std::io::Result<()> {
+    Ok(())
 }
