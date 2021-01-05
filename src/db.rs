@@ -367,7 +367,7 @@ impl Db {
     /// ```
     pub fn import(
         &self,
-        export: Vec<(
+        export: impl IntoIterator<Item = (
             CollectionType,
             CollectionName,
             impl Iterator<Item = Vec<Vec<u8>>>,
