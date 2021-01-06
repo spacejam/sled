@@ -8,11 +8,6 @@
 //! are supported with the
 //! [`Db::open_tree`](struct.Db.html#method.open_tree) method.
 //!
-//! Sled is not designed to be used by multiple processes simultaneously.
-//! Although Sled tries to use advisory filesystem locking to
-//! protect the database from accidental access from foreign
-//! processes, this should not be reiled upon.
-//!
 //! ACID transactions involving reads and writes to
 //! multiple items are supported with the
 //! [`Tree::transaction`](struct.Tree.html#method.transaction)
