@@ -231,7 +231,11 @@ impl Tree {
 
     /// Perform a multi-key serializable transaction.
     ///
-    /// User-provided function `f` may be run multiple times in case of conflicts.
+    /// sled transactions are **optimistic** which means that
+    /// they may re-run in cases where conflicts are detected.
+    /// Do not perform IO or interact with state outside
+    /// of the closure unless it is idempotent, because
+    /// it may re-run several times.
     ///
     /// # Examples
     ///
@@ -337,9 +341,6 @@ impl Tree {
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
     /// # Ok(()) }
     /// ```
-    ///
-    /// Note simple string prepeding in the example above should be natively changed
-    /// to some complex operation, as transactions may be tried multiple times.
     pub fn transaction<F, A, E>(
         &self,
         f: F,

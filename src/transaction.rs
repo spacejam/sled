@@ -1,4 +1,10 @@
-//! Fully serializable (ACID) multi-`Tree` transactions
+//! Fully serializable (ACID) multi-`Tree` transactions.
+//!
+//! sled transactions are **optimistic** which means that
+//! they may re-run in cases where conflicts are detected.
+//! Do not perform IO or interact with state outside
+//! of the closure unless it is idempotent, because
+//! it may re-run several times.
 //!
 //! # Examples
 //! ```

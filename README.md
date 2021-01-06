@@ -57,6 +57,27 @@ tree.flush();
 
 If you would like to work with structured data without paying expensive deserialization costs, check out the [structured](examples/structured.rs) example!
 
+# expectations, gotchas, advice
+
+* Durability: **sled automatically fsyncs every 500ms by default**,
+  which can be configured with the `flush_every_ms` configurable, or you may
+  call `flush` / `flush_async` manually after operations.
+* **Transactions are optimistic** - do not interact with external state
+  or perform IO from within a transaction closure unless it is
+  [idempotent](https://en.wikipedia.org/wiki/Idempotent).
+* Internal tree node optimizations: sled performs prefix encoding
+  on long keys with similar prefixes that are grouped together in a range,
+  as well as suffix truncation to further reduce the indexing costs of
+  long keys. Nodes will skip potentially expensive length and offset pointers
+  if keys or values are all the same length (tracked separately, don't worry
+  about making keys the same length as values), so it may improve space usage
+  slightly if you use fixed-length keys or values. This also makes it easier
+  to use [structured access](examples/structured.rs) as well.
+* sled does not support multiple open instances for the time being. Please
+  keep sled open for the duration of your process's lifespan. It's totally
+  safe and often quite convenient to use a global lazy_static sled instance,
+  modulo the normal global variable trade-offs.
+
 # performance
 
 * [LSM tree](https://en.wikipedia.org/wiki/Log-structured_merge-tree)-like write performance
