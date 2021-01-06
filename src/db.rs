@@ -5,9 +5,6 @@ use crate::*;
 /// The `sled` embedded database! Implements
 /// `Deref<Target = sled::Tree>` to refer to
 /// a default keyspace / namespace / bucket.
-///
-/// Note that dropping `Db` does not gurantee closing the database. 
-/// Sled may still access the underlying directory under the hood.
 #[derive(Clone)]
 pub struct Db {
     #[doc(hidden)]
