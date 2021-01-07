@@ -148,9 +148,7 @@ impl PageTable {
 
         assert!(!res.is_null());
 
-        let page_view = PageView { read: res, entry: tip };
-
-        page_view
+        PageView { read: res, entry: tip }
     }
 
     pub(crate) fn contains_pid(&self, pid: PageId, guard: &Guard) -> bool {
