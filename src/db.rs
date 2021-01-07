@@ -100,7 +100,7 @@ impl Db {
 
         let mut tenants = ret.tenants.write();
 
-        for (id, root) in context.pagecache.get_meta(&guard)?.tenants() {
+        for (id, root) in context.pagecache.get_meta(&guard).tenants() {
             let tree = Tree(Arc::new(TreeInner {
                 tree_id: id.clone(),
                 subscribers: Subscribers::default(),
