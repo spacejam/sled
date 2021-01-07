@@ -365,7 +365,7 @@ impl Update {
         }
     }
 
-    pub(crate) fn as_meta(&self) -> &Meta {
+    fn as_meta(&self) -> &Meta {
         if let Update::Meta(meta) = self {
             meta
         } else {
@@ -373,19 +373,11 @@ impl Update {
         }
     }
 
-    pub(crate) fn as_counter(&self) -> u64 {
+    fn as_counter(&self) -> u64 {
         if let Update::Counter(counter) = self {
             *counter
         } else {
             panic!("called as_counter on {:?}", self)
-        }
-    }
-
-    fn is_free(&self) -> bool {
-        if let Update::Free = self {
-            true
-        } else {
-            false
         }
     }
 }
@@ -421,12 +413,12 @@ impl<'a> RecoveryGuard<'a> {
 /// with associated storage parameters like disk pos, lsn, time.
 #[derive(Debug, Clone)]
 pub struct Page {
-    pub(crate) update: Option<Update>,
-    pub(crate) cache_infos: Vec<CacheInfo>,
+    update: Option<Update>,
+    cache_infos: Vec<CacheInfo>,
 }
 
 impl Page {
-    pub(crate) fn to_page_state(&self) -> PageState {
+    fn to_page_state(&self) -> PageState {
         let base = &self.cache_infos[0];
         if self.is_free() {
             PageState::Free(base.lsn, base.pointer)
@@ -448,24 +440,27 @@ impl Page {
         }
     }
 
-    pub(crate) fn as_node(&self) -> &Node {
+    fn as_node(&self) -> &Node {
         self.update.as_ref().unwrap().as_node()
     }
 
-    pub(crate) fn as_meta(&self) -> &Meta {
+    fn as_meta(&self) -> &Meta {
         self.update.as_ref().unwrap().as_meta()
     }
 
-    pub(crate) fn as_counter(&self) -> u64 {
+    fn as_counter(&self) -> u64 {
         self.update.as_ref().unwrap().as_counter()
     }
 
-    pub(crate) fn is_free(&self) -> bool {
-        self.update.as_ref().map_or(false, Update::is_free)
-            || self.cache_infos.is_empty()
+    fn is_free(&self) -> bool {
+        if let Some(Update::Free) = self.update {
+            true
+        } else {
+            false
+        }
     }
 
-    pub(crate) fn last_lsn(&self) -> Lsn {
+    fn last_lsn(&self) -> Lsn {
         self.cache_infos.last().map(|ci| ci.lsn).unwrap()
     }
 
