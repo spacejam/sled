@@ -382,7 +382,11 @@ impl Update {
     }
 
     fn is_free(&self) -> bool {
-        if let Update::Free = self { true } else { false }
+        if let Update::Free = self {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -544,19 +548,12 @@ impl Drop for PageCacheInner {
 
             let guard = pin();
 
-            self.config.event_log.meta_before_restart(
-                self.get_meta(&guard)
-                    .expect("should get meta under test")
-                    .deref()
-                    .clone(),
-            );
+            self.config
+                .event_log
+                .meta_before_restart(self.get_meta(&guard).deref().clone());
 
             for pid in 0..*self.next_pid_to_allocate.lock() {
-                let pte = if let Some(pte) = self.inner.get(pid, &guard) {
-                    pte
-                } else {
-                    continue;
-                };
+                let pte = self.inner.get(pid, &guard);
                 let pointers =
                     pte.cache_infos.iter().map(|ci| ci.pointer).collect();
                 pages_before_restart.insert(pid, pointers);
@@ -670,11 +667,7 @@ impl PageCache {
             let mut pages_after_restart = Map::default();
 
             for pid in 0..*pc.next_pid_to_allocate.lock() {
-                let pte = if let Some(pte) = pc.inner.get(pid, &guard) {
-                    pte
-                } else {
-                    continue;
-                };
+                let pte = pc.inner.get(pid, &guard);
                 let pointers =
                     pte.cache_infos.iter().map(|ci| ci.pointer).collect();
                 pages_after_restart.insert(pid, pointers);
@@ -690,7 +683,7 @@ impl PageCache {
 
             let guard = pin();
 
-            if let Err(Error::ReportableBug(..)) = pc.get_meta(&guard) {
+            if !pc.inner.contains_pid(META_PID, &guard) {
                 // set up meta
                 was_recovered = false;
 
@@ -705,7 +698,7 @@ impl PageCache {
                 );
             }
 
-            if let Err(Error::ReportableBug(..)) = pc.get_idgen(&guard) {
+            if !pc.inner.contains_pid(COUNTER_PID, &guard) {
                 // set up idgen
                 was_recovered = false;
 
@@ -721,7 +714,7 @@ impl PageCache {
                 );
             }
 
-            let (idgen_key, counter) = pc.get_idgen(&guard)?;
+            let (idgen_key, counter) = pc.get_idgen(&guard);
             let idgen_recovery = if was_recovered {
                 counter + (2 * pc.config.idgen_persist_interval)
             } else {
@@ -741,13 +734,21 @@ impl PageCache {
                 // interval, so that when generate_id() is next called, it
                 // will advance them further by another interval, and wait for
                 // this update to be durable before returning the first ID.
-                let necessary_persists = (counter / pc.config.idgen_persist_interval + 1)
-                    * pc.config.idgen_persist_interval;
+                let necessary_persists =
+                    (counter / pc.config.idgen_persist_interval + 1)
+                        * pc.config.idgen_persist_interval;
                 let counter_update = Update::Counter(necessary_persists);
                 let old = pc.idgen_persists.swap(necessary_persists, Release);
                 assert_eq!(old, idgen_persists);
                 // CAS should never fail because the PageCache is still being constructed.
-                pc.cas_page(COUNTER_PID, idgen_key, counter_update, false, &guard)?.unwrap();
+                pc.cas_page(
+                    COUNTER_PID,
+                    idgen_key,
+                    counter_update,
+                    false,
+                    &guard,
+                )?
+                .unwrap();
             }
         }
 
@@ -757,12 +758,9 @@ impl PageCache {
         {
             let guard = pin();
 
-            pc.config.event_log.meta_after_restart(
-                pc.get_meta(&guard)
-                    .expect("should be able to get meta under test")
-                    .deref()
-                    .clone(),
-            );
+            pc.config
+                .event_log
+                .meta_after_restart(pc.get_meta(&guard).deref().clone());
         }
 
         trace!("pagecache started");
@@ -973,25 +971,18 @@ impl PageCache {
         let guard = pin();
         for pid in 0..pid_bound {
             'inner: loop {
-                if let Some(pg_view) = self.inner.get(pid, &guard) {
-                    if pg_view.cache_infos.is_empty() {
-                        // there is a benign race with the thread
-                        // that is allocating this page. the allocating
-                        // thread has not yet written the new page to disk,
-                        // and it does not yet have any storage tracking
-                        // information.
-                        std::thread::yield_now();
-                    } else {
-                        let page_state = pg_view.to_page_state();
-                        page_states.push(page_state);
-                        break 'inner;
-                    }
-                } else {
+                let pg_view = self.inner.get(pid, &guard);
+                if pg_view.cache_infos.is_empty() {
                     // there is a benign race with the thread
-                    // that bumped the next_pid_to_allocate
-                    // atomic counter above. it has not yet
-                    // installed the page that it is allocating.
+                    // that is allocating this page. the allocating
+                    // thread has not yet written the new page to disk,
+                    // and it does not yet have any storage tracking
+                    // information.
                     std::thread::yield_now();
+                } else {
+                    let page_state = pg_view.to_page_state();
+                    page_states.push(page_state);
+                    break 'inner;
                 }
             }
         }
@@ -1051,14 +1042,7 @@ impl PageCacheInner {
         let (pid, page_view) = if let Some(pid) = free_opt {
             trace!("re-allocating pid {}", pid);
 
-            let page_view = match self.inner.get(pid, guard) {
-                None => panic!(
-                    "expected to find existing stack \
-                     for re-allocated pid {}",
-                    pid
-                ),
-                Some(p) => p,
-            };
+            let page_view = self.inner.get(pid, guard);
             assert!(
                 page_view.is_free(),
                 "failed to re-allocate pid {} which \
@@ -1334,12 +1318,7 @@ impl PageCacheInner {
             segment_to_purge / self.config.segment_size as u64;
 
         loop {
-            let page_view = if let Some(page_view) = self.inner.get(pid, guard)
-            {
-                page_view
-            } else {
-                panic!("rewriting pid {} failed (no longer exists)", pid);
-            };
+            let page_view = self.inner.get(pid, guard);
 
             let already_moved = !unsafe { page_view.read.deref() }
                 .cache_infos
@@ -1464,10 +1443,10 @@ impl PageCacheInner {
 
                 // page-in whole page with a get
                 let (key, update): (_, Update) = if pid == META_PID {
-                    let meta_view = self.get_meta(guard)?;
+                    let meta_view = self.get_meta(guard);
                     (meta_view.0, Update::Meta(meta_view.deref().clone()))
                 } else if pid == COUNTER_PID {
-                    let (key, counter) = self.get_idgen(guard)?;
+                    let (key, counter) = self.get_idgen(guard);
                     (key, Update::Counter(counter))
                 } else if let Some(node_view) = self.get(pid, guard)? {
                     let mut node = node_view.deref().clone();
@@ -1475,10 +1454,7 @@ impl PageCacheInner {
                         node.rewrite_generations.saturating_add(1);
                     (node_view.0, Update::Node(node))
                 } else {
-                    let page_view = match self.inner.get(pid, guard) {
-                        None => panic!("expected page missing in rewrite"),
-                        Some(p) => p,
-                    };
+                    let page_view = self.inner.get(pid, guard);
 
                     if page_view.is_free() {
                         (page_view, Update::Free)
@@ -1567,7 +1543,7 @@ impl PageCacheInner {
 
     fn logical_size_of_all_pages(&self) -> Result<u64> {
         let guard = pin();
-        let meta_size = self.get_meta(&guard)?.rss();
+        let meta_size = self.get_meta(&guard).rss();
         let idgen_size = std::mem::size_of::<u64>() as u64;
 
         let mut ret = meta_size + idgen_size;
@@ -1723,62 +1699,41 @@ impl PageCacheInner {
     }
 
     /// Retrieve the current meta page
-    pub(crate) fn get_meta<'g>(
-        &self,
-        guard: &'g Guard,
-    ) -> Result<MetaView<'g>> {
+    pub(crate) fn get_meta<'g>(&self, guard: &'g Guard) -> MetaView<'g> {
         trace!("getting page iter for META");
 
-        let page_view = match self.inner.get(META_PID, guard) {
-            None => {
-                return Err(Error::ReportableBug(
-                    "failed to retrieve META page \
-                     which should always be present"
-                        .into(),
-                ));
-            }
-            Some(p) => p,
-        };
+        let page_view = self.inner.get(META_PID, guard);
 
-        if page_view.update.is_some() {
-            Ok(MetaView(page_view))
-        } else {
-            Err(Error::ReportableBug(
+        if page_view.update.is_none() {
+            panic!(Error::ReportableBug(
                 "failed to retrieve META page \
                  which should always be present"
                     .into(),
             ))
         }
+
+        MetaView(page_view)
     }
 
     /// Retrieve the current persisted IDGEN value
     pub(crate) fn get_idgen<'g>(
         &self,
         guard: &'g Guard,
-    ) -> Result<(PageView<'g>, u64)> {
+    ) -> (PageView<'g>, u64) {
         trace!("getting page iter for idgen");
 
-        let page_view = match self.inner.get(COUNTER_PID, guard) {
-            None => {
-                return Err(Error::ReportableBug(
-                    "failed to retrieve counter page \
-                     which should always be present"
-                        .into(),
-                ));
-            }
-            Some(p) => p,
-        };
+        let page_view = self.inner.get(COUNTER_PID, guard);
 
-        if page_view.update.is_some() {
-            let counter = page_view.as_counter();
-            Ok((page_view, counter))
-        } else {
-            Err(Error::ReportableBug(
+        if page_view.update.is_none() {
+            panic!(Error::ReportableBug(
                 "failed to retrieve counter page \
                  which should always be present"
                     .into(),
             ))
         }
+
+        let counter = page_view.as_counter();
+        (page_view, counter)
     }
 
     /// Try to retrieve a page by its logical ID.
@@ -1805,10 +1760,7 @@ impl PageCacheInner {
             // we loop here because if the page we want to
             // pull is moved, we want to retry. but if we
             // get a corruption and then
-            page_view = match self.inner.get(pid, guard) {
-                None => return Ok(None),
-                Some(p) => p,
-            };
+            page_view = self.inner.get(pid, guard);
 
             if page_view.is_free() {
                 return Ok(None);
@@ -1952,7 +1904,7 @@ impl PageCacheInner {
                     necessary_persists
                 );
                 let guard = pin();
-                let (key, current) = self.get_idgen(&guard)?;
+                let (key, current) = self.get_idgen(&guard);
 
                 assert_eq!(current, persisted);
 
@@ -1996,7 +1948,7 @@ impl PageCacheInner {
         name: &[u8],
         guard: &Guard,
     ) -> Result<PageId> {
-        let m = self.get_meta(guard)?;
+        let m = self.get_meta(guard);
         if let Some(root) = m.get_root(name) {
             Ok(root)
         } else {
@@ -2014,7 +1966,7 @@ impl PageCacheInner {
         guard: &'g Guard,
     ) -> Result<std::result::Result<(), Option<PageId>>> {
         loop {
-            let meta_view = self.get_meta(guard)?;
+            let meta_view = self.get_meta(guard);
 
             let actual = meta_view.get_root(name);
             if actual != old {
@@ -2063,35 +2015,29 @@ impl PageCacheInner {
                 continue;
             }
             loop {
-                if let Some(page_view) = self.inner.get(pid, guard) {
-                    if page_view.is_free() {
-                        // don't page-out Freed suckas
-                        break;
-                    }
-                    let new_page = Owned::new(Page {
-                        update: None,
-                        cache_infos: page_view.cache_infos.clone(),
-                    });
-
-                    debug_delay();
-                    if page_view
-                        .entry
-                        .compare_and_set(
-                            page_view.read,
-                            new_page,
-                            SeqCst,
-                            guard,
-                        )
-                        .is_ok()
-                    {
-                        unsafe {
-                            guard.defer_destroy(page_view.read);
-                        }
-
-                        break;
-                    }
-                    // keep looping until we page this sucka out
+                let page_view = self.inner.get(pid, guard);
+                if page_view.is_free() {
+                    // don't page-out Freed suckas
+                    break;
                 }
+                let new_page = Owned::new(Page {
+                    update: None,
+                    cache_infos: page_view.cache_infos.clone(),
+                });
+
+                debug_delay();
+                if page_view
+                    .entry
+                    .compare_and_set(page_view.read, new_page, SeqCst, guard)
+                    .is_ok()
+                {
+                    unsafe {
+                        guard.defer_destroy(page_view.read);
+                    }
+
+                    break;
+                }
+                // keep looping until we page this sucka out
             }
         }
     }
