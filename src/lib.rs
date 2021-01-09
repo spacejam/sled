@@ -547,11 +547,15 @@ mod compile_time_assertions {
 }
 
 #[cfg(all(unix, not(miri)))]
-fn maybe_fsync_directory<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<()> {
+fn maybe_fsync_directory<P: AsRef<std::path::Path>>(
+    path: P,
+) -> std::io::Result<()> {
     std::fs::File::open(path)?.sync_all()
 }
 
 #[cfg(any(not(unix), miri))]
-fn maybe_fsync_directory<P: AsRef<std::path::Path>>(_: P) -> std::io::Result<()> {
+fn maybe_fsync_directory<P: AsRef<std::path::Path>>(
+    _: P,
+) -> std::io::Result<()> {
     Ok(())
 }

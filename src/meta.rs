@@ -73,7 +73,7 @@ where
         }
 
         // set up empty leaf
-        let mut leaf = Node::new(&[], None, 0, true, None, &[]);
+        let mut leaf = Node::new_empty_leaf();
         leaf.is_index = false;
         let (leaf_id, leaf_ptr) = context.pagecache.allocate(leaf, guard)?;
 
