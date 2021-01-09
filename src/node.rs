@@ -26,7 +26,7 @@ macro_rules! tf {
 }
 
 // allocates space for a header struct at the beginning.
-pub(crate) fn uninitialized_node(len: usize) -> Node {
+fn uninitialized_node(len: usize) -> Node {
     let layout = Layout::from_size_align(len, ALIGNMENT).unwrap();
 
     unsafe {
@@ -156,13 +156,13 @@ impl DerefMut for Node {
 }
 
 impl Node {
-    pub unsafe fn from_raw(buf: &[u8]) -> Node {
+    pub(crate) unsafe fn from_raw(buf: &[u8]) -> Node {
         let mut ret = uninitialized_node(buf.len());
         ret.as_mut().copy_from_slice(buf);
         ret
     }
 
-    pub(crate) fn new(
+    fn new(
         lo: &[u8],
         hi: Option<&[u8]>,
         prefix_len: u8,
@@ -392,6 +392,10 @@ impl Node {
                 (at, &right.to_le_bytes()),
             ],
         )
+    }
+
+    pub(crate) fn new_empty_leaf() -> Node {
+        Node::new(&[], None, 0, true, None, &[])
     }
 
     // returns the OPEN ENDED buffer where a key may be placed
@@ -1463,7 +1467,7 @@ impl Node {
         Some(self.insert(encoded_sep, &to.to_le_bytes()))
     }
 
-    pub(crate) fn iter_keys(
+    fn iter_keys(
         &self,
     ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator
     {
@@ -1480,14 +1484,14 @@ impl Node {
         })
     }
 
-    pub(crate) fn iter_values(
+    fn iter_values(
         &self,
     ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator
     {
         (0..self.children()).map(move |idx| self.index_value(idx))
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
         self.iter_keys().zip(self.iter_values())
     }
 
@@ -1523,7 +1527,7 @@ impl Node {
         }
     }
 
-    pub(crate) fn index_key(&self, idx: usize) -> &[u8] {
+    fn index_key(&self, idx: usize) -> &[u8] {
         assert!(
             idx < self.children(),
             "index {} is not less than internal length of {}",
@@ -1559,7 +1563,7 @@ impl Node {
         &key_buf[start..end]
     }
 
-    pub(crate) fn index_value(&self, idx: usize) -> &[u8] {
+    fn index_value(&self, idx: usize) -> &[u8] {
         assert!(
             idx < self.children(),
             "index {} is not less than internal length of {}",
@@ -1791,11 +1795,11 @@ impl Node {
 mod prefix {
     use crate::IVec;
 
-    pub(crate) fn empty() -> &'static [u8] {
+    pub(super) fn empty() -> &'static [u8] {
         &[]
     }
 
-    pub(crate) fn reencode(
+    pub(super) fn reencode(
         old_prefix: &[u8],
         old_encoded_key: &[u8],
         new_prefix_length: usize,
@@ -1808,7 +1812,7 @@ mod prefix {
             .collect()
     }
 
-    pub(crate) fn decode(old_prefix: &[u8], old_encoded_key: &[u8]) -> IVec {
+    pub(super) fn decode(old_prefix: &[u8], old_encoded_key: &[u8]) -> IVec {
         let mut decoded_key =
             Vec::with_capacity(old_prefix.len() + old_encoded_key.len());
         decoded_key.extend_from_slice(old_prefix);
