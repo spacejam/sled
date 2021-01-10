@@ -48,6 +48,7 @@ impl Iterator for LogIter {
             let lsn = self.cur_lsn.unwrap();
 
             // self.segment_base is `Some` now.
+            #[cfg(feature = "metrics")]
             let _measure = Measure::new(&M.read_segment_message);
 
             // NB this inequality must be greater than or equal to the
@@ -179,6 +180,7 @@ impl LogIter {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
     fn read_segment(&mut self) -> Result<()> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.segment_read);
         if self.segments.is_empty() {
             return Err(io::Error::new(

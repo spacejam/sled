@@ -260,6 +260,7 @@ pub(crate) fn decompress(in_buf: Vec<u8>) -> Vec<u8> {
         let scootable_in_buf = &mut &*in_buf;
         let raw: IVec = IVec::deserialize(scootable_in_buf)
             .expect("this had to be serialized with an extra length frame");
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.decompress);
         let out_buf = decode_all(&raw[..]).expect(
             "failed to decompress data. \
@@ -629,6 +630,7 @@ impl PageCache {
             );
         }
 
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.start_pagecache);
 
         let cache_capacity = config.cache_capacity;
@@ -774,6 +776,7 @@ impl PageCache {
         new: Link,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Link>> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.link_page);
 
         trace!("linking pid {} with {:?}", pid, new);
@@ -947,6 +950,7 @@ impl PageCache {
     }
 
     fn take_fuzzy_snapshot(self) -> Result<()> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.fuzzy_snapshot);
         let lock = self.snapshot_lock.try_lock();
         if lock.is_none() {
@@ -1236,6 +1240,7 @@ impl PageCacheInner {
         new: Node,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Node>> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.replace_page);
 
         trace!("replacing pid {} with {:?}", pid, new);
@@ -1305,6 +1310,7 @@ impl PageCacheInner {
         segment_to_purge: LogOffset,
         guard: &Guard,
     ) -> Result<()> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);
@@ -1738,6 +1744,7 @@ impl PageCacheInner {
         guard: &'g Guard,
     ) -> Result<Option<NodeView<'g>>> {
         trace!("getting page iterator for pid {}", pid);
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.get_page);
 
         if pid == COUNTER_PID || pid == META_PID || pid == BATCH_MANIFEST_PID {
@@ -2000,6 +2007,7 @@ impl PageCacheInner {
     }
 
     fn page_out(&self, to_evict: Vec<PageId>, guard: &Guard) {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.page_out);
         for pid in to_evict {
             if pid == COUNTER_PID
@@ -2041,6 +2049,7 @@ impl PageCacheInner {
         use MessageKind::*;
 
         trace!("pulling pid {} lsn {} pointer {} from disk", pid, lsn, pointer);
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.pull);
 
         let expected_segment_number: SegmentNumber = SegmentNumber(
@@ -2098,6 +2107,7 @@ impl PageCacheInner {
         let buf = &mut bytes.as_slice();
 
         let update_res = {
+            #[cfg(feature = "metrics")]
             let _deserialize_latency = Measure::new(&M.deserialize);
 
             match header.kind {

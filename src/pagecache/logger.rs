@@ -138,6 +138,7 @@ impl Log {
 
                 let buf = item.serialize();
 
+                #[cfg(feature = "metrics")]
                 let _measure = Measure::new(&M.compress);
 
                 let compressed_buf =
@@ -164,12 +165,14 @@ impl Log {
         heap_rewrite: Option<HeapId>,
         _: &Guard,
     ) -> Result<Reservation<'_>> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.reserve_lat);
 
         let serialized_len = item.serialized_size();
         let max_buf_len =
             u64::try_from(MAX_MSG_HEADER_LEN).unwrap() + serialized_len;
 
+        #[cfg(feature = "metrics")]
         M.reserve_sz.measure(max_buf_len);
 
         let max_buf_size = usize::try_from(super::heap::MIN_SZ)
@@ -217,6 +220,7 @@ impl Log {
         };
 
         loop {
+            #[cfg(feature = "metrics")]
             M.log_reservation_attempted();
 
             // don't continue if the system
@@ -389,6 +393,7 @@ impl Log {
                 heap_reservation,
             )?;
 
+            #[cfg(feature = "metrics")]
             M.log_reservation_success();
 
             let pointer = if let Some(heap_id) = heap_id {
@@ -726,6 +731,7 @@ pub(crate) fn read_message<R: ReadAt>(
     expected_segment_number: SegmentNumber,
     config: &RunningConfig,
 ) -> Result<LogRead> {
+    #[cfg(feature = "metrics")]
     let _measure = Measure::new(&M.read);
     let segment_len = config.segment_size;
     let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;

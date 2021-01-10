@@ -157,6 +157,7 @@ impl Snapshot {
             disk_ptr,
             lsn
         );
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.snapshot_apply);
 
         let pushed = if self.pt.len() <= usize::try_from(pid).unwrap() {
@@ -260,6 +261,7 @@ fn advance_snapshot(
     mut snapshot: Snapshot,
     config: &RunningConfig,
 ) -> Result<Snapshot> {
+    #[cfg(feature = "metrics")]
     let _measure = Measure::new(&M.advance_snapshot);
 
     trace!("building on top of old snapshot: {:?}", snapshot);
