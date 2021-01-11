@@ -172,6 +172,7 @@ impl Tree {
         is_transactional: bool,
         guard: &mut Guard,
     ) -> Result<Conflictable<Option<IVec>>> {
+        #[cfg(feature = "metrics")]
         let _measure = if value.is_some() {
             Measure::new(&M.tree_set)
         } else {
@@ -187,7 +188,8 @@ impl Tree {
             Some(self.subscribers.reserve(&key))
         };
 
-        let (encoded_key, last_value, current_idx) = node_view.node_kv_pair(key.as_ref());
+        let (encoded_key, last_value, current_idx) =
+            node_view.node_kv_pair(key.as_ref());
         let last_value = last_value.map(IVec::from);
 
         if value == last_value {
@@ -224,6 +226,7 @@ impl Tree {
 
             Ok(Ok(last_value))
         } else {
+            #[cfg(feature = "metrics")]
             M.tree_looped();
             Ok(Err(Conflict))
         }
@@ -480,10 +483,15 @@ impl Tree {
     /// db.get_zero_copy(&[1], |value_opt| assert!(value_opt.is_none()));
     /// # Ok(()) }
     /// ```
-    pub fn get_zero_copy<K: AsRef<[u8]>, B, F: FnOnce(Option<&[u8]>) -> B>(&self, key: K, f: F) -> Result<B> {
+    pub fn get_zero_copy<K: AsRef<[u8]>, B, F: FnOnce(Option<&[u8]>) -> B>(
+        &self,
+        key: K,
+        f: F,
+    ) -> Result<B> {
         let mut guard = pin();
         let _cc = concurrency_control::read();
 
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_get);
 
         trace!("getting key {:?}", key.as_ref());
@@ -505,6 +513,7 @@ impl Tree {
         key: &[u8],
         guard: &mut Guard,
     ) -> Result<Conflictable<Option<IVec>>> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_get);
 
         trace!("getting key {:?}", key);
@@ -616,6 +625,7 @@ impl Tree {
         NV: Into<IVec>,
     {
         trace!("cas'ing key {:?}", key.as_ref());
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_cas);
 
         let guard = pin();
@@ -649,7 +659,7 @@ impl Tree {
                 // because we verified that the input matches, so
                 // doing the work has the same semantic effect as not
                 // doing it in this case.
-                return Ok(Ok(()))
+                return Ok(Ok(()));
             }
 
             let mut subscriber_reservation = self.subscribers.reserve(&key);
@@ -679,6 +689,7 @@ impl Tree {
 
                 return Ok(Ok(()));
             }
+            #[cfg(feature = "metrics")]
             M.tree_looped();
         }
     }
@@ -995,6 +1006,7 @@ impl Tree {
     where
         K: AsRef<[u8]>,
     {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_get);
         self.range(..key).next_back().transpose()
     }
@@ -1049,6 +1061,7 @@ impl Tree {
     where
         K: AsRef<[u8]>,
     {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_get);
         self.range((ops::Bound::Excluded(key), ops::Bound::Unbounded))
             .next()
@@ -1130,6 +1143,7 @@ impl Tree {
         value: &[u8],
     ) -> Result<Conflictable<Option<IVec>>> {
         trace!("merging key {:?}", key);
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_merge);
 
         let merge_operator_opt = self.merge_operator.read();
@@ -1187,6 +1201,7 @@ impl Tree {
 
                 return Ok(Ok(new));
             }
+            #[cfg(feature = "metrics")]
             M.tree_looped();
         }
     }
@@ -1589,6 +1604,7 @@ impl Tree {
             lhs,
             guard,
         )?;
+        #[cfg(feature = "metrics")]
         M.tree_child_split_attempt();
         if replace.is_err() {
             // if we failed, don't follow through with the
@@ -1600,10 +1616,12 @@ impl Tree {
                 .expect("could not free allocated page");
             return Ok(());
         }
+        #[cfg(feature = "metrics")]
         M.tree_child_split_success();
 
         // either install parent split or hoist root
         if let Some(parent_view) = parent_view {
+            #[cfg(feature = "metrics")]
             M.tree_parent_split_attempt();
             let split_applied = parent_view.parent_split(&rhs_lo, rhs_pid);
 
@@ -1624,6 +1642,7 @@ impl Tree {
                 guard,
             )?;
             if replace.is_ok() {
+                #[cfg(feature = "metrics")]
                 M.tree_parent_split_success();
             } else {
                 // Parent splits are an optimization
@@ -1644,6 +1663,7 @@ impl Tree {
         at: &[u8],
         guard: &Guard,
     ) -> Result<bool> {
+        #[cfg(feature = "metrics")]
         M.tree_root_split_attempt();
         // hoist new root, pointing to lhs & rhs
 
@@ -1663,13 +1683,18 @@ impl Tree {
         )?;
         if cas.is_ok() {
             debug!("root hoist from {} to {} successful", from, new_root_pid);
+            #[cfg(feature = "metrics")]
             M.tree_root_split_success();
 
             // we spin in a cas loop because it's possible
             // 2 threads are at this point, and we don't want
             // to cause roots to diverge between meta and
             // our version.
-            while self.root.compare_exchange(from, new_root_pid, SeqCst, SeqCst).is_err() {
+            while self
+                .root
+                .compare_exchange(from, new_root_pid, SeqCst, SeqCst)
+                .is_err()
+            {
                 std::sync::atomic::spin_loop_hint();
             }
 
@@ -1737,6 +1762,7 @@ impl Tree {
         #[cfg(not(any(test, feature = "lock_free_delays")))]
         const MAX_LOOPS: usize = 1_000_000;
 
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_traverse);
 
         let mut cursor = self.root.load(Acquire);
@@ -1827,6 +1853,7 @@ impl Tree {
                         view.hi().unwrap(),
                         guard,
                     )? {
+                        #[cfg(feature = "metrics")]
                         M.tree_root_split_success();
                         retry!();
                     }
@@ -1838,7 +1865,8 @@ impl Tree {
                 trace!(
                     "trying to apply split of child with \
                     lo key of {:?} to parent pid {}",
-                    view.lo(), unsplit_parent.pid
+                    view.lo(),
+                    unsplit_parent.pid
                 );
                 let split_applied =
                     unsplit_parent.parent_split(view.lo(), cursor);
@@ -1853,6 +1881,7 @@ impl Tree {
 
                 let parent: Node = split_applied.unwrap();
 
+                #[cfg(feature = "metrics")]
                 M.tree_parent_split_attempt();
                 let replace = self.context.pagecache.replace(
                     unsplit_parent.pid,
@@ -1861,6 +1890,7 @@ impl Tree {
                     guard,
                 )?;
                 if replace.is_ok() {
+                    #[cfg(feature = "metrics")]
                     M.tree_parent_split_success();
                 }
             }
@@ -1872,7 +1902,10 @@ impl Tree {
             // would be merged into a different index, which
             // would add considerable complexity to this already
             // fairly complex implementation.
-            if !took_leftmost_branch && parent_view.is_some() && view.should_merge() {
+            if !took_leftmost_branch
+                && parent_view.is_some()
+                && view.should_merge()
+            {
                 let parent = parent_view.as_mut().unwrap();
                 assert!(parent.merging_child.is_none());
                 if parent.can_merge_child(cursor) {

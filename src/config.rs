@@ -794,6 +794,7 @@ impl Deref for RunningConfig {
 impl Drop for Inner {
     fn drop(&mut self) {
         if self.print_profile_on_drop {
+            #[cfg(feature = "metrics")]
             M.print_profile();
         }
 

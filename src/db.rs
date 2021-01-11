@@ -59,6 +59,7 @@ impl Db {
     }
 
     pub(crate) fn start_inner(config: RunningConfig) -> Result<Self> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_start);
 
         let context = Context::start(config)?;

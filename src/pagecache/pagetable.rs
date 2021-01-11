@@ -13,8 +13,10 @@ use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use crate::{
     debug_delay,
     pagecache::{constants::MAX_PID_BITS, Page, PageView},
-    Measure, M,
 };
+
+#[cfg(feature = "metrics")]
+use crate::{Measure, M};
 
 #[allow(unused)]
 #[doc(hidden)]
@@ -139,6 +141,7 @@ impl PageTable {
         pid: PageId,
         guard: &'g Guard,
     ) -> PageView<'g> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.get_pagetable);
         debug_delay();
         let tip = self.traverse(pid, guard);
@@ -152,6 +155,7 @@ impl PageTable {
     }
 
     pub(crate) fn contains_pid(&self, pid: PageId, guard: &Guard) -> bool {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.get_pagetable);
         debug_delay();
         let tip = self.traverse(pid, guard);

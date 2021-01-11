@@ -444,11 +444,13 @@ impl IoBufs {
     ) -> Result<()> {
         debug_delay();
         if let Some(mut sa) = self.segment_accountant.try_lock() {
+            #[cfg(feature = "metrics")]
             let start = clock();
             sa.mark_replace(pid, old_cache_infos, new_cache_info)?;
             for op in self.deferred_segment_ops.take_iter(guard) {
                 sa.apply_op(op)?;
             }
+            #[cfg(feature = "metrics")]
             M.accountant_hold.measure(clock() - start);
         } else {
             let op = SegmentOp::Replace {
@@ -480,19 +482,23 @@ impl IoBufs {
     where
         F: FnOnce(&mut SegmentAccountant) -> B,
     {
+        #[cfg(feature = "metrics")]
         let start = clock();
 
         debug_delay();
         let mut sa = self.segment_accountant.lock();
 
+        #[cfg(feature = "metrics")]
         let locked_at = clock();
 
+        #[cfg(feature = "metrics")]
         M.accountant_lock.measure(locked_at - start);
 
         let ret = f(&mut sa);
 
         drop(sa);
 
+        #[cfg(feature = "metrics")]
         M.accountant_hold.measure(clock() - locked_at);
 
         ret
@@ -534,6 +540,7 @@ impl IoBufs {
         // to the argument
         let out_buf_ref: &mut &mut [u8] = &mut out_buf;
         {
+            #[cfg(feature = "metrics")]
             let _ = Measure::new(&M.serialize);
             header.serialize_into(out_buf_ref);
         }
@@ -549,6 +556,7 @@ impl IoBufs {
                 .unwrap()
             ];
 
+            #[cfg(feature = "metrics")]
             let serialization_timer = Measure::new(&M.serialize);
             heap_buf[0] = header.kind.into();
             heap_buf[5..13].copy_from_slice(
@@ -556,6 +564,7 @@ impl IoBufs {
             );
             let heap_buf_ref: &mut &mut [u8] = &mut &mut heap_buf[13..];
             item.serialize_into(heap_buf_ref);
+            #[cfg(feature = "metrics")]
             drop(serialization_timer);
 
             let mut hasher = crc32fast::Hasher::new();
@@ -572,6 +581,7 @@ impl IoBufs {
             // write the blob file
             heap_reservation.complete(&heap_buf)?;
         } else {
+            #[cfg(feature = "metrics")]
             let _ = Measure::new(&M.serialize);
             item.serialize_into(out_buf_ref);
         };
@@ -592,6 +602,7 @@ impl IoBufs {
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
     pub(crate) fn write_to_log(&self, iobuf: &IoBuf) -> Result<()> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.write_to_log);
         let header = iobuf.get_header();
         let log_offset = iobuf.offset;
@@ -818,6 +829,7 @@ impl IoBufs {
             self.mark_interval(base_lsn, complete_len);
         }
 
+        #[cfg(feature = "metrics")]
         M.written_bytes.measure(total_len as u64);
 
         // NB the below deferred logic is important to ensure
@@ -941,6 +953,7 @@ pub(in crate::pagecache) fn make_stable_inner(
     lsn: Lsn,
     partial_durability: bool,
 ) -> Result<usize> {
+    #[cfg(feature = "metrics")]
     let _measure = Measure::new(&M.make_stable);
 
     // NB before we write the 0th byte of the file, stable  is -1
@@ -1114,6 +1127,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     // open new slot
     let mut next_lsn = lsn;
 
+    #[cfg(feature = "metrics")]
     let measure_assign_offset = Measure::new(&M.assign_offset);
 
     let (next_offset, from_tip) = if maxed {
@@ -1210,6 +1224,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
 
     let _notified = iobufs.interval_updated.notify_all();
 
+    #[cfg(feature = "metrics")]
     drop(measure_assign_offset);
 
     // if writers is 0, it's our responsibility to write the buffer.
