@@ -82,6 +82,8 @@ If you would like to work with structured data without paying expensive deserial
 
 # expectations, gotchas, advice
 
+* Maybe one of the first things that seems weird is the `IVec` type.
+  This is an inlinable `Arc`ed slice that makes some things more efficient.
 * Durability: **sled automatically fsyncs every 500ms by default**,
   which can be configured with the `flush_every_ms` configurable, or you may
   call `flush` / `flush_async` manually after operations.
@@ -99,7 +101,9 @@ If you would like to work with structured data without paying expensive deserial
 * sled does not support multiple open instances for the time being. Please
   keep sled open for the duration of your process's lifespan. It's totally
   safe and often quite convenient to use a global lazy_static sled instance,
-  modulo the normal global variable trade-offs.
+  modulo the normal global variable trade-offs. Every operation is threadsafe,
+  and most are implemented under the hood with lock-free algorithms that avoid
+  blocking in hot paths.
 
 # performance
 
@@ -107,9 +111,6 @@ If you would like to work with structured data without paying expensive deserial
   with [traditional B+ tree](https://en.wikipedia.org/wiki/B%2B_tree)-like read performance
 * over a billion operations in under a minute at 95% read 5% writes on 16 cores on a small dataset
 * measure your own workloads rather than relying on some marketing for contrived workloads
-
-what's the trade-off? sled uses too much disk space sometimes. this will improve significantly before 1.0.
-
 
 # a note on lexicographic ordering and endianness
 
