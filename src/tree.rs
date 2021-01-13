@@ -1592,7 +1592,7 @@ impl Tree {
         let replace = self.context.pagecache.replace(
             view.pid,
             view.node_view.0,
-            lhs,
+            &lhs,
             guard,
         )?;
         #[cfg(feature = "metrics")]
@@ -1629,7 +1629,7 @@ impl Tree {
             let replace = self.context.pagecache.replace(
                 parent_view.pid,
                 parent_view.node_view.0,
-                parent,
+                &parent,
                 guard,
             )?;
             if replace.is_ok() {
@@ -1877,7 +1877,7 @@ impl Tree {
                 let replace = self.context.pagecache.replace(
                     unsplit_parent.pid,
                     unsplit_parent.node_view.0,
-                    parent,
+                    &parent,
                     guard,
                 )?;
                 if replace.is_ok() {
@@ -2091,7 +2091,7 @@ impl Tree {
         // we assume caller only merges when
         // the node to be merged is not the
         // leftmost child.
-        let mut cursor_pid = parent_view.iter_index_pids().skip(merge_index).next().unwrap();
+        let mut cursor_pid = parent_view.iter_index_pids().nth(merge_index).unwrap();
 
         // searching for the left sibling to merge the target page into
         loop {
@@ -2125,7 +2125,7 @@ impl Tree {
                 }
 
                 merge_index -= 1;
-                cursor_pid = parent_view.iter_index_pids().skip(merge_index).next().unwrap();
+                cursor_pid = parent_view.iter_index_pids().nth(merge_index).unwrap();
 
                 continue;
             };
@@ -2143,7 +2143,7 @@ impl Tree {
                 let replace = self.context.pagecache.replace(
                     cursor_pid,
                     cursor_node.0,
-                    replacement,
+                    &replacement,
                     guard,
                 )?;
                 match replace {

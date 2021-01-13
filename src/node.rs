@@ -172,20 +172,13 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     // the overlay accumulates new writes and tombstones
     // for deletions that have not yet been merged
     // into the inner backing node
     pub(crate) overlay: Vec<(IVec, Option<IVec>)>,
     inner: Arc<Inner>,
-}
-
-impl Clone for Node {
-    // we always merge the overlay into the inner node upon clone
-    fn clone(&self) -> Node {
-        Node { inner: self.merge_overlay(), overlay: Default::default() }
-    }
 }
 
 impl Deref for Node {
@@ -196,7 +189,11 @@ impl Deref for Node {
 }
 
 impl Node {
-    fn iter<'a>(&'a self) -> Iter<'a> {
+    pub(crate) fn consolidate(&self) -> Node {
+        Node { inner: self.merge_overlay(), overlay: Default::default() }
+    }
+
+    fn iter(&self) -> Iter<'_> {
         Iter {
             overlay: self.overlay.iter(),
             node: &self.inner,
@@ -427,8 +424,8 @@ impl Node {
         if let Ok(idx) =
             self.overlay.binary_search_by_key(&encoded_key, |(k, _)| k)
         {
-            let v = self.overlay.get(idx).unwrap().1.as_ref();
-            (encoded_key, v.map(|v| v.as_ref()))
+            let v = self.overlay[idx].1.as_ref();
+            (encoded_key, v.map(AsRef::as_ref))
         } else {
             self.inner.node_kv_pair(key)
         }
@@ -454,7 +451,7 @@ impl Node {
                     Err(idx) => self.overlay[idx..].iter(),
                 };
 
-                let inner_search = self.find(&b);
+                let inner_search = self.find(b);
                 let node_position = match inner_search {
                     Ok(idx) => {
                         return Some((
@@ -475,7 +472,7 @@ impl Node {
                     Err(idx) => self.overlay[idx..].iter(),
                 };
 
-                let inner_search = self.find(&b);
+                let inner_search = self.find(b);
                 let node_position = match inner_search {
                     Ok(idx) => {
                         // short circuit return
@@ -494,7 +491,7 @@ impl Node {
             Bound::Excluded(b) => &b[self.prefix_len as usize..] < k,
         };
 
-        let iter = Iter {
+        let mut iter = Iter {
             overlay,
             node: &self.inner,
             node_position,
@@ -502,8 +499,7 @@ impl Node {
             next_b: None,
         };
 
-        let ret: Option<(&[u8], &[u8])> =
-            iter.filter(|(k, _)| in_bounds(k)).next();
+        let ret: Option<(&[u8], &[u8])> = iter.find(|(k, _)| in_bounds(k));
 
         ret.map(|(k, v)| (self.prefix_decode(k), v.into()))
     }
@@ -523,8 +519,7 @@ impl Node {
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
-            .filter(|(k, _)| in_bounds(k))
-            .next();
+            .find(|(k, _)| in_bounds(k));
 
         ret.map(|(k, v)| (self.prefix_decode(k), v.into()))
     }
@@ -555,7 +550,7 @@ impl Node {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.iter().take(4).count() > 4
         } else if self.is_index {
-            self.len > 1 * 1024 && self.rss() > 1
+            self.len > 1024 && self.rss() > 1
         } else {
             /*
             let threshold = match self.rewrite_generations {
@@ -1205,10 +1200,10 @@ impl Inner {
         // prefix encoded length can only grow or stay the same
         // during splits
         #[cfg(test)]
-        let test_jitter = rand::thread_rng().gen_range(0, 16);
+        let test_jitter_left = rand::thread_rng().gen_range(0, 16);
 
         #[cfg(not(test))]
-        let test_jitter = std::u8::MAX as usize;
+        let test_jitter_left = std::u8::MAX as usize;
 
         let additional_left_prefix = self.lo()[self.prefix_len as usize..]
             .iter()
@@ -1216,13 +1211,13 @@ impl Inner {
             .take((std::u8::MAX - self.prefix_len) as usize)
             .take_while(|(a, b)| a == b)
             .count()
-            .min(test_jitter);
+            .min(test_jitter_left);
 
         #[cfg(test)]
-        let test_jitter = rand::thread_rng().gen_range(0, 16);
+        let test_jitter_right = rand::thread_rng().gen_range(0, 16);
 
         #[cfg(not(test))]
-        let test_jitter = std::u8::MAX as usize;
+        let test_jitter_right = std::u8::MAX as usize;
 
         let additional_right_prefix = if let Some(hi) = self.hi() {
             split_key[self.prefix_len as usize..]
@@ -1231,7 +1226,7 @@ impl Inner {
                 .take((std::u8::MAX - self.prefix_len) as usize)
                 .take_while(|(a, b)| a == b)
                 .count()
-                .min(test_jitter)
+                .min(test_jitter_right)
         } else {
             0
         };
@@ -1311,42 +1306,51 @@ impl Inner {
         assert!(self.merging_child.is_none());
 
         let extended_keys: Vec<_>;
-        let items: Vec<_> = if self.prefix_len == other.prefix_len {
-            log::trace!("keeping equal prefix lengths of {}", other.prefix_len);
-            self.iter().chain(other.iter()).collect()
-        } else if self.prefix_len > other.prefix_len {
-            extended_keys = self
-                .iter_keys()
-                .map(|k| {
-                    prefix::reencode(
-                        self.prefix(),
-                        k,
-                        other.prefix_len as usize,
-                    )
-                })
-                .collect();
-            log::trace!("reencoding left items to have shorter prefix len of {}, new items: {:?}", other.prefix_len, extended_keys);
-            let left_items =
-                extended_keys.iter().map(AsRef::as_ref).zip(self.iter_values());
-            left_items.chain(other.iter()).collect()
-        } else {
-            // self.prefix_len < other.prefix_len
-            extended_keys = other
-                .iter_keys()
-                .map(|k| {
-                    prefix::reencode(
-                        other.prefix(),
-                        k,
-                        self.prefix_len as usize,
-                    )
-                })
-                .collect();
-            log::trace!("reencoding right items to have shorter prefix len of {}, new items: {:?}", self.prefix_len, extended_keys);
-            let right_items = extended_keys
-                .iter()
-                .map(AsRef::as_ref)
-                .zip(other.iter_values());
-            self.iter().chain(right_items).collect()
+        let items: Vec<_> = match self.prefix_len.cmp(&other.prefix_len) {
+            Equal => {
+                log::trace!(
+                    "keeping equal prefix lengths of {}",
+                    other.prefix_len
+                );
+                self.iter().chain(other.iter()).collect()
+            }
+            Greater => {
+                extended_keys = self
+                    .iter_keys()
+                    .map(|k| {
+                        prefix::reencode(
+                            self.prefix(),
+                            k,
+                            other.prefix_len as usize,
+                        )
+                    })
+                    .collect();
+                log::trace!("reencoding left items to have shorter prefix len of {}, new items: {:?}", other.prefix_len, extended_keys);
+                let left_items = extended_keys
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .zip(self.iter_values());
+                left_items.chain(other.iter()).collect()
+            }
+            Less => {
+                // self.prefix_len < other.prefix_len
+                extended_keys = other
+                    .iter_keys()
+                    .map(|k| {
+                        prefix::reencode(
+                            other.prefix(),
+                            k,
+                            self.prefix_len as usize,
+                        )
+                    })
+                    .collect();
+                log::trace!("reencoding right items to have shorter prefix len of {}, new items: {:?}", self.prefix_len, extended_keys);
+                let right_items = extended_keys
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .zip(other.iter_values());
+                self.iter().chain(right_items).collect()
+            }
         };
 
         let mut ret = Inner::new(
@@ -1547,8 +1551,8 @@ impl Inner {
         &buf[start..end]
     }
 
-    /// `node_kv_pair` returns either the existing (node/key, value, current_offset) tuple or
-    /// (node/key, none, future_offset) where a node/key is node level encoded key.
+    /// `node_kv_pair` returns either the existing (node/key, value, current offset) tuple or
+    /// (node/key, none, future offset) where a node/key is node level encoded key.
     fn node_kv_pair<'a>(&'a self, key: &'a [u8]) -> (&'a [u8], Option<&[u8]>) {
         assert!(key >= self.lo());
         if let Some(hi) = self.hi() {

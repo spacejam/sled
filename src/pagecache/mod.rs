@@ -822,7 +822,7 @@ impl PageCache {
         // see if we should short-circuit replace
         if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {
             log::trace!("skipping link, replacing pid {} with {:?}", pid, node);
-            let short_circuit = self.replace(pid, old, node, guard)?;
+            let short_circuit = self.replace(pid, old, &node, guard)?;
             return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
         }
 
@@ -1245,12 +1245,12 @@ impl PageCacheInner {
         &self,
         pid: PageId,
         old: PageView<'g>,
-        new_unmerged: Node,
+        new_unmerged: &Node,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Node>> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.replace_page);
-        let new = new_unmerged.clone();
+        let new = new_unmerged.consolidate();
 
         trace!("replacing pid {} with {:?}", pid, new);
 
