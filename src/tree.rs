@@ -121,16 +121,6 @@ impl Deref for Tree {
 }
 
 impl Tree {
-    #[doc(hidden)]
-    #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
-    pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
-    where
-        K: AsRef<[u8]>,
-        V: Into<IVec>,
-    {
-        self.insert(key, value)
-    }
-
     /// Insert a key to a new value, returning the last value if it
     /// was set.
     ///
@@ -522,12 +512,6 @@ impl Tree {
         guard.readset.push(pid);
 
         Ok(Ok(val))
-    }
-
-    #[doc(hidden)]
-    #[deprecated(since = "0.24.2", note = "replaced by `Tree::remove`")]
-    pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        self.remove(key)
     }
 
     /// Delete a value, returning the old value if it existed.
