@@ -314,7 +314,6 @@ impl Node {
             key,
             ret
         );
-        assert!(ret.node_kv_pair(key).1.is_none());
         ret
     }
 
