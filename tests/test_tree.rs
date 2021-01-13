@@ -1,7 +1,10 @@
 mod common;
 mod tree;
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Barrier},
+    time::Duration,
+};
 
 #[allow(unused_imports)]
 use log::{debug, warn};
@@ -187,9 +190,12 @@ fn concurrent_tree_pops() -> sled::Result<()> {
     let mut threads = vec![];
 
     // Pop 5 values using multiple threads
+    let barrier = Arc::new(Barrier::new(5));
     for _ in 0..5 {
+        let barrier = barrier.clone();
         let db = db.clone();
         threads.push(thread::spawn(move || {
+            barrier.wait();
             db.pop_min().unwrap().unwrap();
         }));
     }

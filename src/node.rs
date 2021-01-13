@@ -10,6 +10,7 @@ use std::{
     mem::{align_of, size_of},
     num::NonZeroU64,
     ops::{Bound, Deref, DerefMut},
+    sync::Arc,
 };
 
 use crate::{varint, IVec, Link};
@@ -26,12 +27,12 @@ macro_rules! tf {
 }
 
 // allocates space for a header struct at the beginning.
-fn uninitialized_node(len: usize) -> Node {
+fn uninitialized_node(len: usize) -> Inner {
     let layout = Layout::from_size_align(len, ALIGNMENT).unwrap();
 
     unsafe {
         let ptr = alloc_zeroed(layout);
-        Node { ptr, len }
+        Inner { ptr, len }
     }
 }
 
@@ -75,29 +76,565 @@ pub struct Header {
     pub is_index: bool,
 }
 
-/// An immutable sorted string table
-#[must_use]
-pub struct Node {
-    ptr: *mut u8,
-    pub len: usize,
+pub struct Iter<'a> {
+    overlay: std::slice::Iter<'a, (IVec, Option<IVec>)>,
+    node: &'a Inner,
+    node_position: usize,
+    next_a: Option<(&'a [u8], Option<&'a IVec>)>,
+    next_b: Option<(&'a [u8], &'a [u8])>,
 }
 
-impl PartialEq<Node> for Node {
-    fn eq(&self, other: &Node) -> bool {
-        self.as_ref().eq(other.as_ref())
+impl<'a> Iterator for Iter<'a> {
+    type Item = (&'a [u8], &'a [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.next_a.is_none() {
+                log::trace!("src/node.rs:94");
+                if let Some((k, v)) = self.overlay.next() {
+                    log::trace!("next_a is now ({:?}, {:?})", k, v);
+                    self.next_a = Some((k.as_ref(), v.as_ref()));
+                }
+            }
+            if self.next_b.is_none()
+                && self.node.children() > self.node_position
+            {
+                self.next_b = Some((
+                    self.node.index_key(self.node_position),
+                    self.node.index_value(self.node_position),
+                ));
+                log::trace!("next_b is now {:?}", self.next_b);
+                self.node_position += 1;
+            }
+            match (self.next_a, self.next_b) {
+                (None, _) => {
+                    log::trace!("src/node.rs:112");
+                    log::trace!("iterator returning {:?}", self.next_b);
+                    return self.next_b.take();
+                }
+                (Some((_, None)), None) => {
+                    log::trace!("src/node.rs:113");
+                    self.next_a.take();
+                }
+                (Some((_, Some(_))), None) => {
+                    log::trace!("src/node.rs:114");
+                    log::trace!("iterator returning {:?}", self.next_a);
+                    return self
+                        .next_a
+                        .take()
+                        .map(|(k, v)| (k, v.unwrap().as_ref()));
+                }
+                (Some((k_a, Some(_))), Some((k_b, _))) if k_a > k_b => {
+                    log::trace!("src/node.rs:120");
+                    log::trace!("iterator returning {:?}", self.next_b);
+                    return self.next_b.take();
+                }
+                (Some((k_a, Some(_))), Some((k_b, _))) if k_a < k_b => {
+                    log::trace!("iterator returning {:?}", self.next_a);
+                    return self
+                        .next_a
+                        .take()
+                        .map(|(k, v)| (k, v.unwrap().as_ref()));
+                }
+                (Some((k_a, Some(_))), Some((k_b, _))) if k_a == k_b => {
+                    // prefer overlay, discard node value
+                    self.next_b.take();
+                    log::trace!("src/node.rs:133");
+                    log::trace!("iterator returning {:?}", self.next_a);
+                    return self
+                        .next_a
+                        .take()
+                        .map(|(k, v)| (k, v.unwrap().as_ref()));
+                }
+                (Some((k_a, None)), Some((k_b, _))) if k_a == k_b => {
+                    // skip tombstone and continue the loop
+                    log::trace!("src/node.rs:141");
+                    self.next_a.take();
+                    self.next_b.take();
+                }
+                (Some((k_a, None)), Some((k_b, _))) if k_a > k_b => {
+                    log::trace!("src/node.rs:146");
+                    // we do not clear a tombstone until we move past
+                    // it in the underlying node
+                    log::trace!("iterator returning {:?}", self.next_b);
+                    return self.next_b.take();
+                }
+                (Some((k_a, None)), Some((k_b, _))) if k_a < k_b => {
+                    log::trace!("src/node.rs:151");
+                    self.next_a.take();
+                }
+                _ => unreachable!(
+                    "did not expect combination a: {:?} b: {:?}",
+                    self.next_a, self.next_b
+                ),
+            }
+        }
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Node {
+    // the overlay accumulates new writes and tombstones
+    // for deletions that have not yet been merged
+    // into the inner backing node
+    pub(crate) overlay: Vec<(IVec, Option<IVec>)>,
+    inner: Arc<Inner>,
 }
 
 impl Clone for Node {
     fn clone(&self) -> Node {
-        unsafe { Node::from_raw(self.as_ref()) }
+        Node { inner: self.merge_overlay(), overlay: Default::default() }
     }
 }
 
-unsafe impl Sync for Node {}
-unsafe impl Send for Node {}
+impl Deref for Node {
+    type Target = Inner;
+    fn deref(&self) -> &Inner {
+        &self.inner
+    }
+}
 
-impl Drop for Node {
+impl Node {
+    fn iter(&self) -> Iter<'_> {
+        Iter {
+            overlay: self.overlay.iter(),
+            node: &self.inner,
+            node_position: 0,
+            next_a: None,
+            next_b: None,
+        }
+    }
+
+    pub(crate) fn iter_index_pids(&self) -> impl '_ + Iterator<Item = u64> {
+        log::trace!("iter_index_pids on node {:?}", self);
+        self.iter().map(|(_, v)| u64::from_le_bytes(v.try_into().unwrap()))
+    }
+
+    pub(crate) unsafe fn from_raw(buf: &[u8]) -> Node {
+        Node {
+            overlay: Default::default(),
+            inner: Arc::new(Inner::from_raw(buf)),
+        }
+    }
+
+    pub(crate) fn new_root(child_pid: u64) -> Node {
+        Node { overlay: vec![], inner: Arc::new(Inner::new_root(child_pid)) }
+    }
+
+    pub(crate) fn new_hoisted_root(left: u64, at: &[u8], right: u64) -> Node {
+        Node {
+            overlay: vec![],
+            inner: Arc::new(Inner::new_hoisted_root(left, at, right)),
+        }
+    }
+
+    pub(crate) fn new_empty_leaf() -> Node {
+        Node { overlay: vec![], inner: Arc::new(Inner::new_empty_leaf()) }
+    }
+
+    pub(crate) fn apply(&self, link: &Link) -> Node {
+        use self::Link::*;
+
+        assert!(
+            !self.inner.merging,
+            "somehow a link was applied to a node after it was merged"
+        );
+
+        match *link {
+            Set(ref k, ref v) => self.insert(k, v),
+            Del(ref key) => self.remove(key),
+            ParentMergeConfirm => {
+                assert!(self.merging_child.is_some());
+                let merged_child = self
+                    .merging_child
+                    .expect(
+                        "we should have a specific \
+                         child that was merged if this \
+                         link appears here",
+                    )
+                    .get();
+                let idx = self
+                    .iter_index_pids()
+                    .position(|pid| pid == merged_child)
+                    .unwrap();
+                let mut ret =
+                    self.remove(&self.index_key(idx).into()).merge_overlay();
+                Arc::get_mut(&mut ret).unwrap().merging_child = None;
+                Node { inner: ret, overlay: Default::default() }
+            }
+            ParentMergeIntention(pid) => {
+                assert!(
+                    self.can_merge_child(pid),
+                    "trying to merge {:?} into node {:?} which \
+                     is not a valid merge target",
+                    link,
+                    self
+                );
+                let mut ret = self.merge_overlay();
+                Arc::make_mut(&mut ret).merging_child =
+                    Some(NonZeroU64::new(pid).unwrap());
+                Node { inner: ret, overlay: vec![] }
+            }
+            ChildMergeCap => {
+                let mut ret = self.merge_overlay();
+                Arc::make_mut(&mut ret).merging = true;
+                Node { inner: ret, overlay: vec![] }
+            }
+        }
+    }
+
+    fn insert(&self, key: &IVec, value: &IVec) -> Node {
+        let search = self.overlay.binary_search_by_key(&key, |(k, _)| k);
+        let overlay = match search {
+            Ok(idx) => {
+                let mut overlay = self.overlay.clone();
+                overlay[idx].1 = Some(value.clone());
+                overlay
+            }
+            Err(idx) => {
+                let mut overlay = Vec::with_capacity(self.overlay.len() + 1);
+                overlay.extend_from_slice(&self.overlay);
+                overlay.insert(idx, (key.clone(), Some(value.clone())));
+                overlay
+            }
+        };
+        Node { overlay, inner: self.inner.clone() }
+    }
+
+    fn remove(&self, key: &IVec) -> Node {
+        let mut overlay = self.overlay.clone();
+        let search = overlay.binary_search_by_key(&key, |(k, _)| k);
+        match search {
+            Ok(idx) => overlay[idx].1 = None,
+            Err(idx) => overlay.insert(idx, (key.clone(), None)),
+        }
+        let ret = Node { overlay, inner: self.inner.clone() };
+        log::trace!(
+            "applying removal of key {:?} results in node {:?}",
+            key,
+            ret
+        );
+        ret
+    }
+
+    pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
+        self.overlay.binary_search_by_key(&key, |(k, _)| k).is_ok()
+            || self.inner.contains_key(key)
+    }
+
+    // Push the overlay into the backing node.
+    fn merge_overlay(&self) -> Arc<Inner> {
+        if self.overlay.is_empty() {
+            return self.inner.clone();
+        };
+        let items: Vec<(&[u8], &[u8])> = self.iter().collect();
+
+        log::trace!(
+            "merging overlay items for node {:?} into {:?}",
+            self,
+            items
+        );
+
+        let mut ret = Inner::new(
+            self.lo(),
+            self.hi(),
+            self.prefix_len,
+            self.is_index,
+            self.next,
+            &items,
+        );
+
+        ret.merging = self.merging;
+        ret.merging_child = self.merging_child;
+
+        log::trace!("merged node {:?} into {:?}", self, ret);
+        Arc::new(ret)
+    }
+
+    pub(crate) fn set_next(&mut self, next: Option<NonZeroU64>) {
+        Arc::get_mut(&mut self.inner).unwrap().next = next;
+    }
+
+    pub(crate) fn increment_rewrite_generations(&mut self) {
+        let rewrite_generations = self.rewrite_generations;
+        Arc::make_mut(&mut self.inner).rewrite_generations =
+            rewrite_generations.saturating_add(1);
+    }
+
+    pub(crate) fn receive_merge(&self, other: &Node) -> Node {
+        log::trace!("receiving merge, left: {:?} right: {:?}", self, other);
+        let left = self.merge_overlay();
+        let right = other.merge_overlay();
+        log::trace!(
+            "overlays should now be merged: left: {:?} right: {:?}",
+            left,
+            right
+        );
+
+        let ret = Node {
+            overlay: Default::default(),
+            inner: Arc::new(left.receive_merge(&right)),
+        };
+
+        log::trace!("merge created node {:?}", ret);
+        ret
+    }
+    pub(crate) fn split(&self) -> (Node, Node) {
+        let (lhs_inner, rhs_inner) = self.merge_overlay().split();
+        let lhs =
+            Node { inner: Arc::new(lhs_inner), overlay: Default::default() };
+        let rhs =
+            Node { inner: Arc::new(rhs_inner), overlay: Default::default() };
+
+        (lhs, rhs)
+    }
+
+    pub(crate) fn parent_split(&self, at: &[u8], to: u64) -> Option<Node> {
+        let encoded_sep = &at[self.prefix_len as usize..];
+        if self.contains_key(encoded_sep) {
+            log::debug!(
+                "parent_split skipped because \
+                parent already contains child with key {:?} \
+                at split point due to deep race",
+                at
+            );
+            return None;
+        }
+
+        let mut overlay = self.overlay.clone();
+
+        let value = Some(to.to_le_bytes().as_ref().into());
+
+        let search = overlay.binary_search_by_key(&encoded_sep, |(k, _)| k);
+        match search {
+            Ok(idx) => overlay[idx].1 = value,
+            Err(idx) => overlay.insert(idx, (encoded_sep.into(), value)),
+        }
+
+        let new_inner =
+            Node { overlay, inner: self.inner.clone() }.merge_overlay();
+
+        Some(Node { overlay: Default::default(), inner: new_inner })
+    }
+
+    pub(crate) fn node_kv_pair<'a>(
+        &'a self,
+        key: &'a [u8],
+    ) -> (&'a [u8], Option<&'a [u8]>) {
+        let encoded_key = self.prefix_encode(key);
+        if let Ok(idx) =
+            self.overlay.binary_search_by_key(&encoded_key, |(k, _)| k)
+        {
+            let v = self.overlay[idx].1.as_ref();
+            (encoded_key, v.map(AsRef::as_ref))
+        } else {
+            self.inner.node_kv_pair(key)
+        }
+    }
+
+    pub(crate) fn successor(
+        &self,
+        bound: &Bound<IVec>,
+    ) -> Option<(IVec, IVec)> {
+        let (overlay, node_position) = match bound {
+            Bound::Unbounded => (self.overlay.iter(), 0),
+            Bound::Included(b) => {
+                let overlay_search =
+                    self.overlay.binary_search_by_key(&b, |(k, _)| k);
+                let overlay = match overlay_search {
+                    Ok(idx) => {
+                        if let (k, Some(v)) = &self.overlay[idx] {
+                            // short circuit return
+                            return Some((k.clone(), v.clone()));
+                        }
+                        self.overlay[idx + 1..].iter()
+                    }
+                    Err(idx) => self.overlay[idx..].iter(),
+                };
+
+                let inner_search = self.find(b);
+                let node_position = match inner_search {
+                    Ok(idx) => {
+                        return Some((
+                            self.inner.index_key(idx).into(),
+                            self.inner.index_value(idx).into(),
+                        ))
+                    }
+                    Err(idx) => idx,
+                };
+
+                (overlay, node_position)
+            }
+            Bound::Excluded(b) => {
+                let overlay_search =
+                    self.overlay.binary_search_by_key(&b, |(k, _)| k);
+                let overlay = match overlay_search {
+                    Ok(idx) => self.overlay[idx + 1..].iter(),
+                    Err(idx) => self.overlay[idx..].iter(),
+                };
+
+                let inner_search = self.find(b);
+                let node_position = match inner_search {
+                    Ok(idx) => {
+                        // short circuit return
+                        idx + 1
+                    }
+                    Err(idx) => idx,
+                };
+
+                (overlay, node_position)
+            }
+        };
+
+        let in_bounds = |k| match bound {
+            Bound::Unbounded => true,
+            Bound::Included(b) => &b[self.prefix_len as usize..] <= k,
+            Bound::Excluded(b) => &b[self.prefix_len as usize..] < k,
+        };
+
+        let mut iter = Iter {
+            overlay,
+            node: &self.inner,
+            node_position,
+            next_a: None,
+            next_b: None,
+        };
+
+        let ret: Option<(&[u8], &[u8])> = iter.find(|(k, _)| in_bounds(k));
+
+        ret.map(|(k, v)| (self.prefix_decode(k), v.into()))
+    }
+
+    pub(crate) fn predecessor(
+        &self,
+        bound: &Bound<IVec>,
+    ) -> Option<(IVec, IVec)> {
+        let in_bounds = |k| match bound {
+            Bound::Unbounded => true,
+            Bound::Included(b) => &b[self.prefix_len as usize..] >= k,
+            Bound::Excluded(b) => &b[self.prefix_len as usize..] > k,
+        };
+
+        let ret: Option<(&[u8], &[u8])> = self
+            .iter()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .find(|(k, _)| in_bounds(k));
+
+        ret.map(|(k, v)| (self.prefix_decode(k), v.into()))
+    }
+
+    pub(crate) fn index_next_node(&self, key: &[u8]) -> (bool, u64) {
+        log::debug!("index_next_node for key {:?} on node {:?}", key, self);
+        assert!(key >= self.lo());
+        if let Some(hi) = self.hi() {
+            assert!(hi > key);
+        }
+
+        let encoded_key = self.prefix_encode(key);
+
+        let idx = match self.find(encoded_key) {
+            Ok(idx) => idx,
+            Err(idx) => idx - 1,
+        };
+
+        let is_leftmost = idx == 0;
+        let pid_bytes = self.index_value(idx);
+        let pid = u64::from_le_bytes(pid_bytes.try_into().unwrap());
+
+        (is_leftmost, pid)
+    }
+
+    pub(crate) fn should_split(&self) -> bool {
+        log::trace!("seeing if we should split node {:?}", self);
+        let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
+            self.iter().take(4).count() > 4
+        } else if self.is_index {
+            self.len > 1024 && self.rss() > 1
+        } else {
+            /*
+            let threshold = match self.rewrite_generations {
+                0 => 24 * 1024,
+                1 => {
+                    64 * 1024
+                }
+                other => {
+                    128 * 1024
+                }
+            };
+            */
+            let threshold = 4 * 1024 - crate::MAX_MSG_HEADER_LEN;
+            self.len > threshold && self.iter().next().is_some()
+        };
+
+        let safety_checks = self.merging_child.is_none() && !self.merging;
+
+        if size_check {
+            log::trace!(
+                "should_split: {} is index: {} children: {} size: {}",
+                safety_checks && size_check,
+                self.is_index,
+                self.children,
+                self.rss()
+            );
+        }
+
+        safety_checks && size_check
+    }
+
+    pub(crate) fn should_merge(&self) -> bool {
+        let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
+            self.iter().take(2).count() < 2
+        /*
+        } else if self.is_index {
+            self.len < 4 * 1024
+        */
+        } else {
+            /*
+            let threshold = match self.rewrite_generations {
+                0 => 10 * 1024,
+                1 => 30 * 1024,
+                other => {
+                    64 * 1024
+                }
+            };
+            */
+            let threshold = 256 - crate::MAX_MSG_HEADER_LEN;
+            self.len < threshold
+        };
+
+        let safety_checks = self.merging_child.is_none()
+            && !self.merging
+            && self.probation_ops_remaining == 0;
+
+        safety_checks && size_check
+    }
+}
+
+/// An immutable sorted string table
+#[must_use]
+pub struct Inner {
+    ptr: *mut u8,
+    pub len: usize,
+}
+
+impl PartialEq<Inner> for Inner {
+    fn eq(&self, other: &Inner) -> bool {
+        self.as_ref().eq(other.as_ref())
+    }
+}
+
+impl Clone for Inner {
+    fn clone(&self) -> Inner {
+        unsafe { Inner::from_raw(self.as_ref()) }
+    }
+}
+
+unsafe impl Sync for Inner {}
+unsafe impl Send for Inner {}
+
+impl Drop for Inner {
     fn drop(&mut self) {
         let layout = Layout::from_size_align(self.len, ALIGNMENT).unwrap();
         unsafe {
@@ -106,19 +643,19 @@ impl Drop for Node {
     }
 }
 
-impl AsRef<[u8]> for Node {
+impl AsRef<[u8]> for Inner {
     fn as_ref(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
 }
 
-impl AsMut<[u8]> for Node {
+impl AsMut<[u8]> for Inner {
     fn as_mut(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
     }
 }
 
-impl Deref for Node {
+impl Deref for Inner {
     type Target = Header;
 
     fn deref(&self) -> &Header {
@@ -126,9 +663,9 @@ impl Deref for Node {
     }
 }
 
-impl fmt::Debug for Node {
+impl fmt::Debug for Inner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut ds = f.debug_struct("Node");
+        let mut ds = f.debug_struct("Inner");
 
         ds.field("header", self.header())
             .field("lo", &self.lo())
@@ -149,14 +686,14 @@ impl fmt::Debug for Node {
     }
 }
 
-impl DerefMut for Node {
+impl DerefMut for Inner {
     fn deref_mut(&mut self) -> &mut Header {
         self.header_mut()
     }
 }
 
-impl Node {
-    pub(crate) unsafe fn from_raw(buf: &[u8]) -> Node {
+impl Inner {
+    unsafe fn from_raw(buf: &[u8]) -> Inner {
         let mut ret = uninitialized_node(buf.len());
         ret.as_mut().copy_from_slice(buf);
         ret
@@ -169,7 +706,7 @@ impl Node {
         is_index: bool,
         next: Option<NonZeroU64>,
         items: &[(&[u8], &[u8])],
-    ) -> Node {
+    ) -> Inner {
         assert!(items.len() <= std::u16::MAX as usize);
 
         // determine if we need to use varints and offset
@@ -261,11 +798,11 @@ impl Node {
         {
             (0, 0)
         } else {
-            let max_offset_storage_size = (6 * items.len()) as u64;
-            let max_total_item_storage_size =
-                key_storage_size + value_storage_size + max_offset_storage_size;
+            let max_indexable_offset =
+                if keys_equal_length { 0 } else { key_storage_size }
+                    + if values_equal_length { 0 } else { value_storage_size };
 
-            let bytes_per_offset: u8 = match max_total_item_storage_size {
+            let bytes_per_offset: u8 = match max_indexable_offset {
                 i if i < 256 => 1,
                 i if i < (1 << 16) => 2,
                 i if i < (1 << 24) => 3,
@@ -359,6 +896,10 @@ impl Node {
             value_buf[..v.len()].copy_from_slice(v);
         }
 
+        if ret.is_index {
+            assert!(!ret.is_empty())
+        }
+
         testing_assert!(
             ret.is_sorted(),
             "created new node is not sorted: {:?}, had items passed in: {:?}",
@@ -369,8 +910,8 @@ impl Node {
         ret
     }
 
-    pub(crate) fn new_root(child_pid: u64) -> Node {
-        Node::new(
+    fn new_root(child_pid: u64) -> Inner {
+        Inner::new(
             &[],
             None,
             0,
@@ -380,8 +921,8 @@ impl Node {
         )
     }
 
-    pub(crate) fn new_hoisted_root(left: u64, at: &[u8], right: u64) -> Node {
-        Node::new(
+    fn new_hoisted_root(left: u64, at: &[u8], right: u64) -> Inner {
+        Inner::new(
             &[],
             None,
             0,
@@ -394,8 +935,8 @@ impl Node {
         )
     }
 
-    pub(crate) fn new_empty_leaf() -> Node {
-        Node::new(&[], None, 0, true, None, &[])
+    fn new_empty_leaf() -> Inner {
+        Inner::new(&[], None, 0, false, None, &[])
     }
 
     // returns the OPEN ENDED buffer where a key may be placed
@@ -571,538 +1112,6 @@ impl Node {
         &mut self.as_mut()[start..]
     }
 
-    pub(crate) fn apply(&self, link: &Link) -> Node {
-        use self::Link::*;
-
-        assert!(
-            !self.merging,
-            "somehow a link was applied to a node after it was merged"
-        );
-
-        match *link {
-            Set(ref k, ref v) => self.insert(k, v),
-            Replace(index, ref v) => self.replace(index, v),
-            Del(index) => self.remove_index(index),
-            ParentMergeIntention(pid) => {
-                assert!(
-                    self.can_merge_child(pid),
-                    "trying to merge {:?} into node {:?} which \
-                     is not a valid merge target",
-                    link,
-                    self
-                );
-                let mut clone = self.clone();
-                clone.merging_child = Some(NonZeroU64::new(pid).unwrap());
-                clone
-            }
-            ParentMergeConfirm => {
-                assert!(self.merging_child.is_some());
-                let merged_child = self
-                    .merging_child
-                    .expect(
-                        "we should have a specific \
-                     child that was merged if this \
-                     link appears here",
-                    )
-                    .get();
-                let idx = self
-                    .iter_index_pids()
-                    .position(|pid| pid == merged_child)
-                    .unwrap();
-                let mut ret = self.remove_index(idx);
-                ret.merging_child = None;
-                ret
-            }
-            ChildMergeCap => {
-                let mut ret = self.clone();
-                ret.merging = true;
-                ret
-            }
-        }
-    }
-
-    fn stitch(
-        &self,
-        index: usize,
-        new_item: Option<(&[u8], &[u8])>,
-        replace: bool,
-    ) -> Node {
-        log::trace!(
-            "stitching item {:?} replace: {} index: {} \
-            into node {:?}",
-            new_item,
-            replace,
-            index,
-            self
-        );
-
-        let children = if new_item.is_none() {
-            self.children - 1
-        } else if replace {
-            self.children
-        } else {
-            self.children + 1
-        };
-
-        let take_slow_path = if let Some((k, v)) = new_item {
-            let new_max_sz = self.len
-                + varint::size(k.len() as u64)
-                + k.len()
-                + varint::size(v.len() as u64)
-                + v.len()
-                + 6;
-
-            let new_offset_bytes = match new_max_sz {
-                i if i < 256 => 1,
-                i if i < (1 << 16) => 2,
-                i if i < (1 << 24) => 3,
-                i if i < (1 << 32) => 4,
-                i if i < (1 << 40) => 5,
-                i if i < (1 << 48) => 6,
-                _ => unreachable!(),
-            };
-
-            let requires_offset_expansion =
-                new_offset_bytes > self.offset_bytes;
-
-            let violates_fixed_key_length =
-                if let Some(fkl) = self.fixed_key_length {
-                    fkl.get() != k.len() as u64
-                } else {
-                    false
-                };
-
-            let violates_fixed_value_length =
-                if let Some(fvl) = self.fixed_value_length {
-                    fvl.get() != v.len() as u64
-                } else {
-                    false
-                };
-
-            requires_offset_expansion
-                || violates_fixed_key_length
-                || violates_fixed_value_length
-        } else {
-            false
-        };
-
-        if take_slow_path {
-            let items: Vec<_> = self
-                .iter()
-                .take(index)
-                .chain(new_item)
-                .chain(self.iter().skip(index + if replace { 1 } else { 0 }))
-                .collect();
-
-            let mut ret = Node::new(
-                self.lo(),
-                self.hi(),
-                self.prefix_len,
-                self.is_index,
-                self.next,
-                &items,
-            );
-
-            if ret.children > 1 {
-                // if we have 1 existing child and our insert index is 1,
-                // we want to set the max activity bit. if the index is 0
-                // we want to set the min activity bit. as we get more
-                // items, we generally want to set the bit that is
-                // proportionally
-                let activity_sketch_bit = if index == self.children as usize {
-                    7
-                } else {
-                    (index * 8) / self.children as usize
-                };
-                assert!(activity_sketch_bit <= 7);
-                let activity_byte = 1_u8 << activity_sketch_bit;
-                ret.activity_sketch = activity_byte | self.activity_sketch;
-            }
-
-            testing_assert!(ret.is_sorted());
-
-            return ret;
-        }
-
-        let existing_item_size = if replace {
-            let k = self.index_key(index);
-            let v = self.index_value(index);
-
-            self.offset_bytes as usize
-                + k.len()
-                + v.len()
-                + if self.fixed_key_length.is_some() {
-                    0
-                } else {
-                    varint::size(k.len() as u64)
-                }
-                + if self.fixed_value_length.is_some() {
-                    0
-                } else {
-                    varint::size(v.len() as u64)
-                }
-        } else {
-            0
-        };
-
-        let new_item_size = if let Some((k, v)) = new_item {
-            self.offset_bytes as usize
-                + k.len()
-                + v.len()
-                + if self.fixed_key_length.is_some() {
-                    0
-                } else {
-                    varint::size(k.len() as u64)
-                }
-                + if self.fixed_value_length.is_some() {
-                    0
-                } else {
-                    varint::size(v.len() as u64)
-                }
-        } else {
-            0
-        };
-
-        let diff: isize =
-            tf!(new_item_size, isize) - tf!(existing_item_size, isize);
-
-        let allocation_size = tf!(tf!(self.len, isize) + diff);
-
-        let mut ret = uninitialized_node(allocation_size);
-
-        *ret.header_mut() = Header {
-            children,
-            probation_ops_remaining: self
-                .probation_ops_remaining
-                .saturating_sub(1),
-            ..**self
-        };
-
-        // set lo and hi keys
-        ret.lo_mut().copy_from_slice(self.lo());
-        if let Some(ref mut hi_buf) = ret.hi_mut() {
-            hi_buf.copy_from_slice(self.hi().unwrap());
-        }
-
-        if ret.offset_bytes > 0 {
-            // set offsets, properly shifted after index
-            let mut offset_shift: isize = if self.fixed_key_length.is_none() {
-                let old_key_bytes = if replace {
-                    let old_key = self.index_key(index);
-                    old_key.len() + varint::size(old_key.len() as u64)
-                } else {
-                    0
-                };
-
-                let new_key_bytes = if let Some((new_key, _)) = new_item {
-                    new_key.len() + varint::size(new_key.len() as u64)
-                } else {
-                    0
-                };
-
-                tf!(new_key_bytes, isize) - tf!(old_key_bytes, isize)
-            } else {
-                0
-            };
-
-            if self.fixed_value_length.is_none() {
-                let old_value_bytes = if replace {
-                    let old_value = self.index_value(index);
-                    old_value.len() + varint::size(old_value.len() as u64)
-                } else {
-                    0
-                };
-
-                let new_value_bytes = if let Some((_, new_value)) = new_item {
-                    new_value.len() + varint::size(new_value.len() as u64)
-                } else {
-                    0
-                };
-
-                let value_shift =
-                    tf!(new_value_bytes, isize) - tf!(old_value_bytes, isize);
-
-                offset_shift += value_shift
-            };
-
-            // just copy the offsets before the index
-            let start = tf!(ret.lo_len) + tf!(ret.hi_len) + size_of::<Header>();
-            let end = start + (index * ret.offset_bytes as usize);
-
-            ret.as_mut()[start..end]
-                .copy_from_slice(&self.as_ref()[start..end]);
-
-            let previous_offset =
-                if index > 0 { ret.offset(index - 1) } else { 0 };
-
-            let previous_item_size = if index > 0 {
-                let mut previous_item_size = 0;
-                if ret.fixed_key_length.is_none() {
-                    let prev_key = self.index_key(index - 1);
-                    previous_item_size +=
-                        prev_key.len() + varint::size(prev_key.len() as u64);
-                }
-                if ret.fixed_value_length.is_none() {
-                    let prev_value = self.index_value(index - 1);
-                    previous_item_size += prev_value.len()
-                        + varint::size(prev_value.len() as u64);
-                }
-                previous_item_size
-            } else {
-                0
-            };
-
-            // set offset at index to previous index + previous size
-            if children > 0 {
-                ret.set_offset(index, previous_offset + previous_item_size);
-            }
-
-            if ret.children > 0 {
-                for i in (index + 1)..ret.children as usize {
-                    // shift the old index down
-                    let old_offset = self.offset(if replace {
-                        if new_item.is_some() {
-                            i
-                        } else {
-                            i + 1
-                        }
-                    } else {
-                        i - 1
-                    });
-                    let shifted_offset =
-                        tf!(tf!(old_offset, isize) + offset_shift);
-                    ret.set_offset(i, shifted_offset);
-                }
-            }
-        }
-
-        // write keys, possibly performing some copy optimizations
-        if let Some(fixed_key_length) = self.fixed_key_length {
-            let fixed_key_length = tf!(fixed_key_length.get());
-
-            let self_offset_sz =
-                self.children as usize * self.offset_bytes as usize;
-            let self_keys_buf = &self.data_buf()[self_offset_sz..];
-
-            let ret_offset_sz =
-                ret.children as usize * ret.offset_bytes as usize;
-            let ret_keys_buf = &mut ret.data_buf_mut()[ret_offset_sz..];
-
-            let prelude = index * fixed_key_length;
-            ret_keys_buf[..prelude].copy_from_slice(&self_keys_buf[..prelude]);
-
-            let item_end =
-                prelude + if new_item.is_some() { fixed_key_length } else { 0 };
-
-            if let Some((k, _)) = new_item {
-                ret_keys_buf[prelude..item_end].copy_from_slice(k);
-            }
-
-            let remaining_items = (children as usize)
-                - index
-                - if new_item.is_some() { 1 } else { 0 };
-
-            let ret_prologue_start = item_end;
-            let ret_prologue_end =
-                item_end + (remaining_items * fixed_key_length);
-
-            let self_prologue_end = (self.children as usize) * fixed_key_length;
-            let self_prologue_start =
-                self_prologue_end - (remaining_items * fixed_key_length);
-
-            ret_keys_buf[ret_prologue_start..ret_prologue_end].copy_from_slice(
-                &self_keys_buf[self_prologue_start..self_prologue_end],
-            );
-        } else {
-            for idx in 0..index {
-                let k = self.index_key(idx);
-                let mut key_buf = ret.key_buf_for_offset_mut(idx);
-                let varint_bytes =
-                    varint::serialize_into(k.len() as u64, key_buf);
-                key_buf = &mut key_buf[varint_bytes..];
-                key_buf[..k.len()].copy_from_slice(k);
-            }
-
-            if let Some((k, _)) = new_item {
-                let mut key_buf = ret.key_buf_for_offset_mut(index);
-                let varint_bytes =
-                    varint::serialize_into(k.len() as u64, key_buf);
-                key_buf = &mut key_buf[varint_bytes..];
-                key_buf[..k.len()].copy_from_slice(k);
-            }
-
-            let start = index + if replace { 1 } else { 0 };
-
-            for idx in start..self.children as usize {
-                let self_idx = idx;
-                let ret_idx = if replace {
-                    if new_item.is_some() {
-                        idx
-                    } else {
-                        idx - 1
-                    }
-                } else {
-                    idx + 1
-                };
-                let k = self.index_key(self_idx);
-                let mut key_buf = ret.key_buf_for_offset_mut(ret_idx);
-                let varint_bytes =
-                    varint::serialize_into(k.len() as u64, key_buf);
-                key_buf = &mut key_buf[varint_bytes..];
-                key_buf[..k.len()].copy_from_slice(k);
-            }
-        }
-
-        // write values, possibly performing some copy optimizations
-        if let Some(fixed_value_length) = self.fixed_value_length {
-            let fixed_value_length = tf!(fixed_value_length.get());
-
-            let self_values_sz = self.children as usize * fixed_value_length;
-            let self_data_buf = self.data_buf();
-            let self_values_buf =
-                &self_data_buf[self_data_buf.len() - self_values_sz..];
-
-            let ret_values_sz = ret.children as usize * fixed_value_length;
-            let ret_data_buf = ret.data_buf_mut();
-            let ret_values_start = ret_data_buf.len() - ret_values_sz;
-            let ret_values_buf = &mut ret_data_buf[ret_values_start..];
-
-            let prelude = index * fixed_value_length;
-            ret_values_buf[..prelude]
-                .copy_from_slice(&self_values_buf[..prelude]);
-
-            let item_end = prelude
-                + if new_item.is_some() { fixed_value_length } else { 0 };
-
-            if let Some((_, v)) = new_item {
-                ret_values_buf[prelude..item_end].copy_from_slice(v);
-            }
-
-            let remaining_items = (children as usize)
-                - index
-                - if new_item.is_some() { 1 } else { 0 };
-            let remaining_length = remaining_items * fixed_value_length;
-
-            let ret_prologue_start = ret_values_buf.len() - remaining_length;
-            let self_prologue_start = self_values_buf.len() - remaining_length;
-
-            ret_values_buf[ret_prologue_start..]
-                .copy_from_slice(&self_values_buf[self_prologue_start..]);
-        } else {
-            for idx in 0..index {
-                let v = self.index_value(idx);
-                let mut value_buf = ret.value_buf_for_offset_mut(idx);
-                let varint_bytes =
-                    varint::serialize_into(v.len() as u64, value_buf);
-                value_buf = &mut value_buf[varint_bytes..];
-                value_buf[..v.len()].copy_from_slice(v);
-            }
-
-            if let Some((_, v)) = new_item {
-                let mut value_buf = ret.value_buf_for_offset_mut(index);
-                let varint_bytes =
-                    varint::serialize_into(v.len() as u64, value_buf);
-                value_buf = &mut value_buf[varint_bytes..];
-                value_buf[..v.len()].copy_from_slice(v);
-            }
-
-            let start = index + if replace { 1 } else { 0 };
-
-            for idx in start..self.children as usize {
-                let self_idx = idx;
-                let ret_idx = if replace {
-                    if new_item.is_some() {
-                        idx
-                    } else {
-                        idx - 1
-                    }
-                } else {
-                    idx + 1
-                };
-                let v = self.index_value(self_idx);
-                let mut value_buf = ret.value_buf_for_offset_mut(ret_idx);
-                let varint_bytes =
-                    varint::serialize_into(v.len() as u64, value_buf);
-                value_buf = &mut value_buf[varint_bytes..];
-                value_buf[..v.len()].copy_from_slice(v);
-            }
-        }
-
-        testing_assert!(
-            ret.is_sorted(),
-            "after stitching item {:?} replace: {} index: {} \
-            into node {:?}, ret is not sorted: {:?}",
-            new_item,
-            replace,
-            index,
-            self,
-            ret
-        );
-
-        if let Some((k, v)) = new_item {
-            assert_eq!(k, ret.index_key(index));
-            assert_eq!(v, ret.index_value(index));
-        } else if index < ret.children() {
-            assert_ne!(self.index_key(index), ret.index_key(index));
-        }
-
-        ret
-    }
-
-    fn remove_index(&self, index: usize) -> Node {
-        log::trace!("removing index {} for node {:?}", index, self);
-        assert!(self.children() > index);
-        self.stitch(index, None, true)
-    }
-
-    fn insert(&self, key: &[u8], value: &[u8]) -> Node {
-        assert!(!self.merging);
-        assert!(self.merging_child.is_none());
-
-        let index = if let Err(prospective_offset) = self.find(key) {
-            prospective_offset
-        } else {
-            panic!(
-                "trying to insert key into node that already contains that key"
-            );
-        };
-
-        self.stitch(index, Some((key, value)), false)
-    }
-
-    fn replace(&self, index: usize, value: &[u8]) -> Node {
-        assert!(!self.merging);
-        assert!(self.merging_child.is_none());
-
-        // possibly short-circuit more expensive node recreation logic
-        if self.index_value(index).len() == value.len() {
-            let mut ret = self.clone();
-            let requires_varint = ret.fixed_value_length.is_none();
-            let mut value_buf = ret.value_buf_for_offset_mut(index);
-            if requires_varint {
-                // skip the varint bytes, which will be unchanged
-                let varint_bytes = varint::size(value.len() as u64);
-                value_buf = &mut value_buf[varint_bytes..];
-            }
-
-            value_buf[..value.len()].copy_from_slice(value);
-
-            testing_assert!(
-                ret.is_sorted(),
-                "after replacing in-place item {:?} index: {} \
-                into node {:?}, ret is not sorted: {:?}",
-                value,
-                index,
-                self,
-                ret
-            );
-
-            return ret;
-        }
-
-        self.stitch(index, Some((self.index_key(index), value)), true)
-    }
-
     fn weighted_split_point(&self) -> usize {
         let bits_set = self.activity_sketch.count_ones() as usize;
 
@@ -1126,7 +1135,7 @@ impl Node {
             .max(1)
     }
 
-    pub(crate) fn split(&self) -> (Node, Node) {
+    fn split(&self) -> (Inner, Inner) {
         assert!(self.children() >= 2);
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
@@ -1179,19 +1188,37 @@ impl Node {
         }
 
         log::trace!(
-            "splitting node with lo: {:?} split_key: {:?} hi: {:?}",
+            "splitting node with lo: {:?} split_key: {:?} hi: {:?} prefix_len {}",
             self.lo(),
             split_key,
-            self.hi()
+            self.hi(),
+            self.prefix_len
         );
 
+        #[cfg(test)]
+        use rand::Rng;
+
         // prefix encoded length can only grow or stay the same
+        // during splits
+        #[cfg(test)]
+        let test_jitter_left = rand::thread_rng().gen_range(0, 16);
+
+        #[cfg(not(test))]
+        let test_jitter_left = std::u8::MAX as usize;
+
         let additional_left_prefix = self.lo()[self.prefix_len as usize..]
             .iter()
             .zip(split_key[self.prefix_len as usize..].iter())
             .take((std::u8::MAX - self.prefix_len) as usize)
             .take_while(|(a, b)| a == b)
-            .count();
+            .count()
+            .min(test_jitter_left);
+
+        #[cfg(test)]
+        let test_jitter_right = rand::thread_rng().gen_range(0, 16);
+
+        #[cfg(not(test))]
+        let test_jitter_right = std::u8::MAX as usize;
 
         let additional_right_prefix = if let Some(hi) = self.hi() {
             split_key[self.prefix_len as usize..]
@@ -1200,10 +1227,16 @@ impl Node {
                 .take((std::u8::MAX - self.prefix_len) as usize)
                 .take_while(|(a, b)| a == b)
                 .count()
+                .min(test_jitter_right)
         } else {
             0
         };
 
+        log::trace!(
+            "trying to add additional left prefix length {} to items {:?}",
+            additional_left_prefix,
+            self.iter().take(split_point).collect::<Vec<_>>()
+        );
         let left_items: Vec<_> = self
             .iter()
             .take(split_point)
@@ -1216,7 +1249,7 @@ impl Node {
             .map(|(k, v)| (&k[additional_right_prefix..], v))
             .collect();
 
-        let mut left = Node::new(
+        let mut left = Inner::new(
             self.lo(),
             Some(&split_key),
             self.prefix_len + tf!(additional_left_prefix, u8),
@@ -1227,7 +1260,7 @@ impl Node {
 
         left.rewrite_generations = self.rewrite_generations;
 
-        let mut right = Node::new(
+        let mut right = Inner::new(
             &split_key,
             self.hi(),
             self.prefix_len + tf!(additional_right_prefix, u8),
@@ -1262,49 +1295,66 @@ impl Node {
         (left, right)
     }
 
-    pub(crate) fn receive_merge(&self, other: &Node) -> Node {
+    fn receive_merge(&self, other: &Inner) -> Inner {
+        log::trace!(
+            "merging node receiving merge left: {:?} right: {:?}",
+            self,
+            other
+        );
         assert_eq!(self.hi(), Some(other.lo()));
         assert_eq!(self.is_index, other.is_index);
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
 
         let extended_keys: Vec<_>;
-        let items: Vec<_> = if self.prefix_len == other.prefix_len {
-            self.iter().chain(other.iter()).collect()
-        } else if self.prefix_len > other.prefix_len {
-            extended_keys = self
-                .iter_keys()
-                .map(|k| {
-                    prefix::reencode(
-                        self.prefix(),
-                        k,
-                        other.prefix_len as usize,
-                    )
-                })
-                .collect();
-            let left_items =
-                extended_keys.iter().map(AsRef::as_ref).zip(self.iter_values());
-            left_items.chain(other.iter()).collect()
-        } else {
-            // self.prefix_len < other.prefix_len
-            extended_keys = other
-                .iter_keys()
-                .map(|k| {
-                    prefix::reencode(
-                        other.prefix(),
-                        k,
-                        self.prefix_len as usize,
-                    )
-                })
-                .collect();
-            let right_items = extended_keys
-                .iter()
-                .map(AsRef::as_ref)
-                .zip(other.iter_values());
-            self.iter().chain(right_items).collect()
+        let items: Vec<_> = match self.prefix_len.cmp(&other.prefix_len) {
+            Equal => {
+                log::trace!(
+                    "keeping equal prefix lengths of {}",
+                    other.prefix_len
+                );
+                self.iter().chain(other.iter()).collect()
+            }
+            Greater => {
+                extended_keys = self
+                    .iter_keys()
+                    .map(|k| {
+                        prefix::reencode(
+                            self.prefix(),
+                            k,
+                            other.prefix_len as usize,
+                        )
+                    })
+                    .collect();
+                log::trace!("reencoding left items to have shorter prefix len of {}, new items: {:?}", other.prefix_len, extended_keys);
+                let left_items = extended_keys
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .zip(self.iter_values());
+                left_items.chain(other.iter()).collect()
+            }
+            Less => {
+                // self.prefix_len < other.prefix_len
+                extended_keys = other
+                    .iter_keys()
+                    .map(|k| {
+                        prefix::reencode(
+                            other.prefix(),
+                            k,
+                            self.prefix_len as usize,
+                        )
+                    })
+                    .collect();
+                log::trace!("reencoding right items to have shorter prefix len of {}, new items: {:?}", self.prefix_len, extended_keys);
+                let right_items = extended_keys
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .zip(other.iter_values());
+                self.iter().chain(right_items).collect()
+            }
         };
 
-        let mut ret = Node::new(
+        let mut ret = Inner::new(
             self.lo(),
             other.hi(),
             self.prefix_len.min(other.prefix_len),
@@ -1321,62 +1371,6 @@ impl Node {
         ret
     }
 
-    pub(crate) fn should_split(&self) -> bool {
-        let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
-            self.children() > 4
-        /*
-        } else if self.is_index {
-            self.len > 32 * 1024 && self.len() > 1
-        */
-        } else {
-            /*
-            let threshold = match self.rewrite_generations {
-                0 => 24 * 1024,
-                1 => {
-                    64 * 1024
-                }
-                other => {
-                    128 * 1024
-                }
-            };
-            */
-            let threshold = 1024 - crate::MAX_MSG_HEADER_LEN;
-            self.len > threshold && self.children() > 1
-        };
-
-        let safety_checks = self.merging_child.is_none() && !self.merging;
-
-        safety_checks && size_check
-    }
-
-    pub(crate) fn should_merge(&self) -> bool {
-        let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
-            self.children() < 2
-        /*
-        } else if self.is_index {
-            self.len < 4 * 1024
-        */
-        } else {
-            /*
-            let threshold = match self.rewrite_generations {
-                0 => 10 * 1024,
-                1 => 30 * 1024,
-                other => {
-                    64 * 1024
-                }
-            };
-            */
-            let threshold = 256 - crate::MAX_MSG_HEADER_LEN;
-            self.len < threshold
-        };
-
-        let safety_checks = self.merging_child.is_none()
-            && !self.merging
-            && self.probation_ops_remaining == 0;
-
-        safety_checks && size_check
-    }
-
     fn header(&self) -> &Header {
         assert_eq!(self.ptr as usize % 8, 0);
         unsafe { &*(self.ptr as *mut u64 as *mut Header) }
@@ -1386,7 +1380,7 @@ impl Node {
         unsafe { &mut *(self.ptr as *mut Header) }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.children() == 0
     }
 
@@ -1394,11 +1388,11 @@ impl Node {
         self.len as u64
     }
 
-    pub(crate) fn children(&self) -> usize {
+    fn children(&self) -> usize {
         usize::from(self.children)
     }
 
-    pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
+    fn contains_key(&self, key: &[u8]) -> bool {
         self.find(key).is_ok()
     }
 
@@ -1436,48 +1430,20 @@ impl Node {
             && self.iter_index_pids().any(|p| p == pid)
     }
 
-    pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, u64) {
-        assert!(key >= self.lo());
-        if let Some(hi) = self.hi() {
-            assert!(hi > key);
-        }
-        assert!(self.is_index);
-        log::trace!("index_next_node for key {:?} on node {:?}", key, self);
-        let idx = match self.find(&key[self.prefix_len as usize..]) {
-            Ok(idx) => idx,
-            Err(idx) => idx - 1,
-        };
-        (idx, self.index_pid(idx))
-    }
-
-    pub(crate) fn parent_split(&self, at: &[u8], to: u64) -> Option<Node> {
-        assert!(self.is_index, "tried to attach a ParentSplit to a Leaf Node");
-
-        let encoded_sep = &at[self.prefix_len as usize..];
-        if self.contains_key(encoded_sep) {
-            log::debug!(
-                "parent_split skipped because \
-                parent already contains child with key {:?} \
-                at split point due to deep race",
-                at
-            );
-            return None;
-        }
-
-        Some(self.insert(encoded_sep, &to.to_le_bytes()))
-    }
-
     fn iter_keys(
         &self,
-    ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator
+    ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator + Clone
     {
         (0..self.children()).map(move |idx| self.index_key(idx))
     }
 
-    pub(crate) fn iter_index_pids(
+    fn iter_index_pids(
         &self,
-    ) -> impl '_ + Iterator<Item = u64> + ExactSizeIterator + DoubleEndedIterator
-    {
+    ) -> impl '_
+           + Iterator<Item = u64>
+           + ExactSizeIterator
+           + DoubleEndedIterator
+           + Clone {
         assert!(self.is_index);
         self.iter_values().map(move |pid_bytes| {
             u64::from_le_bytes(pid_bytes.try_into().unwrap())
@@ -1486,7 +1452,7 @@ impl Node {
 
     fn iter_values(
         &self,
-    ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator
+    ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator + Clone
     {
         (0..self.children()).map(move |idx| self.index_value(idx))
     }
@@ -1586,17 +1552,9 @@ impl Node {
         &buf[start..end]
     }
 
-    pub(crate) fn index_pid(&self, idx: usize) -> u64 {
-        assert!(self.is_index);
-        u64::from_le_bytes(self.index_value(idx).try_into().unwrap())
-    }
-
-    /// `node_kv_pair` returns either existing (node/key, value) pair or
-    /// (node/key, none) where a node/key is node level encoded key.
-    pub(crate) fn node_kv_pair<'a>(
-        &'a self,
-        key: &'a [u8],
-    ) -> (&'a [u8], Option<&[u8]>, usize) {
+    /// `node_kv_pair` returns either the existing (node/key, value, current offset) tuple or
+    /// (node/key, none, future offset) where a node/key is node level encoded key.
+    fn node_kv_pair<'a>(&'a self, key: &'a [u8]) -> (&'a [u8], Option<&[u8]>) {
         assert!(key >= self.lo());
         if let Some(hi) = self.hi() {
             assert!(key < hi);
@@ -1606,13 +1564,12 @@ impl Node {
 
         let search = self.find(suffix);
 
-        match search {
-            Ok(idx) => (self.index_key(idx), Some(self.index_value(idx)), idx),
-            Err(idx) => {
-                let encoded_key = &key[self.prefix_len as usize..];
-                let encoded_val = None;
-                (encoded_key, encoded_val, idx)
-            }
+        if let Ok(idx) = search {
+            (self.index_key(idx), Some(self.index_value(idx)))
+        } else {
+            let encoded_key = &key[self.prefix_len as usize..];
+            let encoded_val = None;
+            (encoded_key, encoded_val)
         }
     }
 
@@ -1650,7 +1607,7 @@ impl Node {
         prefix::decode(self.prefix(), key)
     }
 
-    fn prefix_encode<'a>(&self, key: &'a [u8]) -> &'a [u8] {
+    pub(crate) fn prefix_encode<'a>(&self, key: &'a [u8]) -> &'a [u8] {
         assert!(self.lo() <= key);
         if let Some(hi) = self.hi() {
             assert!(
@@ -1666,107 +1623,6 @@ impl Node {
 
     fn prefix(&self) -> &[u8] {
         &self.lo()[..self.prefix_len as usize]
-    }
-
-    pub(crate) fn successor(
-        &self,
-        bound: &Bound<IVec>,
-    ) -> Option<(IVec, IVec)> {
-        assert!(!self.is_index);
-
-        // This encoding happens this way because
-        // keys cannot be lower than the node's lo key.
-        let predecessor_key = match bound {
-            Bound::Unbounded => self.prefix_encode(self.lo()),
-            Bound::Included(b) | Bound::Excluded(b) => {
-                let max = std::cmp::max(&**b, self.lo());
-                self.prefix_encode(max)
-            }
-        };
-
-        let search = self.find(predecessor_key);
-
-        let start = match search {
-            Ok(start) => start,
-            Err(start) if start < self.children() => start,
-            _ => return None,
-        };
-
-        for (idx, k) in self.iter_keys().skip(start).enumerate() {
-            match bound {
-                Bound::Excluded(b) if b[self.prefix_len as usize..] == *k => {
-                    // keep going because we wanted to exclude
-                    // this key.
-                    continue;
-                }
-                _ => {}
-            }
-            let decoded_key = self.prefix_decode(k);
-            return Some((decoded_key, self.index_value(start + idx).into()));
-        }
-
-        None
-    }
-
-    pub(crate) fn predecessor(
-        &self,
-        bound: &Bound<IVec>,
-    ) -> Option<(IVec, IVec)> {
-        assert!(!self.is_index);
-
-        // This encoding happens this way because
-        // the rightmost (unbounded) node has
-        // a hi key represented by the empty slice
-        let successor_key = match bound {
-            Bound::Unbounded => {
-                if let Some(hi) = self.hi() {
-                    Some(IVec::from(self.prefix_encode(hi)))
-                } else {
-                    None
-                }
-            }
-            Bound::Included(b) => Some(IVec::from(self.prefix_encode(b))),
-            Bound::Excluded(b) => {
-                // we use manual prefix encoding here because
-                // there is an assertion in `prefix_encode`
-                // that asserts the key is within the node,
-                // and maybe `b` is above the node.
-                let encoded = &b[self.prefix_len as usize..];
-                Some(IVec::from(encoded))
-            }
-        };
-
-        let search = if let Some(successor_key) = successor_key {
-            self.find(&*successor_key)
-        } else if self.is_empty() {
-            Err(0)
-        } else {
-            Ok(self.children() - 1)
-        };
-
-        let end = match search {
-            Ok(end) => end,
-            Err(end) if end > 0 => end - 1,
-            _ => return None,
-        };
-
-        for (idx, k) in self.iter_keys().take(end + 1).enumerate().rev() {
-            match bound {
-                Bound::Excluded(b)
-                    if b.len() >= self.prefix_len as usize
-                        && b[self.prefix_len as usize..] == *k =>
-                {
-                    // keep going because we wanted to exclude
-                    // this key.
-                    continue;
-                }
-                _ => {}
-            }
-            let decoded_key = self.prefix_decode(k);
-
-            return Some((decoded_key, self.index_value(idx).into()));
-        }
-        None
     }
 
     #[cfg(feature = "testing")]
@@ -1831,29 +1687,8 @@ mod test {
     use super::*;
 
     #[test]
-    fn simple() {
-        let mut ir = Node::new(
-            &[1],
-            Some(&[7]),
-            0,
-            true,
-            None,
-            &[
-                (&[1], &42_u64.to_le_bytes()),
-                (&[6, 6, 6], &66_u64.to_le_bytes()),
-            ],
-        );
-        ir.next = Some(NonZeroU64::new(5).unwrap());
-        format!("this is for miri to run the format code: {:#?}", ir);
-        assert_eq!(ir.index_next_node(&[1]).1, 42);
-        assert_eq!(ir.index_next_node(&[2]).1, 42);
-        assert_eq!(ir.index_next_node(&[6]).1, 42);
-        assert_eq!(ir.index_next_node(&[6, 6, 6, 6, 6]).1, 66);
-    }
-
-    #[test]
     fn insert_regression() {
-        let node = Node::new(
+        let node = Inner::new(
             &[0, 0, 0, 0, 0, 0, 162, 211],
             Some(&[0, 0, 0, 0, 0, 0, 163, 21]),
             6,
@@ -1862,12 +1697,32 @@ mod test {
             &[(&[162, 211, 0, 0], &[]), (&[163, 15, 0, 0], &[])],
         );
 
-        let new_item = Some((&[162, 211, 0, 0][..], &[][..]));
-        let _ = node.stitch(0, new_item, true);
+        Node { overlay: Default::default(), inner: Arc::new(node) }
+            .insert(&vec![162, 211, 0, 0].into(), &vec![].into())
+            .merge_overlay();
     }
 
     impl Arbitrary for Node {
         fn arbitrary<G: Gen>(g: &mut G) -> Node {
+            Node {
+                overlay: Default::default(),
+                inner: Arc::new(Inner::arbitrary(g)),
+            }
+        }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            let overlay = self.overlay.clone();
+            Box::new(
+                self.inner.shrink().map(move |ni| Node {
+                    overlay: overlay.clone(),
+                    inner: ni,
+                }),
+            )
+        }
+    }
+
+    impl Arbitrary for Inner {
+        fn arbitrary<G: Gen>(g: &mut G) -> Inner {
             use rand::Rng;
 
             let mut lo: Vec<u8> = Arbitrary::arbitrary(g);
@@ -1924,7 +1779,7 @@ mod test {
                 .collect();
 
             let mut ret =
-                Node::new(&lo, hi.map(|h| &*h), 0, false, None, &children_ref);
+                Inner::new(&lo, hi.map(|h| &*h), 0, false, None, &children_ref);
 
             ret.activity_sketch = g.gen();
 
@@ -1946,7 +1801,7 @@ mod test {
                 let shrink_lo = if lo.is_empty() {
                     None
                 } else {
-                    Some(Node::new(
+                    Some(Inner::new(
                         &lo[..lo.len() - 1],
                         node.hi(),
                         node.prefix_len,
@@ -1968,7 +1823,7 @@ mod test {
                         Some(&hi[..hi.len() - 1])
                     };
 
-                    Some(Node::new(
+                    Some(Inner::new(
                         node.lo(),
                         new_hi,
                         node.prefix_len,
@@ -1982,7 +1837,18 @@ mod test {
 
                 let item_removals = (0..node.children()).map({
                     let node = self.clone();
-                    move |i| node.remove_index(i)
+                    move |i| {
+                        let key = node.index_key(i).into();
+
+                        Node {
+                            overlay: Default::default(),
+                            inner: Arc::new(node.clone()),
+                        }
+                        .remove(&key)
+                        .merge_overlay()
+                        .deref()
+                        .clone()
+                    }
                 });
                 let item_reductions = (0..node.children()).flat_map({
                     let node = self.clone();
@@ -1992,19 +1858,47 @@ mod test {
                             node.index_value(i).to_vec(),
                         );
                         let k_shrink = k.shrink().flat_map({
-                            let node2 = node.remove_index(i);
+                            let node2 = Node {
+                                overlay: Default::default(),
+                                inner: Arc::new(node.clone()),
+                            }
+                            .remove(&k.deref().into())
+                            .merge_overlay()
+                            .deref()
+                            .clone();
+
                             let v = v.clone();
                             move |k| {
                                 if node2.contains_key(&k) {
                                     None
                                 } else {
-                                    Some(node2.insert(&k, &v))
+                                    let new_node = Node {
+                                        overlay: Default::default(),
+                                        inner: Arc::new(node2.clone()),
+                                    }
+                                    .insert(
+                                        &k.deref().into(),
+                                        &v.deref().into(),
+                                    )
+                                    .merge_overlay()
+                                    .deref()
+                                    .clone();
+                                    Some(new_node)
                                 }
                             }
                         });
                         let v_shrink = v.shrink().map({
                             let node3 = node.clone();
-                            move |v| node3.replace(i, &v)
+                            move |v| {
+                                Node {
+                                    overlay: Default::default(),
+                                    inner: Arc::new(node3.clone()),
+                                }
+                                .insert(&k.deref().into(), &v.into())
+                                .merge_overlay()
+                                .deref()
+                                .clone()
+                            }
                         });
                         k_shrink.chain(v_shrink)
                     }
@@ -2027,7 +1921,7 @@ mod test {
     ) -> bool {
         let children_ref: Vec<(&[u8], &[u8])> =
             children.iter().map(|(k, v)| (k.as_ref(), v.as_ref())).collect();
-        let ir = Node::new(&lo, Some(&hi), 0, false, None, &children_ref);
+        let ir = Inner::new(&lo, Some(&hi), 0, false, None, &children_ref);
 
         assert_eq!(ir.children as usize, children_ref.len());
 
@@ -2044,7 +1938,7 @@ mod test {
     }
 
     fn prop_insert_split_merge(
-        node: Node,
+        node: Inner,
         key: Vec<u8>,
         value: Vec<u8>,
     ) -> bool {
@@ -2056,11 +1950,19 @@ mod test {
                 .contains_lower_bound(&Bound::Included((&*key).into()), true);
 
         let node2 = if !node.contains_key(&key) && !skip_key_ops {
-            if let Ok(idx) = node.find(&key) {
-                node.apply(&Link::Replace(idx, value.into()))
-            } else {
-                node.apply(&Link::Set((&*key).into(), value.into()))
+            let applied = Node {
+                overlay: Default::default(),
+                inner: Arc::new(node.clone()),
             }
+            .insert(&key.deref().into(), &value.into())
+            .merge_overlay()
+            .deref()
+            .clone();
+            let applied_items: Vec<_> = applied.iter().collect();
+            let clone = applied.clone();
+            let cloned_items: Vec<_> = clone.iter().collect();
+            assert_eq!(applied_items, cloned_items);
+            applied
         } else {
             node.clone()
         };
@@ -2075,14 +1977,20 @@ mod test {
         }
 
         if !node.contains_key(&key) && !skip_key_ops {
-            let idx = node2.find(&key).unwrap();
-            let node4 = node2.remove_index(idx);
+            let node4 = Node {
+                overlay: Default::default(),
+                inner: Arc::new(node.clone()),
+            }
+            .remove(&key.deref().into())
+            .merge_overlay()
+            .deref()
+            .clone();
 
             assert_eq!(
                 node.iter().collect::<Vec<_>>(),
                 node4.iter().collect::<Vec<_>>(),
-                "we expected that removing item at index {} would return the node to its original pre-insertion state",
-                idx
+                "we expected that removing item at key {:?} would return the node to its original pre-insertion state",
+                key
             );
         }
 
@@ -2096,7 +2004,7 @@ mod test {
         }
 
         #[cfg_attr(miri, ignore)]
-        fn insert_split_merge(node: Node, key: Vec<u8>, value: Vec<u8>) -> bool {
+        fn insert_split_merge(node: Inner, key: Vec<u8>, value: Vec<u8>) -> bool {
             prop_insert_split_merge(node, key, value)
         }
 
@@ -2123,7 +2031,7 @@ mod test {
     #[test]
     fn node_bug_02() {
         // postmortem: the test code had some issues with handling invalid keys for nodes
-        let node = Node::new(
+        let node = Inner::new(
             &[47, 97][..],
             None,
             0,

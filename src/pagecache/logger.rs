@@ -596,14 +596,14 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     }
 }
 
-impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
-    fn into(self) -> [u8; SEG_HEADER_LEN] {
+impl From<SegmentHeader> for [u8; SEG_HEADER_LEN] {
+    fn from(header: SegmentHeader) -> [u8; SEG_HEADER_LEN] {
         let mut buf = [0; SEG_HEADER_LEN];
 
-        let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+        let xor_lsn = header.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let lsn_arr = lsn_to_arr(xor_lsn);
 
-        let xor_max_stable_lsn = self.max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+        let xor_max_stable_lsn = header.max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let highest_stable_lsn_arr = lsn_to_arr(xor_max_stable_lsn);
 
         #[allow(unsafe_code)]

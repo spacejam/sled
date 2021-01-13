@@ -779,7 +779,7 @@ impl PageCache {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.link_page);
 
-        trace!("linking pid {} with {:?}", pid, new);
+        trace!("linking pid {} node {:?} with {:?}", pid, old.as_node(), new);
 
         // A failure injector that fails links randomly
         // during test to ensure interleaving coverage.
@@ -821,9 +821,17 @@ impl PageCache {
 
         // see if we should short-circuit replace
         if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {
-            let short_circuit = self.replace(pid, old, node, guard)?;
+            log::trace!("skipping link, replacing pid {} with {:?}", pid, node);
+            let short_circuit = self.replace(pid, old, &node, guard)?;
             return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
         }
+
+        log::trace!(
+            "applying link of {:?} to pid {:?} resulted in node {:?}",
+            new,
+            pid,
+            node
+        );
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(Update::Node(node)),
@@ -1237,11 +1245,13 @@ impl PageCacheInner {
         &self,
         pid: PageId,
         old: PageView<'g>,
-        new: Node,
+        new_unmerged: &Node,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Node>> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.replace_page);
+        // `Node::clone` implicitly consolidates the node overlay
+        let new = new_unmerged.clone();
 
         trace!("replacing pid {} with {:?}", pid, new);
 
@@ -1334,6 +1344,7 @@ impl PageCacheInner {
                         true
                     }
                 });
+
             if already_moved {
                 return Ok(());
             }
@@ -1451,8 +1462,7 @@ impl PageCacheInner {
                     (key, Update::Counter(counter))
                 } else if let Some(node_view) = self.get(pid, guard)? {
                     let mut node = node_view.deref().clone();
-                    node.rewrite_generations =
-                        node.rewrite_generations.saturating_add(1);
+                    node.increment_rewrite_generations();
                     (node_view.0, Update::Node(node))
                 } else {
                     let page_view = self.inner.get(pid, guard);

@@ -18,15 +18,17 @@
 
 ## Breaking Changes
 
-* #1214 The deprecated `Config::build` method has been removed.
+* #1135 The "no_metrics" anti-feature has been replaced with
+  the "metrics" positive feature.
 * #1178 the `Event` enum has become a unified struct that allows
   subscribers to iterate over each (Tree, key, optional value)
   involved in single key operations, batches, or transactions in
   a unified way.
 * #1178 the `Event::key` method has been removed in favor of the
   new more comprehensive `iter` method.
-* #1135 The "no_metrics" anti-feature has been replaced with
-  the "metrics" positive feature.
+* #1214 The deprecated `Config::build` method has been removed.
+* #1248 The deprecated `Tree::set` method has been removed.
+* #1248 The deprecated `Tree::del` method has been removed.
 
 ## Bug Fixes
 
