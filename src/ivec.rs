@@ -241,12 +241,12 @@ from_array!(
     21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
 );
 
-impl Into<Arc<[u8]>> for IVec {
-    fn into(self) -> Arc<[u8]> {
-        match self.0 {
-            IVecInner::Inline(..) => Arc::from(self.as_ref()),
+impl From<IVec> for Arc<[u8]> {
+    fn from(ivec: IVec) -> Arc<[u8]> {
+        match ivec.0 {
+            IVecInner::Inline(..) => Arc::from(ivec.as_ref()),
             IVecInner::Remote(arc) => arc,
-            IVecInner::Subslice { .. } => self.deref().into(),
+            IVecInner::Subslice { .. } => ivec.deref().into(),
         }
     }
 }
