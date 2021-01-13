@@ -139,6 +139,7 @@ impl Drop for SegmentAccountant {
                 Segment::Active(Active { rss, .. })
                 | Segment::Inactive(Inactive { rss, .. }) => *rss,
             };
+            #[cfg(feature = "metrics")]
             M.segment_utilization_shutdown.measure(segment_utilization as u64);
         }
     }
@@ -459,6 +460,7 @@ impl SegmentAccountant {
         snapshot: &Snapshot,
         segment_cleaner: SegmentCleaner,
     ) -> Result<Self> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.start_segment_accountant);
         let mut ret = Self {
             config,
@@ -496,6 +498,7 @@ impl SegmentAccountant {
                 Segment::Active(Active { rss, .. })
                 | Segment::Inactive(Inactive { rss, .. }) => *rss,
             };
+            #[cfg(feature = "metrics")]
             M.segment_utilization_startup.measure(segment_utilization as u64);
         }
 
@@ -751,6 +754,7 @@ impl SegmentAccountant {
         old_cache_infos: &[CacheInfo],
         new_cache_info: CacheInfo,
     ) -> Result<()> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.accountant_mark_replace);
 
         if !new_cache_info.pointer.heap_pointer_merged_into_snapshot() {
@@ -829,6 +833,7 @@ impl SegmentAccountant {
     /// to a logical page at a particular offset. We ensure the
     /// page is present in the segment's page set.
     pub(super) fn mark_link(&mut self, pid: PageId, cache_info: CacheInfo) {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.accountant_mark_link);
 
         trace!("mark_link pid {} at cache info {:?}", pid, cache_info);
@@ -1039,6 +1044,7 @@ impl SegmentAccountant {
     /// fsync due to having been allocated from the file's tip, rather
     /// than `sync_file_range` as is normal.
     pub(super) fn next(&mut self, lsn: Lsn) -> Result<(LogOffset, bool)> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.accountant_next);
 
         assert_eq!(

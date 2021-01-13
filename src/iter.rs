@@ -1,5 +1,6 @@
 use std::ops::{Bound, Deref};
 
+#[cfg(feature = "metrics")]
 use crate::{Measure, M};
 
 use super::*;
@@ -150,6 +151,7 @@ impl Iterator for Iter {
     type Item = Result<(IVec, IVec)>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_scan);
         let _cc = concurrency_control::read();
         self.next_inner()
@@ -162,6 +164,7 @@ impl Iterator for Iter {
 
 impl DoubleEndedIterator for Iter {
     fn next_back(&mut self) -> Option<Self::Item> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_reverse_scan);
         let guard = pin();
         let _cc = concurrency_control::read();

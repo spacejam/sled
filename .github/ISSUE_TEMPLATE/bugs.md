@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug
+about: Report a correctness issue or violated expectation
 labels: bug
 ---
 
@@ -16,7 +16,6 @@ Bug reports must include all following items:
 
 Incomplete bug reports will be closed.
 
+Do not open bug reports for documentation issues. Please just open a PR with the proposed documentation change.
+
 Thank you for understanding :)
-
-
-

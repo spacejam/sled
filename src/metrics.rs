@@ -57,9 +57,7 @@ pub(crate) fn uptime() -> Duration {
 
 /// Measure the duration of an event, and call `Histogram::measure()`.
 pub struct Measure<'h> {
-    #[cfg(feature = "metrics")]
     start: u64,
-    #[cfg(feature = "metrics")]
     histo: &'h Histogram,
     #[cfg(not(feature = "metrics"))]
     _pd: PhantomData<&'h ()>,
@@ -73,9 +71,7 @@ impl<'h> Measure<'h> {
         Measure {
             #[cfg(not(feature = "metrics"))]
             _pd: PhantomData,
-            #[cfg(feature = "metrics")]
             histo,
-            #[cfg(feature = "metrics")]
             start: clock(),
         }
     }
@@ -148,7 +144,6 @@ pub struct Metrics {
     pub allocated_bytes: CachePadded<AtomicUsize>,
 }
 
-#[cfg(feature = "metrics")]
 impl Metrics {
     #[inline]
     pub fn tree_looped(&self) {
@@ -380,27 +375,4 @@ impl Metrics {
             );
         }
     }
-}
-
-#[cfg(not(feature = "metrics"))]
-impl Metrics {
-    pub const fn log_reservation_attempted(&self) {}
-
-    pub const fn log_reservation_success(&self) {}
-
-    pub const fn tree_child_split_attempt(&self) {}
-
-    pub const fn tree_child_split_success(&self) {}
-
-    pub const fn tree_parent_split_attempt(&self) {}
-
-    pub const fn tree_parent_split_success(&self) {}
-
-    pub const fn tree_root_split_attempt(&self) {}
-
-    pub const fn tree_root_split_success(&self) {}
-
-    pub const fn tree_looped(&self) {}
-
-    pub const fn print_profile(&self) {}
 }

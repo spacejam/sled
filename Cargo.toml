@@ -25,6 +25,10 @@ opt-level = 3
 
 [features]
 default = []
+# Do not use the "testing" feature in your own testing code, this is for
+# internal testing use only. It injects many delays and performs several
+# test-only configurations that cause performance to drop significantly.
+# It will cause your tests to take much more time, and possibly time out etc...
 testing = ["event_log", "lock_free_delays", "compression", "failpoints", "backtrace"]
 compression = ["zstd"]
 lock_free_delays = []

@@ -13,8 +13,10 @@ use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use crate::{
     debug_delay,
     pagecache::{constants::MAX_PID_BITS, Page, PageView},
-    Measure, M,
 };
+
+#[cfg(feature = "metrics")]
+use crate::{Measure, M};
 
 #[allow(unused)]
 #[doc(hidden)]
@@ -130,24 +132,38 @@ impl PageTable {
     }
 
     /// Try to get a value from the tree.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the page has never been allocated.
     pub(crate) fn get<'g>(
         &self,
         pid: PageId,
         guard: &'g Guard,
-    ) -> Option<PageView<'g>> {
+    ) -> PageView<'g> {
+        #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.get_pagetable);
         debug_delay();
         let tip = self.traverse(pid, guard);
 
         debug_delay();
         let res = tip.load(Acquire, guard);
-        if res.is_null() {
-            None
-        } else {
-            let page_view = PageView { read: res, entry: tip };
 
-            Some(page_view)
-        }
+        assert!(!res.is_null());
+
+        PageView { read: res, entry: tip }
+    }
+
+    pub(crate) fn contains_pid(&self, pid: PageId, guard: &Guard) -> bool {
+        #[cfg(feature = "metrics")]
+        let _measure = Measure::new(&M.get_pagetable);
+        debug_delay();
+        let tip = self.traverse(pid, guard);
+
+        debug_delay();
+        let res = tip.load(Acquire, guard);
+
+        !res.is_null()
     }
 
     fn traverse<'g>(&self, k: PageId, guard: &'g Guard) -> &'g Atomic<Page> {

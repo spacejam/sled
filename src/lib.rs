@@ -194,6 +194,7 @@ mod ivec;
 mod lazy;
 mod lru;
 mod meta;
+#[cfg(feature = "metrics")]
 mod metrics;
 mod node;
 mod oneshot;
@@ -315,6 +316,12 @@ pub use self::{
     tree::{CompareAndSwapError, Tree},
 };
 
+#[cfg(feature = "metrics")]
+use self::{
+    histogram::Histogram,
+    metrics::{clock, Measure, M},
+};
+
 use {
     self::{
         arc::Arc,
@@ -322,10 +329,8 @@ use {
         concurrency_control::Protector,
         context::Context,
         fastcmp::fastcmp,
-        histogram::Histogram,
         lru::Lru,
         meta::Meta,
-        metrics::{clock, Measure, M},
         node::Node,
         oneshot::{OneShot, OneShotFiller},
         result::CasResult,
