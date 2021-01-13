@@ -172,13 +172,19 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Node {
     // the overlay accumulates new writes and tombstones
     // for deletions that have not yet been merged
     // into the inner backing node
     pub(crate) overlay: Vec<(IVec, Option<IVec>)>,
     inner: Arc<Inner>,
+}
+
+impl Clone for Node {
+    fn clone(&self) -> Node {
+        Node { inner: self.merge_overlay(), overlay: Default::default() }
+    }
 }
 
 impl Deref for Node {
@@ -189,10 +195,6 @@ impl Deref for Node {
 }
 
 impl Node {
-    pub(crate) fn consolidate(&self) -> Node {
-        Node { inner: self.merge_overlay(), overlay: Default::default() }
-    }
-
     fn iter(&self) -> Iter<'_> {
         Iter {
             overlay: self.overlay.iter(),

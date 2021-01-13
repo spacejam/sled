@@ -1250,7 +1250,8 @@ impl PageCacheInner {
     ) -> Result<CasResult<'g, Node>> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.replace_page);
-        let new = new_unmerged.consolidate();
+        // `Node::clone` implicitly consolidates the node overlay
+        let new = new_unmerged.clone();
 
         trace!("replacing pid {} with {:?}", pid, new);
 
@@ -1343,6 +1344,7 @@ impl PageCacheInner {
                         true
                     }
                 });
+
             if already_moved {
                 return Ok(());
             }
