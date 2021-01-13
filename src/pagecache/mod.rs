@@ -382,7 +382,11 @@ impl Update {
     }
 
     fn is_free(&self) -> bool {
-        if let Update::Free = self { true } else { false }
+        if let Update::Free = self {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -741,13 +745,21 @@ impl PageCache {
                 // interval, so that when generate_id() is next called, it
                 // will advance them further by another interval, and wait for
                 // this update to be durable before returning the first ID.
-                let necessary_persists = (counter / pc.config.idgen_persist_interval + 1)
-                    * pc.config.idgen_persist_interval;
+                let necessary_persists =
+                    (counter / pc.config.idgen_persist_interval + 1)
+                        * pc.config.idgen_persist_interval;
                 let counter_update = Update::Counter(necessary_persists);
                 let old = pc.idgen_persists.swap(necessary_persists, Release);
                 assert_eq!(old, idgen_persists);
                 // CAS should never fail because the PageCache is still being constructed.
-                pc.cas_page(COUNTER_PID, idgen_key, counter_update, false, &guard)?.unwrap();
+                pc.cas_page(
+                    COUNTER_PID,
+                    idgen_key,
+                    counter_update,
+                    false,
+                    &guard,
+                )?
+                .unwrap();
             }
         }
 
@@ -783,7 +795,7 @@ impl PageCache {
     ) -> Result<CasResult<'g, Link>> {
         let _measure = Measure::new(&M.link_page);
 
-        trace!("linking pid {} with {:?}", pid, new);
+        trace!("linking pid {} node {:?} with {:?}", pid, old.as_node(), new);
 
         // A failure injector that fails links randomly
         // during test to ensure interleaving coverage.
@@ -825,9 +837,17 @@ impl PageCache {
 
         // see if we should short-circuit replace
         if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {
+            log::trace!("skipping link, replacing pid {} with {:?}", pid, node);
             let short_circuit = self.replace(pid, old, node, guard)?;
             return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
         }
+
+        log::trace!(
+            "applying link of {:?} to pid {:?} resulted in node {:?}",
+            new,
+            pid,
+            node
+        );
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(Update::Node(node)),
@@ -1254,10 +1274,11 @@ impl PageCacheInner {
         &self,
         pid: PageId,
         old: PageView<'g>,
-        new: Node,
+        new_unmerged: Node,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Node>> {
         let _measure = Measure::new(&M.replace_page);
+        let new = new_unmerged.clone();
 
         trace!("replacing pid {} with {:?}", pid, new);
 
@@ -1471,8 +1492,7 @@ impl PageCacheInner {
                     (key, Update::Counter(counter))
                 } else if let Some(node_view) = self.get(pid, guard)? {
                     let mut node = node_view.deref().clone();
-                    node.rewrite_generations =
-                        node.rewrite_generations.saturating_add(1);
+                    node.increment_rewrite_generations();
                     (node_view.0, Update::Node(node))
                 } else {
                     let page_view = match self.inner.get(pid, guard) {
