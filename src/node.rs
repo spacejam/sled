@@ -27,12 +27,12 @@ macro_rules! tf {
 }
 
 // allocates space for a header struct at the beginning.
-fn uninitialized_node(len: usize) -> NodeInner {
+fn uninitialized_node(len: usize) -> Inner {
     let layout = Layout::from_size_align(len, ALIGNMENT).unwrap();
 
     unsafe {
         let ptr = alloc_zeroed(layout);
-        NodeInner { ptr, len }
+        Inner { ptr, len }
     }
 }
 
@@ -78,7 +78,7 @@ pub struct Header {
 
 pub struct Iter<'a> {
     overlay: std::slice::Iter<'a, (IVec, Option<IVec>)>,
-    node: &'a NodeInner,
+    node: &'a Inner,
     node_position: usize,
     next_a: Option<(&'a [u8], Option<&'a IVec>)>,
     next_b: Option<(&'a [u8], &'a [u8])>,
@@ -178,7 +178,7 @@ pub struct Node {
     // for deletions that have not yet been merged
     // into the inner backing node
     pub(crate) overlay: Vec<(IVec, Option<IVec>)>,
-    inner: Arc<NodeInner>,
+    inner: Arc<Inner>,
 }
 
 impl Clone for Node {
@@ -189,8 +189,8 @@ impl Clone for Node {
 }
 
 impl Deref for Node {
-    type Target = NodeInner;
-    fn deref(&self) -> &NodeInner {
+    type Target = Inner;
+    fn deref(&self) -> &Inner {
         &self.inner
     }
 }
@@ -214,26 +214,23 @@ impl Node {
     pub(crate) unsafe fn from_raw(buf: &[u8]) -> Node {
         Node {
             overlay: Default::default(),
-            inner: Arc::new(NodeInner::from_raw(buf)),
+            inner: Arc::new(Inner::from_raw(buf)),
         }
     }
 
     pub(crate) fn new_root(child_pid: u64) -> Node {
-        Node {
-            overlay: vec![],
-            inner: Arc::new(NodeInner::new_root(child_pid)),
-        }
+        Node { overlay: vec![], inner: Arc::new(Inner::new_root(child_pid)) }
     }
 
     pub(crate) fn new_hoisted_root(left: u64, at: &[u8], right: u64) -> Node {
         Node {
             overlay: vec![],
-            inner: Arc::new(NodeInner::new_hoisted_root(left, at, right)),
+            inner: Arc::new(Inner::new_hoisted_root(left, at, right)),
         }
     }
 
     pub(crate) fn new_empty_leaf() -> Node {
-        Node { overlay: vec![], inner: Arc::new(NodeInner::new_empty_leaf()) }
+        Node { overlay: vec![], inner: Arc::new(Inner::new_empty_leaf()) }
     }
 
     pub(crate) fn apply(&self, link: &Link) -> Node {
@@ -328,7 +325,7 @@ impl Node {
     }
 
     // Push the overlay into the backing node.
-    fn merge_overlay(&self) -> Arc<NodeInner> {
+    fn merge_overlay(&self) -> Arc<Inner> {
         if self.overlay.is_empty() {
             return self.inner.clone();
         };
@@ -340,7 +337,7 @@ impl Node {
             items
         );
 
-        let mut ret = NodeInner::new(
+        let mut ret = Inner::new(
             self.lo(),
             self.hi(),
             self.prefix_len,
@@ -621,27 +618,27 @@ impl Node {
 
 /// An immutable sorted string table
 #[must_use]
-pub struct NodeInner {
+pub struct Inner {
     ptr: *mut u8,
     pub len: usize,
 }
 
-impl PartialEq<NodeInner> for NodeInner {
-    fn eq(&self, other: &NodeInner) -> bool {
+impl PartialEq<Inner> for Inner {
+    fn eq(&self, other: &Inner) -> bool {
         self.as_ref().eq(other.as_ref())
     }
 }
 
-impl Clone for NodeInner {
-    fn clone(&self) -> NodeInner {
-        unsafe { NodeInner::from_raw(self.as_ref()) }
+impl Clone for Inner {
+    fn clone(&self) -> Inner {
+        unsafe { Inner::from_raw(self.as_ref()) }
     }
 }
 
-unsafe impl Sync for NodeInner {}
-unsafe impl Send for NodeInner {}
+unsafe impl Sync for Inner {}
+unsafe impl Send for Inner {}
 
-impl Drop for NodeInner {
+impl Drop for Inner {
     fn drop(&mut self) {
         let layout = Layout::from_size_align(self.len, ALIGNMENT).unwrap();
         unsafe {
@@ -650,19 +647,19 @@ impl Drop for NodeInner {
     }
 }
 
-impl AsRef<[u8]> for NodeInner {
+impl AsRef<[u8]> for Inner {
     fn as_ref(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
 }
 
-impl AsMut<[u8]> for NodeInner {
+impl AsMut<[u8]> for Inner {
     fn as_mut(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
     }
 }
 
-impl Deref for NodeInner {
+impl Deref for Inner {
     type Target = Header;
 
     fn deref(&self) -> &Header {
@@ -670,9 +667,9 @@ impl Deref for NodeInner {
     }
 }
 
-impl fmt::Debug for NodeInner {
+impl fmt::Debug for Inner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut ds = f.debug_struct("NodeInner");
+        let mut ds = f.debug_struct("Inner");
 
         ds.field("header", self.header())
             .field("lo", &self.lo())
@@ -693,14 +690,14 @@ impl fmt::Debug for NodeInner {
     }
 }
 
-impl DerefMut for NodeInner {
+impl DerefMut for Inner {
     fn deref_mut(&mut self) -> &mut Header {
         self.header_mut()
     }
 }
 
-impl NodeInner {
-    unsafe fn from_raw(buf: &[u8]) -> NodeInner {
+impl Inner {
+    unsafe fn from_raw(buf: &[u8]) -> Inner {
         let mut ret = uninitialized_node(buf.len());
         ret.as_mut().copy_from_slice(buf);
         ret
@@ -713,7 +710,7 @@ impl NodeInner {
         is_index: bool,
         next: Option<NonZeroU64>,
         items: &[(&[u8], &[u8])],
-    ) -> NodeInner {
+    ) -> Inner {
         assert!(items.len() <= std::u16::MAX as usize);
 
         // determine if we need to use varints and offset
@@ -917,8 +914,8 @@ impl NodeInner {
         ret
     }
 
-    fn new_root(child_pid: u64) -> NodeInner {
-        NodeInner::new(
+    fn new_root(child_pid: u64) -> Inner {
+        Inner::new(
             &[],
             None,
             0,
@@ -928,8 +925,8 @@ impl NodeInner {
         )
     }
 
-    fn new_hoisted_root(left: u64, at: &[u8], right: u64) -> NodeInner {
-        NodeInner::new(
+    fn new_hoisted_root(left: u64, at: &[u8], right: u64) -> Inner {
+        Inner::new(
             &[],
             None,
             0,
@@ -942,8 +939,8 @@ impl NodeInner {
         )
     }
 
-    fn new_empty_leaf() -> NodeInner {
-        NodeInner::new(&[], None, 0, false, None, &[])
+    fn new_empty_leaf() -> Inner {
+        Inner::new(&[], None, 0, false, None, &[])
     }
 
     // returns the OPEN ENDED buffer where a key may be placed
@@ -1142,7 +1139,7 @@ impl NodeInner {
             .max(1)
     }
 
-    fn split(&self) -> (NodeInner, NodeInner) {
+    fn split(&self) -> (Inner, Inner) {
         assert!(self.children() >= 2);
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
@@ -1256,7 +1253,7 @@ impl NodeInner {
             .map(|(k, v)| (&k[additional_right_prefix..], v))
             .collect();
 
-        let mut left = NodeInner::new(
+        let mut left = Inner::new(
             self.lo(),
             Some(&split_key),
             self.prefix_len + tf!(additional_left_prefix, u8),
@@ -1267,7 +1264,7 @@ impl NodeInner {
 
         left.rewrite_generations = self.rewrite_generations;
 
-        let mut right = NodeInner::new(
+        let mut right = Inner::new(
             &split_key,
             self.hi(),
             self.prefix_len + tf!(additional_right_prefix, u8),
@@ -1302,7 +1299,7 @@ impl NodeInner {
         (left, right)
     }
 
-    fn receive_merge(&self, other: &NodeInner) -> NodeInner {
+    fn receive_merge(&self, other: &Inner) -> Inner {
         log::trace!(
             "merging node receiving merge left: {:?} right: {:?}",
             self,
@@ -1352,7 +1349,7 @@ impl NodeInner {
             self.iter().chain(right_items).collect()
         };
 
-        let mut ret = NodeInner::new(
+        let mut ret = Inner::new(
             self.lo(),
             other.hi(),
             self.prefix_len.min(other.prefix_len),
@@ -1686,7 +1683,7 @@ mod test {
 
     #[test]
     fn insert_regression() {
-        let node = NodeInner::new(
+        let node = Inner::new(
             &[0, 0, 0, 0, 0, 0, 162, 211],
             Some(&[0, 0, 0, 0, 0, 0, 163, 21]),
             6,
@@ -1704,7 +1701,7 @@ mod test {
         fn arbitrary<G: Gen>(g: &mut G) -> Node {
             Node {
                 overlay: Default::default(),
-                inner: Arc::new(NodeInner::arbitrary(g)),
+                inner: Arc::new(Inner::arbitrary(g)),
             }
         }
 
@@ -1719,8 +1716,8 @@ mod test {
         }
     }
 
-    impl Arbitrary for NodeInner {
-        fn arbitrary<G: Gen>(g: &mut G) -> NodeInner {
+    impl Arbitrary for Inner {
+        fn arbitrary<G: Gen>(g: &mut G) -> Inner {
             use rand::Rng;
 
             let mut lo: Vec<u8> = Arbitrary::arbitrary(g);
@@ -1776,14 +1773,8 @@ mod test {
                 .into_iter()
                 .collect();
 
-            let mut ret = NodeInner::new(
-                &lo,
-                hi.map(|h| &*h),
-                0,
-                false,
-                None,
-                &children_ref,
-            );
+            let mut ret =
+                Inner::new(&lo, hi.map(|h| &*h), 0, false, None, &children_ref);
 
             ret.activity_sketch = g.gen();
 
@@ -1805,7 +1796,7 @@ mod test {
                 let shrink_lo = if lo.is_empty() {
                     None
                 } else {
-                    Some(NodeInner::new(
+                    Some(Inner::new(
                         &lo[..lo.len() - 1],
                         node.hi(),
                         node.prefix_len,
@@ -1827,7 +1818,7 @@ mod test {
                         Some(&hi[..hi.len() - 1])
                     };
 
-                    Some(NodeInner::new(
+                    Some(Inner::new(
                         node.lo(),
                         new_hi,
                         node.prefix_len,
@@ -1925,7 +1916,7 @@ mod test {
     ) -> bool {
         let children_ref: Vec<(&[u8], &[u8])> =
             children.iter().map(|(k, v)| (k.as_ref(), v.as_ref())).collect();
-        let ir = NodeInner::new(&lo, Some(&hi), 0, false, None, &children_ref);
+        let ir = Inner::new(&lo, Some(&hi), 0, false, None, &children_ref);
 
         assert_eq!(ir.children as usize, children_ref.len());
 
@@ -1942,7 +1933,7 @@ mod test {
     }
 
     fn prop_insert_split_merge(
-        node: NodeInner,
+        node: Inner,
         key: Vec<u8>,
         value: Vec<u8>,
     ) -> bool {
@@ -2008,7 +1999,7 @@ mod test {
         }
 
         #[cfg_attr(miri, ignore)]
-        fn insert_split_merge(node: NodeInner, key: Vec<u8>, value: Vec<u8>) -> bool {
+        fn insert_split_merge(node: Inner, key: Vec<u8>, value: Vec<u8>) -> bool {
             prop_insert_split_merge(node, key, value)
         }
 
@@ -2035,7 +2026,7 @@ mod test {
     #[test]
     fn node_bug_02() {
         // postmortem: the test code had some issues with handling invalid keys for nodes
-        let node = NodeInner::new(
+        let node = Inner::new(
             &[47, 97][..],
             None,
             0,
