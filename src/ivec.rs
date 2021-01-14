@@ -1,33 +1,113 @@
+#![allow(unsafe_code)]
+
 use std::{
+    alloc::{alloc, dealloc, Layout},
     convert::TryFrom,
     fmt,
     hash::{Hash, Hasher},
     iter::FromIterator,
+    mem::size_of,
     ops::{Deref, DerefMut},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crate::Arc;
-
-const CUTOFF: usize = 22;
-
-type Inner = [u8; CUTOFF];
+const SZ: usize = size_of::<usize>() * 2;
+const CUTOFF: usize = SZ - 1;
 
 /// A buffer that may either be inline or remote and protected
-/// by an Arc
-#[derive(Clone)]
-pub struct IVec(IVecInner);
+/// by an Arc. The inner buffer is guaranteed to be aligned to
+/// 8 byte boundaries.
+#[repr(align(8))]
+pub struct IVec([u8; SZ]);
+
+impl Clone for IVec {
+    fn clone(&self) -> IVec {
+        if !self.is_inline() {
+            self.deref_header().rc.fetch_add(1, Ordering::Relaxed);
+        }
+        IVec(self.0)
+    }
+}
+
+impl Drop for IVec {
+    fn drop(&mut self) {
+        if !self.is_inline() {
+            let rc = self.deref_header().rc.fetch_sub(1, Ordering::Release) - 1;
+
+            if rc == 0 {
+                let layout = Layout::from_size_align(
+                    self.deref_header().len + size_of::<RemoteHeader>(),
+                    8,
+                )
+                .unwrap();
+
+                std::sync::atomic::fence(Ordering::Acquire);
+
+                unsafe {
+                    dealloc(self.remote_ptr() as *mut u8, layout);
+                }
+            }
+        }
+    }
+}
+
+struct RemoteHeader {
+    rc: AtomicUsize,
+    len: usize,
+}
+
+impl Deref for IVec {
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        if self.is_inline() {
+            &self.0[..self.inline_len()]
+        } else {
+            unsafe {
+                let data_ptr = self.remote_ptr().add(size_of::<RemoteHeader>());
+                let len = self.deref_header().len;
+                std::slice::from_raw_parts(data_ptr, len)
+            }
+        }
+    }
+}
+
+impl AsRef<[u8]> for IVec {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        &self
+    }
+}
+
+impl DerefMut for IVec {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u8] {
+        let inline_len = self.inline_len();
+        if self.is_inline() {
+            &mut self.0[..inline_len]
+        } else {
+            self.make_mut();
+            unsafe {
+                let data_ptr = self.remote_ptr().add(size_of::<RemoteHeader>());
+                let len = self.deref_header().len;
+                std::slice::from_raw_parts_mut(data_ptr as *mut u8, len)
+            }
+        }
+    }
+}
+
+impl AsMut<[u8]> for IVec {
+    #[inline]
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.deref_mut()
+    }
+}
 
 impl Default for IVec {
     fn default() -> Self {
         Self::from(&[])
     }
-}
-
-#[derive(Clone)]
-enum IVecInner {
-    Inline(u8, Inner),
-    Remote(Arc<[u8]>),
-    Subslice { base: Arc<[u8]>, offset: usize, len: usize },
 }
 
 impl Hash for IVec {
@@ -36,101 +116,64 @@ impl Hash for IVec {
     }
 }
 
-const fn is_inline_candidate(length: usize) -> bool {
-    length <= CUTOFF
-}
-
 impl IVec {
-    /// Create a subslice of this `IVec` that shares
-    /// the same backing data and reference counter.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `self.len() - offset >= len`.
-    ///
-    /// # Examples
-    /// ```
-    /// # use sled::IVec;
-    /// let iv = IVec::from(vec![1]);
-    /// let subslice = iv.subslice(0, 1);
-    /// assert_eq!(&subslice, &[1]);
-    /// let subslice = subslice.subslice(0, 1);
-    /// assert_eq!(&subslice, &[1]);
-    /// let subslice = subslice.subslice(1, 0);
-    /// assert_eq!(&subslice, &[]);
-    /// let subslice = subslice.subslice(0, 0);
-    /// assert_eq!(&subslice, &[]);
-    ///
-    /// let iv2 = IVec::from(vec![1, 2, 3]);
-    /// let subslice = iv2.subslice(3, 0);
-    /// assert_eq!(&subslice, &[]);
-    /// let subslice = iv2.subslice(2, 1);
-    /// assert_eq!(&subslice, &[3]);
-    /// let subslice = iv2.subslice(1, 2);
-    /// assert_eq!(&subslice, &[2, 3]);
-    /// let subslice = iv2.subslice(0, 3);
-    /// assert_eq!(&subslice, &[1, 2, 3]);
-    /// let subslice = subslice.subslice(1, 2);
-    /// assert_eq!(&subslice, &[2, 3]);
-    /// let subslice = subslice.subslice(1, 1);
-    /// assert_eq!(&subslice, &[3]);
-    /// let subslice = subslice.subslice(1, 0);
-    /// assert_eq!(&subslice, &[]);
-    /// ```
-    pub fn subslice(&self, slice_offset: usize, len: usize) -> Self {
-        assert!(self.len().checked_sub(slice_offset).unwrap() >= len);
+    fn new(slice: &[u8]) -> Self {
+        let mut data = [0_u8; SZ];
+        if slice.len() <= CUTOFF {
+            data[SZ - 1] = (u8::try_from(slice.len()).unwrap() << 1) | 1;
+            data[..slice.len()].copy_from_slice(slice);
+        } else {
+            let layout = Layout::from_size_align(
+                slice.len() + size_of::<RemoteHeader>(),
+                8,
+            )
+            .unwrap();
 
-        let inner = match self.0 {
-            IVecInner::Remote(ref base) => IVecInner::Subslice {
-                base: base.clone(),
-                offset: slice_offset,
-                len,
-            },
-            IVecInner::Inline(_, old_inner) => {
-                // old length already checked above in assertion
-                let mut new_inner = Inner::default();
-                new_inner[..len].copy_from_slice(
-                    &old_inner[slice_offset..slice_offset + len],
+            let header = RemoteHeader { rc: 1.into(), len: slice.len() };
+
+            unsafe {
+                let ptr = alloc(layout);
+
+                std::ptr::write(ptr as *mut RemoteHeader, header);
+                std::ptr::copy_nonoverlapping(
+                    slice.as_ptr(),
+                    ptr.add(size_of::<RemoteHeader>()),
+                    slice.len(),
                 );
-
-                IVecInner::Inline(u8::try_from(len).unwrap(), new_inner)
+                std::ptr::write_unaligned(data.as_mut_ptr() as _, ptr);
             }
-            IVecInner::Subslice { ref base, ref offset, .. } => {
-                IVecInner::Subslice {
-                    base: base.clone(),
-                    offset: offset + slice_offset,
-                    len,
-                }
-            }
-        };
 
-        IVec(inner)
+            assert_eq!(data[SZ - 1], 0);
+        }
+        Self(data)
     }
 
-    fn inline(slice: &[u8]) -> Self {
-        assert!(is_inline_candidate(slice.len()));
-        let mut data = Inner::default();
-        data[..slice.len()].copy_from_slice(slice);
-        Self(IVecInner::Inline(u8::try_from(slice.len()).unwrap(), data))
+    fn remote_ptr(&self) -> *const u8 {
+        assert!(!self.is_inline());
+        unsafe { std::ptr::read(self.0.as_ptr() as *const *const u8) }
     }
 
-    fn remote(arc: Arc<[u8]>) -> Self {
-        Self(IVecInner::Remote(arc))
+    fn deref_header(&self) -> &RemoteHeader {
+        assert!(!self.is_inline());
+        unsafe { &*(self.remote_ptr() as *mut RemoteHeader) }
+    }
+
+    const fn inline_len(&self) -> usize {
+        (self.trailer() >> 1) as usize
+    }
+
+    const fn is_inline(&self) -> bool {
+        self.trailer() & 1 == 1
+    }
+
+    const fn trailer(&self) -> u8 {
+        self.0[SZ - 1]
     }
 
     fn make_mut(&mut self) {
-        match self.0 {
-            IVecInner::Remote(ref mut buf) if Arc::strong_count(buf) != 1 => {
-                self.0 = IVecInner::Remote(buf.to_vec().into());
-            }
-            IVecInner::Subslice { ref mut base, offset, len }
-                if Arc::strong_count(base) != 1 =>
-            {
-                self.0 = IVecInner::Remote(
-                    base[offset..offset + len].to_vec().into(),
-                );
-            }
-            _ => {}
+        assert!(!self.is_inline());
+        if self.deref_header().rc.load(Ordering::Acquire) != 1 {
+            *self = IVec::from(self.deref())
         }
     }
 }
@@ -145,33 +188,9 @@ impl FromIterator<u8> for IVec {
     }
 }
 
-impl From<Box<[u8]>> for IVec {
-    fn from(b: Box<[u8]>) -> Self {
-        if is_inline_candidate(b.len()) {
-            Self::inline(&b)
-        } else {
-            Self::remote(Arc::from(b))
-        }
-    }
-}
-
 impl From<&[u8]> for IVec {
     fn from(slice: &[u8]) -> Self {
-        if is_inline_candidate(slice.len()) {
-            Self::inline(slice)
-        } else {
-            Self::remote(Arc::from(slice))
-        }
-    }
-}
-
-impl From<Arc<[u8]>> for IVec {
-    fn from(arc: Arc<[u8]>) -> Self {
-        if is_inline_candidate(arc.len()) {
-            Self::inline(&arc)
-        } else {
-            Self::remote(arc)
-        }
+        IVec::new(slice)
     }
 }
 
@@ -201,14 +220,13 @@ impl From<&IVec> for IVec {
 
 impl From<Vec<u8>> for IVec {
     fn from(v: Vec<u8>) -> Self {
-        if is_inline_candidate(v.len()) {
-            Self::inline(&v)
-        } else {
-            // rely on the Arc From specialization
-            // for Vec<T>, which may improve
-            // over time
-            Self::remote(Arc::from(v))
-        }
+        IVec::new(&v)
+    }
+}
+
+impl From<Box<[u8]>> for IVec {
+    fn from(v: Box<[u8]>) -> Self {
+        IVec::new(&v)
     }
 }
 
@@ -240,66 +258,6 @@ from_array!(
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
     21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
 );
-
-impl From<IVec> for Arc<[u8]> {
-    fn from(ivec: IVec) -> Arc<[u8]> {
-        match ivec.0 {
-            IVecInner::Inline(..) => Arc::from(ivec.as_ref()),
-            IVecInner::Remote(arc) => arc,
-            IVecInner::Subslice { .. } => ivec.deref().into(),
-        }
-    }
-}
-
-impl Deref for IVec {
-    type Target = [u8];
-
-    #[inline]
-    fn deref(&self) -> &[u8] {
-        self.as_ref()
-    }
-}
-
-impl AsRef<[u8]> for IVec {
-    #[inline]
-    #[allow(unsafe_code)]
-    fn as_ref(&self) -> &[u8] {
-        match &self.0 {
-            IVecInner::Inline(sz, buf) => unsafe {
-                buf.get_unchecked(..*sz as usize)
-            },
-            IVecInner::Remote(buf) => buf,
-            IVecInner::Subslice { ref base, offset, len } => {
-                &base[*offset..*offset + *len]
-            }
-        }
-    }
-}
-
-impl DerefMut for IVec {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [u8] {
-        self.as_mut()
-    }
-}
-
-impl AsMut<[u8]> for IVec {
-    #[inline]
-    #[allow(unsafe_code)]
-    fn as_mut(&mut self) -> &mut [u8] {
-        self.make_mut();
-
-        match &mut self.0 {
-            IVecInner::Inline(ref sz, ref mut buf) => unsafe {
-                std::slice::from_raw_parts_mut(buf.as_mut_ptr(), *sz as usize)
-            },
-            IVecInner::Remote(ref mut buf) => Arc::get_mut(buf).unwrap(),
-            IVecInner::Subslice { ref mut base, offset, len } => {
-                &mut Arc::get_mut(base).unwrap()[*offset..*offset + *len]
-            }
-        }
-    }
-}
 
 impl Ord for IVec {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -333,50 +291,36 @@ impl fmt::Debug for IVec {
     }
 }
 
-#[test]
-fn ivec_usage() {
-    let iv1 = IVec::from(vec![1, 2, 3]);
-    assert_eq!(iv1, vec![1, 2, 3]);
-    let iv2 = IVec::from(&[4; 128][..]);
-    assert_eq!(iv2, vec![4; 128]);
-}
-
-#[test]
-fn boxed_slice_conversion() {
-    let boite1: Box<[u8]> = Box::new([1, 2, 3]);
-    let iv1: IVec = boite1.into();
-    assert_eq!(iv1, vec![1, 2, 3]);
-    let boite2: Box<[u8]> = Box::new([4; 128]);
-    let iv2: IVec = boite2.into();
-    assert_eq!(iv2, vec![4; 128]);
-}
-
-#[test]
-#[should_panic]
-fn subslice_usage_00() {
-    let iv1 = IVec::from(vec![1, 2, 3]);
-    let _subslice = iv1.subslice(0, 4);
-}
-
-#[test]
-#[should_panic]
-fn subslice_usage_01() {
-    let iv1 = IVec::from(vec![1, 2, 3]);
-    let _subslice = iv1.subslice(3, 1);
-}
-
-#[test]
-fn ivec_as_mut_identity() {
-    let initial = &[1];
-    let mut iv = IVec::from(initial);
-    assert_eq!(&*initial, &*iv);
-    assert_eq!(&*initial, &mut *iv);
-    assert_eq!(&*initial, iv.as_mut());
-}
-
 #[cfg(test)]
 mod qc {
     use super::IVec;
+
+    #[test]
+    fn ivec_usage() {
+        let iv1 = IVec::from(vec![1, 2, 3]);
+        assert_eq!(iv1, vec![1, 2, 3]);
+        let iv2 = IVec::from(&[4; 128][..]);
+        assert_eq!(iv2, vec![4; 128]);
+    }
+
+    #[test]
+    fn boxed_slice_conversion() {
+        let boite1: Box<[u8]> = Box::new([1, 2, 3]);
+        let iv1: IVec = boite1.into();
+        assert_eq!(iv1, vec![1, 2, 3]);
+        let boite2: Box<[u8]> = Box::new([4; 128]);
+        let iv2: IVec = boite2.into();
+        assert_eq!(iv2, vec![4; 128]);
+    }
+
+    #[test]
+    fn ivec_as_mut_identity() {
+        let initial = &[1];
+        let mut iv = IVec::from(initial);
+        assert_eq!(&*initial, &*iv);
+        assert_eq!(&*initial, &mut *iv);
+        assert_eq!(&*initial, iv.as_mut());
+    }
 
     fn prop_identity(ivec: &IVec) -> bool {
         let mut iv2 = ivec.clone();
@@ -401,8 +345,15 @@ mod qc {
 
     quickcheck::quickcheck! {
         #[cfg_attr(miri, ignore)]
-        fn bool(item: IVec) -> bool {
+        fn ivec(item: IVec) -> bool {
             prop_identity(&item)
         }
+    }
+
+    #[test]
+    fn ivec_bug_00() {
+        assert!(prop_identity(&IVec::new(&[
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ])));
     }
 }

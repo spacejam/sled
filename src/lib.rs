@@ -178,7 +178,6 @@ macro_rules! testing_assert {
     };
 }
 
-mod arc;
 mod atomic_shim;
 mod batch;
 mod concurrency_control;
@@ -350,7 +349,6 @@ use self::{
 
 use {
     self::{
-        arc::Arc,
         atomic_shim::{AtomicI64 as AtomicLsn, AtomicU64},
         concurrency_control::Protector,
         context::Context,
@@ -372,9 +370,12 @@ use {
         convert::TryFrom,
         fmt::{self, Debug},
         io::{Read, Write},
-        sync::atomic::{
-            AtomicUsize,
-            Ordering::{Acquire, Release, SeqCst},
+        sync::{
+            atomic::{
+                AtomicUsize,
+                Ordering::{Acquire, Release, SeqCst},
+            },
+            Arc,
         },
     },
 };
