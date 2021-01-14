@@ -66,7 +66,7 @@ If you would like to work with structured data without paying expensive deserial
 * zero-copy reads
 * [write batches](https://docs.rs/sled/latest/sled/struct.Tree.html#method.apply_batch)
 * [subscribe to changes on key
-  prefixes](struct.Tree.html#method.watch_prefix)
+  prefixes](https://docs.rs/sled/latest/sled/struct.Tree.html#method.watch_prefix)
 * [multiple keyspaces](https://docs.rs/sled/latest/sled/struct.Db.html#method.open_tree)
 * [merge operators](https://docs.rs/sled/latest/sled/doc/merge_operators/index.html)
 * forward and reverse iterators over ranges of items
