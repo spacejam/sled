@@ -11,7 +11,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-const SZ: usize = size_of::<usize>() * 2;
+const SZ: usize = size_of::<usize>();
 const CUTOFF: usize = SZ - 1;
 
 /// A buffer that may either be inline or remote and protected
@@ -143,7 +143,7 @@ impl IVec {
                 std::ptr::write_unaligned(data.as_mut_ptr() as _, ptr);
             }
 
-            assert_eq!(data[SZ - 1], 0);
+            assert_eq!(data[SZ - 1] & 1, 0);
         }
         Self(data)
     }
