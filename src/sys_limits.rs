@@ -86,13 +86,13 @@ pub fn get_memory_limit() -> u64 {
     {
         if let Ok(rlim) = get_rlimit_as() {
             let rlim_cur = Into::<u64>::into(rlim.rlim_cur);
-            if rlim_cur < max || max == 0 {
+            if max == 0 || rlim_cur < max {
                 max = rlim_cur;
             }
         }
 
         if let Ok(available) = get_available_memory() {
-            if available < max || max == 0 {
+            if max == 0 || available < max {
                 max = available;
             }
         }

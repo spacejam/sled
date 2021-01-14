@@ -1,11 +1,11 @@
-//! `sled` is a high-performance embedded database with
+//! `sled` is an embedded database with
 //! an API that is similar to a `BTreeMap<[u8], [u8]>`,
 //! but with several additional capabilities for
 //! assisting creators of stateful systems.
 //!
 //! It is fully thread-safe, and all operations are
-//! atomic. Multiple `Tree`s with isolated keyspaces
-//! are supported with the
+//! atomic. Most are fully non-blocking. Multiple
+//! `Tree`s with isolated keyspaces are supported with the
 //! [`Db::open_tree`](struct.Db.html#method.open_tree) method.
 //!
 //! ACID transactions involving reads and writes to
@@ -282,8 +282,6 @@ mod measure_allocs;
 static ALLOCATOR: measure_allocs::TrackingAllocator =
     measure_allocs::TrackingAllocator;
 
-const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
-
 /// Print a performance profile to standard out
 /// detailing what the internals of the system are doing.
 ///
@@ -371,14 +369,12 @@ use {
 
 #[doc(hidden)]
 pub fn pin() -> Guard {
-    Guard { inner: crossbeam_pin(), readset: vec![], writeset: vec![] }
+    Guard { inner: crossbeam_pin() }
 }
 
 #[doc(hidden)]
 pub struct Guard {
     inner: CrossbeamGuard,
-    readset: Vec<PageId>,
-    writeset: Vec<PageId>,
 }
 
 impl std::ops::Deref for Guard {

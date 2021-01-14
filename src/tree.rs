@@ -207,8 +207,6 @@ impl Tree {
                 res.complete(&event);
             }
 
-            guard.writeset.push(pid);
-
             Ok(Ok(last_value))
         } else {
             #[cfg(feature = "metrics")]
@@ -473,7 +471,7 @@ impl Tree {
         key: K,
         f: F,
     ) -> Result<B> {
-        let mut guard = pin();
+        let guard = pin();
         let _cc = concurrency_control::read();
 
         #[cfg(feature = "metrics")]
@@ -481,14 +479,12 @@ impl Tree {
 
         trace!("getting key {:?}", key.as_ref());
 
-        let View { node_view, pid, .. } =
+        let View { node_view, .. } =
             self.view_for_key(key.as_ref(), &guard)?;
 
         let pair = node_view.node_kv_pair(key.as_ref());
 
         let ret = f(pair.1);
-
-        guard.readset.push(pid);
 
         Ok(ret)
     }
@@ -503,13 +499,11 @@ impl Tree {
 
         trace!("getting key {:?}", key);
 
-        let View { node_view, pid, .. } =
+        let View { node_view,  .. } =
             self.view_for_key(key.as_ref(), guard)?;
 
         let pair = node_view.node_kv_pair(key.as_ref());
         let val = pair.1.map(IVec::from);
-
-        guard.readset.push(pid);
 
         Ok(Ok(val))
     }
