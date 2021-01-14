@@ -31,7 +31,7 @@ PRs that generally require less coordination beforehand:
 * FFI submodule changes: these are generally less well maintained than the Rust core, and benefit more from public assistance.
 * Generally any new kind of test that avoids biases inherent in the others.
 
-####### All PRs block on failing tests!
+#### All PRs block on failing tests!
 
 sled has intense testing, including crash tests, multi-threaded tests with
 delay injection, a variety of mechanically-generated tests that combine fault
