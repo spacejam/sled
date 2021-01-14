@@ -187,6 +187,7 @@ mod db;
 mod dll;
 mod fastcmp;
 mod fastlock;
+mod fnv;
 mod histogram;
 mod iter;
 mod ivec;
@@ -453,11 +454,8 @@ pub(crate) enum Link {
 /// A fast map that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
 #[cfg(not(feature = "testing"))]
-pub(crate) type FastMap8<K, V> = std::collections::HashMap<
-    K,
-    V,
-    std::hash::BuildHasherDefault<fxhash::FxHasher64>,
->;
+pub(crate) type FastMap8<K, V> =
+    std::collections::HashMap<K, V, std::hash::BuildHasherDefault<fnv::Hasher>>;
 
 #[cfg(feature = "testing")]
 pub(crate) type FastMap8<K, V> = BTreeMap<K, V>;
@@ -465,10 +463,8 @@ pub(crate) type FastMap8<K, V> = BTreeMap<K, V>;
 /// A fast set that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
 #[cfg(not(feature = "testing"))]
-pub(crate) type FastSet8<V> = std::collections::HashSet<
-    V,
-    std::hash::BuildHasherDefault<fxhash::FxHasher64>,
->;
+pub(crate) type FastSet8<V> =
+    std::collections::HashSet<V, std::hash::BuildHasherDefault<fnv::Hasher>>;
 
 #[cfg(feature = "testing")]
 pub(crate) type FastSet8<V> = std::collections::BTreeSet<V>;
