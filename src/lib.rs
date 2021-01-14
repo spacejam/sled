@@ -187,6 +187,7 @@ mod db;
 mod dll;
 mod fastcmp;
 mod fastlock;
+mod fxhash;
 mod histogram;
 mod iter;
 mod ivec;
