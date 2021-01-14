@@ -33,6 +33,13 @@
 * #1248 The deprecated `Tree::del` method has been removed.
 * #1250 The `Config::print_profile_on_drop` method has been
   removed in favor of the global `print_profile` function.
+* #1252 The deprecated `Db::open` method has been removed.
+* #1252 The deprecated `Config::segment_cleanup_skew` method
+  has been removed.
+* #1252 The deprecated `Config::segment_cleanup_threshold`
+  method has been removed.
+* #1252 The deprecated `Config::snapshot_path` method has
+  been removed.
 
 ## Bug Fixes
 
