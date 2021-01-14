@@ -295,8 +295,7 @@ fn main() {
 
     let config = sled::Config::new()
         .cache_capacity(256 * 1024 * 1024)
-        .flush_every_ms(Some(args.flush_every))
-        .print_profile_on_drop(true);
+        .flush_every_ms(Some(args.flush_every));
 
     let tree = Arc::new(config.open().unwrap());
     tree.set_merge_operator(concatenate_merge);
@@ -346,6 +345,9 @@ fn main() {
         time,
         ((ops * 1_000) / (time * 1_000)).to_formatted_string(&Locale::en)
     );
+
+    #[cfg(feature = "metrics")]
+    sled::print_profile();
 }
 
 #[cfg(feature = "logging")]
