@@ -76,7 +76,7 @@ impl Deref for IVec {
 impl AsRef<[u8]> for IVec {
     #[inline]
     fn as_ref(&self) -> &[u8] {
-        &self
+        self
     }
 }
 
@@ -109,7 +109,6 @@ impl Default for IVec {
         Self::from(&[])
     }
 }
-
 
 impl Hash for IVec {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -172,7 +171,7 @@ impl IVec {
     }
 
     fn make_mut(&mut self) {
-      assert!(!self.is_inline());
+        assert!(!self.is_inline());
         if self.deref_header().rc.load(Ordering::Acquire) != 1 {
             *self = IVec::from(self.deref())
         }
