@@ -15,18 +15,6 @@ pub struct Db {
     tenants: Arc<RwLock<FastMap8<IVec, Tree>>>,
 }
 
-/// Opens a `Db` with a default configuration at the
-/// specified path. This will create a new storage
-/// directory at the specified path if it does
-/// not already exist. You can use the `Db::was_recovered`
-/// method to determine if your database was recovered
-/// from a previous instance. You can use `Config::create_new`
-/// if you want to increase the chances that the database
-/// will be freshly created.
-pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
-    Config::new().path(path).open()
-}
-
 impl Deref for Db {
     type Target = Tree;
 
@@ -54,12 +42,6 @@ impl Debug for Db {
 }
 
 impl Db {
-    #[doc(hidden)]
-    #[deprecated(since = "0.30.2", note = "replaced by `sled::open`")]
-    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        Config::new().path(path).open()
-    }
-
     pub(crate) fn start_inner(config: RunningConfig) -> Result<Self> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.tree_start);

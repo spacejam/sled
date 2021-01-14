@@ -282,6 +282,18 @@ mod measure_allocs;
 static ALLOCATOR: measure_allocs::TrackingAllocator =
     measure_allocs::TrackingAllocator;
 
+/// Opens a `Db` with a default configuration at the
+/// specified path. This will create a new storage
+/// directory at the specified path if it does
+/// not already exist. You can use the `Db::was_recovered`
+/// method to determine if your database was recovered
+/// from a previous instance. You can use `Config::create_new`
+/// if you want to increase the chances that the database
+/// will be freshly created.
+pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
+    Config::new().path(path).open()
+}
+
 /// Print a performance profile to standard out
 /// detailing what the internals of the system are doing.
 ///
@@ -321,7 +333,7 @@ pub use {
 pub use self::{
     batch::Batch,
     config::{Config, Mode},
-    db::{open, Db},
+    db::Db,
     iter::Iter,
     ivec::IVec,
     result::{Error, Result},
