@@ -14,7 +14,7 @@ edition = "2018"
 exclude = ["benchmarks", "examples", "bindings", "scripts", "experiments"]
 
 [package.metadata.docs.rs]
-features = ["docs"]
+features = ["docs", "metrics"]
 
 [badges]
 maintenance = { status = "actively-developed" }

@@ -190,10 +190,11 @@ impl Metrics {
         self.tree_root_split_success.fetch_add(1, Relaxed);
     }
 
-    pub fn print_profile(&self) {
-        println!(
+    pub fn format_profile(&self) -> String {
+        let mut ret = String::new();
+        ret.push_str(&format!(
             "sled profile:\n\
-             {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}",
+             {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}\n",
             "op",
             "min (us)",
             "med (us)",
@@ -204,20 +205,26 @@ impl Metrics {
             "max (us)",
             "count",
             "sum (s)"
-        );
-        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
+        ));
+        ret.push_str(&format!(
+            "{}\n",
+            std::iter::repeat("-").take(134).collect::<String>()
+        ));
 
-        let p = |mut tuples: Vec<(String, _, _, _, _, _, _, _, _, _)>| {
-            tuples.sort_by_key(|t| (t.9 * -1. * 1e3) as i64);
-            for v in tuples {
-                println!(
-                    "{0: >17} | {1: >10.1} | {2: >10.1} | {3: >10.1} \
+        let p =
+            |mut tuples: Vec<(String, _, _, _, _, _, _, _, _, _)>| -> String {
+                tuples.sort_by_key(|t| (t.9 * -1. * 1e3) as i64);
+                let mut ret = String::new();
+                for v in tuples {
+                    ret.push_str(&format!(
+                        "{0: >17} | {1: >10.1} | {2: >10.1} | {3: >10.1} \
                      | {4: >10.1} | {5: >10.1} | {6: >10.1} | {7: >10.1} \
-                     | {8: >10.1} | {9: >10.3}",
-                    v.0, v.1, v.2, v.3, v.4, v.5, v.6, v.7, v.8, v.9,
-                );
-            }
-        };
+                     | {8: >10.1} | {9: >10.3}\n",
+                        v.0, v.1, v.2, v.3, v.4, v.5, v.6, v.7, v.8, v.9,
+                    ));
+                }
+                ret
+            };
 
         let lat = |name: &str, histo: &Histogram| {
             (
@@ -249,8 +256,9 @@ impl Metrics {
             )
         };
 
-        println!("tree:");
-        p(vec![
+        ret.push_str("tree:\n");
+
+        ret.push_str(&p(vec![
             lat("traverse", &self.tree_traverse),
             lat("get", &self.tree_get),
             lat("set", &self.tree_set),
@@ -259,7 +267,7 @@ impl Metrics {
             lat("cas", &self.tree_cas),
             lat("scan", &self.tree_scan),
             lat("rev scan", &self.tree_reverse_scan),
-        ]);
+        ]));
         let total_loops = self.tree_loops.load(Acquire);
         let total_ops = self.tree_get.count()
             + self.tree_set.count()
@@ -269,23 +277,26 @@ impl Metrics {
             + self.tree_scan.count()
             + self.tree_reverse_scan.count();
         let loop_pct = total_loops * 100 / (total_ops + 1);
-        println!(
-            "tree contention loops: {} ({}% retry rate)",
+        ret.push_str(&format!(
+            "tree contention loops: {} ({}% retry rate)\n",
             total_loops, loop_pct
-        );
-        println!(
-            "tree split success rates: child({}/{}) parent({}/{}) root({}/{})",
+        ));
+        ret.push_str(&format!(
+            "tree split success rates: child({}/{}) parent({}/{}) root({}/{})\n",
             self.tree_child_split_success.load(Acquire),
             self.tree_child_split_attempt.load(Acquire),
             self.tree_parent_split_success.load(Acquire),
             self.tree_parent_split_attempt.load(Acquire),
             self.tree_root_split_success.load(Acquire),
             self.tree_root_split_attempt.load(Acquire),
-        );
+        ));
 
-        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
-        println!("pagecache:");
-        p(vec![
+        ret.push_str(&format!(
+            "{}\n",
+            std::iter::repeat("-").take(134).collect::<String>()
+        ));
+        ret.push_str("pagecache:\n");
+        ret.push_str(&p(vec![
             lat("get", &self.get_page),
             lat("get pt", &self.get_pagetable),
             lat("rewrite", &self.rewrite_page),
@@ -293,25 +304,31 @@ impl Metrics {
             lat("link", &self.link_page),
             lat("pull", &self.pull),
             lat("page_out", &self.page_out),
-        ]);
+        ]));
         let hit_ratio = (self.get_page.count() - self.pull.count()) * 100
             / (self.get_page.count() + 1);
-        println!("hit ratio: {}%", hit_ratio);
+        ret.push_str(&format!("hit ratio: {}%\n", hit_ratio));
 
-        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
-        println!("serialization and compression:");
-        p(vec![
+        ret.push_str(&format!(
+            "{}\n",
+            std::iter::repeat("-").take(134).collect::<String>()
+        ));
+        ret.push_str("serialization and compression:\n");
+        ret.push_str(&p(vec![
             lat("serialize", &self.serialize),
             lat("deserialize", &self.deserialize),
             #[cfg(feature = "compression")]
             lat("compress", &self.compress),
             #[cfg(feature = "compression")]
             lat("decompress", &self.decompress),
-        ]);
+        ]));
 
-        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
-        println!("log:");
-        p(vec![
+        ret.push_str(&format!(
+            "{}\n",
+            std::iter::repeat("-").take(134).collect::<String>()
+        ));
+        ret.push_str("log:\n");
+        ret.push_str(&p(vec![
             lat("make_stable", &self.make_stable),
             lat("read", &self.read),
             lat("write", &self.write_to_log),
@@ -319,7 +336,7 @@ impl Metrics {
             lat("assign offset", &self.assign_offset),
             lat("reserve lat", &self.reserve_lat),
             sz("reserve sz", &self.reserve_sz),
-        ]);
+        ]));
         let log_reservations =
             std::cmp::max(1, self.log_reservations.load(Acquire));
         let log_reservation_attempts =
@@ -327,25 +344,31 @@ impl Metrics {
         let log_reservation_retry_rate =
             (log_reservation_attempts - log_reservations) * 100
                 / (log_reservations + 1);
-        println!("log reservations: {}", log_reservations);
-        println!(
-            "log res attempts: {}, ({}% retry rate)",
+        ret.push_str(&format!("log reservations: {}\n", log_reservations));
+        ret.push_str(&format!(
+            "log res attempts: {}, ({}% retry rate)\n",
             log_reservation_attempts, log_reservation_retry_rate,
-        );
+        ));
 
-        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
-        println!("segment accountant:");
-        p(vec![
+        ret.push_str(&format!(
+            "{}\n",
+            std::iter::repeat("-").take(134).collect::<String>()
+        ));
+        ret.push_str("segment accountant:\n");
+        ret.push_str(&p(vec![
             lat("acquire", &self.accountant_lock),
             lat("hold", &self.accountant_hold),
             lat("next", &self.accountant_next),
             lat("replace", &self.accountant_mark_replace),
             lat("link", &self.accountant_mark_link),
-        ]);
+        ]));
 
-        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
-        println!("recovery:");
-        p(vec![
+        ret.push_str(&format!(
+            "{}\n",
+            std::iter::repeat("-").take(134).collect::<String>()
+        ));
+        ret.push_str("recovery:\n");
+        ret.push_str(&p(vec![
             lat("start", &self.tree_start),
             lat("advance snapshot", &self.advance_snapshot),
             lat("fuzzy snapshot", &self.fuzzy_snapshot),
@@ -356,23 +379,25 @@ impl Metrics {
             lat("log message read", &self.read_segment_message),
             sz("seg util start", &self.segment_utilization_startup),
             sz("seg util end", &self.segment_utilization_shutdown),
-        ]);
+        ]));
 
         #[cfg(feature = "measure_allocs")]
         {
-            println!(
-                "{}",
+            ret.push_str(&format!(
+                "{}\n",
                 std::iter::repeat("-").take(134).collect::<String>()
-            );
-            println!("allocation statistics:");
-            println!(
-                "total allocations: {}",
+            ));
+            ret.push_str("allocation statistics:\n");
+            ret.push_str(&format!(
+                "total allocations: {}\n",
                 measure_allocs::ALLOCATIONS.load(Acquire)
-            );
-            println!(
-                "allocated bytes: {}",
+            ));
+            ret.push_str(&format!(
+                "allocated bytes: {}\n",
                 measure_allocs::ALLOCATED_BYTES.load(Acquire)
-            );
+            ));
         }
+
+        ret
     }
 }
