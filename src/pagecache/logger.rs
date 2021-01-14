@@ -300,7 +300,7 @@ impl Log {
             // recovery, we assume that nothing can begin here,
             // because headers are dynamically sized.
             let red_zone = iobuf.capacity - buf_offset < MAX_MSG_HEADER_LEN;
-            let would_overflow = prospective_size > iobuf.capacity || red_zone;
+            let would_overflow = red_zone || prospective_size > iobuf.capacity;
             if would_overflow {
                 // This buffer is too full to accept our write!
                 // Try to seal the buffer, and maybe write it if

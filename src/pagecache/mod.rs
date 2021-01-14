@@ -1209,13 +1209,8 @@ impl PageCacheInner {
     ) -> Result<CasResult<'g, ()>> {
         trace!("attempting to free pid {}", pid);
 
-        if pid == COUNTER_PID || pid == META_PID || pid == BATCH_MANIFEST_PID {
-            return Err(Error::Unsupported(
-                "you are not able to free the first \
-                 couple pages, which are allocated \
-                 for system internal purposes"
-                    .into(),
-            ));
+        if pid <= COUNTER_PID || pid == BATCH_MANIFEST_PID {
+            panic!("tried to free pid {}", pid);
         }
 
         let new_pointer =
@@ -1691,7 +1686,7 @@ impl PageCacheInner {
 
                     let mut returned_update: Owned<_> = cas_error.new;
 
-                    if actual_ts != old.ts() || is_rewrite {
+                    if is_rewrite || actual_ts != old.ts() {
                         return Ok(Err(Some((
                             PageView { read: current, entry: old.entry },
                             returned_update.update.take().unwrap(),
@@ -1757,7 +1752,7 @@ impl PageCacheInner {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.get_page);
 
-        if pid == COUNTER_PID || pid == META_PID || pid == BATCH_MANIFEST_PID {
+        if pid <= COUNTER_PID || pid == BATCH_MANIFEST_PID {
             panic!(
                 "tried to do normal pagecache get on priviledged pid {}",
                 pid
@@ -2020,13 +2015,13 @@ impl PageCacheInner {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.page_out);
         for pid in to_evict {
-            if pid == COUNTER_PID
-                || pid == META_PID
-                || pid == BATCH_MANIFEST_PID
-            {
+            assert_ne!(pid, BATCH_MANIFEST_PID);
+
+            if pid <= COUNTER_PID {
                 // should not page these suckas out
                 continue;
             }
+
             loop {
                 let page_view = self.inner.get(pid, guard);
                 if page_view.is_free() {

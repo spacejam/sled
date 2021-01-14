@@ -2,6 +2,8 @@ use std::ops::Deref;
 
 use crate::*;
 
+const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
+
 /// The `sled` embedded database! Implements
 /// `Deref<Target = sled::Tree>` to refer to
 /// a default keyspace / namespace / bucket.
