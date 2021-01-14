@@ -110,6 +110,7 @@ impl Default for IVec {
     }
 }
 
+
 impl Hash for IVec {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.deref().hash(state);
@@ -171,7 +172,7 @@ impl IVec {
     }
 
     fn make_mut(&mut self) {
-        assert!(!self.is_inline());
+      assert!(!self.is_inline());
         if self.deref_header().rc.load(Ordering::Acquire) != 1 {
             *self = IVec::from(self.deref())
         }

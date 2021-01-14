@@ -40,6 +40,7 @@
   method has been removed.
 * #1252 The deprecated `Config::snapshot_path` method has
   been removed.
+* #1253 The `IVec::subslice` method has been removed.
 
 ## Bug Fixes
 
