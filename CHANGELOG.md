@@ -15,10 +15,9 @@
 * #1214 a new slab-style storage engine has been added which
   replaces the previous file-per-blob technique for storing
   large pages.
-* #1231 implemented single-allocation tree nodes which use
-  several types of length compression, significantly
-  improving efficiency across the board: memory, disk,
-  latency, and throughput.
+* #1231 tree nodes now get merged into a single-allocation
+  representation that is able to dynamically avoid various
+  overheads, resulting in significant efficiency improvements.
 
 ## Breaking Changes
 
