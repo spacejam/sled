@@ -295,6 +295,7 @@ const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 /// a performance problem, and it can be invaluable
 /// for including in any opened issues.
 #[cfg(feature = "metrics")]
+#[allow(clippy::print_stdout)]
 pub fn print_profile() {
     println!("{}", M.format_profile());
 }

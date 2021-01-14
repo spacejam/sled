@@ -1,5 +1,4 @@
 #![allow(unused_results)]
-#![allow(clippy::print_stdout)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::float_arithmetic)]
