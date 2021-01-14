@@ -284,6 +284,22 @@ static ALLOCATOR: measure_allocs::TrackingAllocator =
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
+/// Print a performance profile to standard out
+/// detailing what the internals of the system are doing.
+///
+/// Requires the `metrics` feature to be enabled,
+/// which may introduce a bit of memory and overall
+/// performance overhead as lots of metrics are
+/// tallied up. Nevertheless, it is a useful
+/// tool for quickly understanding the root of
+/// a performance problem, and it can be invaluable
+/// for including in any opened issues.
+#[cfg(feature = "metrics")]
+#[allow(clippy::print_stdout)]
+pub fn print_profile() {
+    println!("{}", M.format_profile());
+}
+
 /// hidden re-export of items for testing purposes
 #[doc(hidden)]
 pub use {

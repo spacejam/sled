@@ -5,6 +5,8 @@
 * #1178 batches and transactions are now unified for subscribers.
 * #1231 `Tree::get_zero_copy` allows for reading a value directly
   in-place without making an `IVec` first.
+* #1250 the global `print_profile` function has been added
+  which is enabled when compiling with the `metrics` feature.
 
 ## Improvements
 
@@ -29,6 +31,8 @@
 * #1214 The deprecated `Config::build` method has been removed.
 * #1248 The deprecated `Tree::set` method has been removed.
 * #1248 The deprecated `Tree::del` method has been removed.
+* #1250 The `Config::print_profile_on_drop` method has been
+  removed in favor of the global `print_profile` function.
 
 ## Bug Fixes
 
