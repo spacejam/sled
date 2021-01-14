@@ -7,6 +7,8 @@
   in-place without making an `IVec` first.
 * #1250 the global `print_profile` function has been added
   which is enabled when compiling with the `metrics` feature.
+* #1254 `IVec` data will now always have an alignment of 8,
+  which may enable interesting architecture-specific use cases.
 
 ## Improvements
 
