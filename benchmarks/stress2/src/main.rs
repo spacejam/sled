@@ -293,9 +293,10 @@ fn main() {
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    let config = sled::Config::new()
-        .cache_capacity(256 * 1024 * 1024)
-        .flush_every_ms(Some(args.flush_every));
+    let config =
+        sled::Config::new().cache_capacity(256 * 1024 * 1024).flush_every_ms(
+            if args.flush_every == 0 { None } else { Some(args.flush_every) },
+        );
 
     let tree = Arc::new(config.open().unwrap());
     tree.set_merge_operator(concatenate_merge);
