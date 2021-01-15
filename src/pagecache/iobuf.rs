@@ -472,7 +472,7 @@ impl IoBufs {
             sa.stabilize(lsn)?;
             Ok(guard)
         })
-        .map(|guard| drop(guard))
+        .map(drop)
     }
 
     /// `SegmentAccountant` access for coordination with the `PageCache`
