@@ -828,7 +828,9 @@ impl SegmentAccountant {
 
             let idx = self.segment_id(old_lid);
             if let Some((old_idx, ref mut replaced_size)) = cumulative_segment {
-                if idx != old_idx {
+                if idx == old_idx {
+                    *replaced_size += old_cache_info.log_size;
+                } else {
                     // apply the cumulative state and move to the next segment
                     self.segments[old_idx].remove_pid(
                         pid,
@@ -837,8 +839,6 @@ impl SegmentAccountant {
                     );
                     self.possibly_clean_or_free_segment(old_idx, lsn)?;
                     cumulative_segment = Some((idx, old_cache_info.log_size));
-                } else {
-                    *replaced_size += old_cache_info.log_size;
                 }
             } else {
                 cumulative_segment = Some((idx, old_cache_info.log_size));
