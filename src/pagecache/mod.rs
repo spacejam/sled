@@ -975,8 +975,12 @@ impl PageCache {
         let pid_bound_usize = assert_usize(pid_bound);
 
         let mut page_states = Vec::<PageState>::with_capacity(pid_bound_usize);
-        let guard = pin();
+        let mut guard = pin();
         for pid in 0..pid_bound {
+            if pid % 64 == 0 {
+                drop(guard);
+                guard = pin();
+            }
             'inner: loop {
                 let pg_view = self.inner.get(pid, &guard);
                 if pg_view.cache_infos.is_empty() {
