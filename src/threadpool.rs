@@ -2,55 +2,28 @@
 
 use std::{
     collections::VecDeque,
-    sync::atomic::{
-        AtomicBool,
-        Ordering::{Acquire, Relaxed, Release, SeqCst},
-    },
-    thread,
+    sync::{Arc, Once},
     time::{Duration, Instant},
 };
 
 use parking_lot::{Condvar, Mutex};
 
-use crate::{
-    debug_delay, warn, AtomicU64, AtomicUsize, Error, Lazy, OneShot, Result,
-};
+use crate::{debug_delay, Lazy, OneShot, Result};
 
-// This is lower for CI reasons.
-#[cfg(windows)]
-const MAX_THREADS: usize = 16;
-
-#[cfg(not(windows))]
-const MAX_THREADS: usize = 128;
-
-const DESIRED_WAITING_THREADS: usize = 7;
-
-static WAITING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
-static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
-static SPAWNS: AtomicUsize = AtomicUsize::new(0);
-static SPAWNING: AtomicBool = AtomicBool::new(false);
-static SUBMITTED: AtomicU64 = AtomicU64::new(0);
-static COMPLETED: AtomicU64 = AtomicU64::new(0);
-static QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(init_queue);
-static BROKEN: AtomicBool = AtomicBool::new(false);
+static BLOCKING_QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(Default::default);
+static IO_QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(Default::default);
+static SNAPSHOT_QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(Default::default);
 
 type Work = Box<dyn FnOnce() + Send + 'static>;
 
-fn init_queue() -> Queue {
-    debug_delay();
-    for _ in 0..DESIRED_WAITING_THREADS {
-        debug_delay();
-        if let Err(e) = spawn_new_thread(true) {
-            log::error!("failed to initialize threadpool: {:?}", e);
-        }
-    }
-    Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
-}
-
+#[derive(Default)]
 struct Queue {
     cv: Condvar,
     mu: Mutex<VecDeque<Work>>,
 }
+
+#[allow(unsafe_code)]
+unsafe impl Send for Queue {}
 
 impl Queue {
     fn recv_timeout(&self, duration: Duration) -> Option<Work> {
@@ -59,19 +32,12 @@ impl Queue {
         let cutoff = Instant::now() + duration;
 
         while queue.is_empty() {
-            WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
             let res = self.cv.wait_until(&mut queue, cutoff);
-            WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
             if res.timed_out() {
                 break;
             }
         }
 
-        queue.pop_front()
-    }
-
-    fn try_recv(&self) -> Option<Work> {
-        let mut queue = self.mu.lock();
         queue.pop_front()
     }
 
@@ -89,114 +55,24 @@ impl Queue {
 
         len
     }
-}
 
-fn perform_work(is_immortal: bool) {
-    let wait_limit = Duration::from_secs(1);
+    fn perform_work(&self) {
+        let wait_limit = Duration::from_millis(100);
 
-    let mut performed = 0;
-    let mut contiguous_overshoots = 0;
-
-    while is_immortal || performed < 5 || contiguous_overshoots < 3 {
-        debug_delay();
-        let task_res = QUEUE.recv_timeout(wait_limit);
-
-        if let Some(task) = task_res {
-            WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
-            (task)();
-            COMPLETED.fetch_add(1, Release);
-            WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
-            performed += 1;
-        }
-
-        while let Some(task) = QUEUE.try_recv() {
+        loop {
+            let guard = crate::pin();
+            guard.flush();
+            drop(guard);
             debug_delay();
-            WAITING_THREAD_COUNT.fetch_sub(1, SeqCst);
-            (task)();
-            COMPLETED.fetch_add(1, Release);
-            WAITING_THREAD_COUNT.fetch_add(1, SeqCst);
-            performed += 1;
-        }
+            let task_res = self.recv_timeout(wait_limit);
 
-        debug_delay();
-
-        let waiting = WAITING_THREAD_COUNT.load(Acquire);
-
-        if waiting > DESIRED_WAITING_THREADS {
-            contiguous_overshoots += 1;
-        } else {
-            contiguous_overshoots = 0;
-        }
-    }
-}
-
-// Create up to MAX_THREADS dynamic blocking task worker threads.
-// Dynamic threads will terminate themselves if they don't
-// receive any work after one second.
-fn maybe_spawn_new_thread() -> Result<()> {
-    debug_delay();
-    let total_workers = TOTAL_THREAD_COUNT.load(Acquire);
-    debug_delay();
-    let waiting_threads = WAITING_THREAD_COUNT.load(Acquire);
-
-    if waiting_threads >= DESIRED_WAITING_THREADS
-        || total_workers >= MAX_THREADS
-    {
-        return Ok(());
-    }
-
-    if SPAWNING.compare_exchange_weak(false, true, Acquire, Acquire).is_ok() {
-        spawn_new_thread(false)?;
-    }
-
-    Ok(())
-}
-
-fn spawn_new_thread(is_immortal: bool) -> Result<()> {
-    if BROKEN.load(Relaxed) {
-        return Err(Error::ReportableBug(
-            "IO thread unexpectedly panicked. please report \
-            this bug on the sled github repo."
-                .to_string(),
-        ));
-    }
-
-    let spawn_id = SPAWNS.fetch_add(1, SeqCst);
-
-    TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
-    let spawn_res = thread::Builder::new()
-        .name(format!("sled-io-{}", spawn_id))
-        .spawn(move || {
-            SPAWNING.store(false, SeqCst);
-            debug_delay();
-            let res = std::panic::catch_unwind(|| perform_work(is_immortal));
-            TOTAL_THREAD_COUNT.fetch_sub(1, SeqCst);
-            if is_immortal {
-                // IO thread panicked, shut down the system
-                BROKEN.store(true, SeqCst);
-                panic!(
-                    "IO thread unexpectedly panicked. please report \
-                    this bug on the sled github repo. error: {:?}",
-                    res
-                );
+            if let Some(task) = task_res {
+                //println!("starting work");
+                (task)();
+                //println!("done work");
             }
-        });
-
-    if let Err(e) = spawn_res {
-        static E: AtomicBool = AtomicBool::new(false);
-
-        SPAWNING.store(false, SeqCst);
-
-        if E.compare_exchange(false, true, Relaxed, Relaxed).is_ok() {
-            // only execute this once
-            warn!(
-                "Failed to dynamically increase the threadpool size: {:?}.",
-                e,
-            )
         }
     }
-
-    Ok(())
 }
 
 /// Spawn a function on the threadpool.
@@ -205,17 +81,135 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static + Sized,
 {
-    SUBMITTED.fetch_add(1, Acquire);
+    spawn_to(work, &BLOCKING_QUEUE)
+}
+
+#[cfg(all(
+    not(miri),
+    any(
+        windows,
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+    )
+))]
+fn spawn_to<F, R>(work: F, queue: &'static Queue) -> Result<OneShot<R>>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static + Sized,
+{
+    static START_THREADS: Once = Once::new();
+
+    START_THREADS.call_once(|| {
+        std::thread::Builder::new()
+            .name("sled-io-thread".into())
+            .spawn(|| IO_QUEUE.perform_work())
+            .expect("failed to spawn critical IO thread");
+
+        std::thread::Builder::new()
+            .name("sled-blocking-thread".into())
+            .spawn(|| BLOCKING_QUEUE.perform_work())
+            .expect("failed to spawn critical blocking thread");
+
+        std::thread::Builder::new()
+            .name("sled-snapshot-thread".into())
+            .spawn(|| SNAPSHOT_QUEUE.perform_work())
+            .expect("failed to spawn critical snapshot thread");
+    });
+
     let (promise_filler, promise) = OneShot::pair();
     let task = move || {
         promise_filler.fill((work)());
     };
 
-    let depth = QUEUE.send(Box::new(task));
-
-    if depth > DESIRED_WAITING_THREADS {
-        maybe_spawn_new_thread()?;
-    }
+    queue.send(Box::new(task));
 
     Ok(promise)
+}
+
+#[cfg(any(
+    miri,
+    not(any(
+        windows,
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+    ))
+))]
+pub fn spawn_to<F, R>(work: F, _: &'static Queue) -> Result<OneShot<R>>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    // Polyfill for platforms other than those we explicitly trust to
+    // perform threaded work on. Just execute a task without involving threads.
+    let (promise_filler, promise) = OneShot::pair();
+    promise_filler.fill((work)());
+    Ok(promise)
+}
+
+pub fn truncate(
+    config: crate::RunningConfig,
+    at: u64,
+) -> Result<OneShot<Result<()>>> {
+    spawn_to(
+        move || {
+            log::debug!("truncating file to length {}", at);
+            config
+                .file
+                .set_len(at)
+                .and_then(|_| config.file.sync_all())
+                .map_err(|e| e.into())
+        },
+        &IO_QUEUE,
+    )
+}
+
+pub fn take_fuzzy_snapshot(
+    pc: crate::pagecache::PageCache,
+) -> Result<OneShot<()>> {
+    spawn_to(
+        move || {
+            if let Err(e) = pc.take_fuzzy_snapshot() {
+                log::error!("failed to write snapshot: {:?}", e);
+            }
+        },
+        &SNAPSHOT_QUEUE,
+    )
+}
+
+pub(crate) fn write_to_log(
+    iobuf: Arc<crate::pagecache::iobuf::IoBuf>,
+    iobufs: Arc<crate::pagecache::iobuf::IoBufs>,
+) -> Result<OneShot<()>> {
+    spawn_to(
+        move || {
+            if let Err(e) = iobufs.write_to_log(&iobuf) {
+                log::error!(
+                    "hit error while writing iobuf with lsn {}: {:?}",
+                    iobuf.lsn,
+                    e
+                );
+
+                // store error before notifying so that waiting threads will see
+                // it
+                iobufs.config.set_global_error(e);
+
+                let intervals = iobufs.intervals.lock();
+
+                // having held the mutex makes this linearized
+                // with the notify below.
+                drop(intervals);
+
+                let _notified = iobufs.interval_updated.notify_all();
+            }
+        },
+        &IO_QUEUE,
+    )
 }

@@ -464,6 +464,8 @@ impl IoBufs {
     }
 
     pub(in crate::pagecache) fn sa_stabilize(&self, lsn: Lsn) -> Result<()> {
+        // we avoid creating a Guard while blocking on the SA mutex, and we
+        // then drop the Guard only after the SA mutex is no longer held.
         self.with_sa(|sa| {
             let guard = pin();
             for op in self.deferred_segment_ops.take_iter(&guard) {
@@ -998,13 +1000,13 @@ pub(in crate::pagecache) fn make_stable_inner(
         }
 
         // block until another thread updates the stable lsn
-        let mut waiter = iobufs.intervals.lock();
+        let mut intervals = iobufs.intervals.lock();
 
         // check global error again now that we are holding a mutex
         if let Err(e) = iobufs.config.global_error() {
             // having held the mutex makes this linearized
             // with the notify below.
-            drop(waiter);
+            drop(intervals);
 
             let _notified = iobufs.interval_updated.notify_all();
             return Err(e);
@@ -1013,11 +1015,11 @@ pub(in crate::pagecache) fn make_stable_inner(
         stable = iobufs.stable();
 
         if partial_durability {
-            if waiter.stable_lsn > lsn {
+            if intervals.stable_lsn > lsn {
                 return Ok(assert_usize(stable - first_stable));
             }
 
-            for (low, high) in &waiter.fsynced_ranges {
+            for (low, high) in &intervals.fsynced_ranges {
                 if *low <= lsn && *high > lsn {
                     return Ok(assert_usize(stable - first_stable));
                 }
@@ -1028,9 +1030,10 @@ pub(in crate::pagecache) fn make_stable_inner(
             trace!("waiting on cond var for make_stable({})", lsn);
 
             if cfg!(feature = "event_log") {
-                let timeout = iobufs
-                    .interval_updated
-                    .wait_for(&mut waiter, std::time::Duration::from_secs(30));
+                let timeout = iobufs.interval_updated.wait_for(
+                    &mut intervals,
+                    std::time::Duration::from_secs(30),
+                );
                 if timeout.timed_out() {
                     fn tn() -> String {
                         std::thread::current()
@@ -1045,11 +1048,11 @@ pub(in crate::pagecache) fn make_stable_inner(
                         tn(),
                         lsn,
                         iobufs.stable(),
-                        waiter
+                        intervals
                     );
                 }
             } else {
-                iobufs.interval_updated.wait(&mut waiter);
+                iobufs.interval_updated.wait(&mut intervals);
             }
         } else {
             debug!("make_stable({}) returning", lsn);
@@ -1239,26 +1242,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         );
         let iobufs = iobufs.clone();
         let iobuf = iobuf.clone();
-        let _result = threadpool::spawn(move || {
-            if let Err(e) = iobufs.write_to_log(iobuf) {
-                error!(
-                    "hit error while writing iobuf with lsn {}: {:?}",
-                    lsn, e
-                );
-
-                // store error before notifying so that waiting threads will see
-                // it
-                iobufs.config.set_global_error(e);
-
-                let intervals = iobufs.intervals.lock();
-
-                // having held the mutex makes this linearized
-                // with the notify below.
-                drop(intervals);
-
-                let _notified = iobufs.interval_updated.notify_all();
-            }
-        })?;
+        let _result = threadpool::write_to_log(iobuf, iobufs)?;
 
         #[cfg(feature = "event_log")]
         _result.wait();

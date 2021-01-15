@@ -249,7 +249,7 @@ impl Log {
                 // has already been bumped by sealer.
                 trace_once!("io buffer already sealed, spinning");
 
-                backoff.snooze();
+                backoff.spin();
 
                 continue;
             }
@@ -325,7 +325,7 @@ impl Log {
                     "spinning because our buffer has {} writers already",
                     header::MAX_WRITERS
                 );
-                backoff.snooze();
+                backoff.spin();
                 continue;
             }
 
@@ -459,15 +459,7 @@ impl Log {
             );
             let iobufs = self.iobufs.clone();
             let iobuf = iobuf.clone();
-            threadpool::spawn(move || {
-                if let Err(e) = iobufs.write_to_log(iobuf) {
-                    error!(
-                        "hit error while writing iobuf with lsn {}: {:?}",
-                        lsn, e
-                    );
-                    iobufs.config.set_global_error(e);
-                }
-            })?;
+            threadpool::write_to_log(iobuf, iobufs)?;
 
             Ok(())
         } else {

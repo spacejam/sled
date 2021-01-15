@@ -8,7 +8,7 @@ pub mod logger;
 mod disk_pointer;
 mod header;
 mod heap;
-mod iobuf;
+pub(crate) mod iobuf;
 mod iterator;
 mod pagetable;
 #[cfg(any(all(not(unix), not(windows)), miri))]
@@ -676,7 +676,6 @@ impl PageCache {
         let mut was_recovered = true;
 
         let guard = pin();
-
         if !pc.inner.contains_pid(META_PID, &guard) {
             // set up meta
             was_recovered = false;
@@ -913,14 +912,7 @@ impl PageCache {
                         && link_count % self.config.snapshot_after_ops == 0
                     {
                         let s2: PageCache = self.clone();
-                        threadpool::spawn(move || {
-                            if let Err(e) = s2.take_fuzzy_snapshot() {
-                                log::error!(
-                                    "failed to write snapshot: {:?}",
-                                    e
-                                );
-                            }
-                        })?;
+                        threadpool::take_fuzzy_snapshot(s2)?;
                     }
 
                     return Ok(Ok(old));
@@ -948,7 +940,7 @@ impl PageCache {
         }
     }
 
-    fn take_fuzzy_snapshot(self) -> Result<()> {
+    pub(crate) fn take_fuzzy_snapshot(self) -> Result<()> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.fuzzy_snapshot);
         let lock = self.snapshot_lock.try_lock();
