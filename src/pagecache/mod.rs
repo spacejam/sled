@@ -997,6 +997,7 @@ impl PageCache {
                 }
             }
         }
+        drop(guard);
 
         let max_reserved_lsn_after: Lsn =
             self.log.iobufs.max_reserved_lsn.load(Acquire);
