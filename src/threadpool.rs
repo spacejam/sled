@@ -140,7 +140,7 @@ where
         target_os = "netbsd",
     ))
 ))]
-pub fn spawn_to<F, R>(work: F, _: &'static Queue) -> Result<OneShot<R>>
+fn spawn_to<F, R>(work: F, _: &'static Queue) -> Result<OneShot<R>>
 where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,

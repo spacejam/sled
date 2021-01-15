@@ -204,6 +204,7 @@ mod serialization;
 mod stack;
 mod subscriber;
 mod sys_limits;
+mod threadpool;
 pub mod transaction;
 mod tree;
 mod varint;
@@ -214,47 +215,6 @@ pub mod fail;
 
 #[cfg(feature = "docs")]
 pub mod doc;
-
-#[cfg(any(
-    miri,
-    not(any(
-        windows,
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
-    ))
-))]
-mod threadpool {
-    use super::{OneShot, Result};
-
-    /// Just execute a task without involving threads.
-    pub fn spawn<F, R>(work: F) -> Result<OneShot<R>>
-    where
-        F: FnOnce() -> R + Send + 'static,
-        R: Send + 'static,
-    {
-        let (promise_filler, promise) = OneShot::pair();
-        promise_filler.fill((work)());
-        Ok(promise)
-    }
-}
-
-#[cfg(all(
-    not(miri),
-    any(
-        windows,
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
-    )
-))]
-mod threadpool;
 
 #[cfg(all(
     not(miri),
