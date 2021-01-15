@@ -599,7 +599,7 @@ impl IoBufs {
 
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
-    pub(crate) fn write_to_log(&self, iobuf: &IoBuf) -> Result<()> {
+    pub(crate) fn write_to_log(&self, iobuf: Arc<IoBuf>) -> Result<()> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.write_to_log);
         let header = iobuf.get_header();
@@ -804,6 +804,11 @@ impl IoBufs {
                 }
             }
         }
+
+        // get rid of the iobuf as quickly as possible because
+        // it is a huge allocation
+        drop(iobuf);
+
         io_fail!(self, "buffer write post");
 
         if total_len > 0 {
@@ -1235,7 +1240,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         let iobufs = iobufs.clone();
         let iobuf = iobuf.clone();
         let _result = threadpool::spawn(move || {
-            if let Err(e) = iobufs.write_to_log(&iobuf) {
+            if let Err(e) = iobufs.write_to_log(iobuf) {
                 error!(
                     "hit error while writing iobuf with lsn {}: {:?}",
                     lsn, e

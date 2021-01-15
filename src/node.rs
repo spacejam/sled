@@ -327,7 +327,11 @@ impl Node {
         if self.overlay.is_empty() {
             return self.inner.clone();
         };
-        let items: Vec<(&[u8], &[u8])> = self.iter().collect();
+        let mut items: Vec<(&[u8], &[u8])> =
+            Vec::with_capacity(self.inner.children() + self.overlay.len());
+        for (k, v) in self.iter() {
+            items.push((k, v))
+        }
 
         log::trace!(
             "merging overlay items for node {:?} into {:?}",
