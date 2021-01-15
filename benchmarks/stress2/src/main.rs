@@ -6,25 +6,22 @@ use std::{
     thread,
 };
 
+#[cfg(feature = "jemalloc")]
+use jemallocator::Jemalloc;
+
+#[cfg(feature = "dh")]
+use dhat::{Dhat, DhatAlloc};
+
 use num_format::{Locale, ToFormattedString};
 use rand::{thread_rng, Rng};
 
-#[cfg_attr(
-    // only enable jemalloc on linux and macos by default
-    all(
-        any(target_os = "linux", target_os = "macos"),
-        feature = "jemalloc",
-    ),
-    global_allocator
-)]
-#[cfg(
-    // only enable jemalloc on linux and macos by default
-    all(
-        any(target_os = "linux", target_os = "macos"),
-        feature = "jemalloc",
-    ),
-)]
-static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+#[global_allocator]
+#[cfg(feature = "jemalloc")]
+static ALLOCATOR: Jemalloc = Jemalloc;
+
+#[global_allocator]
+#[cfg(feature = "dh")]
+static ALLOCATOR: DhatAlloc = DhatAlloc;
 
 static TOTAL: AtomicUsize = AtomicUsize::new(0);
 
@@ -288,6 +285,9 @@ fn rss() -> usize {
 fn main() {
     #[cfg(feature = "logging")]
     setup_logger();
+
+    #[cfg(feature = "dh")]
+    let _dh = Dhat::start_heap_profiling();
 
     let args = Args::parse();
 
