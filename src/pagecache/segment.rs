@@ -836,10 +836,10 @@ impl SegmentAccountant {
                         usize::try_from(*replaced_size).unwrap(),
                     );
                     self.possibly_clean_or_free_segment(old_idx, lsn)?;
+                    cumulative_segment = Some((idx, old_cache_info.log_size));
                 } else {
                     *replaced_size += old_cache_info.log_size;
                 }
-                cumulative_segment = Some((idx, old_cache_info.log_size));
             } else {
                 cumulative_segment = Some((idx, old_cache_info.log_size));
             }
