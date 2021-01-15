@@ -26,7 +26,7 @@ struct Queue {
 unsafe impl Send for Queue {}
 
 impl Queue {
-    fn recv_timeout(&self, duration: Duration) -> Option<Work> {
+    fn recv_timeout(&self, duration: Duration) -> Option<(Work, usize)> {
         let mut queue = self.mu.lock();
 
         let cutoff = Instant::now() + duration;
@@ -38,7 +38,7 @@ impl Queue {
             }
         }
 
-        queue.pop_front()
+        queue.pop_front().map(|w| (w, queue.len()))
     }
 
     fn send(&self, work: Work) -> usize {
@@ -56,18 +56,35 @@ impl Queue {
         len
     }
 
-    fn perform_work(&self) {
+    fn perform_work(&'static self, elastic: bool, temporary: bool) {
         let wait_limit = Duration::from_millis(100);
 
-        loop {
+        let mut last_employed = Instant::now();
+        while !temporary || last_employed.elapsed() < Duration::from_secs(5) {
             let guard = crate::pin();
             guard.flush();
             drop(guard);
             debug_delay();
-            let task_res = self.recv_timeout(wait_limit);
+            let task_opt = self.recv_timeout(wait_limit);
 
-            if let Some(task) = task_res {
+            if let Some((task, outstanding_work)) = task_opt {
+                // spin up some help if we're falling behind
+                if elastic && outstanding_work > 5 {
+                    let spawn_res = std::thread::Builder::new()
+                        .name("sled-temporary-thread".into())
+                        .spawn(move || self.perform_work(false, true));
+                    if let Err(e) = spawn_res {
+                        log::error!(
+                            "failed to spin-up temporary work thread: {:?}",
+                            e
+                        );
+                    }
+                }
+
+                // execute the work sent to this thread
                 (task)();
+
+                last_employed = Instant::now();
             }
         }
     }
@@ -104,17 +121,17 @@ where
     START_THREADS.call_once(|| {
         std::thread::Builder::new()
             .name("sled-io-thread".into())
-            .spawn(|| IO_QUEUE.perform_work())
+            .spawn(|| IO_QUEUE.perform_work(true, false))
             .expect("failed to spawn critical IO thread");
 
         std::thread::Builder::new()
             .name("sled-blocking-thread".into())
-            .spawn(|| BLOCKING_QUEUE.perform_work())
+            .spawn(|| BLOCKING_QUEUE.perform_work(true, false))
             .expect("failed to spawn critical blocking thread");
 
         std::thread::Builder::new()
             .name("sled-snapshot-thread".into())
-            .spawn(|| SNAPSHOT_QUEUE.perform_work())
+            .spawn(|| SNAPSHOT_QUEUE.perform_work(false, false))
             .expect("failed to spawn critical snapshot thread");
     });
 
