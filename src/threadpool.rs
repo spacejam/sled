@@ -190,10 +190,11 @@ pub(crate) fn write_to_log(
 ) -> Result<OneShot<()>> {
     spawn_to(
         move || {
-            if let Err(e) = iobufs.write_to_log(&iobuf) {
+            let lsn = iobuf.lsn;
+            if let Err(e) = iobufs.write_to_log(iobuf) {
                 log::error!(
                     "hit error while writing iobuf with lsn {}: {:?}",
-                    iobuf.lsn,
+                    lsn,
                     e
                 );
 
