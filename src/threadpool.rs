@@ -67,9 +67,7 @@ impl Queue {
             let task_res = self.recv_timeout(wait_limit);
 
             if let Some(task) = task_res {
-                //println!("starting work");
                 (task)();
-                //println!("done work");
             }
         }
     }
