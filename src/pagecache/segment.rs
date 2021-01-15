@@ -844,11 +844,11 @@ impl SegmentAccountant {
                 cumulative_segment = Some((idx, old_cache_info.log_size));
             }
         }
-        if let Some((old_idx, ref mut replaced_size)) = cumulative_segment {
+        if let Some((old_idx, replaced_size)) = cumulative_segment {
             self.segments[old_idx].remove_pid(
                 pid,
                 lsn,
-                usize::try_from(*replaced_size).unwrap(),
+                usize::try_from(replaced_size).unwrap(),
             );
             self.possibly_clean_or_free_segment(old_idx, lsn)?;
         }
