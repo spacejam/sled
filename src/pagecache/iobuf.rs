@@ -804,6 +804,11 @@ impl IoBufs {
                 }
             }
         }
+
+        // get rid of the iobuf as quickly as possible because
+        // it is a huge allocation
+        drop(iobuf);
+
         io_fail!(self, "buffer write post");
 
         if total_len > 0 {
