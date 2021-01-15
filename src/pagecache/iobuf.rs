@@ -463,18 +463,16 @@ impl IoBufs {
         Ok(())
     }
 
-    pub(in crate::pagecache) fn sa_stabilize(
-        &self,
-        lsn: Lsn,
-        guard: &Guard,
-    ) -> Result<()> {
+    pub(in crate::pagecache) fn sa_stabilize(&self, lsn: Lsn) -> Result<()> {
         self.with_sa(|sa| {
-            for op in self.deferred_segment_ops.take_iter(guard) {
+            let guard = pin();
+            for op in self.deferred_segment_ops.take_iter(&guard) {
                 sa.apply_op(op)?;
             }
             sa.stabilize(lsn)?;
-            Ok(())
+            Ok(guard)
         })
+        .map(|guard| drop(guard))
     }
 
     /// `SegmentAccountant` access for coordination with the `PageCache`
@@ -842,13 +840,13 @@ impl IoBufs {
             trace!("bumping atomic header lsn to {}", stored_max_stable_lsn);
             bump_atomic_lsn(&max_header_stable_lsn, stored_max_stable_lsn)
         });
-
         guard.flush();
+        drop(guard);
 
         let current_max_header_stable_lsn =
             self.max_header_stable_lsn.load(Acquire);
 
-        self.sa_stabilize(current_max_header_stable_lsn, &guard)
+        self.sa_stabilize(current_max_header_stable_lsn)
     }
 
     // It's possible that IO buffers are written out of order!
