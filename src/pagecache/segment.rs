@@ -1160,20 +1160,10 @@ impl SegmentAccountant {
 
         assert!(!self.free.contains(&at), "double-free of a segment occurred");
 
-        let (completer, promise) = OneShot::pair();
-
         let config = self.config.clone();
 
         io_fail!(&config, "file truncation");
-        threadpool::spawn(move || {
-            debug!("truncating file to length {}", at);
-            let res = config
-                .file
-                .set_len(at)
-                .and_then(|_| config.file.sync_all())
-                .map_err(|e| e.into());
-            completer.fill(res);
-        })?;
+        let promise = threadpool::truncate(config, at)?;
 
         if self.async_truncations.insert(at, promise).is_some() {
             panic!(
