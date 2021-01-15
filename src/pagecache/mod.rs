@@ -675,78 +675,69 @@ impl PageCache {
 
         let mut was_recovered = true;
 
-        {
-            // subscope required because pc.begin() borrows pc
+        let guard = pin();
 
-            let guard = pin();
+        if !pc.inner.contains_pid(META_PID, &guard) {
+            // set up meta
+            was_recovered = false;
 
-            if !pc.inner.contains_pid(META_PID, &guard) {
-                // set up meta
-                was_recovered = false;
+            let meta_update = Update::Meta(Meta::default());
 
-                let meta_update = Update::Meta(Meta::default());
+            let (meta_id, _) = pc.allocate_inner(meta_update, &guard)?;
 
-                let (meta_id, _) = pc.allocate_inner(meta_update, &guard)?;
-
-                assert_eq!(
+            assert_eq!(
                     meta_id, META_PID,
                     "we expect the meta page to have pid {}, but it had pid {} instead",
                     META_PID, meta_id,
                 );
-            }
+        }
 
-            if !pc.inner.contains_pid(COUNTER_PID, &guard) {
-                // set up idgen
-                was_recovered = false;
+        if !pc.inner.contains_pid(COUNTER_PID, &guard) {
+            // set up idgen
+            was_recovered = false;
 
-                let counter_update = Update::Counter(0);
+            let counter_update = Update::Counter(0);
 
-                let (counter_id, _) =
-                    pc.allocate_inner(counter_update, &guard)?;
+            let (counter_id, _) = pc.allocate_inner(counter_update, &guard)?;
 
-                assert_eq!(
+            assert_eq!(
                     counter_id, COUNTER_PID,
                     "we expect the counter to have pid {}, but it had pid {} instead",
                     COUNTER_PID, counter_id,
                 );
-            }
+        }
 
-            let (idgen_key, counter) = pc.get_idgen(&guard);
-            let idgen_recovery = if was_recovered {
-                counter + (2 * pc.config.idgen_persist_interval)
-            } else {
-                // persist the meta and idgen pages now, so that we don't hand
-                // out id 0 again if we crash and recover
-                pc.flush()?;
-                0
-            };
-            let idgen_persists = counter / pc.config.idgen_persist_interval
-                * pc.config.idgen_persist_interval;
+        let (idgen_key, counter) = pc.get_idgen(&guard);
+        let idgen_recovery = if was_recovered {
+            counter + (2 * pc.config.idgen_persist_interval)
+        } else {
+            0
+        };
+        let idgen_persists = counter / pc.config.idgen_persist_interval
+            * pc.config.idgen_persist_interval;
 
-            pc.idgen.store(idgen_recovery, Release);
-            pc.idgen_persists.store(idgen_persists, Release);
+        pc.idgen.store(idgen_recovery, Release);
+        pc.idgen_persists.store(idgen_persists, Release);
 
-            if was_recovered {
-                // advance pc.idgen_persists and the counter page by one
-                // interval, so that when generate_id() is next called, it
-                // will advance them further by another interval, and wait for
-                // this update to be durable before returning the first ID.
-                let necessary_persists =
-                    (counter / pc.config.idgen_persist_interval + 1)
-                        * pc.config.idgen_persist_interval;
-                let counter_update = Update::Counter(necessary_persists);
-                let old = pc.idgen_persists.swap(necessary_persists, Release);
-                assert_eq!(old, idgen_persists);
-                // CAS should never fail because the PageCache is still being constructed.
-                pc.cas_page(
-                    COUNTER_PID,
-                    idgen_key,
-                    counter_update,
-                    false,
-                    &guard,
-                )?
+        if was_recovered {
+            // advance pc.idgen_persists and the counter page by one
+            // interval, so that when generate_id() is next called, it
+            // will advance them further by another interval, and wait for
+            // this update to be durable before returning the first ID.
+            let necessary_persists =
+                (counter / pc.config.idgen_persist_interval + 1)
+                    * pc.config.idgen_persist_interval;
+            let counter_update = Update::Counter(necessary_persists);
+            let old = pc.idgen_persists.swap(necessary_persists, Release);
+            assert_eq!(old, idgen_persists);
+            // CAS should never fail because the PageCache is still being constructed.
+            pc.cas_page(COUNTER_PID, idgen_key, counter_update, false, &guard)?
                 .unwrap();
-            }
+        } else {
+            drop(guard);
+            // persist the meta and idgen pages now, so that we don't hand
+            // out id 0 again if we crash and recover
+            pc.flush()?;
         }
 
         pc.was_recovered = was_recovered;
@@ -975,8 +966,12 @@ impl PageCache {
         let pid_bound_usize = assert_usize(pid_bound);
 
         let mut page_states = Vec::<PageState>::with_capacity(pid_bound_usize);
-        let guard = pin();
+        let mut guard = pin();
         for pid in 0..pid_bound {
+            if pid % 64 == 0 {
+                drop(guard);
+                guard = pin();
+            }
             'inner: loop {
                 let pg_view = self.inner.get(pid, &guard);
                 if pg_view.cache_infos.is_empty() {
@@ -993,6 +988,7 @@ impl PageCache {
                 }
             }
         }
+        drop(guard);
 
         let max_reserved_lsn_after: Lsn =
             self.log.iobufs.max_reserved_lsn.load(Acquire);
