@@ -1664,6 +1664,8 @@ impl Tree {
                 .compare_exchange(from, new_root_pid, SeqCst, SeqCst)
                 .is_err()
             {
+                // `hint::spin_loop` requires Rust 1.49.
+                #[allow(deprecated)]
                 std::sync::atomic::spin_loop_hint();
             }
 

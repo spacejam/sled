@@ -64,6 +64,8 @@ where
             .compare_exchange(false, true, SeqCst, SeqCst)
             .is_err()
         {
+            // `hint::spin_loop` requires Rust 1.49.
+            #[allow(deprecated)]
             std::sync::atomic::spin_loop_hint();
         }
 
