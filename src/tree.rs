@@ -1742,23 +1742,27 @@ impl Tree {
         let mut unsplit_parent = None;
         let mut took_leftmost_branch = false;
 
-        macro_rules! retry {
-            () => {
-                trace!(
-                    "retrying at line {} when cursor was {}",
-                    line!(),
-                    cursor
-                );
-                cursor = self.root.load(Acquire);
-                root_pid = cursor;
-                parent_view = None;
-                unsplit_parent = None;
-                took_leftmost_branch = false;
-                continue;
-            };
-        }
+        // only merge or split nodes a few times
+        let mut smo_budget = 3_u8;
 
         for _ in 0..MAX_LOOPS {
+            macro_rules! retry {
+                () => {
+                    trace!(
+                        "retrying at line {} when cursor was {}",
+                        line!(),
+                        cursor
+                    );
+                    smo_budget = smo_budget.saturating_sub(1);
+                    cursor = self.root.load(Acquire);
+                    root_pid = cursor;
+                    parent_view = None;
+                    unsplit_parent = None;
+                    took_leftmost_branch = false;
+                    continue;
+                };
+            }
+
             if cursor == u64::max_value() {
                 // this collection has been explicitly removed
                 return Err(Error::CollectionNotFound(self.tree_id.clone()));
@@ -1798,7 +1802,7 @@ impl Tree {
                 retry!();
             }
 
-            if view.should_split() {
+            if smo_budget > 0 && view.should_split() {
                 self.split_node(&view, &parent_view, root_pid, guard)?;
                 retry!();
             }
@@ -1873,7 +1877,8 @@ impl Tree {
             // would be merged into a different index, which
             // would add considerable complexity to this already
             // fairly complex implementation.
-            if !took_leftmost_branch
+            if smo_budget > 0
+                && !took_leftmost_branch
                 && parent_view.is_some()
                 && view.should_merge()
             {
