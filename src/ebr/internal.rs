@@ -303,11 +303,13 @@ impl Global {
         }
 
         #[cfg(feature = "testing")]
-        if count > 0 && SIZE_HINT.load(Ordering::Relaxed) > 1000 {
-            panic!(
-                "EBR collector grew to {} items",
-                SIZE_HINT.load(Ordering::Relaxed)
-            );
+        {
+            if count > 0 && SIZE_HINT.load(Ordering::Relaxed) > 1000 {
+                panic!(
+                    "EBR collector grew to {} items",
+                    SIZE_HINT.load(Ordering::Relaxed)
+                );
+            }
         }
     }
 
