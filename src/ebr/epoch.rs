@@ -105,10 +105,6 @@ impl AtomicEpoch {
         new: Epoch,
         ord: Ordering,
     ) -> Epoch {
-        let data = self.data.compare_and_swap(current.data, new.data, ord);
-        Epoch { data }
-
-        /*
         use super::atomic::CompareAndSetOrdering;
 
         match self.data.compare_exchange(
@@ -119,6 +115,5 @@ impl AtomicEpoch {
         ) {
             Ok(data) | Err(data) => Epoch { data },
         }
-        */
     }
 }
