@@ -9,7 +9,7 @@
 # We ignore this because collect() calls functionality that relies
 # on atomic::fence for correctness, which doesn't get picked up by TSAN
 # as of Feb 1 2018 / rust 1.23.
-race:crossbeam_epoch::internal::Global::collect
+race:sled::ebr::internal::Global::collect
 
 # Arc::drop is not properly detected by TSAN due to the use
 # of a raw atomic Acquire fence after the strong-count
@@ -20,7 +20,3 @@ race:Arc*drop
 # picked-up by TSAN
 race:lazy_static
 race:std::thread::local
-
-# tsan doesn't seem to pick up parking_lot RwLock-protected accesses
-# that sometimes use lock elision
-race:current_iobuf

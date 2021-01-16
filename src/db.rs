@@ -268,11 +268,11 @@ impl Db {
     /// ```
     /// # use sled as old_sled;
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let old = old_sled::open("my_old_db")?;
+    /// let old = old_sled::open("my_old__db")?;
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
-    /// let new = sled::open("my_new_db")?;
+    /// let new = sled::open("my_new__db")?;
     ///
     /// let export = old.export();
     /// new.import(export);
@@ -280,8 +280,8 @@ impl Db {
     /// assert_eq!(old.checksum()?, new.checksum()?);
     /// # drop(old);
     /// # drop(new);
-    /// # std::fs::remove_file("my_old_db");
-    /// # std::fs::remove_file("my_new_db");
+    /// # std::fs::remove_file("my_old__db");
+    /// # std::fs::remove_file("my_new__db");
     /// # Ok(()) }
     /// ```
     pub fn export(

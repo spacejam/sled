@@ -179,12 +179,15 @@ macro_rules! testing_assert {
 }
 
 mod atomic_shim;
+mod backoff;
 mod batch;
+mod cache_padded;
 mod concurrency_control;
 mod config;
 mod context;
 mod db;
 mod dll;
+mod ebr;
 mod fastcmp;
 mod fastlock;
 mod fnv;
@@ -272,22 +275,17 @@ pub fn print_profile() {
 
 /// hidden re-export of items for testing purposes
 #[doc(hidden)]
-pub use {
-    self::{
-        config::RunningConfig,
-        lazy::Lazy,
-        pagecache::{
-            constants::{
-                MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, SEG_HEADER_LEN,
-            },
-            BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
-            PageCache, PageId,
+pub use self::{
+    config::RunningConfig,
+    lazy::Lazy,
+    pagecache::{
+        constants::{
+            MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, SEG_HEADER_LEN,
         },
-        serialization::Serialize,
+        BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
+        PageCache, PageId,
     },
-    crossbeam_epoch::{
-        pin as crossbeam_pin, Atomic, Guard as CrossbeamGuard, Owned, Shared,
-    },
+    serialization::Serialize,
 };
 
 pub use self::{
@@ -311,8 +309,14 @@ use self::{
 use {
     self::{
         atomic_shim::{AtomicI64 as AtomicLsn, AtomicU64},
+        backoff::Backoff,
+        cache_padded::CachePadded,
         concurrency_control::Protector,
         context::Context,
+        ebr::{
+            pin as crossbeam_pin, Atomic, Guard as CrossbeamGuard, Owned,
+            Shared,
+        },
         fastcmp::fastcmp,
         lru::Lru,
         meta::Meta,
@@ -322,7 +326,6 @@ use {
         subscriber::Subscribers,
         tree::TreeInner,
     },
-    crossbeam_utils::{Backoff, CachePadded},
     log::{debug, error, trace, warn},
     pagecache::RecoveryGuard,
     parking_lot::{Condvar, Mutex, RwLock},

@@ -12,9 +12,8 @@ use std::{
     },
 };
 
-use crossbeam_epoch::pin;
-
 use crate::{
+    ebr::pin,
     pagecache::{pread_exact, pwrite_all, MessageKind},
     stack::Stack,
     Error, Lsn, Result,
