@@ -25,29 +25,6 @@ pub struct Entry {
 ///
 /// # Example
 ///
-/// ```ignore
-/// struct A {
-///     entry: Entry,
-///     data: usize,
-/// }
-///
-/// impl IsElement<A> for A {
-///     fn entry_of(a: &A) -> &Entry {
-///         let entry_ptr = ((a as usize) + offset_of!(A, entry)) as *const Entry;
-///         unsafe { &*entry_ptr }
-///     }
-///
-///     unsafe fn element_of(entry: &Entry) -> &T {
-///         let elem_ptr = ((entry as usize) - offset_of!(A, entry)) as *const T;
-///         &*elem_ptr
-///     }
-///
-///     unsafe fn finalize(entry: &Entry, guard: &Guard) {
-///         guard.defer_destroy(Shared::from(Self::element_of(entry) as *const _));
-///     }
-/// }
-/// ```
-///
 /// This trait is implemented on a type separate from `T` (although it can be just `T`), because
 /// one type might be placeable into multiple lists, in which case it would require multiple
 /// implementations of `IsElement`. In such cases, each struct implementing `IsElement<T>`
@@ -55,26 +32,11 @@ pub struct Entry {
 ///
 /// For example, we can insert the following struct into two lists using `entry1` for one
 /// and `entry2` for the other:
-///
-/// ```ignore
-/// struct B {
-///     entry1: Entry,
-///     entry2: Entry,
-///     data: usize,
-/// }
-/// ```
-///
 pub trait IsElement<T> {
     /// Returns a reference to this element's `Entry`.
     fn entry_of(_: &T) -> &Entry;
 
     /// Given a reference to an element's entry, returns that element.
-    ///
-    /// ```ignore
-    /// let elem = ListElement::new();
-    /// assert_eq!(elem.entry_of(),
-    ///            unsafe { ListElement::element_of(elem.entry_of()) } );
-    /// ```
     ///
     /// # Safety
     ///

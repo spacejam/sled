@@ -1,17 +1,4 @@
 /// Epoch-based garbage collector.
-///
-/// # Examples
-///
-/// ```
-/// use crossbeam_epoch::Collector;
-///
-/// let collector = Collector::new();
-///
-/// let handle = collector.register();
-/// drop(collector); // `handle` still works after dropping `collector`
-///
-/// handle.pin().flush();
-/// ```
 use core::fmt;
 use std::sync::Arc;
 
