@@ -225,8 +225,8 @@ where
 #[test]
 #[cfg(not(miri))] // can't create threads
 fn basic_functionality() {
-    use crossbeam_utils::CachePadded;
-    use ebr::pin;
+    use crate::pin;
+    use crate::CachePadded;
     use std::sync::Arc;
     use std::thread;
 

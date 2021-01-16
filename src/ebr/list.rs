@@ -298,12 +298,9 @@ impl<'g, T: 'g, C: IsElement<T>> Iterator for Iter<'g, T, C> {
 #[cfg(test)]
 mod tests {
     #![allow(trivial_casts)]
-    use super::super::super::collector::Collector;
-    use super::super::super::Owned;
     use super::*;
-
-    use crossbeam_utils::thread;
-    use std::sync::Barrier;
+    use crate::ebr::collector::Collector;
+    use crate::ebr::Owned;
 
     impl IsElement<Entry> for Entry {
         fn entry_of(entry: &Entry) -> &Entry {
@@ -393,100 +390,6 @@ mod tests {
             e1.as_ref().unwrap().delete(&guard);
             e3.as_ref().unwrap().delete(&guard);
         }
-
-        let mut iter = l.iter(&guard);
-        assert!(iter.next().is_none());
-    }
-
-    const THREADS: usize = 8;
-    const ITERS: usize = 512;
-
-    /// Contends the list on insert and delete operations to make sure they can run concurrently.
-    #[test]
-    fn insert_delete_multi() {
-        let collector = Collector::new();
-
-        let l: List<Entry> = List::new();
-        let b = Barrier::new(THREADS);
-
-        thread::scope(|s| {
-            for _ in 0..THREADS {
-                s.spawn(|_| {
-                    b.wait();
-
-                    let handle = collector.register();
-                    let guard: Guard = handle.pin();
-                    let mut v = Vec::with_capacity(ITERS);
-
-                    for _ in 0..ITERS {
-                        let e =
-                            Owned::new(Entry::default()).into_shared(&guard);
-                        v.push(e);
-                        unsafe {
-                            l.insert(e, &guard);
-                        }
-                    }
-
-                    for e in v {
-                        unsafe {
-                            e.as_ref().unwrap().delete(&guard);
-                        }
-                    }
-                });
-            }
-        })
-        .unwrap();
-
-        let handle = collector.register();
-        let guard = handle.pin();
-
-        let mut iter = l.iter(&guard);
-        assert!(iter.next().is_none());
-    }
-
-    /// Contends the list on iteration to make sure that it can be iterated over concurrently.
-    #[test]
-    fn iter_multi() {
-        let collector = Collector::new();
-
-        let l: List<Entry> = List::new();
-        let b = Barrier::new(THREADS);
-
-        thread::scope(|s| {
-            for _ in 0..THREADS {
-                s.spawn(|_| {
-                    b.wait();
-
-                    let handle = collector.register();
-                    let guard: Guard = handle.pin();
-                    let mut v = Vec::with_capacity(ITERS);
-
-                    for _ in 0..ITERS {
-                        let e =
-                            Owned::new(Entry::default()).into_shared(&guard);
-                        v.push(e);
-                        unsafe {
-                            l.insert(e, &guard);
-                        }
-                    }
-
-                    let mut iter = l.iter(&guard);
-                    for _ in 0..ITERS {
-                        assert!(iter.next().is_some());
-                    }
-
-                    for e in v {
-                        unsafe {
-                            e.as_ref().unwrap().delete(&guard);
-                        }
-                    }
-                });
-            }
-        })
-        .unwrap();
-
-        let handle = collector.register();
-        let guard = handle.pin();
 
         let mut iter = l.iter(&guard);
         assert!(iter.next().is_none());
