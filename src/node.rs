@@ -79,7 +79,7 @@ fn apply_computed_distance(mut buf: &mut [u8], mut distance: usize) {
     while distance > 0 {
         let last = &mut buf[buf.len() - 1];
         *last = last.wrapping_add(u8::try_from(distance % 256).unwrap());
-        distance = distance >> 8;
+        distance >>= 8;
         if distance != 0 {
             let new_len = buf.len() - 2;
             buf = &mut buf[..new_len];
@@ -130,6 +130,7 @@ impl<'a> KeyRef<'a> {
         }
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn trim_prefix_bytes(self, additional_prefix: usize) -> KeyRef<'a> {
         match self {
             KeyRef::Computed { base, distance } => {
@@ -137,10 +138,7 @@ impl<'a> KeyRef<'a> {
                     (base.len() - additional_prefix) as f64
                         > (distance as f64).log(256.)
                 );
-                KeyRef::Computed {
-                    base: &base[additional_prefix..],
-                    distance: distance,
-                }
+                KeyRef::Computed { base: &base[additional_prefix..], distance }
             }
             KeyRef::Slice(s) => KeyRef::Slice(&s[additional_prefix..]),
         }
@@ -176,26 +174,20 @@ impl PartialEq<KeyRef<'_>> for KeyRef<'_> {
             (
                 KeyRef::Computed { base: a, distance: da },
                 KeyRef::Computed { base: b, distance: db },
-            ) => {
-                if a < b {
-                    da.eq(&(distance(a, b) + db))
-                } else if a > b {
-                    (distance(b, a) + da).eq(db)
-                } else {
-                    da.eq(db)
-                }
-            }
+            ) => match a.cmp(b) {
+                Less => da.eq(&(distance(a, b) + db)),
+                Greater => (distance(b, a) + da).eq(db),
+                Equal => da.eq(db),
+            },
             (KeyRef::Computed { base: a, distance: da }, KeyRef::Slice(b)) => {
-                if a < b {
-                    da.eq(&distance(a, b))
-                } else if a > b {
-                    false
-                } else {
-                    da.eq(&0)
+                match a.cmp(b) {
+                    Less => da.eq(&distance(a, b)),
+                    Greater => false,
+                    Equal => da.eq(&0),
                 }
             }
             (KeyRef::Slice(a), KeyRef::Computed { base: b, distance: db }) => {
-                if a < b {
+                if let Less = a.cmp(b) {
                     false
                 } else {
                     distance(b, a).eq(db)
@@ -214,31 +206,23 @@ impl Ord for KeyRef<'_> {
             (
                 KeyRef::Computed { base: a, distance: da },
                 KeyRef::Computed { base: b, distance: db },
-            ) => {
-                if a < b {
-                    da.cmp(&(distance(a, b) + db))
-                } else if a > b {
-                    (distance(b, a) + da).cmp(db)
-                } else {
-                    da.cmp(db)
-                }
-            }
+            ) => match a.cmp(b) {
+                Less => da.cmp(&(distance(a, b) + db)),
+                Greater => (distance(b, a) + da).cmp(db),
+                Equal => da.cmp(db),
+            },
             (KeyRef::Computed { base: a, distance: da }, KeyRef::Slice(b)) => {
-                if a < b {
-                    da.cmp(&distance(a, b))
-                } else if a > b {
-                    Greater
-                } else {
-                    da.cmp(&0)
+                match a.cmp(b) {
+                    Less => da.cmp(&distance(a, b)),
+                    Greater => Greater,
+                    Equal => da.cmp(&0),
                 }
             }
             (KeyRef::Slice(a), KeyRef::Computed { base: b, distance: db }) => {
-                if a < b {
-                    Less
-                } else if a > b {
-                    distance(b, a).cmp(db)
-                } else {
-                    0.cmp(db)
+                match a.cmp(b) {
+                    Less => Less,
+                    Greater => distance(b, a).cmp(db),
+                    Equal => 0.cmp(db),
                 }
             }
             (KeyRef::Slice(a), KeyRef::Slice(b)) => a.cmp(b),
@@ -708,8 +692,7 @@ impl Node {
             next_b: None,
         };
 
-        let ret: Option<(KeyRef<'_>, &[u8])> =
-            iter.find(|(k, _)| in_bounds(&k));
+        let ret: Option<(KeyRef<'_>, &[u8])> = iter.find(|(k, _)| in_bounds(k));
 
         ret.map(|(k, v)| (self.prefix_decode(k), v.into()))
     }
@@ -729,7 +712,7 @@ impl Node {
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
-            .find(|(k, _)| in_bounds(&k));
+            .find(|(k, _)| in_bounds(k));
 
         ret.map(|(k, v)| (self.prefix_decode(k), v.into()))
     }
@@ -916,20 +899,16 @@ fn stride(a: &[u8], b: KeyRef<'_>) -> u8 {
     if a.len() != b.len() {
         return 0;
     }
-    use distance as distance_func;
     match b {
         KeyRef::Slice(b) => b[b.len() - 1].wrapping_sub(a[b.len() - 1]),
-        KeyRef::Computed { base, distance } => {
-            let a_distance = distance_func(base, a);
-            u8::try_from(distance - a_distance).unwrap()
+        KeyRef::Computed { base, distance: b_distance } => {
+            let a_distance = distance(base, a);
+            u8::try_from(b_distance - a_distance).unwrap()
         }
     }
 }
 
 fn distance(base: &[u8], search: &[u8]) -> usize {
-    assert!(base <= search);
-    assert!(!base.is_empty());
-    assert_eq!(search.len(), base.len());
     fn f1(base: &[u8], search: &[u8]) -> usize {
         (search[search.len() - 1] - base[search.len() - 1]) as usize
     }
@@ -945,6 +924,10 @@ fn distance(base: &[u8], search: &[u8]) -> usize {
         (u32::from_be_bytes(search.try_into().unwrap()) as usize)
             - (u32::from_be_bytes(base.try_into().unwrap()) as usize)
     }
+
+    assert!(base <= search);
+    assert!(!base.is_empty());
+    assert_eq!(search.len(), base.len());
 
     let computed_gotos = [f1, f2, f3, f4];
 
@@ -1014,7 +997,7 @@ impl Inner {
         let (fixed_key_length, keys_equal_length) = if initial_keys_equal_length
         {
             if let Some(key_length) = key_lengths.first() {
-                if *key_length > 0 && *key_length <= std::u16::MAX as u64 {
+                if *key_length > 0 && *key_length <= u64::from(std::u16::MAX) {
                     (
                         Some(
                             NonZeroU16::new(
@@ -1038,7 +1021,7 @@ impl Inner {
             if initial_values_equal_length {
                 if let Some(value_length) = value_lengths.first() {
                     if *value_length > 0
-                        && *value_length <= std::u16::MAX as u64
+                        && *value_length <= u64::from(std::u16::MAX)
                     {
                         (
                             Some(
@@ -1065,7 +1048,7 @@ impl Inner {
                 // by adding a fixed stride length to the node lo key
                 0
             } else {
-                key_length.get() as u64 * (items.len() as u64)
+                u64::from(key_length.get()) * (items.len() as u64)
             }
         } else {
             let mut sum = 0;
@@ -1086,7 +1069,7 @@ impl Inner {
         // does not extend beyond the allocation.
         let value_storage_size = if let Some(value_length) = fixed_value_length
         {
-            value_length.get() as u64 * (items.len() as u64)
+            u64::from(value_length.get()) * (items.len() as u64)
         } else {
             let mut sum = 0;
             for value_length in &value_lengths {
@@ -1715,7 +1698,7 @@ impl Inner {
 
     fn find(&self, key: &[u8]) -> Result<usize, usize> {
         if self.fixed_key_stride > 0
-            && self.lo_len - self.prefix_len as u64 == key.len() as u64
+            && self.lo_len - u64::from(self.prefix_len) == key.len() as u64
         {
             let distance: usize =
                 distance(&self.lo()[self.prefix_len as usize..], key);
