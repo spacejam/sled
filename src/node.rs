@@ -4,11 +4,11 @@
 
 use std::{
     alloc::{alloc_zeroed, dealloc, Layout},
-    cmp::Ordering::{Equal, Greater, Less},
+    cmp::Ordering::{self, Equal, Greater, Less},
     convert::{TryFrom, TryInto},
     fmt,
     mem::{align_of, size_of},
-    num::NonZeroU64,
+    num::{NonZeroU16, NonZeroU64},
     ops::{Bound, Deref, DerefMut},
     sync::Arc,
 };
@@ -49,12 +49,11 @@ pub struct Header {
     lo_len: u64,
     // could be replaced by a varint, w/ data buf offset stored instead
     hi_len: u64,
-    // can probably be NonZeroU16
-    fixed_key_length: Option<NonZeroU64>,
-    // can probably be NonZeroU16
-    fixed_value_length: Option<NonZeroU64>,
+    fixed_key_length: Option<NonZeroU16>,
+    fixed_value_length: Option<NonZeroU16>,
     pub children: u16,
     pub prefix_len: u8,
+    fixed_key_stride: u8,
     probation_ops_remaining: u8,
     // this can be 3 bits. 111 = 7, but we
     // will never need 7 bytes for storing offsets.
@@ -76,16 +75,223 @@ pub struct Header {
     pub is_index: bool,
 }
 
+fn apply_computed_distance(mut buf: &mut [u8], mut distance: usize) {
+    while distance > 0 {
+        let last = &mut buf[buf.len() - 1];
+        *last = last.wrapping_add(u8::try_from(distance % 256).unwrap());
+        distance = distance >> 8;
+        if distance != 0 {
+            let new_len = buf.len() - 2;
+            buf = &mut buf[..new_len];
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum KeyRef<'a> {
+    // used when all keys on a node are monotonic
+    // with a fixed stride length, allowing us to
+    // avoid ever actually storing any of them
+    Computed { base: &'a [u8], distance: usize },
+    // used when keys are not monotonic, and we
+    // store the actual prefix-encoded keys on the node
+    Slice(&'a [u8]),
+}
+
+impl<'a> From<KeyRef<'a>> for IVec {
+    fn from(kr: KeyRef<'a>) -> IVec {
+        match kr {
+            KeyRef::Computed { base, distance } => {
+                let mut ivec: IVec = base.into();
+                apply_computed_distance(&mut ivec, distance);
+                ivec
+            }
+            KeyRef::Slice(s) => s.into(),
+        }
+    }
+}
+
+impl<'a> KeyRef<'a> {
+    fn unwrap_slice(&self) -> &[u8] {
+        if let KeyRef::Slice(s) = self {
+            s
+        } else {
+            panic!("called KeyRef::unwrap_slice on a KeyRef::Computed");
+        }
+    }
+
+    fn write_into(&self, buf: &mut [u8]) {
+        match self {
+            KeyRef::Computed { base, distance } => {
+                buf.copy_from_slice(base);
+                apply_computed_distance(buf, *distance);
+            }
+            KeyRef::Slice(s) => buf.copy_from_slice(s),
+        }
+    }
+
+    fn trim_prefix_bytes(self, additional_prefix: usize) -> KeyRef<'a> {
+        match self {
+            KeyRef::Computed { base, distance } => {
+                assert!(
+                    (base.len() - additional_prefix) as f64
+                        > (distance as f64).log(256.)
+                );
+                KeyRef::Computed {
+                    base: &base[additional_prefix..],
+                    distance: distance,
+                }
+            }
+            KeyRef::Slice(s) => KeyRef::Slice(&s[additional_prefix..]),
+        }
+    }
+
+    fn distance(&self, other: &KeyRef<'_>) -> usize {
+        match (self, other) {
+            (
+                KeyRef::Computed { base: a, distance: da },
+                KeyRef::Computed { base: b, distance: db },
+            ) => distance(a, b) + (db - da),
+            (KeyRef::Computed { base: a, distance: da }, KeyRef::Slice(b)) => {
+                distance(a, b) - da
+            }
+            (KeyRef::Slice(a), KeyRef::Computed { base: b, distance: db }) => {
+                distance(a, b) + db
+            }
+            (KeyRef::Slice(a), KeyRef::Slice(b)) => distance(a, b),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            KeyRef::Computed { base, .. } => base.len(),
+            KeyRef::Slice(s) => s.len(),
+        }
+    }
+}
+
+impl PartialEq<KeyRef<'_>> for KeyRef<'_> {
+    fn eq(&self, other: &KeyRef<'_>) -> bool {
+        match (self, other) {
+            (
+                KeyRef::Computed { base: a, distance: da },
+                KeyRef::Computed { base: b, distance: db },
+            ) => {
+                if a < b {
+                    da.eq(&(distance(a, b) + db))
+                } else if a > b {
+                    (distance(b, a) + da).eq(db)
+                } else {
+                    da.eq(db)
+                }
+            }
+            (KeyRef::Computed { base: a, distance: da }, KeyRef::Slice(b)) => {
+                if a < b {
+                    da.eq(&distance(a, b))
+                } else if a > b {
+                    false
+                } else {
+                    da.eq(&0)
+                }
+            }
+            (KeyRef::Slice(a), KeyRef::Computed { base: b, distance: db }) => {
+                if a < b {
+                    false
+                } else {
+                    distance(b, a).eq(db)
+                }
+            }
+            (KeyRef::Slice(a), KeyRef::Slice(b)) => a.eq(b),
+        }
+    }
+}
+
+impl Eq for KeyRef<'_> {}
+
+impl Ord for KeyRef<'_> {
+    fn cmp(&self, other: &KeyRef<'_>) -> Ordering {
+        match (self, other) {
+            (
+                KeyRef::Computed { base: a, distance: da },
+                KeyRef::Computed { base: b, distance: db },
+            ) => {
+                if a < b {
+                    da.cmp(&(distance(a, b) + db))
+                } else if a > b {
+                    (distance(b, a) + da).cmp(db)
+                } else {
+                    da.cmp(db)
+                }
+            }
+            (KeyRef::Computed { base: a, distance: da }, KeyRef::Slice(b)) => {
+                if a < b {
+                    da.cmp(&distance(a, b))
+                } else if a > b {
+                    Greater
+                } else {
+                    da.cmp(&0)
+                }
+            }
+            (KeyRef::Slice(a), KeyRef::Computed { base: b, distance: db }) => {
+                if a < b {
+                    Less
+                } else if a > b {
+                    distance(b, a).cmp(db)
+                } else {
+                    0.cmp(db)
+                }
+            }
+            (KeyRef::Slice(a), KeyRef::Slice(b)) => a.cmp(b),
+        }
+    }
+}
+
+impl PartialOrd<KeyRef<'_>> for KeyRef<'_> {
+    fn partial_cmp(&self, other: &KeyRef<'_>) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialOrd<[u8]> for KeyRef<'_> {
+    fn partial_cmp(&self, other: &[u8]) -> Option<Ordering> {
+        use distance as distance_func;
+        match self {
+            KeyRef::Computed { base, distance } => {
+                if *base > other {
+                    Some(Greater)
+                } else {
+                    let right_distance = distance_func(other, base);
+                    distance.partial_cmp(&right_distance)
+                }
+            }
+            KeyRef::Slice(s) => (*s).partial_cmp(other),
+        }
+    }
+}
+
+impl PartialEq<[u8]> for KeyRef<'_> {
+    fn eq(&self, other: &[u8]) -> bool {
+        use distance as distance_func;
+        match self {
+            KeyRef::Computed { base, distance } => {
+                let right_distance = distance_func(base, other);
+                distance.eq(&right_distance)
+            }
+            KeyRef::Slice(s) => (*s).eq(other),
+        }
+    }
+}
+
 pub struct Iter<'a> {
     overlay: std::slice::Iter<'a, (IVec, Option<IVec>)>,
     node: &'a Inner,
     node_position: usize,
     next_a: Option<(&'a [u8], Option<&'a IVec>)>,
-    next_b: Option<(&'a [u8], &'a [u8])>,
+    next_b: Option<(KeyRef<'a>, &'a [u8])>,
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = (&'a [u8], &'a [u8]);
+    type Item = (KeyRef<'a>, &'a [u8]);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -119,47 +325,44 @@ impl<'a> Iterator for Iter<'a> {
                 (Some((_, Some(_))), None) => {
                     log::trace!("src/node.rs:114");
                     log::trace!("iterator returning {:?}", self.next_a);
-                    return self
-                        .next_a
-                        .take()
-                        .map(|(k, v)| (k, v.unwrap().as_ref()));
+                    return self.next_a.take().map(|(k, v)| {
+                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                    });
                 }
-                (Some((k_a, Some(_))), Some((k_b, _))) if k_a > k_b => {
+                (Some((k_a, Some(_))), Some((k_b, _))) if k_b < *k_a => {
                     log::trace!("src/node.rs:120");
                     log::trace!("iterator returning {:?}", self.next_b);
                     return self.next_b.take();
                 }
-                (Some((k_a, Some(_))), Some((k_b, _))) if k_a < k_b => {
+                (Some((k_a, Some(_))), Some((k_b, _))) if k_b > *k_a => {
                     log::trace!("iterator returning {:?}", self.next_a);
-                    return self
-                        .next_a
-                        .take()
-                        .map(|(k, v)| (k, v.unwrap().as_ref()));
+                    return self.next_a.take().map(|(k, v)| {
+                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                    });
                 }
-                (Some((k_a, Some(_))), Some((k_b, _))) if k_a == k_b => {
+                (Some((k_a, Some(_))), Some((k_b, _))) if k_b == *k_a => {
                     // prefer overlay, discard node value
                     self.next_b.take();
                     log::trace!("src/node.rs:133");
                     log::trace!("iterator returning {:?}", self.next_a);
-                    return self
-                        .next_a
-                        .take()
-                        .map(|(k, v)| (k, v.unwrap().as_ref()));
+                    return self.next_a.take().map(|(k, v)| {
+                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                    });
                 }
-                (Some((k_a, None)), Some((k_b, _))) if k_a == k_b => {
+                (Some((k_a, None)), Some((k_b, _))) if k_b == *k_a => {
                     // skip tombstone and continue the loop
                     log::trace!("src/node.rs:141");
                     self.next_a.take();
                     self.next_b.take();
                 }
-                (Some((k_a, None)), Some((k_b, _))) if k_a > k_b => {
+                (Some((k_a, None)), Some((k_b, _))) if k_b < *k_a => {
                     log::trace!("src/node.rs:146");
                     // we do not clear a tombstone until we move past
                     // it in the underlying node
                     log::trace!("iterator returning {:?}", self.next_b);
                     return self.next_b.take();
                 }
-                (Some((k_a, None)), Some((k_b, _))) if k_a < k_b => {
+                (Some((k_a, None)), Some((k_b, _))) if k_b > *k_a => {
                     log::trace!("src/node.rs:151");
                     self.next_a.take();
                 }
@@ -327,8 +530,9 @@ impl Node {
         if self.overlay.is_empty() {
             return self.inner.clone();
         };
-        let mut items: Vec<(&[u8], &[u8])> =
+        let mut items =
             Vec::with_capacity(self.inner.children() + self.overlay.len());
+
         for (k, v) in self.iter() {
             items.push((k, v))
         }
@@ -424,13 +628,13 @@ impl Node {
     pub(crate) fn node_kv_pair<'a>(
         &'a self,
         key: &'a [u8],
-    ) -> (&'a [u8], Option<&'a [u8]>) {
+    ) -> (KeyRef<'_>, Option<&'a [u8]>) {
         let encoded_key = self.prefix_encode(key);
         if let Ok(idx) =
             self.overlay.binary_search_by_key(&encoded_key, |(k, _)| k)
         {
             let v = self.overlay[idx].1.as_ref();
-            (encoded_key, v.map(AsRef::as_ref))
+            (KeyRef::Slice(encoded_key), v.map(AsRef::as_ref))
         } else {
             self.inner.node_kv_pair(key)
         }
@@ -490,10 +694,10 @@ impl Node {
             }
         };
 
-        let in_bounds = |k| match bound {
+        let in_bounds = |k: &KeyRef<'_>| match bound {
             Bound::Unbounded => true,
-            Bound::Included(b) => &b[self.prefix_len as usize..] <= k,
-            Bound::Excluded(b) => &b[self.prefix_len as usize..] < k,
+            Bound::Included(b) => *k >= b[self.prefix_len as usize..],
+            Bound::Excluded(b) => *k > b[self.prefix_len as usize..],
         };
 
         let mut iter = Iter {
@@ -504,7 +708,8 @@ impl Node {
             next_b: None,
         };
 
-        let ret: Option<(&[u8], &[u8])> = iter.find(|(k, _)| in_bounds(k));
+        let ret: Option<(KeyRef<'_>, &[u8])> =
+            iter.find(|(k, _)| in_bounds(&k));
 
         ret.map(|(k, v)| (self.prefix_decode(k), v.into()))
     }
@@ -513,18 +718,18 @@ impl Node {
         &self,
         bound: &Bound<IVec>,
     ) -> Option<(IVec, IVec)> {
-        let in_bounds = |k| match bound {
+        let in_bounds = |k: &KeyRef<'_>| match bound {
             Bound::Unbounded => true,
-            Bound::Included(b) => &b[self.prefix_len as usize..] >= k,
-            Bound::Excluded(b) => &b[self.prefix_len as usize..] > k,
+            Bound::Included(b) => *k <= b[self.prefix_len as usize..],
+            Bound::Excluded(b) => *k < b[self.prefix_len as usize..],
         };
 
-        let ret: Option<(&[u8], &[u8])> = self
+        let ret: Option<(KeyRef<'_>, &[u8])> = self
             .iter()
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
-            .find(|(k, _)| in_bounds(k));
+            .find(|(k, _)| in_bounds(&k));
 
         ret.map(|(k, v)| (self.prefix_decode(k), v.into()))
     }
@@ -696,6 +901,56 @@ impl DerefMut for Inner {
     }
 }
 
+// determines if the item can be losslessly
+// constructed from the base by adding a fixed
+// stride to it.
+fn is_monotone(a: &KeyRef<'_>, b: &KeyRef<'_>, stride: u8) -> bool {
+    if a.len() != b.len() || a.len() > 4 {
+        return false;
+    }
+
+    a.distance(b) == stride as usize
+}
+
+fn stride(a: &[u8], b: KeyRef<'_>) -> u8 {
+    if a.len() != b.len() {
+        return 0;
+    }
+    use distance as distance_func;
+    match b {
+        KeyRef::Slice(b) => b[b.len() - 1].wrapping_sub(a[b.len() - 1]),
+        KeyRef::Computed { base, distance } => {
+            let a_distance = distance_func(base, a);
+            u8::try_from(distance - a_distance).unwrap()
+        }
+    }
+}
+
+fn distance(base: &[u8], search: &[u8]) -> usize {
+    assert!(base <= search);
+    assert!(!base.is_empty());
+    assert_eq!(search.len(), base.len());
+    fn f1(base: &[u8], search: &[u8]) -> usize {
+        (search[search.len() - 1] - base[search.len() - 1]) as usize
+    }
+    fn f2(base: &[u8], search: &[u8]) -> usize {
+        (u16::from_be_bytes(search.try_into().unwrap()) as usize)
+            - (u16::from_be_bytes(base.try_into().unwrap()) as usize)
+    }
+    fn f3(base: &[u8], search: &[u8]) -> usize {
+        (u32::from_be_bytes([0, search[0], search[1], search[2]]) as usize)
+            - (u32::from_be_bytes([0, base[0], base[1], base[2]]) as usize)
+    }
+    fn f4(base: &[u8], search: &[u8]) -> usize {
+        (u32::from_be_bytes(search.try_into().unwrap()) as usize)
+            - (u32::from_be_bytes(base.try_into().unwrap()) as usize)
+    }
+
+    let computed_gotos = [f1, f2, f3, f4];
+
+    computed_gotos[base.len() - 1](base, search)
+}
+
 impl Inner {
     unsafe fn from_raw(buf: &[u8]) -> Inner {
         let mut ret = uninitialized_node(buf.len());
@@ -709,22 +964,43 @@ impl Inner {
         prefix_len: u8,
         is_index: bool,
         next: Option<NonZeroU64>,
-        items: &[(&[u8], &[u8])],
+        items: &[(KeyRef<'_>, &[u8])],
     ) -> Inner {
         assert!(items.len() <= std::u16::MAX as usize);
 
         // determine if we need to use varints and offset
         // indirection tables, or if everything is equal
-        // size we can skip this.
+        // size we can skip this. If all keys are monotonic
+        // with a fixed stride, we can completely skip writing
+        // them at all, as they can always be calculated by
+        // adding the desired offset to the lo key.
         let mut key_lengths = Vec::with_capacity(items.len());
         let mut value_lengths = Vec::with_capacity(items.len());
 
         let mut initial_keys_equal_length = true;
         let mut initial_values_equal_length = true;
+        let mut monotone = items.len() > 1;
+        let stride = if monotone {
+            stride(&lo[prefix_len as usize..], items[1].0)
+        } else {
+            0
+        };
+        let mut prev: Option<&KeyRef<'_>> = None;
         for (k, v) in items {
             key_lengths.push(k.len() as u64);
             if let Some(first_sz) = key_lengths.first() {
                 initial_keys_equal_length &= *first_sz == k.len() as u64;
+                monotone &= initial_keys_equal_length;
+                if initial_keys_equal_length {
+                    monotone = monotone
+                        && if let Some(ref mut prev) = prev {
+                            is_monotone(prev, k, stride)
+                        } else {
+                            true
+                        };
+
+                    prev = Some(k);
+                }
             }
             value_lengths.push(v.len() as u64);
             if let Some(first_sz) = value_lengths.first() {
@@ -738,8 +1014,16 @@ impl Inner {
         let (fixed_key_length, keys_equal_length) = if initial_keys_equal_length
         {
             if let Some(key_length) = key_lengths.first() {
-                if *key_length > 0 {
-                    (Some(NonZeroU64::new(*key_length).unwrap()), true)
+                if *key_length > 0 && *key_length <= std::u16::MAX as u64 {
+                    (
+                        Some(
+                            NonZeroU16::new(
+                                u16::try_from(*key_length).unwrap(),
+                            )
+                            .unwrap(),
+                        ),
+                        true,
+                    )
                 } else {
                     (None, false)
                 }
@@ -753,8 +1037,18 @@ impl Inner {
         let (fixed_value_length, values_equal_length) =
             if initial_values_equal_length {
                 if let Some(value_length) = value_lengths.first() {
-                    if *value_length > 0 {
-                        (Some(NonZeroU64::new(*value_length).unwrap()), true)
+                    if *value_length > 0
+                        && *value_length <= std::u16::MAX as u64
+                    {
+                        (
+                            Some(
+                                NonZeroU16::new(
+                                    u16::try_from(*value_length).unwrap(),
+                                )
+                                .unwrap(),
+                            ),
+                            true,
+                        )
                     } else {
                         (None, false)
                     }
@@ -766,7 +1060,13 @@ impl Inner {
             };
 
         let key_storage_size = if let Some(key_length) = fixed_key_length {
-            key_length.get() * (items.len() as u64)
+            if monotone {
+                // all keys can be directly computed from the node lo key
+                // by adding a fixed stride length to the node lo key
+                0
+            } else {
+                key_length.get() as u64 * (items.len() as u64)
+            }
         } else {
             let mut sum = 0;
             for key_length in &key_lengths {
@@ -786,7 +1086,7 @@ impl Inner {
         // does not extend beyond the allocation.
         let value_storage_size = if let Some(value_length) = fixed_value_length
         {
-            value_length.get() * (items.len() as u64)
+            value_length.get() as u64 * (items.len() as u64)
         } else {
             let mut sum = 0;
             for value_length in &value_lengths {
@@ -838,6 +1138,7 @@ impl Inner {
             hi_len: hi.map(|hi| hi.len() as u64).unwrap_or(0),
             fixed_key_length,
             fixed_value_length,
+            fixed_key_stride: stride,
             offset_bytes,
             children: tf!(items.len(), u16),
             prefix_len,
@@ -883,13 +1184,19 @@ impl Inner {
                 offset += varint::size(v.len() as u64) as u64 + v.len() as u64;
             }
 
-            let mut key_buf = ret.key_buf_for_offset_mut(idx);
-            if !keys_equal_length {
-                let varint_bytes =
-                    varint::serialize_into(k.len() as u64, key_buf);
-                key_buf = &mut key_buf[varint_bytes..];
+            if !monotone {
+                // we completely skip writing any key data at all
+                // when the keys are monotonic, as they can be
+                // computed losslessly by multiplying the desired
+                // index by the fixed stride length.
+                let mut key_buf = ret.key_buf_for_offset_mut(idx);
+                if !keys_equal_length {
+                    let varint_bytes =
+                        varint::serialize_into(k.len() as u64, key_buf);
+                    key_buf = &mut key_buf[varint_bytes..];
+                }
+                k.write_into(&mut key_buf[..k.len()]);
             }
-            key_buf[..k.len()].copy_from_slice(k);
 
             let mut value_buf = ret.value_buf_for_offset_mut(idx);
             if !values_equal_length {
@@ -906,9 +1213,10 @@ impl Inner {
 
         testing_assert!(
             ret.is_sorted(),
-            "created new node is not sorted: {:?}, had items passed in: {:?}",
+            "created new node is not sorted: {:?}, had items passed in: {:?} monotone: {}",
             ret,
-            items
+            items,
+            monotone
         );
 
         ret
@@ -921,7 +1229,7 @@ impl Inner {
             0,
             true,
             None,
-            &[(prefix::empty(), &child_pid.to_le_bytes())],
+            &[(KeyRef::Slice(prefix::empty()), &child_pid.to_le_bytes())],
         )
     }
 
@@ -933,8 +1241,8 @@ impl Inner {
             true,
             None,
             &[
-                (prefix::empty(), &left.to_le_bytes()),
-                (at, &right.to_le_bytes()),
+                (KeyRef::Slice(prefix::empty()), &left.to_le_bytes()),
+                (KeyRef::Slice(at), &right.to_le_bytes()),
             ],
         )
     }
@@ -1146,8 +1454,8 @@ impl Inner {
 
         let split_point = self.weighted_split_point();
 
-        let left_max = self.index_key(split_point - 1);
-        let right_min = self.index_key(split_point);
+        let left_max: IVec = self.index_key(split_point - 1).into();
+        let right_min: IVec = self.index_key(split_point).into();
 
         assert_ne!(
             left_max, right_min,
@@ -1176,12 +1484,13 @@ impl Inner {
                 + 1
         };
 
-        let untruncated_split_key = self.index_key(split_point);
+        let untruncated_split_key: IVec = self.index_key(split_point).into();
 
         let possibly_truncated_split_key =
             &untruncated_split_key[..splitpoint_length];
 
-        let split_key = self.prefix_decode(possibly_truncated_split_key);
+        let split_key =
+            self.prefix_decode(KeyRef::Slice(possibly_truncated_split_key));
 
         if untruncated_split_key.len() != possibly_truncated_split_key.len() {
             log::trace!(
@@ -1244,13 +1553,13 @@ impl Inner {
         let left_items: Vec<_> = self
             .iter()
             .take(split_point)
-            .map(|(k, v)| (&k[additional_left_prefix..], v))
+            .map(|(k, v)| (k.trim_prefix_bytes(additional_left_prefix), v))
             .collect();
 
         let right_items: Vec<_> = self
             .iter()
             .skip(split_point)
-            .map(|(k, v)| (&k[additional_right_prefix..], v))
+            .map(|(k, v)| (k.trim_prefix_bytes(additional_right_prefix), v))
             .collect();
 
         let mut left = Inner::new(
@@ -1325,7 +1634,7 @@ impl Inner {
                     .map(|k| {
                         prefix::reencode(
                             self.prefix(),
-                            k,
+                            &IVec::from(k),
                             other.prefix_len as usize,
                         )
                     })
@@ -1335,7 +1644,10 @@ impl Inner {
                     .iter()
                     .map(AsRef::as_ref)
                     .zip(self.iter_values());
-                left_items.chain(other.iter()).collect()
+                left_items
+                    .map(|(k, v)| (KeyRef::Slice(k), v))
+                    .chain(other.iter())
+                    .collect()
             }
             Less => {
                 // self.prefix_len < other.prefix_len
@@ -1344,7 +1656,7 @@ impl Inner {
                     .map(|k| {
                         prefix::reencode(
                             other.prefix(),
-                            k,
+                            &IVec::from(k),
                             self.prefix_len as usize,
                         )
                     })
@@ -1353,7 +1665,8 @@ impl Inner {
                 let right_items = extended_keys
                     .iter()
                     .map(AsRef::as_ref)
-                    .zip(other.iter_values());
+                    .zip(other.iter_values())
+                    .map(|(k, v)| (KeyRef::Slice(k), v));
                 self.iter().chain(right_items).collect()
             }
         };
@@ -1401,8 +1714,25 @@ impl Inner {
     }
 
     fn find(&self, key: &[u8]) -> Result<usize, usize> {
+        if self.fixed_key_stride > 0
+            && self.lo_len - self.prefix_len as u64 == key.len() as u64
+        {
+            let distance: usize =
+                distance(&self.lo()[self.prefix_len as usize..], key);
+            let offset = distance / self.fixed_key_stride as usize;
+            if distance % self.fixed_key_stride as usize != 0 {
+                // search key does not evenly fit based on
+                // our fixed stride length
+                return Err(offset);
+            }
+            if offset >= self.children as usize {
+                return Err(self.children());
+            }
+            return Ok(offset);
+        }
+
         let mut size = self.children();
-        if size == 0 || key < self.index_key(0) {
+        if size == 0 || self.index_key(0) > *key {
             return Err(0);
         }
         let mut base = 0_usize;
@@ -1413,13 +1743,13 @@ impl Inner {
             // mid >= 0: by definition
             // mid < size: mid = size / 2 + size / 4 + size / 8 ...
             let l = self.index_key(mid);
-            let cmp = crate::fastcmp(l, key);
+            let cmp = crate::fastcmp(l.unwrap_slice(), key);
             base = if cmp == Greater { base } else { mid };
             size -= half;
         }
         // base is always in [0, size) because base <= mid.
         let l = self.index_key(base);
-        let cmp = crate::fastcmp(l, key);
+        let cmp = crate::fastcmp(l.unwrap_slice(), key);
 
         if cmp == Equal {
             Ok(base)
@@ -1436,8 +1766,10 @@ impl Inner {
 
     fn iter_keys(
         &self,
-    ) -> impl Iterator<Item = &[u8]> + ExactSizeIterator + DoubleEndedIterator + Clone
-    {
+    ) -> impl Iterator<Item = KeyRef<'_>>
+           + ExactSizeIterator
+           + DoubleEndedIterator
+           + Clone {
         (0..self.children()).map(move |idx| self.index_key(idx))
     }
 
@@ -1461,7 +1793,7 @@ impl Inner {
         (0..self.children()).map(move |idx| self.index_value(idx))
     }
 
-    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+    fn iter(&self) -> impl Iterator<Item = (KeyRef<'_>, &[u8])> {
         self.iter_keys().zip(self.iter_values())
     }
 
@@ -1497,13 +1829,20 @@ impl Inner {
         }
     }
 
-    fn index_key(&self, idx: usize) -> &[u8] {
+    fn index_key(&self, idx: usize) -> KeyRef<'_> {
         assert!(
             idx < self.children(),
             "index {} is not less than internal length of {}",
             idx,
             self.children()
         );
+
+        if self.fixed_key_stride > 0 {
+            return KeyRef::Computed {
+                base: &self.lo()[self.prefix_len as usize..],
+                distance: self.fixed_key_stride as usize * idx,
+            };
+        }
 
         let offset_sz = self.children as usize * self.offset_bytes as usize;
         let keys_buf = &self.data_buf()[offset_sz..];
@@ -1530,7 +1869,7 @@ impl Inner {
             (start, end)
         };
 
-        &key_buf[start..end]
+        KeyRef::Slice(&key_buf[start..end])
     }
 
     fn index_value(&self, idx: usize) -> &[u8] {
@@ -1558,7 +1897,10 @@ impl Inner {
 
     /// `node_kv_pair` returns either the existing (node/key, value, current offset) tuple or
     /// (node/key, none, future offset) where a node/key is node level encoded key.
-    fn node_kv_pair<'a>(&'a self, key: &'a [u8]) -> (&'a [u8], Option<&[u8]>) {
+    fn node_kv_pair<'a>(
+        &'a self,
+        key: &'a [u8],
+    ) -> (KeyRef<'a>, Option<&[u8]>) {
         assert!(key >= self.lo());
         if let Some(hi) = self.hi() {
             assert!(key < hi);
@@ -1571,7 +1913,7 @@ impl Inner {
         if let Ok(idx) = search {
             (self.index_key(idx), Some(self.index_value(idx)))
         } else {
-            let encoded_key = &key[self.prefix_len as usize..];
+            let encoded_key = KeyRef::Slice(&key[self.prefix_len as usize..]);
             let encoded_val = None;
             (encoded_key, encoded_val)
         }
@@ -1607,8 +1949,15 @@ impl Inner {
         }
     }
 
-    fn prefix_decode(&self, key: &[u8]) -> IVec {
-        prefix::decode(self.prefix(), key)
+    fn prefix_decode(&self, key: KeyRef<'_>) -> IVec {
+        match key {
+            KeyRef::Slice(s) => prefix::decode(self.prefix(), s),
+            KeyRef::Computed { base, distance } => {
+                let mut ret = prefix::decode(self.prefix(), base);
+                apply_computed_distance(&mut ret, distance);
+                ret
+            }
+        }
     }
 
     pub(crate) fn prefix_encode<'a>(&self, key: &'a [u8]) -> &'a [u8] {
@@ -1631,6 +1980,9 @@ impl Inner {
 
     #[cfg(feature = "testing")]
     fn is_sorted(&self) -> bool {
+        if self.fixed_key_stride > 0 {
+            return true;
+        }
         if self.children() <= 1 {
             return true;
         }
@@ -1691,6 +2043,52 @@ mod test {
     use super::*;
 
     #[test]
+    fn keyref_ord() {
+        assert_eq!(
+            KeyRef::Computed { base: &[], distance: 0 },
+            KeyRef::Slice(&[])
+        );
+        assert_eq!(
+            KeyRef::Computed { base: &[0], distance: 0 },
+            KeyRef::Slice(&[0])
+        );
+        assert_eq!(
+            KeyRef::Computed { base: &[0], distance: 1 },
+            KeyRef::Slice(&[1])
+        );
+        assert_eq!(
+            KeyRef::Slice(&[1]),
+            KeyRef::Computed { base: &[0], distance: 1 },
+        );
+        assert_eq!(
+            KeyRef::Slice(&[1, 0]),
+            KeyRef::Computed { base: &[0, 255], distance: 1 },
+        );
+        assert_eq!(
+            KeyRef::Computed { base: &[0, 255], distance: 1 },
+            KeyRef::Slice(&[1, 0]),
+        );
+        assert!(KeyRef::Slice(&[1]) > KeyRef::Slice(&[0]));
+        assert!(KeyRef::Slice(&[]) < KeyRef::Slice(&[0]));
+        assert!(
+            KeyRef::Computed { base: &[0, 255], distance: 2 }
+                > KeyRef::Slice(&[1, 0]),
+        );
+        assert!(
+            KeyRef::Slice(&[1, 0])
+                < KeyRef::Computed { base: &[0, 255], distance: 2 }
+        );
+        assert!(
+            KeyRef::Computed { base: &[0, 255], distance: 2 }
+                < KeyRef::Slice(&[2, 0]),
+        );
+        assert!(
+            KeyRef::Slice(&[2, 0])
+                > KeyRef::Computed { base: &[0, 255], distance: 2 }
+        );
+    }
+
+    #[test]
     fn insert_regression() {
         let node = Inner::new(
             &[0, 0, 0, 0, 0, 0, 162, 211],
@@ -1698,7 +2096,10 @@ mod test {
             6,
             false,
             Some(NonZeroU64::new(220).unwrap()),
-            &[(&[162, 211, 0, 0], &[]), (&[163, 15, 0, 0], &[])],
+            &[
+                (KeyRef::Slice(&[162, 211, 0, 0]), &[]),
+                (KeyRef::Slice(&[163, 15, 0, 0]), &[]),
+            ],
         );
 
         Node { overlay: Default::default(), inner: Arc::new(node) }
@@ -1759,7 +2160,7 @@ mod test {
 
             let min_value_length = equal_length_values.unwrap_or(0);
 
-            let children_ref: Vec<(&[u8], &[u8])> = children
+            let children_ref: Vec<(KeyRef<'_>, &[u8])> = children
                 .iter()
                 .filter(|(k, v)| {
                     k.len() >= min_key_length && v.len() >= min_value_length
@@ -1767,9 +2168,9 @@ mod test {
                 .map(|(k, v)| {
                     (
                         if let Some(kl) = equal_length_keys {
-                            &k[..kl]
+                            KeyRef::Slice(&k[..kl])
                         } else {
-                            k.as_ref()
+                            KeyRef::Slice(k.as_ref())
                         },
                         if let Some(vl) = equal_length_values {
                             &v[..vl]
@@ -1818,7 +2219,7 @@ mod test {
                 let shrink_hi = if let Some(hi) = node.hi() {
                     let new_hi = if !node.is_empty() {
                         let max_k = node.index_key(node.children() - 1);
-                        if max_k >= &hi[..hi.len() - 1] {
+                        if max_k >= hi[..hi.len() - 1] {
                             None
                         } else {
                             Some(&hi[..hi.len() - 1])
@@ -1858,7 +2259,7 @@ mod test {
                     let node = self.clone();
                     move |i| {
                         let (k, v) = (
-                            node.index_key(i).to_vec(),
+                            IVec::from(node.index_key(i)),
                             node.index_value(i).to_vec(),
                         );
                         let k_shrink = k.shrink().flat_map({
@@ -1923,8 +2324,10 @@ mod test {
         hi: Vec<u8>,
         children: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> bool {
-        let children_ref: Vec<(&[u8], &[u8])> =
-            children.iter().map(|(k, v)| (k.as_ref(), v.as_ref())).collect();
+        let children_ref: Vec<(KeyRef<'_>, &[u8])> = children
+            .iter()
+            .map(|(k, v)| (KeyRef::Slice(k.as_ref()), v.as_ref()))
+            .collect();
         let ir = Inner::new(&lo, Some(&hi), 0, false, None, &children_ref);
 
         assert_eq!(ir.children as usize, children_ref.len());
@@ -2025,6 +2428,7 @@ mod test {
             vec![(vec![], vec![]), (vec![1], vec![1]),]
         ));
     }
+
     #[test]
     fn node_bug_01() {
         // postmortem: hi and lo keys were not properly being accounted in the
@@ -2041,9 +2445,19 @@ mod test {
             0,
             false,
             None,
-            &[(&[47, 97], &[]), (&[99], &[])],
+            &[(KeyRef::Slice(&[47, 97]), &[]), (KeyRef::Slice(&[99]), &[])],
         );
 
         assert!(prop_insert_split_merge(node, vec![], vec![]));
+    }
+
+    #[test]
+    fn node_bug_03() {
+        // postmortem: monotone key lengths were being improperly determined
+        assert!(prop_indexable(
+            vec![],
+            vec![],
+            vec![(vec![], vec![]), (vec![0], vec![]),]
+        ));
     }
 }
