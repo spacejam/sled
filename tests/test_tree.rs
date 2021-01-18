@@ -79,6 +79,49 @@ fn monotonic_inserts() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn linear_inserts() {
+    // this is intended to test the linear key omission optimization
+    common::setup_logger();
+
+    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+
+    for k in 0..4096_u16 {
+        db.insert(&k.to_be_bytes(), &[]).unwrap();
+    }
+
+    let count = db.iter().count();
+    assert_eq!(count, 4096);
+    assert_eq!(db.len(), 4096);
+
+    let count = db.iter().rev().count();
+    assert_eq!(count, 4096);
+
+    for k in 0..4096_u16 {
+        db.insert(&k.to_be_bytes(), &[1]).unwrap();
+    }
+
+    let count = db.iter().count();
+    assert_eq!(count, 4096);
+
+    let count = db.iter().rev().count();
+    assert_eq!(count, 4096);
+    assert_eq!(db.len(), 4096);
+
+    for k in 0..4096_u16 {
+        db.remove(&k.to_be_bytes()).unwrap();
+    }
+
+    let count = db.iter().count();
+    assert_eq!(count, 0);
+
+    let count = db.iter().rev().count();
+    assert_eq!(count, 0);
+    assert_eq!(db.len(), 0);
+    assert!(db.is_empty());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn sequential_inserts() {
     common::setup_logger();
 
