@@ -87,17 +87,6 @@ fn apply_computed_distance(mut buf: &mut [u8], mut distance: usize) {
     }
 }
 
-// determines if the item can be losslessly
-// constructed from the base by adding a fixed
-// stride to it.
-fn is_linear(a: &KeyRef<'_>, b: &KeyRef<'_>, stride: u8) -> bool {
-    if a.len() != b.len() || a.len() > 4 {
-        return false;
-    }
-
-    a.distance(b) == stride as usize
-}
-
 fn stride(a: &[u8], b: KeyRef<'_>) -> u8 {
     if a.len() != b.len() {
         return 0;
@@ -768,7 +757,7 @@ impl Node {
 
         let idx = match self.find(encoded_key) {
             Ok(idx) => idx,
-            Err(idx) => idx - 1,
+            Err(idx) => idx.max(1) - 1,
         };
 
         let is_leftmost = idx == 0;
@@ -953,12 +942,24 @@ impl Inner {
         let mut initial_keys_equal_length = true;
         let mut initial_values_equal_length = true;
         let mut linear = items.len() > 1;
-        let stride =
+        let fixed_key_stride =
             if linear && lo[prefix_len as usize..].len() == items[1].0.len() {
                 stride(&lo[prefix_len as usize..], items[1].0)
             } else {
                 0
             };
+
+        // determines if the item can be losslessly
+        // constructed from the base by adding a fixed
+        // stride to it.
+        fn is_linear(a: &KeyRef<'_>, b: &KeyRef<'_>, stride: u8) -> bool {
+            if a.len() != b.len() || a.len() > 4 {
+                return false;
+            }
+
+            a.distance(b) == stride as usize
+        }
+
         let mut prev: Option<&KeyRef<'_>> = None;
         for (k, v) in items {
             key_lengths.push(k.len() as u64);
@@ -968,7 +969,7 @@ impl Inner {
                 if initial_keys_equal_length {
                     linear = linear
                         && if let Some(ref mut prev) = prev {
-                            is_linear(prev, k, stride)
+                            is_linear(prev, k, fixed_key_stride)
                         } else {
                             true
                         };
@@ -1007,6 +1008,9 @@ impl Inner {
         } else {
             (None, false)
         };
+
+        linear &= fixed_key_length.is_some();
+        let fixed_key_stride = if linear { fixed_key_stride } else { 0 };
 
         let (fixed_value_length, values_equal_length) =
             if initial_values_equal_length {
@@ -1112,7 +1116,7 @@ impl Inner {
             hi_len: hi.map(|hi| hi.len() as u64).unwrap_or(0),
             fixed_key_length,
             fixed_value_length,
-            fixed_key_stride: stride,
+            fixed_key_stride,
             offset_bytes,
             children: tf!(items.len(), u16),
             prefix_len,
@@ -1183,6 +1187,16 @@ impl Inner {
 
         if ret.is_index {
             assert!(!ret.is_empty())
+        }
+
+        if ret.fixed_key_stride > 0 {
+            assert!(
+                ret.fixed_key_length.is_some(),
+                "fixed_key_stride is {} but fixed_key_length \
+                is None for generated node {:?}",
+                ret.fixed_key_stride,
+                ret
+            );
         }
 
         testing_assert!(
