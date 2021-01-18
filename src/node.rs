@@ -78,10 +78,12 @@ pub struct Header {
 fn apply_computed_distance(mut buf: &mut [u8], mut distance: usize) {
     while distance > 0 {
         let last = &mut buf[buf.len() - 1];
-        *last = last.wrapping_add(u8::try_from(distance % 256).unwrap());
-        distance >>= 8;
+        let distance_byte = u8::try_from(distance % 256).unwrap();
+        let carry = if 255 - distance_byte < *last { 1 } else { 0 };
+        *last = last.wrapping_add(distance_byte);
+        distance = (distance >> 8) + carry;
         if distance != 0 {
-            let new_len = buf.len() - 2;
+            let new_len = buf.len() - 1;
             buf = &mut buf[..new_len];
         }
     }
@@ -158,6 +160,19 @@ impl<'a> From<KeyRef<'a>> for IVec {
                 ivec
             }
             KeyRef::Slice(s) => s.into(),
+        }
+    }
+}
+
+impl<'a> From<&KeyRef<'a>> for IVec {
+    fn from(kr: &KeyRef<'a>) -> IVec {
+        match kr {
+            KeyRef::Computed { base, distance } => {
+                let mut ivec: IVec = (*base).into();
+                apply_computed_distance(&mut ivec, *distance);
+                ivec
+            }
+            KeyRef::Slice(s) => (*s).into(),
         }
     }
 }
@@ -2084,6 +2099,20 @@ mod test {
             KeyRef::Slice(&[2, 0])
                 > KeyRef::Computed { base: &[0, 255], distance: 2 }
         );
+    }
+
+    #[test]
+    fn compute_distance() {
+        let table: &[(KeyRef<'_>, &[u8])] = &[
+            (KeyRef::Computed { base: &[0], distance: 0 }, &[0]),
+            (KeyRef::Computed { base: &[0], distance: 1 }, &[1]),
+            (KeyRef::Computed { base: &[0, 255], distance: 1 }, &[1, 0]),
+        ];
+
+        for (key_ref, expected) in table {
+            let ivec: IVec = key_ref.into();
+            assert_eq!(&ivec, expected)
+        }
     }
 
     #[test]
