@@ -1241,6 +1241,7 @@ impl Inner {
                 // when the keys are linear, as they can be
                 // computed losslessly by multiplying the desired
                 // index by the fixed stride length.
+                assert_eq!(fixed_key_stride, 0);
                 let mut key_buf = ret.key_buf_for_offset_mut(idx);
                 if !keys_equal_length {
                     let varint_bytes =
@@ -1248,6 +1249,8 @@ impl Inner {
                     key_buf = &mut key_buf[varint_bytes..];
                 }
                 k.write_into(&mut key_buf[..k.len()]);
+            } else {
+                assert!(fixed_key_stride > 0);
             }
 
             let mut value_buf = ret.value_buf_for_offset_mut(idx);
