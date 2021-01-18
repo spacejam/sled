@@ -87,13 +87,75 @@ fn apply_computed_distance(mut buf: &mut [u8], mut distance: usize) {
     }
 }
 
+// determines if the item can be losslessly
+// constructed from the base by adding a fixed
+// stride to it.
+fn is_linear(a: &KeyRef<'_>, b: &KeyRef<'_>, stride: u8) -> bool {
+    if a.len() != b.len() || a.len() > 4 {
+        return false;
+    }
+
+    a.distance(b) == stride as usize
+}
+
+fn stride(a: &[u8], b: KeyRef<'_>) -> u8 {
+    if a.len() != b.len() {
+        return 0;
+    }
+    match b {
+        KeyRef::Slice(b) => b[b.len() - 1].wrapping_sub(a[b.len() - 1]),
+        KeyRef::Computed { base, distance: b_distance } => {
+            let a_distance = linear_distance(base, a);
+            u8::try_from(b_distance - a_distance).unwrap()
+        }
+    }
+}
+
+// NB: caller must ensure that base and search are equal lengths
+fn linear_distance(base: &[u8], search: &[u8]) -> usize {
+    fn f1(base: &[u8], search: &[u8]) -> usize {
+        (search[search.len() - 1] - base[search.len() - 1]) as usize
+    }
+    fn f2(base: &[u8], search: &[u8]) -> usize {
+        (u16::from_be_bytes(search.try_into().unwrap()) as usize)
+            - (u16::from_be_bytes(base.try_into().unwrap()) as usize)
+    }
+    fn f3(base: &[u8], search: &[u8]) -> usize {
+        (u32::from_be_bytes([0, search[0], search[1], search[2]]) as usize)
+            - (u32::from_be_bytes([0, base[0], base[1], base[2]]) as usize)
+    }
+    fn f4(base: &[u8], search: &[u8]) -> usize {
+        (u32::from_be_bytes(search.try_into().unwrap()) as usize)
+            - (u32::from_be_bytes(base.try_into().unwrap()) as usize)
+    }
+
+    assert!(base <= search);
+    assert!(!base.is_empty());
+    assert_eq!(search.len(), base.len());
+
+    let computed_gotos = [f1, f2, f3, f4];
+
+    if base.len() > 4 {
+        if &base[..base.len() - 4] != &search[..search.len() - 4] {
+            std::usize::MAX
+        } else {
+            computed_gotos[3](
+                &base[base.len() - 4..],
+                &search[search.len() - 4..],
+            )
+        }
+    } else {
+        computed_gotos[base.len() - 1](base, search)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum KeyRef<'a> {
-    // used when all keys on a node are monotonic
+    // used when all keys on a node are linear
     // with a fixed stride length, allowing us to
     // avoid ever actually storing any of them
     Computed { base: &'a [u8], distance: usize },
-    // used when keys are not monotonic, and we
+    // used when keys are not linear, and we
     // store the actual prefix-encoded keys on the node
     Slice(&'a [u8]),
 }
@@ -149,14 +211,14 @@ impl<'a> KeyRef<'a> {
             (
                 KeyRef::Computed { base: a, distance: da },
                 KeyRef::Computed { base: b, distance: db },
-            ) => distance(a, b) + (db - da),
+            ) => linear_distance(a, b) + (db - da),
             (KeyRef::Computed { base: a, distance: da }, KeyRef::Slice(b)) => {
-                distance(a, b) - da
+                linear_distance(a, b) - da
             }
             (KeyRef::Slice(a), KeyRef::Computed { base: b, distance: db }) => {
-                distance(a, b) + db
+                linear_distance(a, b) + db
             }
-            (KeyRef::Slice(a), KeyRef::Slice(b)) => distance(a, b),
+            (KeyRef::Slice(a), KeyRef::Slice(b)) => linear_distance(a, b),
         }
     }
 
@@ -170,31 +232,10 @@ impl<'a> KeyRef<'a> {
 
 impl PartialEq<KeyRef<'_>> for KeyRef<'_> {
     fn eq(&self, other: &KeyRef<'_>) -> bool {
-        match (self, other) {
-            (
-                KeyRef::Computed { base: a, distance: da },
-                KeyRef::Computed { base: b, distance: db },
-            ) => match a.cmp(b) {
-                Less => da.eq(&(distance(a, b) + db)),
-                Greater => (distance(b, a) + da).eq(db),
-                Equal => da.eq(db),
-            },
-            (KeyRef::Computed { base: a, distance: da }, KeyRef::Slice(b)) => {
-                match a.cmp(b) {
-                    Less => da.eq(&distance(a, b)),
-                    Greater => false,
-                    Equal => da.eq(&0),
-                }
-            }
-            (KeyRef::Slice(a), KeyRef::Computed { base: b, distance: db }) => {
-                if let Less = a.cmp(b) {
-                    false
-                } else {
-                    distance(b, a).eq(db)
-                }
-            }
-            (KeyRef::Slice(a), KeyRef::Slice(b)) => a.eq(b),
+        if self.len() != other.len() {
+            return false;
         }
+        self.cmp(other) == Equal
     }
 }
 
@@ -202,28 +243,45 @@ impl Eq for KeyRef<'_> {}
 
 impl Ord for KeyRef<'_> {
     fn cmp(&self, other: &KeyRef<'_>) -> Ordering {
+        let min_len = self.len().min(other.len());
         match (self, other) {
             (
                 KeyRef::Computed { base: a, distance: da },
                 KeyRef::Computed { base: b, distance: db },
-            ) => match a.cmp(b) {
-                Less => da.cmp(&(distance(a, b) + db)),
-                Greater => (distance(b, a) + da).cmp(db),
-                Equal => da.cmp(db),
-            },
-            (KeyRef::Computed { base: a, distance: da }, KeyRef::Slice(b)) => {
+            ) => {
+                let shared_a = &a[..min_len];
+                let compensated_da = da >> ((a.len() - min_len) * 8);
+                let shared_b = &b[..min_len];
+                let compensated_db = db >> ((b.len() - min_len) * 8);
                 match a.cmp(b) {
-                    Less => da.cmp(&distance(a, b)),
-                    Greater => Greater,
-                    Equal => da.cmp(&0),
+                    Less => {
+                        match compensated_da.cmp(
+                            &(linear_distance(shared_a, shared_b)
+                                + compensated_db),
+                        ) {
+                            Equal => self.len().cmp(&other.len()),
+                            other => other,
+                        }
+                    }
+                    Greater => {
+                        match (linear_distance(shared_b, shared_a)
+                            + compensated_da)
+                            .cmp(&compensated_db)
+                        {
+                            Equal => self.len().cmp(&other.len()),
+                            other => other,
+                        }
+                    }
+                    Equal => da.cmp(db),
                 }
             }
-            (KeyRef::Slice(a), KeyRef::Computed { base: b, distance: db }) => {
-                match a.cmp(b) {
-                    Less => Less,
-                    Greater => distance(b, a).cmp(db),
-                    Equal => 0.cmp(db),
-                }
+            (KeyRef::Computed { .. }, KeyRef::Slice(b)) => {
+                // recurse to first case
+                self.cmp(&KeyRef::Computed { base: b, distance: 0 })
+            }
+            (KeyRef::Slice(a), KeyRef::Computed { .. }) => {
+                // recurse to first case
+                KeyRef::Computed { base: a, distance: 0 }.cmp(&other)
             }
             (KeyRef::Slice(a), KeyRef::Slice(b)) => a.cmp(b),
         }
@@ -238,31 +296,13 @@ impl PartialOrd<KeyRef<'_>> for KeyRef<'_> {
 
 impl PartialOrd<[u8]> for KeyRef<'_> {
     fn partial_cmp(&self, other: &[u8]) -> Option<Ordering> {
-        use distance as distance_func;
-        match self {
-            KeyRef::Computed { base, distance } => {
-                if *base > other {
-                    Some(Greater)
-                } else {
-                    let right_distance = distance_func(other, base);
-                    distance.partial_cmp(&right_distance)
-                }
-            }
-            KeyRef::Slice(s) => (*s).partial_cmp(other),
-        }
+        self.partial_cmp(&KeyRef::Slice(other))
     }
 }
 
 impl PartialEq<[u8]> for KeyRef<'_> {
     fn eq(&self, other: &[u8]) -> bool {
-        use distance as distance_func;
-        match self {
-            KeyRef::Computed { base, distance } => {
-                let right_distance = distance_func(base, other);
-                distance.eq(&right_distance)
-            }
-            KeyRef::Slice(s) => (*s).eq(other),
-        }
+        self.eq(&KeyRef::Slice(other))
     }
 }
 
@@ -884,56 +924,6 @@ impl DerefMut for Inner {
     }
 }
 
-// determines if the item can be losslessly
-// constructed from the base by adding a fixed
-// stride to it.
-fn is_monotone(a: &KeyRef<'_>, b: &KeyRef<'_>, stride: u8) -> bool {
-    if a.len() != b.len() || a.len() > 4 {
-        return false;
-    }
-
-    a.distance(b) == stride as usize
-}
-
-fn stride(a: &[u8], b: KeyRef<'_>) -> u8 {
-    if a.len() != b.len() {
-        return 0;
-    }
-    match b {
-        KeyRef::Slice(b) => b[b.len() - 1].wrapping_sub(a[b.len() - 1]),
-        KeyRef::Computed { base, distance: b_distance } => {
-            let a_distance = distance(base, a);
-            u8::try_from(b_distance - a_distance).unwrap()
-        }
-    }
-}
-
-fn distance(base: &[u8], search: &[u8]) -> usize {
-    fn f1(base: &[u8], search: &[u8]) -> usize {
-        (search[search.len() - 1] - base[search.len() - 1]) as usize
-    }
-    fn f2(base: &[u8], search: &[u8]) -> usize {
-        (u16::from_be_bytes(search.try_into().unwrap()) as usize)
-            - (u16::from_be_bytes(base.try_into().unwrap()) as usize)
-    }
-    fn f3(base: &[u8], search: &[u8]) -> usize {
-        (u32::from_be_bytes([0, search[0], search[1], search[2]]) as usize)
-            - (u32::from_be_bytes([0, base[0], base[1], base[2]]) as usize)
-    }
-    fn f4(base: &[u8], search: &[u8]) -> usize {
-        (u32::from_be_bytes(search.try_into().unwrap()) as usize)
-            - (u32::from_be_bytes(base.try_into().unwrap()) as usize)
-    }
-
-    assert!(base <= search);
-    assert!(!base.is_empty());
-    assert_eq!(search.len(), base.len());
-
-    let computed_gotos = [f1, f2, f3, f4];
-
-    computed_gotos[base.len() - 1](base, search)
-}
-
 impl Inner {
     unsafe fn from_raw(buf: &[u8]) -> Inner {
         let mut ret = uninitialized_node(buf.len());
@@ -953,7 +943,7 @@ impl Inner {
 
         // determine if we need to use varints and offset
         // indirection tables, or if everything is equal
-        // size we can skip this. If all keys are monotonic
+        // size we can skip this. If all keys are linear
         // with a fixed stride, we can completely skip writing
         // them at all, as they can always be calculated by
         // adding the desired offset to the lo key.
@@ -962,22 +952,23 @@ impl Inner {
 
         let mut initial_keys_equal_length = true;
         let mut initial_values_equal_length = true;
-        let mut monotone = items.len() > 1;
-        let stride = if monotone {
-            stride(&lo[prefix_len as usize..], items[1].0)
-        } else {
-            0
-        };
+        let mut linear = items.len() > 1;
+        let stride =
+            if linear && lo[prefix_len as usize..].len() == items[1].0.len() {
+                stride(&lo[prefix_len as usize..], items[1].0)
+            } else {
+                0
+            };
         let mut prev: Option<&KeyRef<'_>> = None;
         for (k, v) in items {
             key_lengths.push(k.len() as u64);
             if let Some(first_sz) = key_lengths.first() {
                 initial_keys_equal_length &= *first_sz == k.len() as u64;
-                monotone &= initial_keys_equal_length;
+                linear &= initial_keys_equal_length;
                 if initial_keys_equal_length {
-                    monotone = monotone
+                    linear = linear
                         && if let Some(ref mut prev) = prev {
-                            is_monotone(prev, k, stride)
+                            is_linear(prev, k, stride)
                         } else {
                             true
                         };
@@ -1043,7 +1034,7 @@ impl Inner {
             };
 
         let key_storage_size = if let Some(key_length) = fixed_key_length {
-            if monotone {
+            if linear {
                 // all keys can be directly computed from the node lo key
                 // by adding a fixed stride length to the node lo key
                 0
@@ -1167,9 +1158,9 @@ impl Inner {
                 offset += varint::size(v.len() as u64) as u64 + v.len() as u64;
             }
 
-            if !monotone {
+            if !linear {
                 // we completely skip writing any key data at all
-                // when the keys are monotonic, as they can be
+                // when the keys are linear, as they can be
                 // computed losslessly by multiplying the desired
                 // index by the fixed stride length.
                 let mut key_buf = ret.key_buf_for_offset_mut(idx);
@@ -1196,10 +1187,10 @@ impl Inner {
 
         testing_assert!(
             ret.is_sorted(),
-            "created new node is not sorted: {:?}, had items passed in: {:?} monotone: {}",
+            "created new node is not sorted: {:?}, had items passed in: {:?} linear: {}",
             ret,
             items,
-            monotone
+            linear
         );
 
         ret
@@ -1697,17 +1688,27 @@ impl Inner {
     }
 
     fn find(&self, key: &[u8]) -> Result<usize, usize> {
-        if self.fixed_key_stride > 0
-            && self.lo_len - u64::from(self.prefix_len) == key.len() as u64
-        {
-            let distance: usize =
-                distance(&self.lo()[self.prefix_len as usize..], key);
+        if self.fixed_key_stride > 0 {
+            let compare_bytes =
+                usize::try_from(self.lo_len - u64::from(self.prefix_len))
+                    .unwrap()
+                    .min(key.len());
+            let distance: usize = linear_distance(
+                &self.lo()[self.prefix_len as usize..],
+                &key[..compare_bytes],
+            );
             let offset = distance / self.fixed_key_stride as usize;
-            if distance % self.fixed_key_stride as usize != 0 {
+            if key.len() != compare_bytes
+                || distance % self.fixed_key_stride as usize != 0
+            {
                 // search key does not evenly fit based on
                 // our fixed stride length
-                return Err(offset);
+                return Err(offset.min(self.children()));
             }
+            assert_eq!(
+                key.len(),
+                usize::from(self.fixed_key_length.unwrap().get())
+            );
             if offset >= self.children as usize {
                 return Err(self.children());
             }
@@ -1715,7 +1716,7 @@ impl Inner {
         }
 
         let mut size = self.children();
-        if size == 0 || self.index_key(0) > *key {
+        if size == 0 || self.index_key(0).unwrap_slice() > key {
             return Err(0);
         }
         let mut base = 0_usize;
@@ -2436,7 +2437,7 @@ mod test {
 
     #[test]
     fn node_bug_03() {
-        // postmortem: monotone key lengths were being improperly determined
+        // postmortem: linear key lengths were being improperly determined
         assert!(prop_indexable(
             vec![],
             vec![],
