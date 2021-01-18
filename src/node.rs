@@ -89,15 +89,15 @@ fn apply_computed_distance(mut buf: &mut [u8], mut distance: usize) {
     }
 }
 
-fn stride(a: &[u8], b: KeyRef<'_>) -> u8 {
+fn stride(a: &[u8], b: KeyRef<'_>) -> Option<u8> {
     if a.len() != b.len() {
-        return 0;
+        return None;
     }
     match b {
-        KeyRef::Slice(b) => b[b.len() - 1].wrapping_sub(a[b.len() - 1]),
+        KeyRef::Slice(b) => Some(b[b.len() - 1].wrapping_sub(a[b.len() - 1])),
         KeyRef::Computed { base, distance: b_distance } => {
             let a_distance = linear_distance(base, a);
-            u8::try_from(b_distance - a_distance).unwrap()
+            u8::try_from(b_distance - a_distance).ok()
         }
     }
 }
@@ -645,11 +645,23 @@ impl Node {
         if self.contains_key(encoded_sep) {
             log::debug!(
                 "parent_split skipped because \
-                parent already contains child with key {:?} \
-                at split point due to deep race",
-                at
+                parent node already contains child with key {:?} \
+                pid {} \
+                at split point due to deep race. parent node: {:?}",
+                at,
+                to,
+                self
             );
             return None;
+        }
+
+        if at < self.lo()
+            || if let Some(hi) = self.hi() { hi <= at } else { false }
+        {
+            panic!(
+                "tried to add split child at {:?} to parent index node {:?}",
+                at, self
+            );
         }
 
         let mut overlay = self.overlay.clone();
@@ -696,7 +708,10 @@ impl Node {
                     Ok(idx) => {
                         if let (k, Some(v)) = &self.overlay[idx] {
                             // short circuit return
-                            return Some((k.clone(), v.clone()));
+                            return Some((
+                                self.prefix_decode(KeyRef::Slice(&k)),
+                                v.clone(),
+                            ));
                         }
                         self.overlay[idx + 1..].iter()
                     }
@@ -711,7 +726,7 @@ impl Node {
                 let node_position = match inner_search {
                     Ok(idx) => {
                         return Some((
-                            self.inner.index_key(idx).into(),
+                            self.prefix_decode(self.inner.index_key(idx)),
                             self.inner.index_value(idx).into(),
                         ))
                     }
@@ -785,8 +800,9 @@ impl Node {
     }
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> (bool, u64) {
-        log::debug!("index_next_node for key {:?} on node {:?}", key, self);
+        log::trace!("index_next_node for key {:?} on node {:?}", key, self);
         assert!(key >= self.lo());
+        assert!(self.overlay.is_empty());
         if let Some(hi) = self.hi() {
             assert!(hi > key);
         }
@@ -802,13 +818,14 @@ impl Node {
         let pid_bytes = self.index_value(idx);
         let pid = u64::from_le_bytes(pid_bytes.try_into().unwrap());
 
+        log::trace!("index_next_node for key {:?} returning pid {} after seaching node {:?}", key, pid, self);
         (is_leftmost, pid)
     }
 
     pub(crate) fn should_split(&self) -> bool {
         log::trace!("seeing if we should split node {:?}", self);
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
-            self.iter().take(4).count() > 3
+            self.iter().take(5).count() > 4
         } else if self.is_index {
             self.len > 1024 && self.rss() > 1
         } else {
@@ -982,7 +999,7 @@ impl Inner {
         let mut linear = items.len() > 1;
         let fixed_key_stride =
             if linear && lo[prefix_len as usize..].len() == items[1].0.len() {
-                stride(&lo[prefix_len as usize..], items[1].0)
+                stride(&lo[prefix_len as usize..], items[1].0).unwrap_or(0)
             } else {
                 0
             };
@@ -1246,6 +1263,8 @@ impl Inner {
             linear
         );
 
+        log::trace!("created new node {:?}", ret);
+
         ret
     }
 
@@ -1280,6 +1299,7 @@ impl Inner {
 
     // returns the OPEN ENDED buffer where a key may be placed
     fn key_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
+        assert_eq!(self.fixed_key_stride, 0);
         let offset_sz = self.children as usize * self.offset_bytes as usize;
         match (self.fixed_key_length, self.fixed_value_length) {
             (Some(k_sz), Some(_)) | (Some(k_sz), None) => {
@@ -1772,6 +1792,11 @@ impl Inner {
                 usize::try_from(self.lo_len - u64::from(self.prefix_len))
                     .unwrap()
                     .min(key.len());
+            log::trace!(
+                "looking for key {:?} on fixed stride node {:?}",
+                key,
+                self
+            );
             let distance: usize = linear_distance(
                 &self.lo()[self.prefix_len as usize..],
                 &key[..compare_bytes],
@@ -1782,15 +1807,15 @@ impl Inner {
             {
                 // search key does not evenly fit based on
                 // our fixed stride length
-                return Err(offset.min(self.children()));
+                return Err((offset + 1).min(self.children()));
             }
-            assert_eq!(
-                key.len(),
-                usize::from(self.fixed_key_length.unwrap().get())
+            assert!(
+                key.len() <= usize::from(self.fixed_key_length.unwrap().get())
             );
             if offset >= self.children as usize {
                 return Err(self.children());
             }
+            log::trace!("found offset in Node::find {}", offset);
             return Ok(offset);
         }
 

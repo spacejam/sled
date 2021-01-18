@@ -1610,6 +1610,11 @@ impl Tree {
                 &parent,
                 guard,
             )?;
+            trace!(
+                "parent_split at {:?} child pid {} \
+                parent pid {} success: {}",
+                rhs_lo, rhs_pid, parent_view.pid, replace.is_ok()
+            );
             if replace.is_ok() {
                 #[cfg(feature = "metrics")]
                 M.tree_parent_split_success();
@@ -1809,13 +1814,15 @@ impl Tree {
 
             if undershot {
                 // half-complete split detect & completion
-                cursor = view
+                let right_sibling = view
                     .next
                     .expect(
                         "if our hi bound is not Inf (inity), \
-                     we should have a right sibling",
+                         we should have a right sibling",
                     )
                     .get();
+                trace!("seeking right on undershot node, from {} to {}", cursor, right_sibling);
+                cursor = right_sibling;
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
                 } else if parent_view.is_none() && view.lo().is_empty() {
@@ -1833,6 +1840,7 @@ impl Tree {
                         retry!();
                     }
                 }
+
                 continue;
             } else if let Some(unsplit_parent) = unsplit_parent.take() {
                 // we have found the proper page for

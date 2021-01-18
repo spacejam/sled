@@ -85,12 +85,19 @@ fn linear_inserts() {
 
     let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
 
+    let mut expected = std::collections::HashSet::new();
     for k in 0..4096_u16 {
         db.insert(&k.to_be_bytes(), &[]).unwrap();
+        expected.insert(k.to_be_bytes().to_vec());
     }
 
-    let count = db.iter().count();
-    assert_eq!(count, 4096);
+    let mut count = 0_u16;
+    for kvr in db.iter() {
+        let (k, v) = kvr.unwrap();
+        assert_eq!(&k, &count.to_be_bytes());
+        count += 1;
+    }
+    assert_eq!(count, 4096, "tree: {:?}", db);
     assert_eq!(db.len(), 4096);
 
     let count = db.iter().rev().count();
