@@ -1281,6 +1281,24 @@ impl Inner {
             linear
         );
 
+        #[cfg(feature = "testing")]
+        {
+            for i in 0..items.len() {
+                if !keys_equal_length || !values_equal_length {
+                    assert!(
+                        (ret.offset(i) as u64) < total_node_storage_size,
+                        "offset {} is {} which is larger than \
+                    total node storage size of {} for node \
+                    with header {:#?}",
+                        i,
+                        ret.offset(i),
+                        total_node_storage_size,
+                        ret.header()
+                    );
+                }
+            }
+        }
+
         log::trace!("created new node {:?}", ret);
 
         ret
@@ -1460,7 +1478,7 @@ impl Inner {
             }
             (Some(fixed_key_length), _) => {
                 let start = if self.fixed_key_stride > 0 {
-                    0
+                    offset_sz
                 } else {
                     offset_sz
                         + tf!(fixed_key_length.get()) * self.children as usize
@@ -1483,7 +1501,7 @@ impl Inner {
             }
             (Some(fixed_key_length), _) => {
                 let start = if self.fixed_key_stride > 0 {
-                    0
+                    offset_sz
                 } else {
                     offset_sz
                         + tf!(fixed_key_length.get()) * self.children as usize
