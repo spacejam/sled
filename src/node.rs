@@ -102,7 +102,6 @@ fn stride(a: &[u8], b: KeyRef<'_>) -> u8 {
     }
 }
 
-// NB: caller must ensure that base and search are equal lengths
 fn linear_distance(base: &[u8], search: &[u8]) -> usize {
     fn f1(base: &[u8], search: &[u8]) -> usize {
         (search[search.len() - 1] - base[search.len() - 1]) as usize
@@ -122,22 +121,28 @@ fn linear_distance(base: &[u8], search: &[u8]) -> usize {
 
     assert!(base <= search);
     assert!(!base.is_empty());
-    assert_eq!(search.len(), base.len());
+    assert!(search.len() <= base.len());
 
     let computed_gotos = [f1, f2, f3, f4];
 
-    if base.len() > 4 {
-        if &base[..base.len() - 4] != &search[..search.len() - 4] {
+    let mut distance = if base.len() > 4 {
+        if &base[..search.len() - 4] != &search[..search.len() - 4] {
             std::usize::MAX
         } else {
             computed_gotos[3](
-                &base[base.len() - 4..],
+                &base[search.len() - 4..],
                 &search[search.len() - 4..],
             )
         }
     } else {
-        computed_gotos[base.len() - 1](base, search)
+        computed_gotos[search.len() - 1](base, search)
+    };
+
+    for i in 0..(base.len() - search.len()) {
+        distance <<= 8;
+        distance -= usize::from(base[base.len() - i - 1])
     }
+    distance
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -548,9 +553,19 @@ impl Node {
         ret
     }
 
-    pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
+    fn contains_key(&self, key: &[u8]) -> bool {
+        if key < self.lo()
+            || if let Some(hi) = self.hi() { key >= hi } else { false }
+        {
+            return false;
+        }
+        if let Some(fixed_key_length) = self.fixed_key_length {
+            if usize::from(fixed_key_length.get()) != key.len() {
+                return false;
+            }
+        }
         self.overlay.binary_search_by_key(&key, |(k, _)| k).is_ok()
-            || self.inner.contains_key(key)
+            || self.inner.contains_key(self.prefix_encode(key))
     }
 
     // Push the overlay into the backing node.
@@ -688,7 +703,11 @@ impl Node {
                     Err(idx) => self.overlay[idx..].iter(),
                 };
 
-                let inner_search = self.find(b);
+                let inner_search = if &**b < self.lo() {
+                    Err(0)
+                } else {
+                    self.find(self.prefix_encode(b))
+                };
                 let node_position = match inner_search {
                     Ok(idx) => {
                         return Some((
@@ -709,7 +728,11 @@ impl Node {
                     Err(idx) => self.overlay[idx..].iter(),
                 };
 
-                let inner_search = self.find(b);
+                let inner_search = if &**b < self.lo() {
+                    Err(0)
+                } else {
+                    self.find(self.prefix_encode(b))
+                };
                 let node_position = match inner_search {
                     Ok(idx) => {
                         // short circuit return
@@ -1024,7 +1047,7 @@ impl Inner {
             (None, false)
         };
 
-        linear &= fixed_key_length.is_some();
+        linear &= fixed_key_length.is_some() && fixed_key_stride > 0;
         let fixed_key_stride = if linear { fixed_key_stride } else { 0 };
 
         let (fixed_value_length, values_equal_length) =
@@ -1056,6 +1079,7 @@ impl Inner {
             if linear {
                 // all keys can be directly computed from the node lo key
                 // by adding a fixed stride length to the node lo key
+                assert!(fixed_key_stride > 0);
                 0
             } else {
                 u64::from(key_length.get()) * (items.len() as u64)
@@ -1277,6 +1301,7 @@ impl Inner {
     // the key and its varint length prefix, as this needs to be parsed
     // for case 4.
     fn value_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
+        let stride = self.fixed_key_stride;
         match (self.fixed_key_length, self.fixed_value_length) {
             (Some(_), Some(v_sz)) | (None, Some(v_sz)) => {
                 let values_buf = self.values_buf_mut();
@@ -1293,8 +1318,11 @@ impl Inner {
                 let offset = self.offset(index);
                 let values_buf = self.values_buf_mut();
                 let slot_buf = &mut values_buf[offset..];
-                let (val_len, varint_sz) =
-                    varint::deserialize(slot_buf).unwrap();
+                let (val_len, varint_sz) = if stride > 0 {
+                    (0, 0)
+                } else {
+                    varint::deserialize(slot_buf).unwrap()
+                };
                 &mut slot_buf[tf!(val_len) + varint_sz..]
             }
         }
@@ -1306,6 +1334,7 @@ impl Inner {
     // the key and its varint length prefix, as this needs to be parsed
     // for case 4.
     fn value_buf_for_offset(&self, index: usize) -> &[u8] {
+        let stride = self.fixed_key_stride;
         match (self.fixed_key_length, self.fixed_value_length) {
             (Some(_), Some(v_sz)) | (None, Some(v_sz)) => {
                 let values_buf = self.values_buf();
@@ -1322,8 +1351,11 @@ impl Inner {
                 let offset = self.offset(index);
                 let values_buf = self.values_buf();
                 let slot_buf = &values_buf[offset..];
-                let (val_len, varint_sz) =
-                    varint::deserialize(slot_buf).unwrap();
+                let (val_len, varint_sz) = if stride > 0 {
+                    (0, 0)
+                } else {
+                    varint::deserialize(slot_buf).unwrap()
+                };
                 &slot_buf[tf!(val_len) + varint_sz..]
             }
         }
@@ -1389,8 +1421,12 @@ impl Inner {
                 &mut data_buf[start..]
             }
             (Some(fixed_key_length), _) => {
-                let start = offset_sz
-                    + tf!(fixed_key_length.get()) * self.children as usize;
+                let start = if self.fixed_key_stride > 0 {
+                    0
+                } else {
+                    offset_sz
+                        + tf!(fixed_key_length.get()) * self.children as usize
+                };
                 &mut self.data_buf_mut()[start..]
             }
             (None, None) => &mut self.data_buf_mut()[offset_sz..],
@@ -1408,8 +1444,12 @@ impl Inner {
                 &data_buf[start..]
             }
             (Some(fixed_key_length), _) => {
-                let start = offset_sz
-                    + tf!(fixed_key_length.get()) * self.children as usize;
+                let start = if self.fixed_key_stride > 0 {
+                    0
+                } else {
+                    offset_sz
+                        + tf!(fixed_key_length.get()) * self.children as usize
+                };
                 &self.data_buf()[start..]
             }
             (None, None) => &self.data_buf()[offset_sz..],
@@ -1713,6 +1753,16 @@ impl Inner {
     }
 
     fn contains_key(&self, key: &[u8]) -> bool {
+        if key < self.lo()
+            || if let Some(hi) = self.hi() { key >= hi } else { false }
+        {
+            return false;
+        }
+        if let Some(fixed_key_length) = self.fixed_key_length {
+            if usize::from(fixed_key_length.get()) != key.len() {
+                return false;
+            }
+        }
         self.find(key).is_ok()
     }
 
@@ -2102,7 +2152,23 @@ mod test {
     }
 
     #[test]
-    fn compute_distance() {
+    fn compute_distances() {
+        let table: &[(&[u8], &[u8], usize)] = &[
+            (&[0], &[0], 0),
+            (&[0], &[1], 1),
+            (&[0, 255], &[1, 0], 1),
+            (&[1, 0], &[2], 256),
+            (&[1, 1], &[2], 255),
+            (&[1, 2], &[2], 254),
+        ];
+
+        for (a, b, expected) in table {
+            assert_eq!(linear_distance(a, b), *expected);
+        }
+    }
+
+    #[test]
+    fn apply_computed_distances() {
         let table: &[(KeyRef<'_>, &[u8])] = &[
             (KeyRef::Computed { base: &[0], distance: 0 }, &[0]),
             (KeyRef::Computed { base: &[0], distance: 1 }, &[1]),
