@@ -95,9 +95,13 @@ fn stride(a: &[u8], b: KeyRef<'_>) -> Option<u8> {
     }
     match b {
         KeyRef::Slice(b) => Some(b[b.len() - 1].wrapping_sub(a[b.len() - 1])),
-        KeyRef::Computed { base, distance: b_distance } => {
-            let a_distance = linear_distance(base, a);
-            u8::try_from(b_distance - a_distance).ok()
+        KeyRef::Computed { base: b, distance: db } => {
+            let distance = if a <= b {
+                linear_distance(a, b) + db
+            } else {
+                db - linear_distance(b, a)
+            };
+            u8::try_from(distance).ok()
         }
     }
 }
@@ -199,7 +203,8 @@ impl<'a> KeyRef<'a> {
     fn write_into(&self, buf: &mut [u8]) {
         match self {
             KeyRef::Computed { base, distance } => {
-                buf.copy_from_slice(base);
+                let buf_len = buf.len();
+                buf[buf_len - base.len()..].copy_from_slice(base);
                 apply_computed_distance(buf, *distance);
             }
             KeyRef::Slice(s) => buf.copy_from_slice(s),
@@ -248,7 +253,15 @@ impl<'a> KeyRef<'a> {
 
     fn len(&self) -> usize {
         match self {
-            KeyRef::Computed { base, .. } => base.len(),
+            KeyRef::Computed { base, distance } => {
+                let mut slack = 0_usize;
+                for c in base.iter() {
+                    slack += 255 - *c as usize;
+                    slack <<= 8;
+                }
+                slack >>= 8;
+                base.len() + if *distance > slack { 1 } else { 0 }
+            }
             KeyRef::Slice(s) => s.len(),
         }
     }

@@ -93,7 +93,7 @@ fn linear_inserts() {
 
     let mut count = 0_u16;
     for kvr in db.iter() {
-        let (k, v) = kvr.unwrap();
+        let (k, _) = kvr.unwrap();
         assert_eq!(&k, &count.to_be_bytes());
         count += 1;
     }
