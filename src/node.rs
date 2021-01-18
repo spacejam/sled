@@ -119,7 +119,12 @@ fn linear_distance(base: &[u8], search: &[u8]) -> usize {
             - (u32::from_be_bytes(base.try_into().unwrap()) as usize)
     }
 
-    assert!(base <= search);
+    assert!(
+        base <= search,
+        "expected base {:?} to be <= search {:?}",
+        base,
+        search
+    );
     assert!(!base.is_empty());
     assert!(search.len() <= base.len());
 
@@ -220,12 +225,22 @@ impl<'a> KeyRef<'a> {
             (
                 KeyRef::Computed { base: a, distance: da },
                 KeyRef::Computed { base: b, distance: db },
-            ) => linear_distance(a, b) + (db - da),
+            ) => {
+                if a <= b {
+                    linear_distance(a, b) + (db - da)
+                } else {
+                    (db - da) - linear_distance(b, a)
+                }
+            }
             (KeyRef::Computed { base: a, distance: da }, KeyRef::Slice(b)) => {
                 linear_distance(a, b) - da
             }
             (KeyRef::Slice(a), KeyRef::Computed { base: b, distance: db }) => {
-                linear_distance(a, b) + db
+                if a <= b {
+                    linear_distance(a, b) + db
+                } else {
+                    db - linear_distance(b, a)
+                }
             }
             (KeyRef::Slice(a), KeyRef::Slice(b)) => linear_distance(a, b),
         }
@@ -658,10 +673,12 @@ impl Node {
         if at < self.lo()
             || if let Some(hi) = self.hi() { hi <= at } else { false }
         {
-            panic!(
+            log::debug!(
                 "tried to add split child at {:?} to parent index node {:?}",
-                at, self
+                at,
+                self
             );
+            return None;
         }
 
         let mut overlay = self.overlay.clone();
@@ -1212,6 +1229,7 @@ impl Inner {
                 ret.set_offset(idx, tf!(offset));
             }
             if !keys_equal_length {
+                assert_eq!(fixed_key_stride, 0);
                 offset += varint::size(k.len() as u64) as u64 + k.len() as u64;
             }
             if !values_equal_length {
