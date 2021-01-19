@@ -187,9 +187,9 @@ impl Tree {
         }
 
         let frag = if let Some(value) = value.clone() {
-            Link::Set(encoded_key.into(), value)
+            Link::Set(encoded_key, value)
         } else {
-            Link::Del(encoded_key.into())
+            Link::Del(encoded_key)
         };
 
         let link =
