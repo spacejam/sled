@@ -1913,24 +1913,17 @@ impl Inner {
 
             let offset = distance / stride.get() as usize;
 
-            log::trace!(
-                "looking for key {:?} on fixed stride node {} base: {:?} s_len {} distance {} offset {} node children: {} lo: {:?}",
-                key,
-                stride.get(),
-                base,
-                s_len,
-                distance,
-                offset,
-                self.children(),
-                self.lo(),
-            );
-
             if base.len() != key.len()
                 || distance % stride.get() as usize != 0
                 || offset >= self.children as usize
             {
                 // search key does not evenly fit based on
                 // our fixed stride length
+                log::trace!("failed to find, search: {:?} lo: {:?} \
+                    prefix_len: {} distance: {} stride: {} offset: {} children: {}",
+                    key, self.lo(), self.prefix_len, distance,
+                    stride.get(), offset, self.children
+                );
                 return Err((offset + 1).min(self.children()));
             }
 
