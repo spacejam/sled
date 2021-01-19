@@ -42,18 +42,14 @@ pub struct Header {
     // NB always lay out fields from largest to smallest
     // to properly pack the struct
     pub next: Option<NonZeroU64>,
-    // could probably be Option<u16> w/ child index
-    // rather than the pid
     pub merging_child: Option<NonZeroU64>,
-    // could be replaced by a varint, w/ data buf offset stored instead
     lo_len: u64,
-    // could be replaced by a varint, w/ data buf offset stored instead
     hi_len: u64,
     fixed_key_length: Option<NonZeroU16>,
     fixed_value_length: Option<NonZeroU16>,
+    fixed_key_stride: Option<NonZeroU16>,
     pub children: u16,
     pub prefix_len: u8,
-    fixed_key_stride: u8,
     probation_ops_remaining: u8,
     // this can be 3 bits. 111 = 7, but we
     // will never need 7 bytes for storing offsets.
@@ -69,6 +65,7 @@ pub struct Header {
     // 01: mixed updates
     // 10: all updates have been at the beginning
     activity_sketch: u8,
+    version: u8,
     // can be 1 bit
     pub merging: bool,
     // can be 1 bit
@@ -85,23 +82,6 @@ fn apply_computed_distance(mut buf: &mut [u8], mut distance: usize) {
         if distance != 0 {
             let new_len = buf.len() - 1;
             buf = &mut buf[..new_len];
-        }
-    }
-}
-
-fn stride(a: &[u8], b: KeyRef<'_>) -> Option<u8> {
-    if a.len() != b.len() {
-        return None;
-    }
-    match b {
-        KeyRef::Slice(b) => Some(b[b.len() - 1].wrapping_sub(a[b.len() - 1])),
-        KeyRef::Computed { base: b, distance: db } => {
-            let distance = if a <= b {
-                linear_distance(a, b) + db
-            } else {
-                db - linear_distance(b, a)
-            };
-            u8::try_from(distance).ok()
         }
     }
 }
@@ -135,13 +115,13 @@ fn linear_distance(base: &[u8], search: &[u8]) -> usize {
     let computed_gotos = [f1, f2, f3, f4];
 
     let mut distance = if base.len() > 4 {
-        if &base[..search.len() - 4] != &search[..search.len() - 4] {
-            std::usize::MAX
-        } else {
+        if base[..search.len() - 4] == search[..search.len() - 4] {
             computed_gotos[3](
                 &base[search.len() - 4..],
                 &search[search.len() - 4..],
             )
+        } else {
+            std::usize::MAX
         }
     } else {
         computed_gotos[search.len() - 1](base, search)
@@ -318,7 +298,7 @@ impl Ord for KeyRef<'_> {
             }
             (KeyRef::Slice(a), KeyRef::Computed { .. }) => {
                 // recurse to first case
-                KeyRef::Computed { base: a, distance: 0 }.cmp(&other)
+                KeyRef::Computed { base: a, distance: 0 }.cmp(other)
             }
             (KeyRef::Slice(a), KeyRef::Slice(b)) => a.cmp(b),
         }
@@ -739,7 +719,7 @@ impl Node {
                         if let (k, Some(v)) = &self.overlay[idx] {
                             // short circuit return
                             return Some((
-                                self.prefix_decode(KeyRef::Slice(&k)),
+                                self.prefix_decode(KeyRef::Slice(k)),
                                 v.clone(),
                             ));
                         }
@@ -998,6 +978,17 @@ impl DerefMut for Inner {
     }
 }
 
+// determines if the item can be losslessly
+// constructed from the base by adding a fixed
+// stride to it.
+fn is_linear(a: &KeyRef<'_>, b: &KeyRef<'_>, stride: u16) -> bool {
+    if a.len() != b.len() || a.len() > 4 {
+        return false;
+    }
+
+    a.distance(b) == stride as usize
+}
+
 impl Inner {
     unsafe fn from_raw(buf: &[u8]) -> Inner {
         let mut ret = uninitialized_node(buf.len());
@@ -1026,39 +1017,33 @@ impl Inner {
 
         let mut initial_keys_equal_length = true;
         let mut initial_values_equal_length = true;
-        let mut linear = items.len() > 1;
-        let fixed_key_stride =
-            if linear && lo[prefix_len as usize..].len() == items[1].0.len() {
-                stride(&lo[prefix_len as usize..], items[1].0).unwrap_or(0)
-            } else {
-                0
-            };
-
-        // determines if the item can be losslessly
-        // constructed from the base by adding a fixed
-        // stride to it.
-        fn is_linear(a: &KeyRef<'_>, b: &KeyRef<'_>, stride: u8) -> bool {
-            if a.len() != b.len() || a.len() > 4 {
-                return false;
-            }
-
-            a.distance(b) == stride as usize
-        }
+        let mut fixed_key_stride: Option<u16> = if items.len() > 1
+            && lo[prefix_len as usize..].len() == items[1].0.len()
+        {
+            u16::try_from(
+                KeyRef::Slice(&lo[prefix_len as usize..]).distance(&items[1].0),
+            )
+            .ok()
+        } else {
+            None
+        };
 
         let mut prev: Option<&KeyRef<'_>> = None;
         for (k, v) in items {
             key_lengths.push(k.len() as u64);
             if let Some(first_sz) = key_lengths.first() {
                 initial_keys_equal_length &= *first_sz == k.len() as u64;
-                linear &= initial_keys_equal_length;
-                if initial_keys_equal_length {
-                    linear = linear
-                        && if let Some(ref mut prev) = prev {
-                            is_linear(prev, k, fixed_key_stride)
-                        } else {
-                            true
-                        };
 
+                if !initial_keys_equal_length {
+                    fixed_key_stride = None;
+                }
+
+                if let Some(stride) = fixed_key_stride {
+                    if let Some(ref mut prev) = prev {
+                        if !is_linear(prev, k, stride) {
+                            fixed_key_stride = None;
+                        }
+                    }
                     prev = Some(k);
                 }
             }
@@ -1094,8 +1079,9 @@ impl Inner {
             (None, false)
         };
 
-        linear &= fixed_key_length.is_some() && fixed_key_stride > 0;
-        let fixed_key_stride = if linear { fixed_key_stride } else { 0 };
+        if fixed_key_length.is_none() {
+            fixed_key_stride = None;
+        }
 
         let (fixed_value_length, values_equal_length) =
             if initial_values_equal_length {
@@ -1123,10 +1109,10 @@ impl Inner {
             };
 
         let key_storage_size = if let Some(key_length) = fixed_key_length {
-            if linear {
+            if let Some(stride) = fixed_key_stride {
                 // all keys can be directly computed from the node lo key
                 // by adding a fixed stride length to the node lo key
-                assert!(fixed_key_stride > 0);
+                assert!(stride > 0);
                 0
             } else {
                 u64::from(key_length.get()) * (items.len() as u64)
@@ -1202,10 +1188,12 @@ impl Inner {
             hi_len: hi.map(|hi| hi.len() as u64).unwrap_or(0),
             fixed_key_length,
             fixed_value_length,
-            fixed_key_stride,
+            fixed_key_stride: fixed_key_stride
+                .map(|stride| NonZeroU16::new(stride).unwrap()),
             offset_bytes,
             children: tf!(items.len(), u16),
             prefix_len,
+            version: 1,
             next,
             is_index,
         };
@@ -1242,19 +1230,21 @@ impl Inner {
                 ret.set_offset(idx, tf!(offset));
             }
             if !keys_equal_length {
-                assert_eq!(fixed_key_stride, 0);
+                assert!(fixed_key_stride.is_none());
                 offset += varint::size(k.len() as u64) as u64 + k.len() as u64;
             }
             if !values_equal_length {
                 offset += varint::size(v.len() as u64) as u64 + v.len() as u64;
             }
 
-            if !linear {
+            if let Some(stride) = fixed_key_stride {
+                assert!(stride > 0);
+            } else {
                 // we completely skip writing any key data at all
                 // when the keys are linear, as they can be
                 // computed losslessly by multiplying the desired
                 // index by the fixed stride length.
-                assert_eq!(fixed_key_stride, 0);
+                assert!(fixed_key_stride.is_none());
                 let mut key_buf = ret.key_buf_for_offset_mut(idx);
                 if !keys_equal_length {
                     let varint_bytes =
@@ -1262,8 +1252,6 @@ impl Inner {
                     key_buf = &mut key_buf[varint_bytes..];
                 }
                 k.write_into(&mut key_buf[..k.len()]);
-            } else {
-                assert!(fixed_key_stride > 0);
             }
 
             let mut value_buf = ret.value_buf_for_offset_mut(idx);
@@ -1279,22 +1267,22 @@ impl Inner {
             assert!(!ret.is_empty())
         }
 
-        if ret.fixed_key_stride > 0 {
+        if let Some(stride) = ret.fixed_key_stride {
             assert!(
                 ret.fixed_key_length.is_some(),
                 "fixed_key_stride is {} but fixed_key_length \
                 is None for generated node {:?}",
-                ret.fixed_key_stride,
+                stride,
                 ret
             );
         }
 
         testing_assert!(
             ret.is_sorted(),
-            "created new node is not sorted: {:?}, had items passed in: {:?} linear: {}",
+            "created new node is not sorted: {:?}, had items passed in: {:?} fixed stride: {:?}",
             ret,
             items,
-            linear
+            fixed_key_stride
         );
 
         #[cfg(feature = "testing")]
@@ -1351,7 +1339,7 @@ impl Inner {
 
     // returns the OPEN ENDED buffer where a key may be placed
     fn key_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
-        assert_eq!(self.fixed_key_stride, 0);
+        assert!(self.fixed_key_stride.is_none());
         let offset_sz = self.children as usize * self.offset_bytes as usize;
         match (self.fixed_key_length, self.fixed_value_length) {
             (Some(k_sz), Some(_)) | (Some(k_sz), None) => {
@@ -1390,7 +1378,7 @@ impl Inner {
                 let offset = self.offset(index);
                 let values_buf = self.values_buf_mut();
                 let slot_buf = &mut values_buf[offset..];
-                let (val_len, varint_sz) = if stride > 0 {
+                let (val_len, varint_sz) = if stride.is_some() {
                     (0, 0)
                 } else {
                     varint::deserialize(slot_buf).unwrap()
@@ -1423,7 +1411,7 @@ impl Inner {
                 let offset = self.offset(index);
                 let values_buf = self.values_buf();
                 let slot_buf = &values_buf[offset..];
-                let (val_len, varint_sz) = if stride > 0 {
+                let (val_len, varint_sz) = if stride.is_some() {
                     (0, 0)
                 } else {
                     varint::deserialize(slot_buf).unwrap()
@@ -1493,7 +1481,7 @@ impl Inner {
                 &mut data_buf[start..]
             }
             (Some(fixed_key_length), _) => {
-                let start = if self.fixed_key_stride > 0 {
+                let start = if self.fixed_key_stride.is_some() {
                     offset_sz
                 } else {
                     offset_sz
@@ -1516,7 +1504,7 @@ impl Inner {
                 &data_buf[start..]
             }
             (Some(fixed_key_length), _) => {
-                let start = if self.fixed_key_stride > 0 {
+                let start = if self.fixed_key_stride.is_some() {
                     offset_sz
                 } else {
                     offset_sz
@@ -1839,7 +1827,7 @@ impl Inner {
     }
 
     fn find(&self, key: &[u8]) -> Result<usize, usize> {
-        if self.fixed_key_stride > 0 {
+        if let Some(stride) = self.fixed_key_stride {
             let compare_bytes =
                 usize::try_from(self.lo_len - u64::from(self.prefix_len))
                     .unwrap()
@@ -1853,9 +1841,9 @@ impl Inner {
                 &self.lo()[self.prefix_len as usize..],
                 &key[..compare_bytes],
             );
-            let offset = distance / self.fixed_key_stride as usize;
+            let offset = distance / stride.get() as usize;
             if key.len() != compare_bytes
-                || distance % self.fixed_key_stride as usize != 0
+                || distance % stride.get() as usize != 0
             {
                 // search key does not evenly fit based on
                 // our fixed stride length
@@ -1977,10 +1965,10 @@ impl Inner {
             self.children()
         );
 
-        if self.fixed_key_stride > 0 {
+        if let Some(stride) = self.fixed_key_stride {
             return KeyRef::Computed {
                 base: &self.lo()[self.prefix_len as usize..],
-                distance: self.fixed_key_stride as usize * idx,
+                distance: stride.get() as usize * idx,
             };
         }
 
@@ -2120,7 +2108,7 @@ impl Inner {
 
     #[cfg(feature = "testing")]
     fn is_sorted(&self) -> bool {
-        if self.fixed_key_stride > 0 {
+        if self.fixed_key_stride.is_some() {
             return true;
         }
         if self.children() <= 1 {
