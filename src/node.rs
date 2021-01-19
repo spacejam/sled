@@ -267,6 +267,31 @@ impl<'a> KeyRef<'a> {
     }
 }
 
+// this function "corrects" a distance calculated
+// for shared prefix lengths by accounting for
+// dangling bytes that were omitted from the
+// shared calculation. We only need to subtract
+// distance when the base is shorter than the
+// search key, because in the other case,
+// the result is still usable
+fn unshift_distance(
+    mut shared_distance: usize,
+    base: &[u8],
+    search: &[u8],
+) -> usize {
+    if base.len() > search.len() {
+        // base: [0, 0, 234], search: [0, 1]
+        // shared_distance: 1
+        // desired outcome: (1 << 8) - 234
+        for byte in &base[search.len()..] {
+            shared_distance <<= 8;
+            shared_distance -= *byte as usize;
+        }
+    }
+
+    shared_distance
+}
+
 fn shift_distance(
     mut buf: &[u8],
     mut distance: usize,
@@ -1884,9 +1909,7 @@ impl Inner {
             let shared_distance: usize =
                 shared_distance(&base[..s_len], &key[..s_len]);
 
-            // We must correct the distance by shifting it up
-            // to normalize it with our actual low key.
-            let distance = shared_distance << (8 * (base.len() - s_len));
+            let distance = unshift_distance(shared_distance, base, key);
 
             let offset = distance / stride.get() as usize;
 
