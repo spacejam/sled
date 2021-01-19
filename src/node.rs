@@ -1902,7 +1902,7 @@ impl Inner {
                 self.lo(),
             );
 
-            if s_len != base.len()
+            if base.len() != key.len()
                 || distance % stride.get() as usize != 0
                 || offset >= self.children as usize
             {
