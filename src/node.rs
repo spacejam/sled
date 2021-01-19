@@ -195,18 +195,6 @@ impl<'a> KeyRef<'a> {
         }
     }
 
-    #[allow(clippy::cast_precision_loss)]
-    fn trim_prefix_bytes(self, additional_prefix: usize) -> KeyRef<'a> {
-        match self {
-            KeyRef::Computed { base, distance } => {
-                let max_distance = 1 << (8 * (base.len() - additional_prefix));
-                assert!(distance < max_distance);
-                KeyRef::Computed { base: &base[additional_prefix..], distance }
-            }
-            KeyRef::Slice(s) => KeyRef::Slice(&s[additional_prefix..]),
-        }
-    }
-
     fn shared_distance(&self, other: &KeyRef<'_>) -> usize {
         match (self, other) {
             (
