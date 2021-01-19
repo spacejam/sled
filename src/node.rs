@@ -727,7 +727,6 @@ impl Node {
                     rhs.iter()
                         .map(|(k, v)| (rhs.prefix_decode(k), IVec::from(v))),
                 )
-                .map(|(k, v)| (IVec::from(k), IVec::from(v)))
                 .collect();
 
             assert_eq!(
