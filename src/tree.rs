@@ -638,9 +638,9 @@ impl Tree {
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key.into(), new.clone())
+                Link::Set(encoded_key, new.clone())
             } else {
-                Link::Del(encoded_key.into())
+                Link::Del(encoded_key)
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -1146,9 +1146,9 @@ impl Tree {
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key.into(), new.clone())
+                Link::Set(encoded_key, new.clone())
             } else {
-                Link::Del(encoded_key.into())
+                Link::Del(encoded_key)
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
