@@ -158,14 +158,7 @@ enum KeyRef<'a> {
 
 impl<'a> From<KeyRef<'a>> for IVec {
     fn from(kr: KeyRef<'a>) -> IVec {
-        match kr {
-            KeyRef::Computed { base, distance } => {
-                let mut ivec: IVec = base.into();
-                apply_computed_distance(&mut ivec, distance);
-                ivec
-            }
-            KeyRef::Slice(s) => s.into(),
-        }
+        (&kr).into()
     }
 }
 
@@ -206,10 +199,8 @@ impl<'a> KeyRef<'a> {
     fn trim_prefix_bytes(self, additional_prefix: usize) -> KeyRef<'a> {
         match self {
             KeyRef::Computed { base, distance } => {
-                assert!(
-                    (base.len() - additional_prefix) as f64
-                        > (distance as f64).log(256.)
-                );
+                let max_distance = 1 << (8 * (base.len() - additional_prefix));
+                assert!(distance < max_distance);
                 KeyRef::Computed { base: &base[additional_prefix..], distance }
             }
             KeyRef::Slice(s) => KeyRef::Slice(&s[additional_prefix..]),
@@ -280,9 +271,6 @@ fn unshift_distance(
     search: &[u8],
 ) -> usize {
     if base.len() > search.len() {
-        // base: [0, 0, 234], search: [0, 1]
-        // shared_distance: 1
-        // desired outcome: (1 << 8) - 234
         for byte in &base[search.len()..] {
             shared_distance <<= 8;
             shared_distance -= *byte as usize;
@@ -659,6 +647,21 @@ impl Node {
             &items,
         );
 
+        #[cfg(feature = "testing")]
+        {
+            let orig_ivec_pairs: Vec<_> = self
+                .iter()
+                .map(|(k, v)| (self.prefix_decode(k), IVec::from(v)))
+                .collect();
+
+            let new_ivec_pairs: Vec<_> = ret
+                .iter()
+                .map(|(k, v)| (ret.prefix_decode(k), IVec::from(v)))
+                .collect();
+
+            assert_eq!(orig_ivec_pairs, new_ivec_pairs);
+        }
+
         ret.merging = self.merging;
         ret.merging_child = self.merging_child;
 
@@ -691,15 +694,60 @@ impl Node {
             inner: Arc::new(left.receive_merge(&right)),
         };
 
+        #[cfg(feature = "testing")]
+        {
+            let orig_ivec_pairs: Vec<_> = self
+                .iter()
+                .map(|(k, v)| (self.prefix_decode(k), IVec::from(v)))
+                .chain(
+                    other
+                        .iter()
+                        .map(|(k, v)| (other.prefix_decode(k), IVec::from(v))),
+                )
+                .collect();
+
+            let new_ivec_pairs: Vec<_> = ret
+                .iter()
+                .map(|(k, v)| (ret.prefix_decode(k), IVec::from(v)))
+                .collect();
+
+            assert_eq!(orig_ivec_pairs, new_ivec_pairs);
+        }
+
         log::trace!("merge created node {:?}", ret);
         ret
     }
+
     pub(crate) fn split(&self) -> (Node, Node) {
         let (lhs_inner, rhs_inner) = self.merge_overlay().split();
         let lhs =
             Node { inner: Arc::new(lhs_inner), overlay: Default::default() };
         let rhs =
             Node { inner: Arc::new(rhs_inner), overlay: Default::default() };
+
+        #[cfg(feature = "testing")]
+        {
+            let orig_ivec_pairs: Vec<_> = self
+                .iter()
+                .map(|(k, v)| (self.prefix_decode(k), IVec::from(v)))
+                .collect();
+
+            let new_ivec_pairs: Vec<_> = lhs
+                .iter()
+                .map(|(k, v)| (lhs.prefix_decode(k), IVec::from(v)))
+                .chain(
+                    rhs.iter()
+                        .map(|(k, v)| (rhs.prefix_decode(k), IVec::from(v))),
+                )
+                .map(|(k, v)| (IVec::from(k), IVec::from(v)))
+                .collect();
+
+            assert_eq!(
+                orig_ivec_pairs, new_ivec_pairs,
+                "splitting node {:?} failed",
+                self
+            );
+        }
 
         (lhs, rhs)
     }
@@ -1315,7 +1363,6 @@ impl Inner {
                 // when the keys are linear, as they can be
                 // computed losslessly by multiplying the desired
                 // index by the fixed stride length.
-                assert!(fixed_key_stride.is_none());
                 let mut key_buf = ret.key_buf_for_offset_mut(idx);
                 if !keys_equal_length {
                     let varint_bytes =
@@ -1449,12 +1496,12 @@ impl Inner {
                 let offset = self.offset(index);
                 let values_buf = self.values_buf_mut();
                 let slot_buf = &mut values_buf[offset..];
-                let (val_len, varint_sz) = if stride.is_some() {
+                let (key_len, key_varint_sz) = if stride.is_some() {
                     (0, 0)
                 } else {
                     varint::deserialize(slot_buf).unwrap()
                 };
-                &mut slot_buf[tf!(val_len) + varint_sz..]
+                &mut slot_buf[tf!(key_len) + key_varint_sz..]
             }
         }
     }
@@ -1482,12 +1529,12 @@ impl Inner {
                 let offset = self.offset(index);
                 let values_buf = self.values_buf();
                 let slot_buf = &values_buf[offset..];
-                let (val_len, varint_sz) = if stride.is_some() {
+                let (key_len, key_varint_sz) = if stride.is_some() {
                     (0, 0)
                 } else {
                     varint::deserialize(slot_buf).unwrap()
                 };
-                &slot_buf[tf!(val_len) + varint_sz..]
+                &slot_buf[tf!(key_len) + key_varint_sz..]
             }
         }
     }
@@ -1724,16 +1771,34 @@ impl Inner {
             additional_left_prefix,
             self.iter().take(split_point).collect::<Vec<_>>()
         );
+
         let left_items: Vec<_> = self
             .iter()
             .take(split_point)
-            .map(|(k, v)| (k.trim_prefix_bytes(additional_left_prefix), v))
+            .map(|(k, v)| (IVec::from(k), v))
             .collect();
 
-        let right_items: Vec<_> = self
+        let left_items: Vec<_> = left_items
+            .iter()
+            .map(|(k, v)| (KeyRef::Slice(&k[additional_left_prefix..]), *v))
+            .collect();
+
+        // we need to convert these to ivecs first
+        // because if we shave off bytes of the
+        // KeyRef base then it may corrupt their
+        // semantic meanings, applying distances
+        // that overflow into different values
+        // than what the KeyRef was originally
+        // created to represent.
+        let right_ivecs: Vec<_> = self
             .iter()
             .skip(split_point)
-            .map(|(k, v)| (k.trim_prefix_bytes(additional_right_prefix), v))
+            .map(|(k, v)| (IVec::from(k), v))
+            .collect();
+
+        let right_items: Vec<_> = right_ivecs
+            .iter()
+            .map(|(k, v)| (KeyRef::Slice(&k[additional_right_prefix..]), *v))
             .collect();
 
         let mut left = Inner::new(
@@ -1793,69 +1858,77 @@ impl Inner {
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
 
-        let extended_keys: Vec<_>;
-        let items: Vec<_> = match self.prefix_len.cmp(&other.prefix_len) {
-            Equal => {
-                log::trace!(
-                    "keeping equal prefix lengths of {}",
-                    other.prefix_len
-                );
-                self.iter().chain(other.iter()).collect()
-            }
-            Greater => {
-                extended_keys = self
-                    .iter_keys()
-                    .map(|k| {
-                        prefix::reencode(
-                            self.prefix(),
-                            &IVec::from(k),
-                            other.prefix_len as usize,
-                        )
-                    })
-                    .collect();
-                log::trace!("reencoding left items to have shorter prefix len of {}, new items: {:?}", other.prefix_len, extended_keys);
-                let left_items = extended_keys
-                    .iter()
-                    .map(AsRef::as_ref)
-                    .zip(self.iter_values());
-                left_items
-                    .map(|(k, v)| (KeyRef::Slice(k), v))
-                    .chain(other.iter())
-                    .collect()
-            }
-            Less => {
-                // self.prefix_len < other.prefix_len
-                extended_keys = other
-                    .iter_keys()
-                    .map(|k| {
-                        prefix::reencode(
-                            other.prefix(),
-                            &IVec::from(k),
-                            self.prefix_len as usize,
-                        )
-                    })
-                    .collect();
-                log::trace!("reencoding right items to have shorter prefix len of {}, new items: {:?}", self.prefix_len, extended_keys);
-                let right_items = extended_keys
-                    .iter()
-                    .map(AsRef::as_ref)
-                    .zip(other.iter_values())
-                    .map(|(k, v)| (KeyRef::Slice(k), v));
-                self.iter().chain(right_items).collect()
-            }
+        let prefix_len = if let Some(right_hi) = other.hi() {
+            #[cfg(test)]
+            use rand::Rng;
+
+            // prefix encoded length can only grow or stay the same
+            // during splits
+            #[cfg(test)]
+            let test_jitter = rand::thread_rng().gen_range(0, 16);
+
+            #[cfg(not(test))]
+            let test_jitter = std::u8::MAX as usize;
+
+            self.lo()
+                .iter()
+                .zip(right_hi)
+                .take(std::u8::MAX as usize)
+                .take_while(|(a, b)| a == b)
+                .count()
+                .min(test_jitter)
+        } else {
+            0
         };
+
+        let extended_left: Vec<_>;
+        let extended_right: Vec<_>;
+        let items: Vec<_> = if self.prefix_len as usize == prefix_len
+            && other.prefix_len as usize == prefix_len
+        {
+            self.iter().chain(other.iter()).collect()
+        } else {
+            extended_left = self
+                .iter_keys()
+                .map(|k| {
+                    prefix::reencode(self.prefix(), &IVec::from(k), prefix_len)
+                })
+                .collect();
+
+            let left_iter = extended_left
+                .iter()
+                .map(|k| KeyRef::Slice(k.as_ref()))
+                .zip(self.iter_values());
+
+            extended_right = other
+                .iter_keys()
+                .map(|k| {
+                    prefix::reencode(other.prefix(), &IVec::from(k), prefix_len)
+                })
+                .collect();
+
+            let right_iter = extended_right
+                .iter()
+                .map(|k| KeyRef::Slice(k.as_ref()))
+                .zip(other.iter_values());
+
+            left_iter.chain(right_iter).collect()
+        };
+
+        let other_rewrite_generations = other.rewrite_generations;
+        let other_next = other.next;
 
         let mut ret = Inner::new(
             self.lo(),
             other.hi(),
-            self.prefix_len.min(other.prefix_len),
+            u8::try_from(prefix_len).unwrap(),
             self.is_index,
-            other.next,
+            other_next,
             &*items,
         );
 
         ret.rewrite_generations =
-            self.rewrite_generations.min(other.rewrite_generations);
+            self.rewrite_generations.min(other_rewrite_generations);
 
         testing_assert!(ret.is_sorted());
 
@@ -1920,9 +1993,9 @@ impl Inner {
                 // search key does not evenly fit based on
                 // our fixed stride length
                 log::trace!("failed to find, search: {:?} lo: {:?} \
-                    prefix_len: {} distance: {} stride: {} offset: {} children: {}",
+                    prefix_len: {} distance: {} stride: {} offset: {} children: {}, node: {:?}",
                     key, self.lo(), self.prefix_len, distance,
-                    stride.get(), offset, self.children
+                    stride.get(), offset, self.children, self
                 );
                 return Err((offset + 1).min(self.children()));
             }
@@ -2308,12 +2381,18 @@ mod test {
             (KeyRef::Computed { base: &[0], distance: 0 }, &[0]),
             (KeyRef::Computed { base: &[0], distance: 1 }, &[1]),
             (KeyRef::Computed { base: &[0, 255], distance: 1 }, &[1, 0]),
+            (KeyRef::Computed { base: &[2, 253], distance: 8 }, &[3, 5]),
         ];
 
         for (key_ref, expected) in table {
             let ivec: IVec = key_ref.into();
             assert_eq!(&ivec, expected)
         }
+
+        let key_ref = KeyRef::Computed { base: &[2, 253], distance: 8 };
+        let mut buf = &mut [0, 0][..];
+        key_ref.write_into(&mut buf);
+        assert_eq!(buf, &[3, 5]);
     }
 
     #[test]
@@ -2687,5 +2766,36 @@ mod test {
             vec![],
             vec![(vec![], vec![]), (vec![0], vec![]),]
         ));
+    }
+
+    #[test]
+    fn node_bug_04() {
+        let node = Inner::new(
+            &[0, 2, 253],
+            Some(&[0, 3, 33]),
+            1,
+            true,
+            None,
+            &[
+                (
+                    KeyRef::Computed { base: &[2, 253], distance: 0 },
+                    &620_u64.to_le_bytes(),
+                ),
+                (
+                    KeyRef::Computed { base: &[2, 253], distance: 2 },
+                    &665_u64.to_le_bytes(),
+                ),
+                (
+                    KeyRef::Computed { base: &[2, 253], distance: 4 },
+                    &683_u64.to_le_bytes(),
+                ),
+                (
+                    KeyRef::Computed { base: &[2, 253], distance: 6 },
+                    &713_u64.to_le_bytes(),
+                ),
+            ],
+        );
+
+        Node { inner: Arc::new(node), overlay: Default::default() }.split();
     }
 }

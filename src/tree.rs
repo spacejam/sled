@@ -1804,6 +1804,7 @@ impl Tree {
 
             if overshot {
                 // merge interfered, reload root and retry
+                log::trace!("overshot searching for {:?} on node {:?}", key.as_ref(), view.deref());
                 retry!();
             }
 
@@ -1855,10 +1856,20 @@ impl Tree {
                     unsplit_parent.parent_split(view.lo(), cursor);
 
                 if split_applied.is_none() {
-                    // due to deep races, it's possible for the
+                    // Due to deep races, it's possible for the
                     // parent to already have a node for this lo key.
                     // if this is the case, we can skip the parent split
                     // because it's probably going to fail anyway.
+                    //
+                    // If a test is failing because of retrying in a
+                    // loop here, this has happened often histically
+                    // due to the Node::index_next_node method
+                    // returning a child that is off-by-one to the
+                    // left, always causing an undershoot.
+                    log::trace!("failed to apply parent split of \
+                        ({:?}, {}) to parent node {:?}",
+                        view.lo(), cursor, unsplit_parent
+                    );
                     retry!();
                 }
 
@@ -1912,6 +1923,7 @@ impl Tree {
 
             if view.is_index {
                 let next = view.index_next_node(key.as_ref());
+                log::trace!("found next {} from node {:?}", next.1, view.deref());
                 took_leftmost_branch = next.0;
                 parent_view = Some(view);
                 cursor = next.1;

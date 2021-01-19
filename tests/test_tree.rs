@@ -2689,3 +2689,38 @@ fn tree_bug_48() {
         0
     ))
 }
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_49() {
+    // postmortem: was incorrectly calculating the child offset while searching
+    // for a node with omitted keys, where the distance == the stride, and
+    // as a result we went into an infinite loop trying to apply a parent
+    // split that was already present
+    assert!(prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![39; 1]), 245),
+            Set(Key(vec![108; 1]), 96),
+            Set(Key(vec![147; 1]), 44),
+            Set(Key(vec![102; 1]), 2),
+            Merge(Key(vec![22; 1]), 160),
+            Set(Key(vec![36; 1]), 1),
+            Set(Key(vec![65; 1]), 213),
+            Set(Key(vec![]), 221),
+            Set(Key(vec![84; 1]), 20),
+            Merge(Key(vec![229; 1]), 61),
+            Set(Key(vec![156; 1]), 69),
+            Merge(Key(vec![252; 1]), 85),
+            Set(Key(vec![36; 2]), 57),
+            Set(Key(vec![245; 1]), 143),
+            Set(Key(vec![59; 1]), 209),
+            GetGt(Key(vec![136; 1])),
+            Set(Key(vec![40; 1]), 96),
+            GetGt(Key(vec![59; 2]))
+        ],
+        false,
+        false,
+        0,
+        0
+    ))
+}
