@@ -33,6 +33,8 @@ mod queue {
         Lazy::new(Default::default);
     pub(super) static SNAPSHOT_QUEUE: Lazy<Queue, fn() -> Queue> =
         Lazy::new(Default::default);
+    pub(super) static TRUNCATE_QUEUE: Lazy<Queue, fn() -> Queue> =
+        Lazy::new(Default::default);
 
     type Work = Box<dyn FnOnce() + Send + 'static>;
 
@@ -61,6 +63,11 @@ mod queue {
                 .name("sled-snapshot-thread".into())
                 .spawn(|| SNAPSHOT_QUEUE.perform_work(false, false))
                 .expect("failed to spawn critical snapshot thread");
+
+            std::thread::Builder::new()
+                .name("sled-truncate-thread".into())
+                .spawn(|| TRUNCATE_QUEUE.perform_work(false, false))
+                .expect("failed to spawn critical truncation thread");
         });
 
         let (promise_filler, promise) = OneShot::pair();
@@ -116,12 +123,13 @@ mod queue {
         fn perform_work(&'static self, elastic: bool, temporary: bool) {
             let wait_limit = Duration::from_millis(100);
 
-            let mut last_employed = Instant::now();
-            while !temporary || last_employed.elapsed() < Duration::from_secs(5)
-            {
+            let mut unemployed_loops = 0;
+            while !temporary || unemployed_loops < 50 {
+                // take on a bit of GC labor
                 let guard = crate::pin();
                 guard.flush();
                 drop(guard);
+
                 debug_delay();
                 let task_opt = self.recv_timeout(wait_limit);
 
@@ -142,7 +150,9 @@ mod queue {
                     // execute the work sent to this thread
                     (task)();
 
-                    last_employed = Instant::now();
+                    unemployed_loops = 0;
+                } else {
+                    unemployed_loops += 1;
                 }
             }
         }
@@ -189,6 +199,7 @@ mod queue {
     pub(super) const IO_QUEUE: () = ();
     pub(super) const BLOCKING_QUEUE: () = ();
     pub(super) const SNAPSHOT_QUEUE: () = ();
+    pub(super) const TRUNCATE_QUEUE: () = ();
 }
 
 use queue::spawn_to;
@@ -206,7 +217,7 @@ pub fn truncate(
                 .and_then(|_| config.file.sync_all())
                 .map_err(|e| e.into())
         },
-        &queue::IO_QUEUE,
+        &queue::TRUNCATE_QUEUE,
     )
 }
 
