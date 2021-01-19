@@ -260,38 +260,15 @@ impl Eq for KeyRef<'_> {}
 
 impl Ord for KeyRef<'_> {
     fn cmp(&self, other: &KeyRef<'_>) -> Ordering {
-        let min_len = self.len().min(other.len());
         match (self, other) {
             (
                 KeyRef::Computed { base: a, distance: da },
                 KeyRef::Computed { base: b, distance: db },
-            ) => {
-                let shared_a = &a[..min_len];
-                let compensated_da = da >> ((a.len() - min_len) * 8);
-                let shared_b = &b[..min_len];
-                let compensated_db = db >> ((b.len() - min_len) * 8);
-                match a.cmp(b) {
-                    Less => {
-                        match compensated_da.cmp(
-                            &(linear_distance(shared_a, shared_b)
-                                + compensated_db),
-                        ) {
-                            Equal => self.len().cmp(&other.len()),
-                            other => other,
-                        }
-                    }
-                    Greater => {
-                        match (linear_distance(shared_b, shared_a)
-                            + compensated_da)
-                            .cmp(&compensated_db)
-                        {
-                            Equal => self.len().cmp(&other.len()),
-                            other => other,
-                        }
-                    }
-                    Equal => da.cmp(db),
-                }
-            }
+            ) => match a.cmp(b) {
+                Less => da.cmp(&(linear_distance(a, b) + db)),
+                Greater => (linear_distance(b, a) + da).cmp(&db),
+                Equal => da.cmp(db),
+            },
             (KeyRef::Computed { .. }, KeyRef::Slice(b)) => {
                 // recurse to first case
                 self.cmp(&KeyRef::Computed { base: b, distance: 0 })
@@ -2213,6 +2190,14 @@ mod test {
         assert!(
             KeyRef::Slice(&[2, 0])
                 > KeyRef::Computed { base: &[0, 255], distance: 2 }
+        );
+        assert!(
+            KeyRef::Computed { base: &[0, 200], distance: 201 }
+                > KeyRef::Slice(&[1])
+        );
+        assert!(
+            KeyRef::Slice(&[1])
+                < KeyRef::Computed { base: &[0, 200], distance: 201 }
         );
     }
 
