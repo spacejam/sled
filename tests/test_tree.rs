@@ -79,8 +79,8 @@ fn monotonic_inserts() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn linear_inserts() {
-    // this is intended to test the linear key omission optimization
+fn fixed_stride_inserts() {
+    // this is intended to test the fixed stride key omission optimization
     common::setup_logger();
 
     let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();

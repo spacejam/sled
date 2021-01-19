@@ -1880,8 +1880,13 @@ impl Inner {
             let base = &self.lo()[self.prefix_len as usize..];
 
             let s_len = key.len().min(base.len());
-            let distance: usize =
+
+            let shared_distance: usize =
                 shared_distance(&base[..s_len], &key[..s_len]);
+
+            // We must correct the distance by shifting it up
+            // to normalize it with our actual low key.
+            let distance = shared_distance << (8 * (base.len() - s_len));
 
             let offset = distance / stride.get() as usize;
 
