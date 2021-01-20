@@ -1119,7 +1119,7 @@ impl Node {
                 }
             };
             */
-            let threshold = 4 * 1024 - crate::MAX_MSG_HEADER_LEN;
+            let threshold = 1024 - crate::MAX_MSG_HEADER_LEN;
             self.probation_ops_remaining == 0
                 && self.len > threshold
                 && self.iter().next().is_some()
