@@ -1097,9 +1097,9 @@ impl Node {
     pub(crate) fn should_split(&self) -> bool {
         log::trace!("seeing if we should split node {:?}", self);
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
-            self.iter().take(5).count() > 4
+            self.iter().take(6).count() > 5
         } else if self.is_index {
-            self.len > 1024 && self.rss() > 1
+            self.len > 1024 && self.iter().take(2).count() > 1
         } else {
             /*
             let threshold = match self.rewrite_generations {
