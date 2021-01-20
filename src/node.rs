@@ -407,23 +407,6 @@ impl<'a> Iterator for Iter<'a> {
                     log::trace!("src/node.rs:113");
                     self.next_a.take();
                 }
-                (Some((k_a, None)), Some((k_b, _))) if k_b == *k_a => {
-                    // skip tombstone and continue the loop
-                    log::trace!("src/node.rs:141");
-                    self.next_a.take();
-                    self.next_b.take();
-                }
-                (Some((k_a, None)), Some((k_b, _))) if k_b < *k_a => {
-                    log::trace!("src/node.rs:146");
-                    // we do not clear a tombstone until we move past
-                    // it in the underlying node
-                    log::trace!("iterator returning {:?}", self.next_b);
-                    return self.next_b.take();
-                }
-                (Some((k_a, None)), Some((k_b, _))) if k_b > *k_a => {
-                    log::trace!("src/node.rs:151");
-                    self.next_a.take();
-                }
                 (Some((_, Some(_))), None) => {
                     log::trace!("src/node.rs:114");
                     log::trace!("iterator returning {:?}", self.next_a);
@@ -431,30 +414,48 @@ impl<'a> Iterator for Iter<'a> {
                         (KeyRef::Slice(&*k), v.unwrap().as_ref())
                     });
                 }
-                (Some((k_a, Some(_))), Some((k_b, _))) if k_b < *k_a => {
-                    log::trace!("src/node.rs:120");
-                    log::trace!("iterator returning {:?}", self.next_b);
-                    return self.next_b.take();
+                (Some((k_a, v_a_opt)), Some((k_b, _))) => {
+                    let cmp = KeyRef::Slice(k_a).cmp(&k_b);
+                    match (cmp, v_a_opt) {
+                        (Equal, Some(_)) => {
+                            // prefer overlay, discard node value
+                            self.next_b.take();
+                            log::trace!("src/node.rs:133");
+                            log::trace!("iterator returning {:?}", self.next_a);
+                            return self.next_a.take().map(|(k, v)| {
+                                (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                            });
+                        }
+                        (Equal, None) => {
+                            // skip tombstone and continue the loop
+                            log::trace!("src/node.rs:141");
+                            self.next_a.take();
+                            self.next_b.take();
+                        }
+                        (Less, Some(_)) => {
+                            log::trace!("iterator returning {:?}", self.next_a);
+                            return self.next_a.take().map(|(k, v)| {
+                                (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                            });
+                        }
+                        (Less, None) => {
+                            log::trace!("src/node.rs:151");
+                            self.next_a.take();
+                        }
+                        (Greater, Some(_)) => {
+                            log::trace!("src/node.rs:120");
+                            log::trace!("iterator returning {:?}", self.next_b);
+                            return self.next_b.take();
+                        }
+                        (Greater, None) => {
+                            log::trace!("src/node.rs:146");
+                            // we do not clear a tombstone until we move past
+                            // it in the underlying node
+                            log::trace!("iterator returning {:?}", self.next_b);
+                            return self.next_b.take();
+                        }
+                    }
                 }
-                (Some((k_a, Some(_))), Some((k_b, _))) if k_b > *k_a => {
-                    log::trace!("iterator returning {:?}", self.next_a);
-                    return self.next_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
-                    });
-                }
-                (Some((k_a, Some(_))), Some((k_b, _))) if k_b == *k_a => {
-                    // prefer overlay, discard node value
-                    self.next_b.take();
-                    log::trace!("src/node.rs:133");
-                    log::trace!("iterator returning {:?}", self.next_a);
-                    return self.next_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
-                    });
-                }
-                _ => unreachable!(
-                    "did not expect combination a: {:?} b: {:?}",
-                    self.next_a, self.next_b
-                ),
             }
         }
     }
