@@ -739,6 +739,11 @@ impl Node {
 
         ret.merging = self.merging;
         ret.merging_child = self.merging_child;
+        ret.probation_ops_remaining =
+            self.probation_ops_remaining.saturating_sub(
+                u8::try_from(self.overlay.len().min(std::u8::MAX as usize))
+                    .unwrap(),
+            );
 
         log::trace!("merged node {:?} into {:?}", self, ret);
         Arc::new(ret)
@@ -1115,7 +1120,9 @@ impl Node {
             };
             */
             let threshold = 4 * 1024 - crate::MAX_MSG_HEADER_LEN;
-            self.len > threshold && self.iter().next().is_some()
+            self.probation_ops_remaining == 0
+                && self.len > threshold
+                && self.iter().next().is_some()
         };
 
         let safety_checks = self.merging_child.is_none() && !self.merging;
@@ -1966,6 +1973,8 @@ impl Inner {
         );
 
         left.rewrite_generations = self.rewrite_generations;
+        left.probation_ops_remaining =
+            tf!((self.children() / 2).min(std::u8::MAX as usize), u8);
 
         let mut right = Inner::new(
             &split_key,
@@ -1977,9 +1986,9 @@ impl Inner {
         );
 
         right.rewrite_generations = self.rewrite_generations;
+        right.probation_ops_remaining = left.probation_ops_remaining;
+
         right.next = self.next;
-        right.probation_ops_remaining =
-            tf!((self.children() / 2).min(std::u8::MAX as usize), u8);
 
         log::trace!(
             "splitting node {:?} into left: {:?} and right: {:?}",
@@ -2083,7 +2092,7 @@ impl Inner {
         );
 
         ret.rewrite_generations =
-            self.rewrite_generations.min(other_rewrite_generations);
+            self.rewrite_generations.max(other_rewrite_generations);
 
         testing_assert!(ret.is_sorted());
 
