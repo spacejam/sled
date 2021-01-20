@@ -1125,6 +1125,14 @@ impl Inner {
             && lo[prefix_len as usize..].len() == items[1].0.len()
             && items[1].0.len() <= 4
         {
+            assert!(
+                items[1].0 > lo[prefix_len as usize..],
+                "somehow, the second key on this node is not greater \
+                than the node low key (adjusted for prefix): \
+                lo: {:?} items: {:?}",
+                lo,
+                items
+            );
             u16::try_from(
                 KeyRef::Slice(&lo[prefix_len as usize..])
                     .shared_distance(&items[1].0),
@@ -2620,9 +2628,25 @@ mod test {
     ) -> bool {
         let children_ref: Vec<(KeyRef<'_>, &[u8])> = children
             .iter()
-            .map(|(k, v)| (KeyRef::Slice(k.as_ref()), v.as_ref()))
+            .filter_map(|(k, v)| {
+                if k < &lo {
+                    None
+                } else {
+                    Some((KeyRef::Slice(k.as_ref()), v.as_ref()))
+                }
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
             .collect();
-        let ir = Inner::new(&lo, Some(&hi), 0, false, None, &children_ref);
+
+        let ir = Inner::new(
+            &lo,
+            if hi <= lo { None } else { Some(&hi) },
+            0,
+            false,
+            None,
+            &children_ref,
+        );
 
         assert_eq!(ir.children as usize, children_ref.len());
 
@@ -2784,5 +2808,16 @@ mod test {
         );
 
         Node { inner: Arc::new(node), overlay: Default::default() }.split();
+    }
+
+    #[test]
+    fn node_bug_05() {
+        // postmortem: `prop_indexable` did not account for the requirement
+        // of feeding sorted items that are >= the lo key to the Node::new method.
+        assert!(prop_indexable(
+            vec![1],
+            vec![],
+            vec![(vec![], vec![]), (vec![0], vec![])],
+        ))
     }
 }
