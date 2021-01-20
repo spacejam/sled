@@ -518,7 +518,10 @@ impl SegmentAccountant {
             // stabilize things now so that we don't force
             // the first stabilizing thread to need
             // to cope with a huge amount of segments.
-            ret.stabilize(stable_lsn, true)?;
+            ret.stabilize(
+                stable_lsn - Lsn::try_from(ret.config.segment_size).unwrap(),
+                true,
+            )?;
         }
 
         Ok(ret)
