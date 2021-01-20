@@ -442,8 +442,7 @@ impl IoBufs {
         new_cache_info: CacheInfo,
         guard: &Guard,
     ) -> Result<()> {
-        debug_delay();
-        if let Some(mut sa) = self.segment_accountant.try_lock() {
+        let worked: Option<Result<()>> = self.try_with_sa(|sa| {
             #[cfg(feature = "metrics")]
             let start = clock();
             sa.mark_replace(pid, old_cache_infos, new_cache_info)?;
@@ -452,6 +451,11 @@ impl IoBufs {
             }
             #[cfg(feature = "metrics")]
             M.accountant_hold.measure(clock() - start);
+            Ok(())
+        });
+
+        if let Some(res) = worked {
+            res
         } else {
             let op = SegmentOp::Replace {
                 pid,
@@ -459,22 +463,54 @@ impl IoBufs {
                 new_cache_info,
             };
             self.deferred_segment_ops.push(op, guard);
+            Ok(())
         }
-        Ok(())
     }
 
     pub(in crate::pagecache) fn sa_stabilize(&self, lsn: Lsn) -> Result<()> {
         // we avoid creating a Guard while blocking on the SA mutex, and we
         // then drop the Guard only after the SA mutex is no longer held.
-        self.with_sa(|sa| {
+
+        let worked: Option<Result<Guard>> = self.try_with_sa(|sa| {
             let guard = pin();
             for op in self.deferred_segment_ops.take_iter(&guard) {
                 sa.apply_op(op)?;
             }
             sa.stabilize(lsn, false)?;
             Ok(guard)
-        })
-        .map(drop)
+        });
+
+        if let Some(guard_res) = worked {
+            // we want to drop the EBR guard when we're not
+            // holding the SA mutex because it could take a while
+            // to clean up garbage.
+            drop(guard_res?);
+        }
+
+        Ok(())
+    }
+
+    /// `SegmentAccountant` access for coordination with the `PageCache`
+    pub(in crate::pagecache) fn try_with_sa<B, F>(&self, f: F) -> Option<B>
+    where
+        F: FnOnce(&mut SegmentAccountant) -> B,
+    {
+        debug_delay();
+        if let Some(mut sa) = self.segment_accountant.try_lock() {
+            #[cfg(feature = "metrics")]
+            let start = clock();
+
+            let ret = f(&mut sa);
+
+            #[cfg(feature = "metrics")]
+            M.accountant_hold.measure(clock() - start);
+
+            debug_delay();
+
+            Some(ret)
+        } else {
+            None
+        }
     }
 
     /// `SegmentAccountant` access for coordination with the `PageCache`
