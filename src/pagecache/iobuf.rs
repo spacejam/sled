@@ -471,7 +471,7 @@ impl IoBufs {
             for op in self.deferred_segment_ops.take_iter(&guard) {
                 sa.apply_op(op)?;
             }
-            sa.stabilize(lsn)?;
+            sa.stabilize(lsn, false)?;
             Ok(guard)
         })
         .map(drop)

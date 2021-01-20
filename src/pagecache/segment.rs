@@ -514,6 +514,13 @@ impl SegmentAccountant {
             M.segment_utilization_startup.measure(segment_utilization as u64);
         }
 
+        if let Some(stable_lsn) = snapshot.stable_lsn {
+            // stabilize things now so that we don't force
+            // the first stabilizing thread to need
+            // to cope with a huge amount of segments.
+            ret.stabilize(stable_lsn, true)?;
+        }
+
         Ok(ret)
     }
 
@@ -953,7 +960,14 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    pub(super) fn stabilize(&mut self, stable_lsn: Lsn) -> Result<()> {
+    pub(super) fn stabilize(
+        &mut self,
+        stable_lsn: Lsn,
+        in_startup: bool,
+    ) -> Result<()> {
+        #[cfg(feature = "metrics")]
+        let _measure = Measure::new(&M.accountant_stabilize);
+
         let segment_size = self.config.segment_size as Lsn;
         let lsn = ((stable_lsn / segment_size) - 1) * segment_size;
         trace!(
@@ -983,10 +997,19 @@ impl SegmentAccountant {
             .map(|(lsn, _lid)| *lsn)
             .collect::<Vec<_>>();
 
-        self.max_stabilized_lsn = lsn;
+        // auto-tune collection in cases
+        // where we experience a blow-up,
+        // similar to the collection
+        // logic in the ebr module.
+        let bound = if in_startup {
+            std::usize::MAX
+        } else {
+            32.max(can_deactivate.len() / 16)
+        };
 
-        for lsn in can_deactivate {
+        for lsn in can_deactivate.into_iter().take(bound) {
             self.deactivate_segment(lsn)?;
+            self.max_stabilized_lsn = lsn;
         }
 
         Ok(())
