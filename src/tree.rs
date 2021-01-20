@@ -187,9 +187,9 @@ impl Tree {
         }
 
         let frag = if let Some(value) = value.clone() {
-            Link::Set(encoded_key.into(), value)
+            Link::Set(encoded_key, value)
         } else {
-            Link::Del(encoded_key.into())
+            Link::Del(encoded_key)
         };
 
         let link =
@@ -638,9 +638,9 @@ impl Tree {
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key.into(), new.clone())
+                Link::Set(encoded_key, new.clone())
             } else {
-                Link::Del(encoded_key.into())
+                Link::Del(encoded_key)
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -1146,9 +1146,9 @@ impl Tree {
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key.into(), new.clone())
+                Link::Set(encoded_key, new.clone())
             } else {
-                Link::Del(encoded_key.into())
+                Link::Del(encoded_key)
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -1610,6 +1610,11 @@ impl Tree {
                 &parent,
                 guard,
             )?;
+            trace!(
+                "parent_split at {:?} child pid {} \
+                parent pid {} success: {}",
+                rhs_lo, rhs_pid, parent_view.pid, replace.is_ok()
+            );
             if replace.is_ok() {
                 #[cfg(feature = "metrics")]
                 M.tree_parent_split_success();
@@ -1799,6 +1804,7 @@ impl Tree {
 
             if overshot {
                 // merge interfered, reload root and retry
+                log::trace!("overshot searching for {:?} on node {:?}", key.as_ref(), view.deref());
                 retry!();
             }
 
@@ -1809,13 +1815,15 @@ impl Tree {
 
             if undershot {
                 // half-complete split detect & completion
-                cursor = view
+                let right_sibling = view
                     .next
                     .expect(
                         "if our hi bound is not Inf (inity), \
-                     we should have a right sibling",
+                         we should have a right sibling",
                     )
                     .get();
+                trace!("seeking right on undershot node, from {} to {}", cursor, right_sibling);
+                cursor = right_sibling;
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
                 } else if parent_view.is_none() && view.lo().is_empty() {
@@ -1833,6 +1841,7 @@ impl Tree {
                         retry!();
                     }
                 }
+
                 continue;
             } else if let Some(unsplit_parent) = unsplit_parent.take() {
                 // we have found the proper page for
@@ -1847,10 +1856,20 @@ impl Tree {
                     unsplit_parent.parent_split(view.lo(), cursor);
 
                 if split_applied.is_none() {
-                    // due to deep races, it's possible for the
+                    // Due to deep races, it's possible for the
                     // parent to already have a node for this lo key.
                     // if this is the case, we can skip the parent split
                     // because it's probably going to fail anyway.
+                    //
+                    // If a test is failing because of retrying in a
+                    // loop here, this has happened often histically
+                    // due to the Node::index_next_node method
+                    // returning a child that is off-by-one to the
+                    // left, always causing an undershoot.
+                    log::trace!("failed to apply parent split of \
+                        ({:?}, {}) to parent node {:?}",
+                        view.lo(), cursor, unsplit_parent
+                    );
                     retry!();
                 }
 
@@ -1904,6 +1923,7 @@ impl Tree {
 
             if view.is_index {
                 let next = view.index_next_node(key.as_ref());
+                log::trace!("found next {} from node {:?}", next.1, view.deref());
                 took_leftmost_branch = next.0;
                 parent_view = Some(view);
                 cursor = next.1;

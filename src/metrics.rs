@@ -92,6 +92,7 @@ pub struct Metrics {
     pub accountant_mark_link: Histogram,
     pub accountant_mark_replace: Histogram,
     pub accountant_next: Histogram,
+    pub accountant_stabilize: Histogram,
     pub advance_snapshot: Histogram,
     pub fuzzy_snapshot: Histogram,
     pub assign_offset: Histogram,
@@ -358,6 +359,7 @@ impl Metrics {
             lat("acquire", &self.accountant_lock),
             lat("hold", &self.accountant_hold),
             lat("next", &self.accountant_next),
+            lat("stabilize", &self.accountant_stabilize),
             lat("replace", &self.accountant_mark_replace),
             lat("link", &self.accountant_mark_link),
         ]));

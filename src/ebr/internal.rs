@@ -305,10 +305,14 @@ impl Global {
         #[cfg(feature = "testing")]
         {
             if count > 0 && SIZE_HINT.load(Ordering::Relaxed) > 5000 {
-                log::warn!(
-                    "EBR collector grew to {} items",
-                    SIZE_HINT.load(Ordering::Relaxed)
-                );
+                static O: std::sync::Once = std::sync::Once::new();
+
+                O.call_once(|| {
+                    log::warn!(
+                        "EBR collector grew to {} items",
+                        SIZE_HINT.load(Ordering::Relaxed)
+                    )
+                });
             }
         }
     }

@@ -22,6 +22,7 @@ maintenance = { status = "actively-developed" }
 [profile.release]
 debug = true
 opt-level = 3
+overflow-checks = true
 
 [features]
 default = []
