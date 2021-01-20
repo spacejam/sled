@@ -1116,7 +1116,7 @@ impl Node {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.iter().take(6).count() > 5
         } else if self.is_index {
-            self.len > 1024 && self.iter().take(2).count() > 1
+            self.len > 1024 && self.iter().take(2).count() == 2
         } else {
             /*
             let threshold = match self.rewrite_generations {
@@ -1132,7 +1132,7 @@ impl Node {
             let threshold = 1024 - crate::MAX_MSG_HEADER_LEN;
             self.probation_ops_remaining == 0
                 && self.len > threshold
-                && self.iter().next().is_some()
+                && self.iter().take(2).count() == 2
         };
 
         let safety_checks = self.merging_child.is_none() && !self.merging;
