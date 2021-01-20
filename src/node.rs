@@ -1026,6 +1026,7 @@ impl Node {
             Bound::Excluded(b) => {
                 let overlay_search =
                     self.overlay.binary_search_by_key(&b, |(k, _)| k);
+                #[allow(clippy::match_same_arms)]
                 let overlay = match overlay_search {
                     Ok(idx) => self.overlay[..idx].iter(),
                     Err(idx) => self.overlay[..idx].iter(),
@@ -1039,6 +1040,7 @@ impl Node {
                 } else {
                     self.find(self.prefix_encode(b))
                 };
+                #[allow(clippy::match_same_arms)]
                 let node_back_position = match inner_search {
                     Ok(idx) => idx,
                     Err(idx) => idx,
