@@ -359,8 +359,11 @@ struct Iter<'a> {
     overlay: std::slice::Iter<'a, (IVec, Option<IVec>)>,
     node: &'a Inner,
     node_position: usize,
+    node_back_position: usize,
     next_a: Option<(&'a [u8], Option<&'a IVec>)>,
     next_b: Option<(KeyRef<'a>, &'a [u8])>,
+    next_back_a: Option<(&'a [u8], Option<&'a IVec>)>,
+    next_back_b: Option<(KeyRef<'a>, &'a [u8])>,
 }
 
 impl<'a> Iterator for Iter<'a> {
@@ -395,6 +398,23 @@ impl<'a> Iterator for Iter<'a> {
                     log::trace!("src/node.rs:113");
                     self.next_a.take();
                 }
+                (Some((k_a, None)), Some((k_b, _))) if k_b == *k_a => {
+                    // skip tombstone and continue the loop
+                    log::trace!("src/node.rs:141");
+                    self.next_a.take();
+                    self.next_b.take();
+                }
+                (Some((k_a, None)), Some((k_b, _))) if k_b < *k_a => {
+                    log::trace!("src/node.rs:146");
+                    // we do not clear a tombstone until we move past
+                    // it in the underlying node
+                    log::trace!("iterator returning {:?}", self.next_b);
+                    return self.next_b.take();
+                }
+                (Some((k_a, None)), Some((k_b, _))) if k_b > *k_a => {
+                    log::trace!("src/node.rs:151");
+                    self.next_a.take();
+                }
                 (Some((_, Some(_))), None) => {
                     log::trace!("src/node.rs:114");
                     log::trace!("iterator returning {:?}", self.next_a);
@@ -422,26 +442,90 @@ impl<'a> Iterator for Iter<'a> {
                         (KeyRef::Slice(&*k), v.unwrap().as_ref())
                     });
                 }
-                (Some((k_a, None)), Some((k_b, _))) if k_b == *k_a => {
-                    // skip tombstone and continue the loop
-                    log::trace!("src/node.rs:141");
-                    self.next_a.take();
-                    self.next_b.take();
-                }
-                (Some((k_a, None)), Some((k_b, _))) if k_b < *k_a => {
-                    log::trace!("src/node.rs:146");
-                    // we do not clear a tombstone until we move past
-                    // it in the underlying node
-                    log::trace!("iterator returning {:?}", self.next_b);
-                    return self.next_b.take();
-                }
-                (Some((k_a, None)), Some((k_b, _))) if k_b > *k_a => {
-                    log::trace!("src/node.rs:151");
-                    self.next_a.take();
-                }
                 _ => unreachable!(
                     "did not expect combination a: {:?} b: {:?}",
                     self.next_a, self.next_b
+                ),
+            }
+        }
+    }
+}
+
+impl<'a> DoubleEndedIterator for Iter<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.next_back_a.is_none() {
+                log::trace!("src/node.rs:458");
+                if let Some((k, v)) = self.overlay.next_back() {
+                    log::trace!("next_back_a is now ({:?}, {:?})", k, v);
+                    self.next_back_a = Some((k.as_ref(), v.as_ref()));
+                }
+            }
+            if self.next_back_b.is_none() && self.node_back_position > 0 {
+                self.node_back_position -= 1;
+                self.next_back_b = Some((
+                    self.node.index_key(self.node_back_position),
+                    self.node.index_value(self.node_back_position),
+                ));
+                log::trace!("next_back_b is now {:?}", self.next_back_b);
+            }
+            match (self.next_back_a, self.next_back_b) {
+                (None, _) => {
+                    log::trace!("src/node.rs:474");
+                    log::trace!("iterator returning {:?}", self.next_back_b);
+                    return self.next_back_b.take();
+                }
+                (Some((_, None)), None) => {
+                    log::trace!("src/node.rs:480");
+                    self.next_back_a.take();
+                }
+                (Some((k_a, None)), Some((k_b, _))) if k_b == *k_a => {
+                    // skip tombstone and continue the loop
+                    log::trace!("src/node.rs:491");
+                    self.next_back_a.take();
+                    self.next_back_b.take();
+                }
+                (Some((k_a, None)), Some((k_b, _))) if k_b > *k_a => {
+                    log::trace!("src/node.rs:496");
+                    // we do not clear a tombstone until we move past
+                    // it in the underlying node
+                    log::trace!("iterator returning {:?}", self.next_back_b);
+                    return self.next_back_b.take();
+                }
+                (Some((k_a, None)), Some((k_b, _))) if k_b < *k_a => {
+                    log::trace!("src/node.rs:503");
+                    self.next_back_a.take();
+                }
+                (Some((_, Some(_))), None) => {
+                    log::trace!("src/node.rs:483");
+                    log::trace!("iterator returning {:?}", self.next_back_a);
+                    return self.next_back_a.take().map(|(k, v)| {
+                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                    });
+                }
+                (Some((k_a, Some(_))), Some((k_b, _))) if k_b > *k_a => {
+                    log::trace!("src/node.rs:508");
+                    log::trace!("iterator returning {:?}", self.next_back_b);
+                    return self.next_back_b.take();
+                }
+                (Some((k_a, Some(_))), Some((k_b, _))) if k_b < *k_a => {
+                    log::trace!("iterator returning {:?}", self.next_back_a);
+                    return self.next_back_a.take().map(|(k, v)| {
+                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                    });
+                }
+                (Some((k_a, Some(_))), Some((k_b, _))) if k_b == *k_a => {
+                    // prefer overlay, discard node value
+                    self.next_back_b.take();
+                    log::trace!("src/node.rs:520");
+                    log::trace!("iterator returning {:?}", self.next_back_a);
+                    return self.next_back_a.take().map(|(k, v)| {
+                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                    });
+                }
+                _ => unreachable!(
+                    "did not expect combination a: {:?} b: {:?}",
+                    self.next_back_a, self.next_back_b
                 ),
             }
         }
@@ -478,6 +562,9 @@ impl Node {
             node_position: 0,
             next_a: None,
             next_b: None,
+            node_back_position: self.children(),
+            next_back_a: None,
+            next_back_b: None,
         }
     }
 
@@ -886,6 +973,9 @@ impl Node {
             node_position,
             next_a: None,
             next_b: None,
+            node_back_position: self.children(),
+            next_back_a: None,
+            next_back_b: None,
         };
 
         let ret: Option<(KeyRef<'_>, &[u8])> = iter.find(|(k, _)| in_bounds(k));
@@ -897,18 +987,86 @@ impl Node {
         &self,
         bound: &Bound<IVec>,
     ) -> Option<(IVec, IVec)> {
+        let (overlay, node_back_position) = match bound {
+            Bound::Unbounded => (self.overlay.iter(), self.children()),
+            Bound::Included(b) => {
+                let overlay_search =
+                    self.overlay.binary_search_by_key(&b, |(k, _)| k);
+                let overlay = match overlay_search {
+                    Ok(idx) => {
+                        if let (k, Some(v)) = &self.overlay[idx] {
+                            // short circuit return
+                            return Some((
+                                self.prefix_decode(KeyRef::Slice(k)),
+                                v.clone(),
+                            ));
+                        }
+                        self.overlay[..idx].iter()
+                    }
+                    Err(idx) => self.overlay[..idx].iter(),
+                };
+
+                let inner_search = if &**b < self.lo() {
+                    Err(0)
+                } else {
+                    self.find(self.prefix_encode(b))
+                };
+                let node_back_position = match inner_search {
+                    Ok(idx) => {
+                        return Some((
+                            self.prefix_decode(self.inner.index_key(idx)),
+                            self.inner.index_value(idx).into(),
+                        ))
+                    }
+                    Err(idx) => idx,
+                };
+
+                (overlay, node_back_position)
+            }
+            Bound::Excluded(b) => {
+                let overlay_search =
+                    self.overlay.binary_search_by_key(&b, |(k, _)| k);
+                let overlay = match overlay_search {
+                    Ok(idx) => self.overlay[..idx].iter(),
+                    Err(idx) => self.overlay[..idx].iter(),
+                };
+
+                let above_hi =
+                    if let Some(hi) = self.hi() { &**b >= hi } else { false };
+
+                let inner_search = if above_hi {
+                    Err(self.children())
+                } else {
+                    self.find(self.prefix_encode(b))
+                };
+                let node_back_position = match inner_search {
+                    Ok(idx) => idx,
+                    Err(idx) => idx,
+                };
+
+                (overlay, node_back_position)
+            }
+        };
+
+        let iter = Iter {
+            overlay,
+            node: &self.inner,
+            node_position: 0,
+            node_back_position,
+            next_a: None,
+            next_b: None,
+            next_back_a: None,
+            next_back_b: None,
+        };
+
         let in_bounds = |k: &KeyRef<'_>| match bound {
             Bound::Unbounded => true,
             Bound::Included(b) => *k <= b[self.prefix_len as usize..],
             Bound::Excluded(b) => *k < b[self.prefix_len as usize..],
         };
 
-        let ret: Option<(KeyRef<'_>, &[u8])> = self
-            .iter()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .find(|(k, _)| in_bounds(k));
+        let ret: Option<(KeyRef<'_>, &[u8])> =
+            iter.rev().find(|(k, _)| in_bounds(k));
 
         ret.map(|(k, v)| (self.prefix_decode(k), v.into()))
     }
