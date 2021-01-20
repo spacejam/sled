@@ -39,20 +39,21 @@ fn uninitialized_node(len: usize) -> Inner {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Header {
-    // NB always lay out fields from largest to smallest
-    // to properly pack the struct
+    // NB always lay out fields from largest to smallest to properly pack the struct
     pub next: Option<NonZeroU64>,
     pub merging_child: Option<NonZeroU64>,
     lo_len: u64,
     hi_len: u64,
-    // TODO change to u32
-    pub children: u16,
+    pub children: u32,
     fixed_key_length: Option<NonZeroU16>,
     // we use this form to squish it all into
     // 16 bytes, but really we do allow
     // for Some(0) by shifting everything
     // down by one on access.
     fixed_value_length: Option<NonZeroU16>,
+    // if all keys on a node are equidistant,
+    // we can avoid writing any data for them
+    // at all.
     fixed_key_stride: Option<NonZeroU16>,
     pub prefix_len: u8,
     probation_ops_remaining: u8,
@@ -1283,7 +1284,7 @@ impl Inner {
         next: Option<NonZeroU64>,
         items: &[(KeyRef<'_>, &[u8])],
     ) -> Inner {
-        assert!(items.len() <= std::u16::MAX as usize);
+        assert!(items.len() <= std::u32::MAX as usize);
 
         // determine if we need to use varints and offset
         // indirection tables, or if everything is equal
@@ -1369,7 +1370,7 @@ impl Inner {
         }
         let fixed_key_length = fixed_key_length
             .and_then(|fkl| u16::try_from(fkl).ok())
-            .and_then(|fkl| NonZeroU16::new(fkl));
+            .and_then(NonZeroU16::new);
 
         let fixed_key_stride =
             fixed_key_stride.map(|stride| NonZeroU16::new(stride).unwrap());
@@ -1464,7 +1465,7 @@ impl Inner {
             hi_len: hi.map(|hi| hi.len() as u64).unwrap_or(0),
             fixed_key_stride,
             offset_bytes,
-            children: tf!(items.len(), u16),
+            children: tf!(items.len(), u32),
             prefix_len,
             version: 1,
             next,
@@ -1617,17 +1618,14 @@ impl Inner {
     fn key_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
         assert!(self.fixed_key_stride.is_none());
         let offset_sz = self.children as usize * self.offset_bytes as usize;
-        match self.fixed_key_length {
-            Some(k_sz) => {
-                let keys_buf = &mut self.data_buf_mut()[offset_sz..];
-                &mut keys_buf[index * tf!(k_sz.get())..]
-            }
-            None => {
-                // find offset for key or combined kv offset
-                let offset = self.offset(index);
-                let keys_buf = &mut self.data_buf_mut()[offset_sz..];
-                &mut keys_buf[offset..]
-            }
+        if let Some(k_sz) = self.fixed_key_length {
+            let keys_buf = &mut self.data_buf_mut()[offset_sz..];
+            &mut keys_buf[index * tf!(k_sz.get())..]
+        } else {
+            // find offset for key or combined kv offset
+            let offset = self.offset(index);
+            let keys_buf = &mut self.data_buf_mut()[offset_sz..];
+            &mut keys_buf[offset..]
         }
     }
 
@@ -2118,7 +2116,7 @@ impl Inner {
     }
 
     fn children(&self) -> usize {
-        usize::from(self.children)
+        self.children as usize
     }
 
     fn contains_key(&self, key: &[u8]) -> bool {
