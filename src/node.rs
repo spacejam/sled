@@ -39,16 +39,21 @@ fn uninitialized_node(len: usize) -> Inner {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Header {
-    // NB always lay out fields from largest to smallest
-    // to properly pack the struct
+    // NB always lay out fields from largest to smallest to properly pack the struct
     pub next: Option<NonZeroU64>,
     pub merging_child: Option<NonZeroU64>,
     lo_len: u64,
     hi_len: u64,
-    // TODO change to u32
-    pub children: u16,
+    pub children: u32,
     fixed_key_length: Option<NonZeroU16>,
+    // we use this form to squish it all into
+    // 16 bytes, but really we do allow
+    // for Some(0) by shifting everything
+    // down by one on access.
     fixed_value_length: Option<NonZeroU16>,
+    // if all keys on a node are equidistant,
+    // we can avoid writing any data for them
+    // at all.
     fixed_key_stride: Option<NonZeroU16>,
     pub prefix_len: u8,
     probation_ops_remaining: u8,
@@ -126,20 +131,20 @@ fn shared_distance(base: &[u8], search: &[u8]) -> usize {
         (u32::from_be_bytes(search.try_into().unwrap()) as usize)
             - (u32::from_be_bytes(base.try_into().unwrap()) as usize)
     }
-    assert!(
+    testing_assert!(
         base <= search,
         "expected base {:?} to be <= search {:?}",
         base,
         search
     );
-    assert!(
+    testing_assert!(
         base.len() == search.len(),
         "base len: {} search len: {}",
         base.len(),
         search.len()
     );
-    assert!(!base.is_empty());
-    assert!(base.len() <= 4);
+    testing_assert!(!base.is_empty());
+    testing_assert!(base.len() <= 4);
 
     let computed_gotos = [f1, f2, f3, f4];
     computed_gotos[search.len() - 1](base, search)
@@ -228,6 +233,10 @@ impl<'a> KeyRef<'a> {
                     .shared_distance(&KeyRef::Computed { base: b, distance: 0 })
             }
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     fn len(&self) -> usize {
@@ -398,23 +407,6 @@ impl<'a> Iterator for Iter<'a> {
                     log::trace!("src/node.rs:113");
                     self.next_a.take();
                 }
-                (Some((k_a, None)), Some((k_b, _))) if k_b == *k_a => {
-                    // skip tombstone and continue the loop
-                    log::trace!("src/node.rs:141");
-                    self.next_a.take();
-                    self.next_b.take();
-                }
-                (Some((k_a, None)), Some((k_b, _))) if k_b < *k_a => {
-                    log::trace!("src/node.rs:146");
-                    // we do not clear a tombstone until we move past
-                    // it in the underlying node
-                    log::trace!("iterator returning {:?}", self.next_b);
-                    return self.next_b.take();
-                }
-                (Some((k_a, None)), Some((k_b, _))) if k_b > *k_a => {
-                    log::trace!("src/node.rs:151");
-                    self.next_a.take();
-                }
                 (Some((_, Some(_))), None) => {
                     log::trace!("src/node.rs:114");
                     log::trace!("iterator returning {:?}", self.next_a);
@@ -422,30 +414,48 @@ impl<'a> Iterator for Iter<'a> {
                         (KeyRef::Slice(&*k), v.unwrap().as_ref())
                     });
                 }
-                (Some((k_a, Some(_))), Some((k_b, _))) if k_b < *k_a => {
-                    log::trace!("src/node.rs:120");
-                    log::trace!("iterator returning {:?}", self.next_b);
-                    return self.next_b.take();
+                (Some((k_a, v_a_opt)), Some((k_b, _))) => {
+                    let cmp = KeyRef::Slice(k_a).cmp(&k_b);
+                    match (cmp, v_a_opt) {
+                        (Equal, Some(_)) => {
+                            // prefer overlay, discard node value
+                            self.next_b.take();
+                            log::trace!("src/node.rs:133");
+                            log::trace!("iterator returning {:?}", self.next_a);
+                            return self.next_a.take().map(|(k, v)| {
+                                (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                            });
+                        }
+                        (Equal, None) => {
+                            // skip tombstone and continue the loop
+                            log::trace!("src/node.rs:141");
+                            self.next_a.take();
+                            self.next_b.take();
+                        }
+                        (Less, Some(_)) => {
+                            log::trace!("iterator returning {:?}", self.next_a);
+                            return self.next_a.take().map(|(k, v)| {
+                                (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                            });
+                        }
+                        (Less, None) => {
+                            log::trace!("src/node.rs:151");
+                            self.next_a.take();
+                        }
+                        (Greater, Some(_)) => {
+                            log::trace!("src/node.rs:120");
+                            log::trace!("iterator returning {:?}", self.next_b);
+                            return self.next_b.take();
+                        }
+                        (Greater, None) => {
+                            log::trace!("src/node.rs:146");
+                            // we do not clear a tombstone until we move past
+                            // it in the underlying node
+                            log::trace!("iterator returning {:?}", self.next_b);
+                            return self.next_b.take();
+                        }
+                    }
                 }
-                (Some((k_a, Some(_))), Some((k_b, _))) if k_b > *k_a => {
-                    log::trace!("iterator returning {:?}", self.next_a);
-                    return self.next_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
-                    });
-                }
-                (Some((k_a, Some(_))), Some((k_b, _))) if k_b == *k_a => {
-                    // prefer overlay, discard node value
-                    self.next_b.take();
-                    log::trace!("src/node.rs:133");
-                    log::trace!("iterator returning {:?}", self.next_a);
-                    return self.next_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
-                    });
-                }
-                _ => unreachable!(
-                    "did not expect combination a: {:?} b: {:?}",
-                    self.next_a, self.next_b
-                ),
             }
         }
     }
@@ -1106,7 +1116,7 @@ impl Node {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.iter().take(6).count() > 5
         } else if self.is_index {
-            self.len > 1024 && self.iter().take(2).count() > 1
+            self.len > 1024 && self.iter().take(2).count() == 2
         } else {
             /*
             let threshold = match self.rewrite_generations {
@@ -1122,7 +1132,7 @@ impl Node {
             let threshold = 1024 - crate::MAX_MSG_HEADER_LEN;
             self.probation_ops_remaining == 0
                 && self.len > threshold
-                && self.iter().next().is_some()
+                && self.iter().take(2).count() == 2
         };
 
         let safety_checks = self.merging_child.is_none() && !self.merging;
@@ -1275,7 +1285,7 @@ impl Inner {
         next: Option<NonZeroU64>,
         items: &[(KeyRef<'_>, &[u8])],
     ) -> Inner {
-        assert!(items.len() <= std::u16::MAX as usize);
+        assert!(items.len() <= std::u32::MAX as usize);
 
         // determine if we need to use varints and offset
         // indirection tables, or if everything is equal
@@ -1283,11 +1293,10 @@ impl Inner {
         // with a fixed stride, we can completely skip writing
         // them at all, as they can always be calculated by
         // adding the desired offset to the lo key.
-        let mut key_lengths = Vec::with_capacity(items.len());
-        let mut value_lengths = Vec::with_capacity(items.len());
 
-        let mut initial_keys_equal_length = true;
-        let mut initial_values_equal_length = true;
+        // we compare the lo key to the second item because
+        // it is assumed that the first key matches the lo key
+        // in the case of a fixed stride
         let mut fixed_key_stride: Option<u16> = if items.len() > 1
             && lo[prefix_len as usize..].len() == items[1].0.len()
             && items[1].0.len() <= 4
@@ -1309,102 +1318,89 @@ impl Inner {
             None
         };
 
+        let mut fixed_key_length = items.first().and_then(|(k, _)| {
+            if k.is_empty() {
+                None
+            } else {
+                Some(k.len())
+            }
+        });
+        let mut fixed_value_length = items.first().map(|(_, v)| v.len());
+
+        let mut dynamic_key_storage_size = 0;
+        let mut dynamic_value_storage_size = 0;
+
         let mut prev: Option<&KeyRef<'_>> = None;
+
+        // the first pass over items determines the various
+        // sizes required to represent keys and values, and
+        // whether keys, values, or both share the same sizes
+        // or possibly whether the keys increment at a fixed
+        // rate so that they can be completely skipped
         for (k, v) in items {
-            key_lengths.push(k.len() as u64);
-            if let Some(first_sz) = key_lengths.first() {
-                initial_keys_equal_length &= *first_sz == k.len() as u64;
+            dynamic_key_storage_size += k.len() + varint::size(k.len() as u64);
+            dynamic_value_storage_size +=
+                v.len() + varint::size(v.len() as u64);
 
-                if !initial_keys_equal_length {
-                    fixed_key_stride = None;
-                }
-
-                if let Some(stride) = fixed_key_stride {
-                    if let Some(ref mut prev) = prev {
-                        if !is_linear(prev, k, stride) {
-                            fixed_key_stride = None;
+            if fixed_key_length.is_some() {
+                if let Some(last) = prev {
+                    // see if the lengths all match for the offset table
+                    // omission optimization
+                    if last.len() == k.len() {
+                        // see if the keys are equidistant for the
+                        // key omission optimization
+                        if let Some(stride) = fixed_key_stride {
+                            if !is_linear(last, k, stride) {
+                                fixed_key_stride = None;
+                            }
                         }
-                    }
-                    prev = Some(k);
-                }
-            }
-            value_lengths.push(v.len() as u64);
-            if let Some(first_sz) = value_lengths.first() {
-                if is_index {
-                    assert_eq!(*first_sz, size_of::<u64>() as u64);
-                }
-                initial_values_equal_length &= *first_sz == v.len() as u64;
-            }
-        }
-
-        let (fixed_key_length, keys_equal_length) = if initial_keys_equal_length
-        {
-            if let Some(key_length) = key_lengths.first() {
-                if *key_length > 0 && *key_length <= u64::from(std::u16::MAX) {
-                    (
-                        Some(
-                            NonZeroU16::new(
-                                u16::try_from(*key_length).unwrap(),
-                            )
-                            .unwrap(),
-                        ),
-                        true,
-                    )
-                } else {
-                    (None, false)
-                }
-            } else {
-                (None, false)
-            }
-        } else {
-            (None, false)
-        };
-
-        if fixed_key_length.is_none() {
-            fixed_key_stride = None;
-        }
-
-        let (fixed_value_length, values_equal_length) =
-            if initial_values_equal_length {
-                if let Some(value_length) = value_lengths.first() {
-                    if *value_length > 0
-                        && *value_length <= u64::from(std::u16::MAX)
-                    {
-                        (
-                            Some(
-                                NonZeroU16::new(
-                                    u16::try_from(*value_length).unwrap(),
-                                )
-                                .unwrap(),
-                            ),
-                            true,
-                        )
                     } else {
-                        (None, false)
+                        fixed_key_length = None;
+                        fixed_key_stride = None;
                     }
-                } else {
-                    (None, false)
                 }
-            } else {
-                (None, false)
-            };
+
+                prev = Some(k);
+            }
+
+            if let Some(fvl) = fixed_value_length {
+                if v.len() != fvl {
+                    fixed_value_length = None;
+                }
+            }
+        }
+        let fixed_key_length = fixed_key_length
+            .and_then(|fkl| u16::try_from(fkl).ok())
+            .and_then(NonZeroU16::new);
+
+        let fixed_key_stride =
+            fixed_key_stride.map(|stride| NonZeroU16::new(stride).unwrap());
+
+        let fixed_value_length = fixed_value_length
+            .and_then(|fvl| {
+                if fvl < std::u16::MAX as usize {
+                    // we add 1 to the fvl to
+                    // represent Some(0) in
+                    // less space.
+                    u16::try_from(fvl).ok()
+                } else {
+                    None
+                }
+            })
+            .and_then(|fvl| NonZeroU16::new(fvl + 1));
 
         let key_storage_size = if let Some(key_length) = fixed_key_length {
+            assert_ne!(key_length.get(), 0);
             if let Some(stride) = fixed_key_stride {
                 // all keys can be directly computed from the node lo key
                 // by adding a fixed stride length to the node lo key
-                assert!(stride > 0);
+                assert!(stride.get() > 0);
                 0
             } else {
-                u64::from(key_length.get()) * (items.len() as u64)
+                key_length.get() as usize * items.len()
             }
         } else {
-            let mut sum = 0;
-            for key_length in &key_lengths {
-                sum += key_length;
-                sum += varint::size(*key_length) as u64;
-            }
-            sum
+            dynamic_key_storage_size
         };
 
         // we max the value size with the size of a u64 because
@@ -1417,25 +1413,24 @@ impl Inner {
         // does not extend beyond the allocation.
         let value_storage_size = if let Some(value_length) = fixed_value_length
         {
-            u64::from(value_length.get()) * (items.len() as u64)
+            (value_length.get() - 1) as usize * items.len()
         } else {
-            let mut sum = 0;
-            for value_length in &value_lengths {
-                sum += value_length;
-                sum += varint::size(*value_length) as u64;
-            }
-            sum
+            dynamic_value_storage_size
         }
-        .max(size_of::<u64>() as u64);
+        .max(size_of::<u64>());
 
-        let (offsets_storage_size, offset_bytes) = if keys_equal_length
-            && values_equal_length
+        let (offsets_storage_size, offset_bytes) = if fixed_key_length.is_some()
+            && fixed_value_length.is_some()
         {
             (0, 0)
         } else {
             let max_indexable_offset =
-                if keys_equal_length { 0 } else { key_storage_size }
-                    + if values_equal_length { 0 } else { value_storage_size };
+                if fixed_key_length.is_some() { 0 } else { key_storage_size }
+                    + if fixed_value_length.is_some() {
+                        0
+                    } else {
+                        value_storage_size
+                    };
 
             let bytes_per_offset: u8 = match max_indexable_offset {
                 i if i < 256 => 1,
@@ -1447,17 +1442,22 @@ impl Inner {
                 _ => unreachable!(),
             };
 
-            (tf!(bytes_per_offset, u64) * items.len() as u64, bytes_per_offset)
+            (bytes_per_offset as usize * items.len(), bytes_per_offset)
         };
 
-        let total_node_storage_size = size_of::<Header>() as u64
-            + hi.map(|hi| hi.len() as u64).unwrap_or(0)
-            + lo.len() as u64
+        let total_node_storage_size = size_of::<Header>()
+            + hi.map(|hi| hi.len()).unwrap_or(0)
+            + lo.len()
             + key_storage_size
             + value_storage_size
             + offsets_storage_size;
 
         let mut ret = uninitialized_node(tf!(total_node_storage_size));
+
+        if offset_bytes == 0 {
+            assert!(fixed_key_length.is_some());
+            assert!(fixed_value_length.is_some());
+        }
 
         *ret.header_mut() = Header {
             rewrite_generations: 0,
@@ -1465,14 +1465,13 @@ impl Inner {
             probation_ops_remaining: 0,
             merging_child: None,
             merging: false,
-            lo_len: lo.len() as u64,
-            hi_len: hi.map(|hi| hi.len() as u64).unwrap_or(0),
             fixed_key_length,
             fixed_value_length,
-            fixed_key_stride: fixed_key_stride
-                .map(|stride| NonZeroU16::new(stride).unwrap()),
+            lo_len: lo.len() as u64,
+            hi_len: hi.map(|hi| hi.len() as u64).unwrap_or(0),
+            fixed_key_stride,
             offset_bytes,
-            children: tf!(items.len(), u16),
+            children: tf!(items.len(), u32),
             prefix_len,
             version: 1,
             next,
@@ -1507,26 +1506,26 @@ impl Inner {
         //  - fixed_key_length: None, fixed_value_length: None
         let mut offset = 0_u64;
         for (idx, (k, v)) in items.iter().enumerate() {
-            if !keys_equal_length || !values_equal_length {
+            if fixed_key_length.is_none() || fixed_value_length.is_none() {
                 ret.set_offset(idx, tf!(offset));
             }
-            if !keys_equal_length {
+            if fixed_key_length.is_none() {
                 assert!(fixed_key_stride.is_none());
                 offset += varint::size(k.len() as u64) as u64 + k.len() as u64;
             }
-            if !values_equal_length {
+            if fixed_value_length.is_none() {
                 offset += varint::size(v.len() as u64) as u64 + v.len() as u64;
             }
 
             if let Some(stride) = fixed_key_stride {
-                assert!(stride > 0);
+                assert!(stride.get() > 0);
             } else {
                 // we completely skip writing any key data at all
                 // when the keys are linear, as they can be
                 // computed losslessly by multiplying the desired
                 // index by the fixed stride length.
                 let mut key_buf = ret.key_buf_for_offset_mut(idx);
-                if !keys_equal_length {
+                if fixed_key_length.is_none() {
                     let varint_bytes =
                         varint::serialize_into(k.len() as u64, key_buf);
                     key_buf = &mut key_buf[varint_bytes..];
@@ -1535,7 +1534,7 @@ impl Inner {
             }
 
             let mut value_buf = ret.value_buf_for_offset_mut(idx);
-            if !values_equal_length {
+            if fixed_value_length.is_none() {
                 let varint_bytes =
                     varint::serialize_into(v.len() as u64, value_buf);
                 value_buf = &mut value_buf[varint_bytes..];
@@ -1568,9 +1567,9 @@ impl Inner {
         #[cfg(feature = "testing")]
         {
             for i in 0..items.len() {
-                if !keys_equal_length || !values_equal_length {
+                if fixed_key_length.is_none() || fixed_value_length.is_none() {
                     assert!(
-                        (ret.offset(i) as u64) < total_node_storage_size,
+                        ret.offset(i) < total_node_storage_size,
                         "offset {} is {} which is larger than \
                     total node storage size of {} for node \
                     with header {:#?}",
@@ -1617,21 +1616,22 @@ impl Inner {
         Inner::new(&[], None, 0, false, None, &[])
     }
 
+    fn fixed_value_length(&self) -> Option<usize> {
+        self.fixed_value_length.map(|fvl| usize::from(fvl.get()) - 1)
+    }
+
     // returns the OPEN ENDED buffer where a key may be placed
     fn key_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
         assert!(self.fixed_key_stride.is_none());
         let offset_sz = self.children as usize * self.offset_bytes as usize;
-        match (self.fixed_key_length, self.fixed_value_length) {
-            (Some(k_sz), Some(_)) | (Some(k_sz), None) => {
-                let keys_buf = &mut self.data_buf_mut()[offset_sz..];
-                &mut keys_buf[index * tf!(k_sz.get())..]
-            }
-            (None, Some(_)) | (None, None) => {
-                // find offset for key or combined kv offset
-                let offset = self.offset(index);
-                let keys_buf = &mut self.data_buf_mut()[offset_sz..];
-                &mut keys_buf[offset..]
-            }
+        if let Some(k_sz) = self.fixed_key_length {
+            let keys_buf = &mut self.data_buf_mut()[offset_sz..];
+            &mut keys_buf[index * tf!(k_sz.get())..]
+        } else {
+            // find offset for key or combined kv offset
+            let offset = self.offset(index);
+            let keys_buf = &mut self.data_buf_mut()[offset_sz..];
+            &mut keys_buf[offset..]
         }
     }
 
@@ -1642,10 +1642,11 @@ impl Inner {
     // for case 4.
     fn value_buf_for_offset_mut(&mut self, index: usize) -> &mut [u8] {
         let stride = self.fixed_key_stride;
-        match (self.fixed_key_length, self.fixed_value_length) {
+        match (self.fixed_key_length, self.fixed_value_length()) {
+            (_, Some(0)) => &mut [],
             (Some(_), Some(v_sz)) | (None, Some(v_sz)) => {
                 let values_buf = self.values_buf_mut();
-                &mut values_buf[index * tf!(v_sz.get())..]
+                &mut values_buf[index * tf!(v_sz)..]
             }
             (Some(_), None) => {
                 // find combined kv offset
@@ -1675,10 +1676,11 @@ impl Inner {
     // for case 4.
     fn value_buf_for_offset(&self, index: usize) -> &[u8] {
         let stride = self.fixed_key_stride;
-        match (self.fixed_key_length, self.fixed_value_length) {
+        match (self.fixed_key_length, self.fixed_value_length()) {
+            (_, Some(0)) => &[],
             (Some(_), Some(v_sz)) | (None, Some(v_sz)) => {
                 let values_buf = self.values_buf();
-                &values_buf[index * tf!(v_sz.get())..]
+                &values_buf[index * v_sz..]
             }
             (Some(_), None) => {
                 // find combined kv offset
@@ -1704,7 +1706,11 @@ impl Inner {
     #[inline]
     fn offset(&self, index: usize) -> usize {
         assert!(index < self.children as usize);
-        assert!(self.offset_bytes > 0);
+        assert!(
+            self.offset_bytes > 0,
+            "offset invariant failed on {:#?}",
+            self.header()
+        );
         let offsets_buf_start =
             tf!(self.lo_len) + tf!(self.hi_len) + size_of::<Header>();
 
@@ -1752,10 +1758,10 @@ impl Inner {
 
     fn values_buf_mut(&mut self) -> &mut [u8] {
         let offset_sz = self.children as usize * self.offset_bytes as usize;
-        match (self.fixed_key_length, self.fixed_value_length) {
+        match (self.fixed_key_length, self.fixed_value_length()) {
+            (_, Some(0)) => &mut [],
             (_, Some(fixed_value_length)) => {
-                let total_value_size =
-                    tf!(fixed_value_length.get()) * self.children as usize;
+                let total_value_size = fixed_value_length * self.children();
                 let data_buf = self.data_buf_mut();
                 let start = data_buf.len() - total_value_size;
                 &mut data_buf[start..]
@@ -1764,8 +1770,7 @@ impl Inner {
                 let start = if self.fixed_key_stride.is_some() {
                     offset_sz
                 } else {
-                    offset_sz
-                        + tf!(fixed_key_length.get()) * self.children as usize
+                    offset_sz + tf!(fixed_key_length.get()) * self.children()
                 };
                 &mut self.data_buf_mut()[start..]
             }
@@ -1775,10 +1780,10 @@ impl Inner {
 
     fn values_buf(&self) -> &[u8] {
         let offset_sz = self.children as usize * self.offset_bytes as usize;
-        match (self.fixed_key_length, self.fixed_value_length) {
+        match (self.fixed_key_length, self.fixed_value_length()) {
+            (_, Some(0)) => &[],
             (_, Some(fixed_value_length)) => {
-                let total_value_size =
-                    tf!(fixed_value_length.get()) * self.children as usize;
+                let total_value_size = fixed_value_length * self.children();
                 let data_buf = self.data_buf();
                 let start = data_buf.len() - total_value_size;
                 &data_buf[start..]
@@ -2117,7 +2122,7 @@ impl Inner {
     }
 
     fn children(&self) -> usize {
-        usize::from(self.children)
+        self.children as usize
     }
 
     fn contains_key(&self, key: &[u8]) -> bool {
@@ -2317,11 +2322,15 @@ impl Inner {
             self.children()
         );
 
+        if let Some(0) = self.fixed_value_length() {
+            return &[];
+        }
+
         let buf = self.value_buf_for_offset(idx);
 
         let (start, end) =
-            if let Some(fixed_value_length) = self.fixed_value_length {
-                (0, tf!(fixed_value_length.get()))
+            if let Some(fixed_value_length) = self.fixed_value_length() {
+                (0, fixed_value_length)
             } else {
                 let (value_len, varint_sz) = varint::deserialize(buf).unwrap();
                 let start = varint_sz;

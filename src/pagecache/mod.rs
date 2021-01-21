@@ -21,7 +21,7 @@ mod reservation;
 mod segment;
 mod snapshot;
 
-use std::{collections::BinaryHeap, ops::Deref};
+use std::ops::Deref;
 
 use crate::*;
 
@@ -504,7 +504,7 @@ pub struct PageCacheInner {
     next_pid_to_allocate: Mutex<PageId>,
     // needs to be a sub-Arc because we separate
     // it for async modification in an EBR guard
-    free: Arc<Mutex<BinaryHeap<PageId>>>,
+    free: Arc<Mutex<FastSet8<PageId>>>,
     #[doc(hidden)]
     pub log: Log,
     lru: Lru,
@@ -639,7 +639,7 @@ impl PageCache {
         let mut pc = PageCacheInner {
             was_recovered: false,
             config: config.clone(),
-            free: Arc::new(Mutex::new(BinaryHeap::new())),
+            free: Arc::new(Mutex::new(FastSet8::default())),
             idgen: AtomicU64::new(0),
             idgen_persist_mu: Mutex::new(()),
             idgen_persists: AtomicU64::new(0),
@@ -1032,7 +1032,15 @@ impl PageCacheInner {
     ) -> Result<(PageId, PageView<'g>)> {
         let mut allocation_serializer;
 
-        let free_opt = self.free.lock().pop();
+        let free_opt = {
+            let mut free = self.free.lock();
+            if let Some(pid) = free.iter().copied().next() {
+                free.remove(&pid);
+                Some(pid)
+            } else {
+                None
+            }
+        };
 
         let (pid, page_view) = if let Some(pid) = free_opt {
             trace!("re-allocating pid {}", pid);
@@ -1208,12 +1216,7 @@ impl PageCacheInner {
             let free = self.free.clone();
             guard.defer(move || {
                 let mut free = free.lock();
-                // panic if we double-freed a page
-                if free.iter().any(|e| e == &pid) {
-                    panic!("pid {} was double-freed", pid);
-                }
-
-                free.push(pid);
+                assert!(free.insert(pid), "pid {} was double-freed", pid);
             });
         }
 
@@ -2187,7 +2190,7 @@ impl PageCacheInner {
                         ts: 0,
                     };
                     cache_infos.push(cache_info);
-                    self.free.lock().push(pid);
+                    assert!(self.free.lock().insert(pid));
                 }
                 _ => panic!("tried to load a {:?}", state),
             }
