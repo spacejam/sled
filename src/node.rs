@@ -1454,6 +1454,11 @@ impl Inner {
 
         let mut ret = uninitialized_node(tf!(total_node_storage_size));
 
+        if offset_bytes == 0 {
+            assert!(fixed_key_length.is_some());
+            assert!(fixed_value_length.is_some());
+        }
+
         *ret.header_mut() = Header {
             rewrite_generations: 0,
             activity_sketch: 0,
