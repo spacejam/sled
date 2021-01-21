@@ -32,7 +32,7 @@ impl Clone for IVec {
 impl Drop for IVec {
     fn drop(&mut self) {
         if !self.is_inline() {
-            let rc = self.deref_header().rc.fetch_sub(1, Ordering::Release) - 1;
+            let rc = self.deref_header().rc.fetch_sub(1, Ordering::Relaxed) - 1;
 
             if rc == 0 {
                 let layout = Layout::from_size_align(
@@ -40,8 +40,6 @@ impl Drop for IVec {
                     8,
                 )
                 .unwrap();
-
-                std::sync::atomic::fence(Ordering::Acquire);
 
                 unsafe {
                     dealloc(self.remote_ptr() as *mut u8, layout);
@@ -143,7 +141,9 @@ impl IVec {
                 std::ptr::write_unaligned(data.as_mut_ptr() as _, ptr);
             }
 
-            assert_eq!(data[SZ - 1] & 1, 0);
+            // assert that the bottom 3 bits are empty, as we expect
+            // the buffer to always have an alignment of 8 (2 ^ 3).
+            assert_eq!(data[SZ - 1] & 0b111, 0);
         }
         Self(data)
     }
