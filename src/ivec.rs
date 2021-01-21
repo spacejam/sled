@@ -32,7 +32,7 @@ impl Clone for IVec {
 impl Drop for IVec {
     fn drop(&mut self) {
         if !self.is_inline() {
-            let rc = self.deref_header().rc.fetch_sub(1, Ordering::Relaxed) - 1;
+            let rc = self.deref_header().rc.fetch_sub(1, Ordering::Release) - 1;
 
             if rc == 0 {
                 let layout = Layout::from_size_align(
@@ -40,6 +40,8 @@ impl Drop for IVec {
                     8,
                 )
                 .unwrap();
+
+                std::sync::atomic::fence(Ordering::Acquire);
 
                 unsafe {
                     dealloc(self.remote_ptr() as *mut u8, layout);
