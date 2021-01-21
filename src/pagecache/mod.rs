@@ -906,7 +906,7 @@ impl PageCache {
 
                     old.read = new_shared;
 
-                    let link_count = self.links.fetch_add(1, Release);
+                    let link_count = self.links.fetch_add(1, Relaxed);
 
                     if link_count > 0
                         && link_count % self.config.snapshot_after_ops == 0
