@@ -337,7 +337,7 @@ use {
         sync::{
             atomic::{
                 AtomicUsize,
-                Ordering::{Acquire, Release, SeqCst},
+                Ordering::{Acquire, Relaxed, Release, SeqCst},
             },
             Arc,
         },

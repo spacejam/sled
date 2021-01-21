@@ -143,7 +143,9 @@ impl IVec {
                 std::ptr::write_unaligned(data.as_mut_ptr() as _, ptr);
             }
 
-            assert_eq!(data[SZ - 1] & 1, 0);
+            // assert that the bottom 3 bits are empty, as we expect
+            // the buffer to always have an alignment of 8 (2 ^ 3).
+            assert_eq!(data[SZ - 1] & 0b111, 0);
         }
         Self(data)
     }
