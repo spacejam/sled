@@ -328,7 +328,7 @@ use {
         tree::TreeInner,
     },
     log::{debug, error, trace, warn},
-    pagecache::RecoveryGuard,
+    pagecache::{constants::MAX_BLOB, RecoveryGuard},
     parking_lot::{Condvar, Mutex, RwLock},
     std::{
         collections::BTreeMap,

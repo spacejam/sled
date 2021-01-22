@@ -13,7 +13,9 @@ use std::{
     sync::Arc,
 };
 
-use crate::{varint, IVec, Link};
+use crate::{
+    pagecache::constants::PAGE_CONSOLIDATION_THRESHOLD, varint, IVec, Link,
+};
 
 const ALIGNMENT: usize = align_of::<Header>();
 
@@ -1135,7 +1137,11 @@ impl Node {
                 && self.iter().take(2).count() == 2
         };
 
-        let safety_checks = self.merging_child.is_none() && !self.merging;
+        let safety_checks = self.merging_child.is_none()
+            && !self.merging
+            && self.children
+                < std::u32::MAX
+                    - u32::try_from(PAGE_CONSOLIDATION_THRESHOLD).unwrap();
 
         if size_check {
             log::trace!(

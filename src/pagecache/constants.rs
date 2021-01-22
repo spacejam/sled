@@ -35,3 +35,11 @@ pub(crate) const MAX_PID_BITS: usize = 37;
 // Assumed to be enough for a 32-bit system.
 #[cfg(target_pointer_width = "32")]
 pub(crate) const MAX_PID_BITS: usize = 32;
+
+// Limit keys and values to 128gb on 64-bit systems.
+#[cfg(target_pointer_width = "64")]
+pub(crate) const MAX_BLOB: usize = 1 << 37;
+
+// Limit keys and values to 512mb on 32-bit systems.
+#[cfg(target_pointer_width = "32")]
+pub(crate) const MAX_BLOB: usize = 1 << 29;

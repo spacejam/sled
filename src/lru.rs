@@ -292,6 +292,9 @@ impl Default for Entry {
 
 struct Shard {
     list: DoublyLinkedList,
+    // TODO this should be some sort of pagetable
+    // that doesn't need to move anything when it
+    // grows.
     entries: Vec<Entry>,
     capacity: u64,
     size: u64,
@@ -312,7 +315,8 @@ impl Shard {
     /// `PageId`s in the shard list are indexes of the entries.
     fn accessed(&mut self, pos: usize, size: u64) -> Vec<PageId> {
         if pos >= self.entries.len() {
-            self.entries.resize(pos + 1, Entry::default());
+            let new_sz = (pos + 1).max(self.entries.len() * 120 / 100);
+            self.entries.resize(new_sz, Entry::default());
         }
 
         {
