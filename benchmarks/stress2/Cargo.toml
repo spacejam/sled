@@ -10,6 +10,7 @@ panic = 'abort'
 codegen-units = 1
 lto = "fat"
 debug = true
+overflow-checks = true
 
 [features]
 default = []

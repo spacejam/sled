@@ -55,6 +55,7 @@ Options:
     --sequential       Run the test in sequential mode instead of random.
     --total-ops=<n>    Stop test after executing a total number of operations.
     --flush-every=<m>  Flush and sync the database every ms [default: 200].
+    --cache-mb=<mb>    Size of the page cache in megabytes [default: 1024].
 ";
 
 #[derive(Clone, Copy)]
@@ -74,6 +75,7 @@ struct Args {
     sequential: bool,
     total_ops: Option<usize>,
     flush_every: u64,
+    cache_mb: usize,
 }
 
 impl Default for Args {
@@ -94,6 +96,7 @@ impl Default for Args {
             sequential: false,
             total_ops: None,
             flush_every: 200,
+            cache_mb: 1024,
         }
     }
 }
@@ -293,10 +296,13 @@ fn main() {
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    let config =
-        sled::Config::new().cache_capacity(256 * 1024 * 1024).flush_every_ms(
-            if args.flush_every == 0 { None } else { Some(args.flush_every) },
-        );
+    let config = sled::Config::new()
+        .cache_capacity(args.cache_mb as u64 * 1024 * 1024)
+        .flush_every_ms(if args.flush_every == 0 {
+            None
+        } else {
+            Some(args.flush_every)
+        });
 
     let tree = Arc::new(config.open().unwrap());
     tree.set_merge_operator(concatenate_merge);
