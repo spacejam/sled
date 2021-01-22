@@ -38,6 +38,7 @@ const fn out_of_bounds(numba: usize) -> bool {
     numba > MAX_BLOB
 }
 
+#[cold]
 fn bounds_error() -> Result<()> {
     Err(Error::Unsupported(
         "Keys and values are limited to \
