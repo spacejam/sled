@@ -1109,6 +1109,7 @@ impl PageCacheInner {
             target_os = "freebsd",
             target_os = "openbsd",
             target_os = "netbsd",
+            target_os = "ios",
         )
     ))]
     pub(crate) fn attempt_gc(&self) -> Result<bool> {
@@ -1178,6 +1179,7 @@ impl PageCacheInner {
             target_os = "freebsd",
             target_os = "openbsd",
             target_os = "netbsd",
+            target_os = "ios",
         )
     ))]
     pub(crate) fn set_failpoint(&self, e: Error) {

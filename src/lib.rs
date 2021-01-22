@@ -229,6 +229,7 @@ pub mod doc;
         target_os = "freebsd",
         target_os = "openbsd",
         target_os = "netbsd",
+        target_os = "ios",
     )
 ))]
 mod flusher;

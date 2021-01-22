@@ -14,6 +14,7 @@ use crate::{OneShot, Result};
         target_os = "freebsd",
         target_os = "openbsd",
         target_os = "netbsd",
+        target_os = "ios",
     )
 ))]
 mod queue {
@@ -178,6 +179,7 @@ where
         target_os = "freebsd",
         target_os = "openbsd",
         target_os = "netbsd",
+        target_os = "ios",
     ))
 ))]
 mod queue {
