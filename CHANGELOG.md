@@ -42,6 +42,8 @@
 * #1252 The deprecated `Config::snapshot_path` method has
   been removed.
 * #1253 The `IVec::subslice` method has been removed.
+* #1275 Keys and values are now limited to 128gb on 64-bit
+  platforms and 512mb on 32-bit platforms.
 
 ## Bug Fixes
 

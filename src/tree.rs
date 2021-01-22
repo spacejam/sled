@@ -34,6 +34,18 @@ impl IntoIterator for &'_ Tree {
     }
 }
 
+const fn out_of_bounds(numba: usize) -> bool {
+    numba > MAX_BLOB
+}
+
+fn bounds_error() -> Result<()> {
+    Err(Error::Unsupported(
+        "Keys and values are limited to \
+        128gb on 64-bit platforms and
+        512mb on 32-bit platforms.".to_string()
+    ))
+}
+
 /// A flash-sympathetic persistent lock-free B+ tree.
 ///
 /// A `Tree` represents a single logical keyspace / namespace / bucket.
@@ -169,6 +181,10 @@ impl Tree {
             Measure::new(&M.tree_del)
         };
 
+        if out_of_bounds(key.len()) {
+            bounds_error()?;
+        }
+
         let View { node_view, pid, .. } =
             self.view_for_key(key.as_ref(), guard)?;
 
@@ -187,6 +203,9 @@ impl Tree {
         }
 
         let frag = if let Some(value) = value.clone() {
+            if out_of_bounds(value.len()) {
+                bounds_error()?;
+            }
             Link::Set(encoded_key, value)
         } else {
             Link::Del(encoded_key)
