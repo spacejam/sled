@@ -1244,7 +1244,11 @@ impl fmt::Debug for Inner {
             .field("lo", &self.lo())
             .field("hi", &self.hi());
 
-        if self.is_index {
+        if self.fixed_value_length() == Some(0)
+            && self.fixed_key_stride.is_some()
+        {
+            ds.field("fixed node, all keys and values omitted", &()).finish()
+        } else if self.is_index {
             ds.field(
                 "items",
                 &self
