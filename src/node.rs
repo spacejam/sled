@@ -1269,7 +1269,8 @@ impl DerefMut for Inner {
 // constructed from the base by adding a fixed
 // stride to it.
 fn is_linear(a: &KeyRef<'_>, b: &KeyRef<'_>, stride: u16) -> bool {
-    if a.len() != b.len() || a.len() > 4 {
+    let a_len = a.len();
+    if a_len != b.len() || a_len > 4 {
         return false;
     }
 
