@@ -2409,13 +2409,13 @@ impl Tree {
                 pid = next_pid.get();
             } else {
                 // we've traversed our level, time to bump down
-                let left_get_res = self.view_for_pid(left_most, &guard);
-                let left_node = if let Ok(Some(ref view)) = left_get_res {
+                let left_get_opt = self.view_for_pid(left_most, &guard)?;
+                let left_node = if let Some(ref view) = left_get_opt {
                     view
                 } else {
                     panic!(
                         "pagecache returned non-base node: {:?}",
-                        left_get_res
+                        left_get_opt
                     )
                 };
 
