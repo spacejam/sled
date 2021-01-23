@@ -2162,7 +2162,13 @@ impl Inner {
             let shared_distance: usize =
                 shared_distance(&base[..s_len], &key[..s_len]);
 
-            let distance = unshift_distance(shared_distance, base, key);
+            let mut distance = unshift_distance(shared_distance, base, key);
+
+            if distance % stride.get() as usize == 0 && key.len() < base.len() {
+                // searching for [9] resulted in going to [9, 0],
+                // this must have 1 subtracted in that case
+                distance = distance.checked_sub(1).unwrap();
+            }
 
             let offset = distance / stride.get() as usize;
 
