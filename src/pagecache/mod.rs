@@ -978,6 +978,10 @@ impl PageCache {
                     page_states.push(page_state);
                     break 'inner;
                 }
+
+                // break out of this loop if the overall system
+                // has halted
+                self.log.iobufs.config.global_error()?;
             }
         }
         drop(guard);
