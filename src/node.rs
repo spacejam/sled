@@ -215,10 +215,10 @@ impl<'a> KeyRef<'a> {
                 let s_b = &b[..s_len];
                 let s_da = shift_distance(a, *da, a.len() - s_len);
                 let s_db = shift_distance(b, *db, b.len() - s_len);
-                if a <= b {
-                    shared_distance(s_a, s_b) + s_db - s_da
-                } else {
-                    (s_db - s_da) - shared_distance(s_b, s_a)
+                match a.cmp(b) {
+                    Less => shared_distance(s_a, s_b) + s_db - s_da,
+                    Greater => (s_db - s_da) - shared_distance(s_b, s_a),
+                    Equal => db - da,
                 }
             }
             (KeyRef::Computed { .. }, KeyRef::Slice(b)) => {
