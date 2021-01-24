@@ -2611,6 +2611,22 @@ mod test {
             KeyRef::Computed { base: &[2], distance: 0 }
                 > KeyRef::Computed { base: &[0, 2], distance: 0 }
         );
+        assert!(
+            KeyRef::Computed { base: &[2], distance: 0 }
+                != KeyRef::Computed { base: &[0, 2], distance: 0 }
+        );
+        assert!(
+            KeyRef::Computed { base: &[2], distance: 0 }
+                != KeyRef::Computed { base: &[2, 0], distance: 0 }
+        );
+        assert!(
+            KeyRef::Computed { base: &[1, 0], distance: 0 }
+                != KeyRef::Computed { base: &[255], distance: 1 }
+        );
+        assert!(
+            KeyRef::Computed { base: &[0, 0], distance: 0 }
+                != KeyRef::Computed { base: &[255], distance: 1 }
+        );
     }
 
     #[test]
