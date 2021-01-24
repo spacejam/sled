@@ -2027,7 +2027,8 @@ impl Inner {
             &left_items,
         );
 
-        left.rewrite_generations = self.rewrite_generations;
+        left.rewrite_generations =
+            if split_point == 1 { 0 } else { self.rewrite_generations };
         left.probation_ops_remaining =
             tf!((self.children() / 2).min(std::u8::MAX as usize), u8);
 
@@ -2040,7 +2041,11 @@ impl Inner {
             &right_items,
         );
 
-        right.rewrite_generations = self.rewrite_generations;
+        right.rewrite_generations = if split_point == self.children() - 1 {
+            0
+        } else {
+            self.rewrite_generations
+        };
         right.probation_ops_remaining = left.probation_ops_remaining;
 
         right.next = self.next;
