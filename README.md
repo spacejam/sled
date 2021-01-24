@@ -188,7 +188,7 @@ for a more detailed overview of where we're at and where we see things going!
 
 * rework the transaction API to eliminate surprises and limitations
 * reduce space and memory usage
-* the 1.0.0 release date is January 19, 2021 (sled's 5th birthday)
+* the 1.0.0 release date is imminent! just putting the final touches on, while performing intensive testing
 * combine merge operators with subscribers in a way that plays nicely with transactions
 * typed trees for low-friction serialization
 * replication support for both strongly and eventually consistent systems
