@@ -215,10 +215,10 @@ impl<'a> KeyRef<'a> {
                 let s_b = &b[..s_len];
                 let s_da = shift_distance(a, *da, a.len() - s_len);
                 let s_db = shift_distance(b, *db, b.len() - s_len);
-                if a <= b {
-                    shared_distance(s_a, s_b) + s_db - s_da
-                } else {
-                    (s_db - s_da) - shared_distance(s_b, s_a)
+                match a.cmp(b) {
+                    Less => shared_distance(s_a, s_b) + s_db - s_da,
+                    Greater => (s_db - s_da) - shared_distance(s_b, s_a),
+                    Equal => db - da,
                 }
             }
             (KeyRef::Computed { .. }, KeyRef::Slice(b)) => {
@@ -712,6 +712,42 @@ impl Node {
         if self.overlay.is_empty() {
             return self.inner.clone();
         };
+
+        // if this is a node that has a fixed key stride
+        // and empty values, we may be able to skip
+        // the normal merge process by performing a
+        // header-only update
+        let can_seamlessly_absorb = self.fixed_key_stride.is_some()
+            && self.fixed_value_length() == Some(0)
+            && {
+                let mut prev = self.inner.index_key(self.inner.children() - 1);
+                let stride: u16 = self.fixed_key_stride.unwrap().get();
+                let mut length_and_stride_matches = true;
+                for (k, v) in &self.overlay {
+                    length_and_stride_matches &=
+                        v.is_some() && v.as_ref().unwrap().is_empty();
+                    length_and_stride_matches &= KeyRef::Slice(&*k) > prev
+                        && is_linear(&prev, &KeyRef::Slice(&*k), stride);
+
+                    prev = KeyRef::Slice(&*k);
+
+                    if !length_and_stride_matches {
+                        break;
+                    }
+                }
+                length_and_stride_matches
+            };
+
+        if can_seamlessly_absorb {
+            let mut ret = self.inner.deref().clone();
+            ret.children = self
+                .inner
+                .children
+                .checked_add(u32::try_from(self.overlay.len()).unwrap())
+                .unwrap();
+            return Arc::new(ret);
+        }
+
         let mut items =
             Vec::with_capacity(self.inner.children() + self.overlay.len());
 
@@ -1244,7 +1280,11 @@ impl fmt::Debug for Inner {
             .field("lo", &self.lo())
             .field("hi", &self.hi());
 
-        if self.is_index {
+        if self.fixed_value_length() == Some(0)
+            && self.fixed_key_stride.is_some()
+        {
+            ds.field("fixed node, all keys and values omitted", &()).finish()
+        } else if self.is_index {
             ds.field(
                 "items",
                 &self
@@ -1269,7 +1309,8 @@ impl DerefMut for Inner {
 // constructed from the base by adding a fixed
 // stride to it.
 fn is_linear(a: &KeyRef<'_>, b: &KeyRef<'_>, stride: u16) -> bool {
-    if a.len() != b.len() || a.len() > 4 {
+    let a_len = a.len();
+    if a_len != b.len() || a_len > 4 {
         return false;
     }
 
@@ -2032,6 +2073,28 @@ impl Inner {
         assert_eq!(self.is_index, other.is_index);
         assert!(!self.merging);
         assert!(self.merging_child.is_none());
+        assert!(other.merging_child.is_none());
+
+        // we can shortcut the normal merge process
+        // when the right sibling can be merged into
+        // our node without considering keys or values
+        let can_seamlessly_absorb = self.fixed_key_stride.is_some()
+            && self.fixed_key_stride == other.fixed_key_stride
+            && self.fixed_value_length() == Some(0)
+            && other.fixed_value_length() == Some(0)
+            && self.fixed_key_length == other.fixed_key_length;
+
+        if can_seamlessly_absorb {
+            let mut ret = self.clone();
+            if let Some(other_hi) = other.hi() {
+                ret.hi_mut().unwrap().copy_from_slice(other_hi);
+            }
+            ret.children = self.children.checked_add(other.children).unwrap();
+            ret.next = other.next;
+            ret.rewrite_generations =
+                self.rewrite_generations.max(other.rewrite_generations);
+            return ret;
+        }
 
         let prefix_len = if let Some(right_hi) = other.hi() {
             #[cfg(test)]
@@ -2157,7 +2220,13 @@ impl Inner {
             let shared_distance: usize =
                 shared_distance(&base[..s_len], &key[..s_len]);
 
-            let distance = unshift_distance(shared_distance, base, key);
+            let mut distance = unshift_distance(shared_distance, base, key);
+
+            if distance % stride.get() as usize == 0 && key.len() < base.len() {
+                // searching for [9] resulted in going to [9, 0],
+                // this must have 1 subtracted in that case
+                distance = distance.checked_sub(1).unwrap();
+            }
 
             let offset = distance / stride.get() as usize;
 

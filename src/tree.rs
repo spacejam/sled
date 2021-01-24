@@ -1770,7 +1770,10 @@ impl Tree {
         // only merge or split nodes a few times
         let mut smo_budget = 3_u8;
 
-        for _ in 0..MAX_LOOPS {
+        #[cfg(feature = "testing")]
+        let mut path = vec![];
+
+        for i in 0.. {
             macro_rules! retry {
                 () => {
                     trace!(
@@ -1778,12 +1781,19 @@ impl Tree {
                         line!(),
                         cursor
                     );
+                    if i > MAX_LOOPS {
+                        break;
+                    }
                     smo_budget = smo_budget.saturating_sub(1);
                     cursor = self.root.load(Acquire);
                     root_pid = cursor;
                     parent_view = None;
                     unsplit_parent = None;
                     took_leftmost_branch = false;
+
+                    #[cfg(feature = "testing")]
+                    path.clear();
+
                     continue;
                 };
             }
@@ -1800,6 +1810,9 @@ impl Tree {
             } else {
                 retry!();
             };
+
+            #[cfg(feature = "testing")]
+            path.push((cursor, view.clone()));
 
             // When we encounter a merge intention, we collaboratively help out
             if view.merging_child.is_some() {
@@ -1952,6 +1965,16 @@ impl Tree {
                 return Ok(view);
             }
         }
+
+        #[cfg(feature = "testing")]
+        {
+            log::error!("failed to traverse tree while looking for key {:?}", key.as_ref());
+            log::error!("took path:");
+            for (pid, view) in path {
+                log::error!("pid: {} node: {:?}\n\n", pid, view.deref());
+            }
+        }
+
         panic!(
             "cannot find pid {} in view_for_key, looking for key {:?} in tree",
             cursor,
@@ -2409,13 +2432,13 @@ impl Tree {
                 pid = next_pid.get();
             } else {
                 // we've traversed our level, time to bump down
-                let left_get_res = self.view_for_pid(left_most, &guard);
-                let left_node = if let Ok(Some(ref view)) = left_get_res {
+                let left_get_opt = self.view_for_pid(left_most, &guard)?;
+                let left_node = if let Some(ref view) = left_get_opt {
                     view
                 } else {
                     panic!(
                         "pagecache returned non-base node: {:?}",
-                        left_get_res
+                        left_get_opt
                     )
                 };
 
