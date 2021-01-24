@@ -1153,8 +1153,6 @@ impl Node {
         log::trace!("seeing if we should split node {:?}", self);
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.iter().take(6).count() > 5
-        } else if self.is_index {
-            self.len > 1024 && self.iter().take(2).count() == 2
         } else {
             /*
             let threshold = match self.rewrite_generations {
@@ -2082,7 +2080,9 @@ impl Inner {
             && self.fixed_key_stride == other.fixed_key_stride
             && self.fixed_value_length() == Some(0)
             && other.fixed_value_length() == Some(0)
-            && self.fixed_key_length == other.fixed_key_length;
+            && self.fixed_key_length == other.fixed_key_length
+            && self.lo().len() == other.lo().len()
+            && self.hi().map(|h| h.len()) == other.hi().map(|h| h.len());
 
         if can_seamlessly_absorb {
             let mut ret = self.clone();
