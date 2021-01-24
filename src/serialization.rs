@@ -801,6 +801,7 @@ mod qc {
     impl Arbitrary for Snapshot {
         fn arbitrary<G: Gen>(g: &mut G) -> Snapshot {
             Snapshot {
+                version: g.gen(),
                 stable_lsn: g.gen(),
                 active_segment: g.gen(),
                 pt: Arbitrary::arbitrary(g),
