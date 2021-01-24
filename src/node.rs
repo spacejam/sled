@@ -803,8 +803,13 @@ impl Node {
 
     pub(crate) fn increment_rewrite_generations(&mut self) {
         let rewrite_generations = self.rewrite_generations;
-        Arc::make_mut(&mut self.inner).rewrite_generations =
-            rewrite_generations.saturating_add(1);
+
+        // don't bump rewrite_generations unless we've cooled
+        // down after the last split.
+        if self.activity_sketch == 0 {
+            Arc::make_mut(&mut self.inner).rewrite_generations =
+                rewrite_generations.saturating_add(1);
+        }
     }
 
     pub(crate) fn receive_merge(&self, other: &Node) -> Node {
