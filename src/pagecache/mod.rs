@@ -990,6 +990,7 @@ impl PageCache {
             self.log.iobufs.max_reserved_lsn.load(Acquire);
 
         let snapshot = Snapshot {
+            version: 0,
             stable_lsn: Some(stable_lsn_before),
             active_segment: None,
             pt: page_states,
