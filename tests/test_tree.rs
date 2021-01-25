@@ -2,7 +2,10 @@ mod common;
 mod tree;
 
 use std::{
-    sync::{Arc, Barrier},
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc, Barrier,
+    },
     time::Duration,
 };
 
@@ -25,7 +28,7 @@ const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREA
 const SPACE: usize = N;
 
 #[allow(dead_code)]
-const INTENSITY: usize = 5;
+const INTENSITY: usize = 10;
 
 fn kv(i: usize) -> Vec<u8> {
     let i = i % SPACE;
@@ -431,6 +434,7 @@ fn concurrent_tree_iter() -> Result<()> {
     let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
 
     let mut threads: Vec<thread::JoinHandle<Result<()>>> = vec![];
+    static I: AtomicUsize = AtomicUsize::new(0);
 
     for i in 0..N_FORWARD {
         let t = thread::Builder::new()
@@ -439,6 +443,7 @@ fn concurrent_tree_iter() -> Result<()> {
                 let t = t.clone();
                 let barrier = barrier.clone();
                 move || {
+                    I.fetch_add(1, SeqCst);
                     barrier.wait();
                     for _ in 0..100 {
                         let expected = INDELIBLE.iter();
@@ -461,6 +466,7 @@ fn concurrent_tree_iter() -> Result<()> {
                             }
                         }
                     }
+                    I.fetch_sub(1, SeqCst);
 
                     Ok(())
                 }
@@ -476,6 +482,7 @@ fn concurrent_tree_iter() -> Result<()> {
                 let t = t.clone();
                 let barrier = barrier.clone();
                 move || {
+                    I.fetch_add(1, SeqCst);
                     barrier.wait();
                     for _ in 0..100 {
                         let expected = INDELIBLE.iter().rev();
@@ -502,6 +509,7 @@ fn concurrent_tree_iter() -> Result<()> {
                             }
                         }
                     }
+                    I.fetch_sub(1, SeqCst);
 
                     Ok(())
                 }
@@ -519,13 +527,15 @@ fn concurrent_tree_iter() -> Result<()> {
             move || {
                 barrier.wait();
 
-                for i in 0..(16 * 16 * 8) {
-                    let major = i / (16 * 8);
-                    let minor = i % 16;
+                while I.load(SeqCst) != 0 {
+                    for i in 0..(16 * 16 * 8) {
+                        let major = i / (16 * 8);
+                        let minor = i % 16;
 
-                    let mut base = INDELIBLE[major].to_vec();
-                    base.push(minor as u8);
-                    t.insert(base.clone(), base.clone())?;
+                        let mut base = INDELIBLE[major].to_vec();
+                        base.push(minor as u8);
+                        t.insert(base.clone(), base.clone())?;
+                    }
                 }
 
                 Ok(())
@@ -541,13 +551,15 @@ fn concurrent_tree_iter() -> Result<()> {
             move || {
                 barrier.wait();
 
-                for i in 0..(16 * 16 * 8) {
-                    let major = i / (16 * 8);
-                    let minor = i % 16;
+                while I.load(SeqCst) != 0 {
+                    for i in 0..(16 * 16 * 8) {
+                        let major = i / (16 * 8);
+                        let minor = i % 16;
 
-                    let mut base = INDELIBLE[major].to_vec();
-                    base.push(minor as u8);
-                    t.remove(&base)?;
+                        let mut base = INDELIBLE[major].to_vec();
+                        base.push(minor as u8);
+                        t.remove(&base)?;
+                    }
                 }
 
                 Ok(())

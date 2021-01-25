@@ -803,8 +803,13 @@ impl Node {
 
     pub(crate) fn increment_rewrite_generations(&mut self) {
         let rewrite_generations = self.rewrite_generations;
-        Arc::make_mut(&mut self.inner).rewrite_generations =
-            rewrite_generations.saturating_add(1);
+
+        // don't bump rewrite_generations unless we've cooled
+        // down after the last split.
+        if self.activity_sketch == 0 {
+            Arc::make_mut(&mut self.inner).rewrite_generations =
+                rewrite_generations.saturating_add(1);
+        }
     }
 
     pub(crate) fn receive_merge(&self, other: &Node) -> Node {
@@ -1153,8 +1158,6 @@ impl Node {
         log::trace!("seeing if we should split node {:?}", self);
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.iter().take(6).count() > 5
-        } else if self.is_index {
-            self.len > 1024 && self.iter().take(2).count() == 2
         } else {
             /*
             let threshold = match self.rewrite_generations {
@@ -2024,7 +2027,8 @@ impl Inner {
             &left_items,
         );
 
-        left.rewrite_generations = self.rewrite_generations;
+        left.rewrite_generations =
+            if split_point == 1 { 0 } else { self.rewrite_generations };
         left.probation_ops_remaining =
             tf!((self.children() / 2).min(std::u8::MAX as usize), u8);
 
@@ -2037,7 +2041,11 @@ impl Inner {
             &right_items,
         );
 
-        right.rewrite_generations = self.rewrite_generations;
+        right.rewrite_generations = if split_point == self.children() - 1 {
+            0
+        } else {
+            self.rewrite_generations
+        };
         right.probation_ops_remaining = left.probation_ops_remaining;
 
         right.next = self.next;
@@ -2082,7 +2090,9 @@ impl Inner {
             && self.fixed_key_stride == other.fixed_key_stride
             && self.fixed_value_length() == Some(0)
             && other.fixed_value_length() == Some(0)
-            && self.fixed_key_length == other.fixed_key_length;
+            && self.fixed_key_length == other.fixed_key_length
+            && self.lo().len() == other.lo().len()
+            && self.hi().map(|h| h.len()) == other.hi().map(|h| h.len());
 
         if can_seamlessly_absorb {
             let mut ret = self.clone();
@@ -2610,6 +2620,22 @@ mod test {
         assert!(
             KeyRef::Computed { base: &[2], distance: 0 }
                 > KeyRef::Computed { base: &[0, 2], distance: 0 }
+        );
+        assert!(
+            KeyRef::Computed { base: &[2], distance: 0 }
+                != KeyRef::Computed { base: &[0, 2], distance: 0 }
+        );
+        assert!(
+            KeyRef::Computed { base: &[2], distance: 0 }
+                != KeyRef::Computed { base: &[2, 0], distance: 0 }
+        );
+        assert!(
+            KeyRef::Computed { base: &[1, 0], distance: 0 }
+                != KeyRef::Computed { base: &[255], distance: 1 }
+        );
+        assert!(
+            KeyRef::Computed { base: &[0, 0], distance: 0 }
+                != KeyRef::Computed { base: &[255], distance: 1 }
         );
     }
 
