@@ -14,13 +14,13 @@ use std::convert::TryFrom;
 /// 0x7FFFFFFFFFFFF000 (2^63-1 rounded down to 4k which is a common page size).
 /// So we know we are not running in a memory restricted environment.
 #[cfg(target_os = "linux")]
-fn get_cgroup_memory_limit() -> io::Result<usize> {
+fn get_cgroup_memory_limit() -> io::Result<u64> {
     File::open("/sys/fs/cgroup/memory/memory.limit_in_bytes")
-        .and_then(read_usize_from)
+        .and_then(read_u64_from)
 }
 
 #[cfg(target_os = "linux")]
-fn read_usize_from(mut file: File) -> io::Result<usize> {
+fn read_u64_from(mut file: File) -> io::Result<u64> {
     let mut s = String::new();
     file.read_to_string(&mut s).and_then(|_| {
         s.trim()
@@ -61,7 +61,7 @@ pub fn get_available_memory() -> io::Result<usize> {
 }
 
 pub fn get_memory_limit() -> Option<usize> {
-    let mut max: usize = 0;
+    let mut max: u64 = 0;
 
     #[cfg(target_os = "linux")]
     {
@@ -82,15 +82,15 @@ pub fn get_memory_limit() -> Option<usize> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Ok(rlim) = get_rlimit_as() {
-            let rlim_cur = usize::try_from(rlim.rlim_cur).unwrap();
+            let rlim_cur = u64::try_from(rlim.rlim_cur).unwrap();
             if max == 0 || rlim_cur < max {
                 max = rlim_cur;
             }
         }
 
         if let Ok(available) = get_available_memory() {
-            if max == 0 || available < max {
-                max = available;
+            if max == 0 || (available as u64) < max {
+                max = available as u64;
             }
         }
     }
@@ -106,5 +106,10 @@ pub fn get_memory_limit() -> Option<usize> {
         max /= 40;
     }
 
-    Some(max)
+    let ret = usize::try_from(max).expect("cache limit not representable");
+    if ret == 0 {
+        None
+    } else {
+        Some(ret)
+    }
 }
