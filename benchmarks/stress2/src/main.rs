@@ -58,7 +58,7 @@ Options:
     --cache-mb=<mb>    Size of the page cache in megabytes [default: 1024].
 ";
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct Args {
     threads: usize,
     burn_in: bool,
@@ -131,6 +131,7 @@ impl Args {
                 "sequential" => args.sequential = true,
                 "total-ops" => args.total_ops = Some(parse(&mut splits)),
                 "flush-every" => args.flush_every = parse(&mut splits),
+                "cache-mb" => args.cache_mb = parse(&mut splits),
                 other => panic!("unknown option: {}, {}", other, USAGE),
             }
         }
@@ -296,8 +297,10 @@ fn main() {
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
+    dbg!(args);
+
     let config = sled::Config::new()
-        .cache_capacity(args.cache_mb as u64 * 1024 * 1024)
+        .cache_capacity(args.cache_mb * 1024 * 1024)
         .flush_every_ms(if args.flush_every == 0 {
             None
         } else {
