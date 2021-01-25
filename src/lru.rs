@@ -1,16 +1,19 @@
 #![allow(unsafe_code)]
 
-use std::convert::TryFrom;
-use std::mem::MaybeUninit;
-use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::{
+    borrow::{Borrow, BorrowMut},
+    convert::TryFrom,
+    hash::{Hash, Hasher},
+    mem::MaybeUninit,
+    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
+};
 
 use crate::{
     atomic_shim::AtomicU64,
     debug_delay,
     dll::{DoublyLinkedList, Node},
     fastlock::FastLock,
-    Guard, PageId,
+    FastSet8, Guard, PageId,
 };
 
 #[cfg(any(test, feature = "lock_free_delays"))]
@@ -60,6 +63,8 @@ impl Default for AccessQueue {
 impl AccessQueue {
     fn push(&self, item: CacheAccess) -> bool {
         let mut filled = false;
+        let item_u64: u64 = item.into();
+        assert_ne!(item_u64, 0);
         loop {
             debug_delay();
             let head = self.writing.load(Ordering::Acquire);
@@ -74,7 +79,7 @@ impl AccessQueue {
                     block
                         .block
                         .get_unchecked(offset)
-                        .store(item.0, Ordering::Release);
+                        .store(item_u64, Ordering::Release);
                 }
                 return filled;
             } else {
@@ -183,30 +188,54 @@ impl<'a> Iterator for CacheAccessIter<'a> {
                     .load(Ordering::Acquire);
             }
             self.current_offset += 1;
-            return Some(CacheAccess(next));
+            return Some(CacheAccess::from(next));
         }
 
         None
     }
 }
 
-#[derive(Clone, Copy)]
-struct CacheAccess(u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CacheAccess {
+    // safe because MAX_PID_BITS / N_SHARDS < u32::MAX
+    //                     2**37 /   2**8   < 2**32
+    pub pid: u32,
+    sz: u8,
+}
+
+impl From<CacheAccess> for u64 {
+    fn from(ca: CacheAccess) -> u64 {
+        (u64::from(ca.pid) << 8) | u64::from(ca.sz)
+    }
+}
+
+#[allow(clippy::fallible_impl_from)]
+impl From<u64> for CacheAccess {
+    fn from(u: u64) -> CacheAccess {
+        let sz = usize::try_from((u << 56) >> 56).unwrap();
+        assert_ne!(sz, 0);
+        let pid = u >> 8;
+        assert!(pid < u64::from(std::u32::MAX));
+        CacheAccess {
+            pid: u32::try_from(pid).unwrap(),
+            sz: u8::try_from(sz).unwrap(),
+        }
+    }
+}
 
 impl CacheAccess {
-    fn new(pid: PageId, sz: u64) -> CacheAccess {
-        let rounded_up_power_of_2 =
-            u64::from(sz.next_power_of_two().trailing_zeros());
-
-        assert!(rounded_up_power_of_2 < 256);
-
-        CacheAccess(pid | (rounded_up_power_of_2 << 56))
+    fn size(&self) -> usize {
+        1 << usize::from(self.sz)
     }
 
-    const fn decompose(self) -> (PageId, u64) {
-        let sz = 1 << (self.0 >> 56);
-        let pid = self.0 << 8 >> 8;
-        (pid, sz)
+    fn new(pid: PageId, sz: usize) -> CacheAccess {
+        let rounded_up_power_of_2 =
+            u8::try_from(sz.next_power_of_two().trailing_zeros()).unwrap();
+
+        CacheAccess {
+            pid: u32::try_from(pid).expect("expected caller to shift pid down"),
+            sz: rounded_up_power_of_2,
+        }
     }
 }
 
@@ -217,13 +246,13 @@ pub struct Lru {
 
 impl Lru {
     /// Instantiates a new `Lru` cache.
-    pub(crate) fn new(cache_capacity: u64) -> Self {
+    pub(crate) fn new(cache_capacity: usize) -> Self {
         assert!(
-            cache_capacity >= 256,
+            cache_capacity >= N_SHARDS,
             "Please configure the cache \
              capacity to be at least 256 bytes"
         );
-        let shard_capacity = cache_capacity / N_SHARDS as u64;
+        let shard_capacity = cache_capacity / N_SHARDS;
 
         let mut shards = Vec::with_capacity(N_SHARDS);
         shards.resize_with(N_SHARDS, || {
@@ -245,27 +274,30 @@ impl Lru {
     pub(crate) fn accessed(
         &self,
         id: PageId,
-        item_size: u64,
+        item_size: usize,
         guard: &Guard,
     ) -> Vec<PageId> {
-        let mut ret = vec![];
-        let shards = self.shards.len() as u64;
-        let (shard_idx, item_pos) = (id % shards, id / shards);
-        let (stack, shard_mu) = &self.shards[safe_usize(shard_idx)];
+        const SHARD_BITS: usize = N_SHARDS.trailing_zeros() as usize;
 
-        let filled = stack.push(CacheAccess::new(item_pos, item_size));
+        let mut ret = vec![];
+        let shards = N_SHARDS as u64;
+        let (shard_idx, shifted_pid) = (id % shards, id >> SHARD_BITS);
+        let (access_queue, shard_mu) = &self.shards[safe_usize(shard_idx)];
+
+        let cache_access = CacheAccess::new(shifted_pid, item_size);
+        let filled = access_queue.push(cache_access);
 
         if filled {
-            // only try to acquire this if
+            // only try to acquire this if the access queue has filled
+            // an entire segment
             if let Some(mut shard) = shard_mu.try_lock() {
-                let accesses = stack.take(guard);
+                let accesses = access_queue.take(guard);
                 for item in accesses {
-                    let (item_pos, item_size) = item.decompose();
-                    let to_evict =
-                        shard.accessed(safe_usize(item_pos), item_size);
+                    let to_evict = shard.accessed(item);
                     // map shard internal offsets to global items ids
                     for pos in to_evict {
-                        let item = (pos * shards) + shard_idx;
+                        let item =
+                            (PageId::from(pos) << SHARD_BITS) + shard_idx;
                         ret.push(item);
                     }
                 }
@@ -275,80 +307,106 @@ impl Lru {
     }
 }
 
-#[derive(Clone)]
-struct Entry {
-    ptr: *mut Node,
-    size: u64,
-}
+#[derive(Eq)]
+struct Entry(*mut Node);
 
-#[allow(unsafe_code)]
 unsafe impl Send for Entry {}
 
-impl Default for Entry {
-    fn default() -> Self {
-        Self { ptr: ptr::null_mut(), size: 0 }
+impl Ord for Entry {
+    fn cmp(&self, other: &Entry) -> std::cmp::Ordering {
+        let left_pid: u32 = *self.borrow();
+        let right_pid: u32 = *other.borrow();
+        left_pid.cmp(&right_pid)
+    }
+}
+
+impl PartialOrd<Entry> for Entry {
+    fn partial_cmp(&self, other: &Entry) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Entry {
+    fn eq(&self, other: &Entry) -> bool {
+        unsafe { (*self.0).pid == (*other.0).pid }
+    }
+}
+
+impl BorrowMut<CacheAccess> for Entry {
+    fn borrow_mut(&mut self) -> &mut CacheAccess {
+        unsafe { &mut *self.0 }
+    }
+}
+
+impl Borrow<CacheAccess> for Entry {
+    fn borrow(&self) -> &CacheAccess {
+        unsafe { &*self.0 }
+    }
+}
+
+impl Borrow<u32> for Entry {
+    fn borrow(&self) -> &u32 {
+        unsafe { &(*self.0).pid }
+    }
+}
+
+// we only hash on pid, since we will change
+// sz sometimes and we access the item by pid
+impl Hash for Entry {
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        unsafe { (*self.0).pid.hash(hasher) }
     }
 }
 
 struct Shard {
-    list: DoublyLinkedList,
-    // TODO this should be some sort of pagetable
-    // that doesn't need to move anything when it
-    // grows.
-    entries: Vec<Entry>,
-    capacity: u64,
-    size: u64,
+    dll: DoublyLinkedList,
+    entries: FastSet8<Entry>,
+    capacity: usize,
+    size: usize,
 }
 
 impl Shard {
-    fn new(capacity: u64) -> Self {
+    fn new(capacity: usize) -> Self {
         assert!(capacity > 0, "shard capacity must be non-zero");
 
         Self {
-            list: DoublyLinkedList::default(),
-            entries: vec![],
+            dll: DoublyLinkedList::default(),
+            entries: FastSet8::default(),
             capacity,
             size: 0,
         }
     }
 
     /// `PageId`s in the shard list are indexes of the entries.
-    fn accessed(&mut self, pos: usize, size: u64) -> Vec<PageId> {
-        if pos >= self.entries.len() {
-            let new_sz = (pos + 1).max(self.entries.len() * 120 / 100);
-            self.entries.resize(new_sz, Entry::default());
-        }
+    fn accessed(&mut self, cache_access: CacheAccess) -> Vec<u32> {
+        if let Some(mut entry) = self.entries.take(&cache_access.pid) {
+            let old_ca: &mut CacheAccess = entry.borrow_mut();
+            self.size -= old_ca.size();
+            old_ca.sz = cache_access.sz;
+            self.dll.promote(entry.0);
+            self.entries.insert(entry);
+        } else {
+            let ptr = self.dll.push_head(cache_access);
+            self.entries.insert(Entry(ptr));
+        };
 
-        {
-            let entry = &mut self.entries[pos];
-
-            self.size -= entry.size;
-            entry.size = size;
-            self.size += size;
-
-            if entry.ptr.is_null() {
-                entry.ptr = self.list.push_head(PageId::try_from(pos).unwrap());
-            } else {
-                entry.ptr = self.list.promote(entry.ptr);
-            }
-        }
+        self.size += cache_access.size();
 
         let mut to_evict = vec![];
+
         while self.size > self.capacity {
-            if self.list.len() == 1 {
+            if self.dll.len() == 1 {
                 // don't evict what we just added
                 break;
             }
 
-            let min_pid = self.list.pop_tail().unwrap();
-            let min_pid_idx = safe_usize(min_pid);
+            let min_pid = self.dll.pop_tail().unwrap();
 
-            self.entries[min_pid_idx].ptr = ptr::null_mut();
+            self.entries.remove(&min_pid.pid);
 
-            to_evict.push(min_pid);
+            to_evict.push(min_pid.pid);
 
-            self.size -= self.entries[min_pid_idx].size;
-            self.entries[min_pid_idx].size = 0;
+            self.size -= min_pid.size();
         }
 
         to_evict
@@ -364,9 +422,35 @@ fn safe_usize(value: PageId) -> usize {
 fn lru_smoke_test() {
     use crate::pin;
 
-    let lru = Lru::new(256);
+    let lru = Lru::new(2);
     for i in 0..1000 {
         let guard = pin();
         lru.accessed(i, 16, &guard);
     }
+}
+
+#[test]
+fn lru_access_test() {
+    use crate::pin;
+
+    let ci = CacheAccess::new(6, 20667);
+    assert_eq!(ci.size(), 32 * 1024);
+
+    let lru = Lru::new(4096);
+
+    let guard = pin();
+
+    assert_eq!(lru.accessed(0, 20667, &guard), vec![]);
+    assert_eq!(lru.accessed(2, 20667, &guard), vec![]);
+    assert_eq!(lru.accessed(4, 20667, &guard), vec![]);
+    assert_eq!(lru.accessed(6, 20667, &guard), vec![]);
+    assert_eq!(lru.accessed(8, 20667, &guard), vec![0, 2, 4]);
+    assert_eq!(lru.accessed(10, 20667, &guard), vec![]);
+    assert_eq!(lru.accessed(12, 20667, &guard), vec![]);
+    assert_eq!(lru.accessed(14, 20667, &guard), vec![]);
+    assert_eq!(lru.accessed(16, 20667, &guard), vec![6, 8, 10, 12]);
+    assert_eq!(lru.accessed(18, 20667, &guard), vec![]);
+    assert_eq!(lru.accessed(20, 20667, &guard), vec![]);
+    assert_eq!(lru.accessed(22, 20667, &guard), vec![]);
+    assert_eq!(lru.accessed(24, 20667, &guard), vec![14, 16, 18, 20]);
 }

@@ -62,7 +62,7 @@ mod queue {
 
             std::thread::Builder::new()
                 .name("sled-snapshot-thread".into())
-                .spawn(|| SNAPSHOT_QUEUE.perform_work(false, false))
+                .spawn(|| SNAPSHOT_QUEUE.perform_work(true, false))
                 .expect("failed to spawn critical snapshot thread");
 
             std::thread::Builder::new()

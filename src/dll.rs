@@ -2,14 +2,28 @@
 
 use std::ptr;
 
-use crate::PageId;
+use super::lru::CacheAccess;
 
 /// A simple doubly linked list for use in the `Lru`
 #[derive(Debug)]
 pub(crate) struct Node {
-    inner: PageId,
+    inner: CacheAccess,
     next: *mut Node,
     prev: *mut Node,
+}
+
+impl std::ops::Deref for Node {
+    type Target = CacheAccess;
+
+    fn deref(&self) -> &CacheAccess {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for Node {
+    fn deref_mut(&mut self) -> &mut CacheAccess {
+        &mut self.inner
+    }
 }
 
 impl Node {
@@ -71,17 +85,19 @@ impl DoublyLinkedList {
         self.len
     }
 
-    pub(crate) fn push_head(&mut self, item: PageId) -> *mut Node {
+    pub(crate) fn push_head(&mut self, item: CacheAccess) -> *mut Node {
         self.len += 1;
 
         let node = Node { inner: item, next: ptr::null_mut(), prev: self.head };
 
         let ptr = Box::into_raw(Box::new(node));
 
-        self.push_head_ptr(ptr)
+        self.push_head_ptr(ptr);
+
+        ptr
     }
 
-    fn push_head_ptr(&mut self, ptr: *mut Node) -> *mut Node {
+    fn push_head_ptr(&mut self, ptr: *mut Node) {
         if !self.head.is_null() {
             unsafe {
                 (*self.head).next = ptr;
@@ -94,12 +110,10 @@ impl DoublyLinkedList {
         }
 
         self.head = ptr;
-
-        ptr
     }
 
     #[cfg(test)]
-    pub(crate) fn push_tail(&mut self, item: PageId) {
+    pub(crate) fn push_tail(&mut self, item: CacheAccess) {
         self.len += 1;
 
         let node = Node { inner: item, next: self.tail, prev: ptr::null_mut() };
@@ -119,9 +133,9 @@ impl DoublyLinkedList {
         self.tail = ptr;
     }
 
-    pub(crate) fn promote(&mut self, ptr: *mut Node) -> *mut Node {
+    pub(crate) fn promote(&mut self, ptr: *mut Node) {
         if self.head == ptr {
-            return ptr;
+            return;
         }
 
         unsafe {
@@ -135,12 +149,12 @@ impl DoublyLinkedList {
 
             (*ptr).unwire();
 
-            self.push_head_ptr(ptr)
+            self.push_head_ptr(ptr);
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn pop_head(&mut self) -> Option<PageId> {
+    pub(crate) fn pop_head(&mut self) -> Option<CacheAccess> {
         if self.head.is_null() {
             return None;
         }
@@ -162,7 +176,7 @@ impl DoublyLinkedList {
         }
     }
 
-    pub(crate) fn pop_tail(&mut self) -> Option<PageId> {
+    pub(crate) fn pop_tail(&mut self) -> Option<CacheAccess> {
         if self.tail.is_null() {
             return None;
         }
@@ -185,7 +199,7 @@ impl DoublyLinkedList {
     }
 
     #[cfg(test)]
-    pub(crate) fn into_vec(mut self) -> Vec<PageId> {
+    pub(crate) fn into_vec(mut self) -> Vec<CacheAccess> {
         let mut res = vec![];
         while let Some(val) = self.pop_head() {
             res.push(val);
@@ -198,15 +212,28 @@ impl DoublyLinkedList {
 #[test]
 fn basic_functionality() {
     let mut dll = DoublyLinkedList::default();
-    dll.push_head(5);
-    dll.push_tail(6);
-    dll.push_head(4);
-    dll.push_tail(7);
-    dll.push_tail(8);
-    dll.push_head(3);
-    dll.push_tail(9);
-    dll.push_head(2);
-    dll.push_head(1);
+    dll.push_head(5.into());
+    dll.push_tail(6.into());
+    dll.push_head(4.into());
+    dll.push_tail(7.into());
+    dll.push_tail(8.into());
+    dll.push_head(3.into());
+    dll.push_tail(9.into());
+    dll.push_head(2.into());
+    dll.push_head(1.into());
     assert_eq!(dll.len(), 9);
-    assert_eq!(dll.into_vec(), vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(
+        dll.into_vec(),
+        vec![
+            1.into(),
+            2.into(),
+            3.into(),
+            4.into(),
+            5.into(),
+            6.into(),
+            7.into(),
+            8.into(),
+            9.into()
+        ]
+    );
 }
