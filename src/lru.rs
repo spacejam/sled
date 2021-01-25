@@ -2,7 +2,6 @@
 
 use std::{
     borrow::{Borrow, BorrowMut},
-    collections::HashSet,
     convert::TryFrom,
     hash::{Hash, Hasher},
     mem::MaybeUninit,
@@ -14,7 +13,7 @@ use crate::{
     debug_delay,
     dll::{DoublyLinkedList, Node},
     fastlock::FastLock,
-    Guard, PageId,
+    FastSet8, Guard, PageId,
 };
 
 #[cfg(any(test, feature = "lock_free_delays"))]
@@ -343,7 +342,7 @@ impl Hash for Entry {
 
 struct Shard {
     list: DoublyLinkedList,
-    entries: HashSet<Entry>,
+    entries: FastSet8<Entry>,
     capacity: usize,
     size: usize,
 }
@@ -354,7 +353,7 @@ impl Shard {
 
         Self {
             list: DoublyLinkedList::default(),
-            entries: HashSet::default(),
+            entries: FastSet8::default(),
             capacity,
             size: 0,
         }
