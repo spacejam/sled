@@ -209,13 +209,17 @@ impl From<CacheAccess> for u64 {
     }
 }
 
+#[allow(clippy::fallible_impl_from)]
 impl From<u64> for CacheAccess {
     fn from(u: u64) -> CacheAccess {
         let sz = usize::try_from((u << 56) >> 56).unwrap();
         assert_ne!(sz, 0);
         let pid = u >> 8;
-        assert!(pid < std::u32::MAX as u64);
-        CacheAccess { pid: pid as u32, sz: sz as u8 }
+        assert!(pid < u64::from(std::u32::MAX));
+        CacheAccess {
+            pid: u32::try_from(pid).unwrap(),
+            sz: u8::try_from(sz).unwrap(),
+        }
     }
 }
 
@@ -308,6 +312,20 @@ struct Entry(*mut Node);
 
 unsafe impl Send for Entry {}
 
+impl Ord for Entry {
+    fn cmp(&self, other: &Entry) -> std::cmp::Ordering {
+        let left_pid: u32 = *self.borrow();
+        let right_pid: u32 = *other.borrow();
+        left_pid.cmp(&right_pid)
+    }
+}
+
+impl PartialOrd<Entry> for Entry {
+    fn partial_cmp(&self, other: &Entry) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl PartialEq for Entry {
     fn eq(&self, other: &Entry) -> bool {
         unsafe { (*self.0).pid == (*other.0).pid }
@@ -341,7 +359,7 @@ impl Hash for Entry {
 }
 
 struct Shard {
-    list: DoublyLinkedList,
+    dll: DoublyLinkedList,
     entries: FastSet8<Entry>,
     capacity: usize,
     size: usize,
@@ -352,7 +370,7 @@ impl Shard {
         assert!(capacity > 0, "shard capacity must be non-zero");
 
         Self {
-            list: DoublyLinkedList::default(),
+            dll: DoublyLinkedList::default(),
             entries: FastSet8::default(),
             capacity,
             size: 0,
@@ -365,10 +383,10 @@ impl Shard {
             let old_ca: &mut CacheAccess = entry.borrow_mut();
             self.size -= old_ca.size();
             old_ca.sz = cache_access.sz;
-            self.list.promote(entry.0);
+            self.dll.promote(entry.0);
             self.entries.insert(entry);
         } else {
-            let ptr = self.list.push_head(cache_access);
+            let ptr = self.dll.push_head(cache_access);
             self.entries.insert(Entry(ptr));
         };
 
@@ -377,12 +395,12 @@ impl Shard {
         let mut to_evict = vec![];
 
         while self.size > self.capacity {
-            if self.list.len() == 1 {
+            if self.dll.len() == 1 {
                 // don't evict what we just added
                 break;
             }
 
-            let min_pid = self.list.pop_tail().unwrap();
+            let min_pid = self.dll.pop_tail().unwrap();
 
             self.entries.remove(&min_pid.pid);
 
