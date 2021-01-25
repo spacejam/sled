@@ -44,6 +44,8 @@
 * #1253 The `IVec::subslice` method has been removed.
 * #1275 Keys and values are now limited to 128gb on 64-bit
   platforms and 512mb on 32-bit platforms.
+* #1281 `Config`'s `cache_capacity` is now a usize, as u64
+  doesn't make sense for things that must fit in memory anyway.
 
 ## Bug Fixes
 
