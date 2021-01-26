@@ -915,7 +915,7 @@ impl PageCache {
                         && link_count % self.config.snapshot_after_ops == 0
                     {
                         let s2: PageCache = self.clone();
-                        threadpool::take_fuzzy_snapshot(s2)?;
+                        threadpool::take_fuzzy_snapshot(s2);
                     }
 
                     return Ok(Ok(old));

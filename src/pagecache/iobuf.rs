@@ -1278,7 +1278,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         );
         let iobufs = iobufs.clone();
         let iobuf = iobuf.clone();
-        let _result = threadpool::write_to_log(iobuf, iobufs)?;
+        let _result = threadpool::write_to_log(iobuf, iobufs);
 
         #[cfg(feature = "event_log")]
         _result.wait();

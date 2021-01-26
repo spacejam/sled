@@ -616,10 +616,11 @@ macro_rules! impl_transactional_tuple_trees {
             type View = repeat_type!(TransactionalTree, ($($indices),+));
 
             fn make_overlay(&self) -> Result<TransactionalTrees> {
-                let mut paths = vec![];
-                $(
-                    paths.push(self.$indices.context.get_path());
-                )+
+                let paths = vec![
+                    $(
+                        self.$indices.context.get_path(),
+                    )+
+                ];
                 if !paths.windows(2).all(|w| {
                     w[0] == w[1]
                 }) {

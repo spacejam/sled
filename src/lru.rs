@@ -200,7 +200,7 @@ pub(crate) struct CacheAccess {
     // safe because MAX_PID_BITS / N_SHARDS < u32::MAX
     //                     2**37 /   2**8   < 2**32
     pub pid: u32,
-    sz: u8,
+    pub sz: u8,
 }
 
 impl From<CacheAccess> for u64 {
@@ -379,12 +379,12 @@ impl Shard {
 
     /// `PageId`s in the shard list are indexes of the entries.
     fn accessed(&mut self, cache_access: CacheAccess) -> Vec<u32> {
-        if let Some(mut entry) = self.entries.take(&cache_access.pid) {
-            let old_ca: &mut CacheAccess = entry.borrow_mut();
-            self.size -= old_ca.size();
-            old_ca.sz = cache_access.sz;
+        if let Some(entry) = self.entries.get(&cache_access.pid) {
+            let old_sz_po2 = unsafe { (*entry.0).swap_sz(cache_access.sz) };
+            let old_size = 1 << usize::from(old_sz_po2);
+
+            self.size -= old_size;
             self.dll.promote(entry.0);
-            self.entries.insert(entry);
         } else {
             let ptr = self.dll.push_head(cache_access);
             self.entries.insert(Entry(ptr));

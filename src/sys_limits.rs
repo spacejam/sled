@@ -79,6 +79,7 @@ pub fn get_memory_limit() -> Option<usize> {
         }
     }
 
+    #[allow(clippy::useless_conversion)]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Ok(rlim) = get_rlimit_as() {
