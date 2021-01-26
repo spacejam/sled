@@ -1,13 +1,13 @@
 #![allow(unsafe_code)]
 
-use std::ptr;
+use std::{cell::UnsafeCell, ptr};
 
 use super::lru::CacheAccess;
 
 /// A simple doubly linked list for use in the `Lru`
 #[derive(Debug)]
 pub(crate) struct Node {
-    inner: CacheAccess,
+    inner: UnsafeCell<CacheAccess>,
     next: *mut Node,
     prev: *mut Node,
 }
@@ -16,13 +16,13 @@ impl std::ops::Deref for Node {
     type Target = CacheAccess;
 
     fn deref(&self) -> &CacheAccess {
-        &self.inner
+        unsafe { &(*self.inner.get()) }
     }
 }
 
 impl std::ops::DerefMut for Node {
     fn deref_mut(&mut self) -> &mut CacheAccess {
-        &mut self.inner
+        unsafe { &mut (*self.inner.get()) }
     }
 }
 
@@ -40,6 +40,18 @@ impl Node {
 
         self.next = ptr::null_mut();
         self.prev = ptr::null_mut();
+    }
+
+    // This is a bit hacky but it's done
+    // this way because we don't have a way
+    // of mutating a key that is in a HashSet.
+    //
+    // This is safe to do because the hash
+    // happens based on the PageId of the
+    // CacheAccess, rather than the size
+    // that we modify here.
+    pub fn swap_sz(&self, new_sz: u8) -> u8 {
+        unsafe { std::mem::replace(&mut (*self.inner.get()).sz, new_sz) }
     }
 }
 
@@ -88,7 +100,11 @@ impl DoublyLinkedList {
     pub(crate) fn push_head(&mut self, item: CacheAccess) -> *mut Node {
         self.len += 1;
 
-        let node = Node { inner: item, next: ptr::null_mut(), prev: self.head };
+        let node = Node {
+            inner: UnsafeCell::new(item),
+            next: ptr::null_mut(),
+            prev: self.head,
+        };
 
         let ptr = Box::into_raw(Box::new(node));
 
@@ -184,7 +200,7 @@ impl DoublyLinkedList {
         self.len -= 1;
 
         unsafe {
-            let mut tail = Box::from_raw(self.tail);
+            let mut tail: Box<Node> = Box::from_raw(self.tail);
 
             if self.head == self.tail {
                 self.head = ptr::null_mut();
@@ -194,7 +210,7 @@ impl DoublyLinkedList {
 
             tail.unwire();
 
-            Some(tail.inner)
+            Some(**tail)
         }
     }
 

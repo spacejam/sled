@@ -148,7 +148,7 @@ impl PageTable {
         debug_delay();
         let res = tip.load(Acquire, guard);
 
-        assert!(!res.is_null());
+        assert!(!res.is_null(), "tried to get pid {}", pid);
 
         PageView { read: res, entry: tip }
     }
