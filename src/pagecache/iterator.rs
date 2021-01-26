@@ -336,7 +336,7 @@ fn scan_segment_headers_and_tail(
     );
 
     // scatter
-    let header_promises_res: Result<Vec<_>> = (0..segments)
+    let header_promises: Vec<_> = (0..segments)
         .map({
             // let config = config.clone();
             move |idx| {
@@ -347,8 +347,6 @@ fn scan_segment_headers_and_tail(
             }
         })
         .collect();
-
-    let header_promises = header_promises_res?;
 
     // gather
     let mut headers: Vec<(LogOffset, SegmentHeader)> = vec![];

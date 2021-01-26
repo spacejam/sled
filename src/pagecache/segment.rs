@@ -1189,7 +1189,7 @@ impl SegmentAccountant {
         let config = self.config.clone();
 
         io_fail!(&config, "file truncation");
-        let promise = threadpool::truncate(config, at)?;
+        let promise = threadpool::truncate(config, at);
 
         if self.async_truncations.insert(at, promise).is_some() {
             panic!(

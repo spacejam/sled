@@ -459,7 +459,7 @@ impl Log {
             );
             let iobufs = self.iobufs.clone();
             let iobuf = iobuf.clone();
-            threadpool::write_to_log(iobuf, iobufs)?;
+            threadpool::write_to_log(iobuf, iobufs);
 
             Ok(())
         } else {

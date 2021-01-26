@@ -26,7 +26,7 @@ mod queue {
 
     use parking_lot::{Condvar, Mutex};
 
-    use crate::{debug_delay, Lazy, OneShot, Result};
+    use crate::{debug_delay, Lazy, OneShot};
 
     pub(super) static BLOCKING_QUEUE: Lazy<Queue, fn() -> Queue> =
         Lazy::new(Default::default);
@@ -39,10 +39,7 @@ mod queue {
 
     type Work = Box<dyn FnOnce() + Send + 'static>;
 
-    pub(super) fn spawn_to<F, R>(
-        work: F,
-        queue: &'static Queue,
-    ) -> Result<OneShot<R>>
+    pub(super) fn spawn_to<F, R>(work: F, queue: &'static Queue) -> OneShot<R>
     where
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static + Sized,
@@ -78,7 +75,7 @@ mod queue {
 
         queue.send(Box::new(task));
 
-        Ok(promise)
+        promise
     }
 
     #[derive(Default)]
@@ -161,7 +158,7 @@ mod queue {
 }
 
 /// Spawn a function on the threadpool.
-pub fn spawn<F, R>(work: F) -> Result<OneShot<R>>
+pub fn spawn<F, R>(work: F) -> OneShot<R>
 where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static + Sized,
@@ -186,7 +183,7 @@ mod queue {
     /// This is the polyfill that just executes things synchronously.
     use crate::{OneShot, Result};
 
-    pub(super) fn spawn_to<F, R>(work: F, _: &()) -> Result<OneShot<R>>
+    pub(super) fn spawn_to<F, R>(work: F, _: &()) -> OneShot<R>
     where
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
@@ -195,7 +192,7 @@ mod queue {
         // perform threaded work on. Just execute a task without involving threads.
         let (promise_filler, promise) = OneShot::pair();
         promise_filler.fill((work)());
-        Ok(promise)
+        promise
     }
 
     pub(super) const IO_QUEUE: () = ();
@@ -206,10 +203,7 @@ mod queue {
 
 use queue::spawn_to;
 
-pub fn truncate(
-    config: crate::RunningConfig,
-    at: u64,
-) -> Result<OneShot<Result<()>>> {
+pub fn truncate(config: crate::RunningConfig, at: u64) -> OneShot<Result<()>> {
     spawn_to(
         move || {
             log::debug!("truncating file to length {}", at);
@@ -223,9 +217,7 @@ pub fn truncate(
     )
 }
 
-pub fn take_fuzzy_snapshot(
-    pc: crate::pagecache::PageCache,
-) -> Result<OneShot<()>> {
+pub fn take_fuzzy_snapshot(pc: crate::pagecache::PageCache) -> OneShot<()> {
     spawn_to(
         move || {
             if let Err(e) = pc.take_fuzzy_snapshot() {
@@ -239,7 +231,7 @@ pub fn take_fuzzy_snapshot(
 pub(crate) fn write_to_log(
     iobuf: Arc<crate::pagecache::iobuf::IoBuf>,
     iobufs: Arc<crate::pagecache::iobuf::IoBufs>,
-) -> Result<OneShot<()>> {
+) -> OneShot<()> {
     spawn_to(
         move || {
             let lsn = iobuf.lsn;
