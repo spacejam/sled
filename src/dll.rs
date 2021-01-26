@@ -132,7 +132,11 @@ impl DoublyLinkedList {
     pub(crate) fn push_tail(&mut self, item: CacheAccess) {
         self.len += 1;
 
-        let node = Node { inner: item, next: self.tail, prev: ptr::null_mut() };
+        let node = Node {
+            inner: UnsafeCell::new(item),
+            next: self.tail,
+            prev: ptr::null_mut(),
+        };
 
         let ptr = Box::into_raw(Box::new(node));
 
@@ -188,7 +192,7 @@ impl DoublyLinkedList {
 
             head.unwire();
 
-            Some(head.inner)
+            Some(**head)
         }
     }
 
