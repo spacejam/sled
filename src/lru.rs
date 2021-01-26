@@ -76,7 +76,7 @@ impl AccessQueue {
     fn push(&self, item: CacheAccess) -> bool {
         loop {
             debug_delay();
-            let head = self.writing.load(Ordering::Relaxed);
+            let head = self.writing.load(Ordering::Acquire);
             let block = unsafe { &*head };
 
             debug_delay();
