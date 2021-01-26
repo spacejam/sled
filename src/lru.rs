@@ -49,6 +49,18 @@ struct AccessQueue {
     full_list: AtomicPtr<AccessBlock>,
 }
 
+impl AccessBlock {
+    fn new(item: CacheAccess) -> AccessBlock {
+        let mut ret = AccessBlock {
+            len: AtomicUsize::new(1),
+            block: unsafe { MaybeUninit::zeroed().assume_init() },
+            next: AtomicPtr::default(),
+        };
+        ret.block[0] = AtomicU64::from(u64::from(item));
+        ret
+    }
+}
+
 impl Default for AccessQueue {
     fn default() -> AccessQueue {
         AccessQueue {
@@ -62,18 +74,17 @@ impl Default for AccessQueue {
 
 impl AccessQueue {
     fn push(&self, item: CacheAccess) -> bool {
-        let mut filled = false;
-        let item_u64: u64 = item.into();
-        assert_ne!(item_u64, 0);
         loop {
             debug_delay();
-            let head = self.writing.load(Ordering::Acquire);
+            let head = self.writing.load(Ordering::Relaxed);
             let block = unsafe { &*head };
 
             debug_delay();
-            let offset = block.len.fetch_add(1, Ordering::Release);
+            let offset = block.len.fetch_add(1, Ordering::Acquire);
 
             if offset < MAX_QUEUE_ITEMS {
+                let item_u64: u64 = item.into();
+                assert_ne!(item_u64, 0);
                 debug_delay();
                 unsafe {
                     block
@@ -81,10 +92,10 @@ impl AccessQueue {
                         .get_unchecked(offset)
                         .store(item_u64, Ordering::Release);
                 }
-                return filled;
+                return false;
             } else {
                 // install new writer
-                let new = Box::into_raw(Box::new(AccessBlock::default()));
+                let new = Box::into_raw(Box::new(AccessBlock::new(item)));
                 debug_delay();
                 let res = self.writing.compare_exchange_weak(
                     head,
@@ -119,7 +130,7 @@ impl AccessQueue {
                 } {
                     full_list_ptr = ret.unwrap_err();
                 }
-                filled = true;
+                return true;
             }
         }
     }
