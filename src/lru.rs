@@ -380,8 +380,8 @@ impl Shard {
     /// `PageId`s in the shard list are indexes of the entries.
     fn accessed(&mut self, cache_access: CacheAccess) -> Vec<u32> {
         if let Some(entry) = self.entries.get(&cache_access.pid) {
-            let old_size = 1
-                << usize::from(unsafe { (*entry.0).swap_sz(cache_access.sz) });
+            let old_sz_po2 = unsafe { (*entry.0).swap_sz(cache_access.sz) };
+            let old_size = 1 << usize::from(old_sz_po2);
 
             self.size -= old_size;
             self.dll.promote(entry.0);
