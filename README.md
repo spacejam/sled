@@ -86,7 +86,9 @@ If you would like to work with structured data without paying expensive deserial
 * flash-optimized log-structured storage
 * uses modern b-tree techniques such as prefix encoding and suffix
   truncation for reducing the storage costs of long keys with shared
-  prefixes
+  prefixes. If keys are the same length and sequential then the
+  system can avoid storing 99%+ of the key data in most cases,
+  essentially acting like a learned index
 
 # expectations, gotchas, advice
 
