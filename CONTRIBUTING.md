@@ -42,7 +42,7 @@ challenging to understand why something is failing these intense tests.
 For better understanding test failures, please:
 
 1. read the failing test name and output log for clues
-1. try to reproduce the failed test locally by running its assocated command from the [test script](https://github.com/spacejam/sled/blob/master/.github/workflows/test.yml)
+1. try to reproduce the failed test locally by running its assocated command from the [test script](https://github.com/spacejam/sled/blob/main/.github/workflows/test.yml)
 1. If it is not clear why your test is failing, feel free to request help with understanding it either on discord or requesting help on the PR, and we will do our best to help.
 
 Want to help sled but don't have time for individual contributions? Contribute via [GitHub Sponsors](https://github.com/sponsors/spacejam) to support the people pushing the project forward!

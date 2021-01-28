@@ -23,7 +23,7 @@
   </td>
   <td>
 <p align="center">
-  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="40%" height="auto" />
+  <img src="https://raw.githubusercontent.com/spacejam/sled/main/art/tree_face_anti-transphobia.png" width="40%" height="auto" />
   </p>
   </td>
  </tr>

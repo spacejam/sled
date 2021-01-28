@@ -1,4 +1,8 @@
-//! Here's a look at where sled is at, and where it's going architecturally. The system is very much under active development, and we have a ways to go. If specific areas are interesting to you, I'd love to [work together](https://github.com/spacejam/sled/blob/master/CONTRIBUTING.md)! If your business has a need for particular items below, you can [fund development of particular features](https://opencollective.com/sled).
+//! Here's a look at where sled is at, and where it's going architecturally. The system is very
+//! much under active development, and we have a ways to go. If specific areas are interesting to
+//! you, I'd love to [work together](https://github.com/spacejam/sled/blob/main/CONTRIBUTING.md)!
+//! If your business has a need for particular items below, you can [fund development of particular
+//! features](https://opencollective.com/sled).
 //!
 //! People face unnecessary hardship when working with existing embedded
 //! databases. They tend to have sharp performance trade-offs, are difficult to
