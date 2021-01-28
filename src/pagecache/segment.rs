@@ -281,7 +281,7 @@ impl Segment {
                 std::mem::replace(&mut active.pids, Default::default());
 
             for deferred_replaced_pid in &active.deferred_replaced_pids {
-                assert!(pids.remove(&deferred_replaced_pid));
+                assert!(pids.remove(deferred_replaced_pid));
             }
 
             let inactive = Segment::Inactive(Inactive {
