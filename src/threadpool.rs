@@ -20,7 +20,10 @@ use crate::{OneShot, Result};
 mod queue {
     use std::{
         collections::VecDeque,
-        sync::Once,
+        sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Once,
+        },
         time::{Duration, Instant},
     };
 
@@ -82,6 +85,8 @@ mod queue {
     pub(super) struct Queue {
         cv: Condvar,
         mu: Mutex<VecDeque<Work>>,
+        temporary_threads: AtomicUsize,
+        spawning: AtomicBool,
     }
 
     #[allow(unsafe_code)]
@@ -119,6 +124,10 @@ mod queue {
         }
 
         fn perform_work(&'static self, elastic: bool, temporary: bool) {
+            const MAX_TEMPORARY_THREADS: usize = 16;
+
+            self.spawning.store(false, Ordering::SeqCst);
+
             let wait_limit = Duration::from_millis(100);
 
             let mut unemployed_loops = 0;
@@ -133,7 +142,24 @@ mod queue {
 
                 if let Some((task, outstanding_work)) = task_opt {
                     // spin up some help if we're falling behind
-                    if elastic && outstanding_work > 5 {
+
+                    let temporary_threads =
+                        self.temporary_threads.load(Ordering::Acquire);
+
+                    if elastic
+                        && outstanding_work > 5
+                        && temporary_threads < MAX_TEMPORARY_THREADS
+                        && self
+                            .spawning
+                            .compare_exchange(
+                                false,
+                                true,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            )
+                            .is_ok()
+                    {
+                        self.temporary_threads.fetch_add(1, Ordering::SeqCst);
                         let spawn_res = std::thread::Builder::new()
                             .name("sled-temporary-thread".into())
                             .spawn(move || self.perform_work(false, true));
@@ -142,6 +168,8 @@ mod queue {
                                 "failed to spin-up temporary work thread: {:?}",
                                 e
                             );
+                            self.temporary_threads
+                                .fetch_sub(1, Ordering::SeqCst);
                         }
                     }
 
@@ -153,6 +181,9 @@ mod queue {
                     unemployed_loops += 1;
                 }
             }
+
+            assert!(temporary);
+            self.temporary_threads.fetch_sub(1, Ordering::SeqCst);
         }
     }
 }
