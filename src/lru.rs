@@ -461,7 +461,10 @@ fn lru_access_test() {
     assert_eq!(lru.accessed(2, 20667, &guard), vec![]);
     assert_eq!(lru.accessed(4, 20667, &guard), vec![]);
     assert_eq!(lru.accessed(6, 20667, &guard), vec![]);
+
+    // TODO failing occasionally
     assert_eq!(lru.accessed(8, 20667, &guard), vec![0, 2, 4]);
+
     assert_eq!(lru.accessed(10, 20667, &guard), vec![]);
     assert_eq!(lru.accessed(12, 20667, &guard), vec![]);
     assert_eq!(lru.accessed(14, 20667, &guard), vec![]);
