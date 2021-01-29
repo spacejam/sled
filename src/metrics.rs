@@ -112,7 +112,7 @@ pub struct Metrics {
     pub replace_page: Histogram,
     pub reserve_lat: Histogram,
     pub reserve_sz: Histogram,
-    pub rewrite_page: Histogram,
+    pub clean_log: Histogram,
     pub segment_read: Histogram,
     pub segment_utilization_startup: Histogram,
     pub segment_utilization_shutdown: Histogram,
@@ -299,7 +299,7 @@ impl Metrics {
         ret.push_str(&p(vec![
             lat("get", &self.get_page),
             lat("get pt", &self.get_pagetable),
-            lat("rewrite", &self.rewrite_page),
+            lat("clean log", &self.clean_log),
             lat("replace", &self.replace_page),
             lat("link", &self.link_page),
             lat("pull", &self.pull),

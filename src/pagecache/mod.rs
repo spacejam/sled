@@ -40,7 +40,7 @@ use self::{
         PAGE_CONSOLIDATION_THRESHOLD, SEGMENT_CLEANUP_THRESHOLD,
     },
     header::Header,
-    iobuf::{roll_iobuf, IoBuf, IoBufs},
+    iobuf::{roll_iobuf, AlignedBuf, IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
     segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
@@ -1261,6 +1261,75 @@ impl PageCacheInner {
                 unreachable!();
             }
         }))
+    }
+
+    // TODO this will replace clean_log below
+    pub(crate) fn _clean_segments(&self, _guard: &Guard) -> Result<bool> {
+        // see if we have enough pids to justify a segment
+        let pids_to_clean = if let Some(pids_to_clean) = todo!() {
+            pids_to_clean
+        } else {
+            return Ok(false);
+        };
+
+        // allocate a new `IoBuf` to hold the replacements
+        let (next_offset, next_lsn, from_tip) =
+            match self.log.iobufs.with_sa(SegmentAccountant::next) {
+                Ok(ret) => ret,
+                Err(e) => {
+                    self.log.iobufs.config.set_global_error(e.clone());
+                    let intervals = self.log.iobufs.intervals.lock();
+
+                    // having held the mutex makes this linearized
+                    // with the notify below.
+                    drop(intervals);
+
+                    let _notified =
+                        self.log.iobufs.interval_updated.notify_all();
+                    return Err(e);
+                }
+            };
+
+        let mut iobuf = IoBuf {
+            buf: Arc::new(std::cell::UnsafeCell::new(AlignedBuf::new(
+                self.config.segment_size,
+            ))),
+            header: CachePadded::new(AtomicU64::new(0)),
+            base: 0,
+            offset: next_offset,
+            lsn: next_lsn,
+            from_tip,
+            capacity: self.config.segment_size,
+            stored_max_stable_lsn: -1,
+        };
+
+        iobuf.store_segment_header(next_lsn, self.log.iobufs.stable());
+
+        // for each page, try to reserve space for its rewrite
+        todo!();
+
+        // Once the iobuf is full or we're out of pids to
+        // replace, put overflow into the normal log and
+        // wait for the previous segment to stabilize.
+        assert_ne!(next_lsn, 0);
+        self.log.make_stable(next_lsn - self.config.segment_size as Lsn)?;
+
+        // Once the previous segment stabilizes, sweep through
+        // all replaced nodes and cas them to the replacement.
+        // If this fails, they were invalidated by writes that
+        // would be logged "before" the lsn of this replacement
+        // segment, so we have to cancel their reservation. It's
+        // important that the ts remains the same for all pages.
+        todo!();
+
+        // Write the iobuf to disk.
+        threadpool::write_to_log(Arc::new(iobuf), self.log.iobufs.clone());
+
+        // mark_replace for all successfully rewritten pids
+        todo!();
+
+        // do a normal rewrite page on anything that didn't fit
+        todo!()
     }
 
     // rewrite a page so we can reuse the segment that it is

@@ -27,10 +27,10 @@ macro_rules! io_fail {
     };
 }
 
-struct AlignedBuf(*mut u8, usize);
+pub(crate) struct AlignedBuf(*mut u8, usize);
 
 impl AlignedBuf {
-    fn new(len: usize) -> AlignedBuf {
+    pub(crate) fn new(len: usize) -> AlignedBuf {
         let layout = Layout::from_size_align(len, 8192).unwrap();
         let ptr = unsafe { alloc(layout) };
 
@@ -50,14 +50,14 @@ impl Drop for AlignedBuf {
 }
 
 pub(crate) struct IoBuf {
-    buf: Arc<UnsafeCell<AlignedBuf>>,
-    header: CachePadded<AtomicU64>,
-    base: usize,
+    pub buf: Arc<UnsafeCell<AlignedBuf>>,
+    pub header: CachePadded<AtomicU64>,
+    pub base: usize,
     pub offset: LogOffset,
     pub lsn: Lsn,
     pub capacity: usize,
-    from_tip: bool,
-    stored_max_stable_lsn: Lsn,
+    pub from_tip: bool,
+    pub stored_max_stable_lsn: Lsn,
 }
 
 #[allow(unsafe_code)]
@@ -109,9 +109,8 @@ impl IoBuf {
     // We write a new segment header to the beginning of the buffer
     // for assistance during recovery. The caller is responsible
     // for ensuring that the IoBuf's capacity has been set properly.
-    fn store_segment_header(
+    pub(crate) fn store_segment_header(
         &mut self,
-        last: Header,
         lsn: Lsn,
         max_stable_lsn: Lsn,
     ) {
@@ -135,9 +134,7 @@ impl IoBuf {
         }
 
         // ensure writes to the buffer land after our header.
-        let last_salt = header::salt(last);
-        let new_salt = header::bump_salt(last_salt);
-        let bumped = header::bump_offset(new_salt, SEG_HEADER_LEN);
+        let bumped = header::bump_offset(0, SEG_HEADER_LEN);
         self.set_header(bumped);
     }
 
@@ -586,7 +583,7 @@ impl IoBufs {
         };
 
         if snapshot.active_segment.is_none() {
-            iobuf.store_segment_header(0, next_lsn, stable);
+            iobuf.store_segment_header(next_lsn, stable);
         }
 
         Ok(IoBufs {
@@ -1362,7 +1359,7 @@ fn maybe_seal_and_write_iobuf(
             lid + res_len as LogOffset,
         );
 
-        match iobufs.with_sa(|sa| sa.next()) {
+        match iobufs.with_sa(SegmentAccountant::next) {
             Ok(ret) => ret,
             Err(e) => {
                 iobufs.config.set_global_error(e.clone());
@@ -1402,19 +1399,17 @@ fn maybe_seal_and_write_iobuf(
             stored_max_stable_lsn: -1,
         };
 
-        next_iobuf.store_segment_header(sealed, next_lsn, iobufs.stable());
+        next_iobuf.store_segment_header(next_lsn, iobufs.stable());
 
         next_iobuf
     } else {
         let new_cap = capacity - res_len;
         assert_ne!(new_cap, 0);
-        let last_salt = header::salt(sealed);
-        let new_salt = header::bump_salt(last_salt);
 
         IoBuf {
             // reuse the previous io buffer
             buf: iobuf.buf.clone(),
-            header: CachePadded::new(AtomicU64::new(new_salt)),
+            header: CachePadded::new(AtomicU64::new(0)),
             base: iobuf.base + res_len,
             offset: next_offset,
             lsn: next_lsn,

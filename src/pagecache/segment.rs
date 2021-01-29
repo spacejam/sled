@@ -365,6 +365,7 @@ impl Segment {
             Segment::Free(_) => panic!("called lsn on Segment::Free"),
         }
     }
+
     /// Add a pid to the Segment. The caller must provide
     /// the Segment's LSN.
     fn insert_pid(&mut self, pid: PageId, lsn: Lsn, size: usize) {

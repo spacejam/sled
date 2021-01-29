@@ -56,11 +56,3 @@ pub(crate) fn bump_offset(v: Header, by: usize) -> Header {
     assert_eq!(by >> 24, 0);
     v + (by as Header)
 }
-
-pub(crate) const fn bump_salt(v: Header) -> Header {
-    (v + (1 << 33)) & 0xFFFF_FFFD_0000_0000
-}
-
-pub(crate) const fn salt(v: Header) -> Header {
-    (v >> 33) << 33
-}
