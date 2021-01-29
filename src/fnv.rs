@@ -20,13 +20,9 @@ impl std::hash::Hasher for Hasher {
     #[inline]
     #[allow(clippy::cast_lossless)]
     fn write(&mut self, bytes: &[u8]) {
-        let Hasher(mut hash) = *self;
-
         for byte in bytes.iter() {
-            hash ^= *byte as u64;
-            hash = hash.wrapping_mul(0x100000001b3);
+            self.0 ^= *byte as u64;
+            self.0 = self.0.wrapping_mul(0x100000001b3);
         }
-
-        *self = Hasher(hash);
     }
 }
