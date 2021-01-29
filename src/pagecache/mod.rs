@@ -1165,12 +1165,7 @@ impl PageCacheInner {
             guard,
         )?;
 
-        iobuf::maybe_seal_and_write_iobuf(
-            &self.log.iobufs,
-            &batch_res.iobuf,
-            batch_res.iobuf.get_header(),
-            false,
-        )?;
+        self.log.roll_iobuf()?;
 
         Ok(RecoveryGuard { batch_res })
     }

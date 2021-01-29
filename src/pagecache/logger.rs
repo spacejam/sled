@@ -1,9 +1,9 @@
 use std::fs::File;
 
 use super::{
-    arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, decompress, header,
-    iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr,
-    Arc, BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
+    arr_to_lsn, arr_to_u32, assert_usize, decompress, header, iobuf,
+    lsn_to_arr, pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr, Arc,
+    BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
     MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
     COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, SEG_HEADER_LEN,
 };
@@ -163,7 +163,7 @@ impl Log {
         pid: PageId,
         item: &T,
         heap_rewrite: Option<HeapId>,
-        _: &Guard,
+        guard: &Guard,
     ) -> Result<Reservation<'_>> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.reserve_lat);
@@ -183,18 +183,6 @@ impl Log {
             max_buf_len > u64::try_from(max_buf_size).unwrap();
 
         assert!(!(over_heap_threshold && heap_rewrite.is_some()));
-
-        let mut printed = false;
-        macro_rules! trace_once {
-            ($($msg:expr),*) => {
-                if !printed {
-                    trace!($($msg),*);
-                    printed = true;
-                }
-            };
-        }
-
-        let backoff = Backoff::new();
 
         let kind = match (
             pid,
@@ -219,7 +207,12 @@ impl Log {
             ),
         };
 
+        let backoff = Backoff::new();
+
+        let mut attempt = 0;
         loop {
+            attempt += 1;
+
             #[cfg(feature = "metrics")]
             M.log_reservation_attempted();
 
@@ -236,185 +229,23 @@ impl Log {
                 return Err(e);
             }
 
-            // load current header value
             let iobuf = self.iobufs.current_iobuf();
-            let header = iobuf.get_header();
-            let buf_offset = header::offset(header);
-            let reservation_lsn =
-                iobuf.lsn + Lsn::try_from(buf_offset).unwrap();
 
-            // skip if already sealed
-            if header::is_sealed(header) {
-                // already sealed, start over and hope cur
-                // has already been bumped by sealer.
-                trace_once!("io buffer already sealed, spinning");
-
-                backoff.spin();
-
-                continue;
-            }
-
-            // figure out how big the header + buf will be.
-            // this is variable because of varints used
-            // in the header.
-            let message_header = MessageHeader {
-                crc32: 0,
+            if let Some(reservation) = iobuf.reserve(
+                self,
                 kind,
-                segment_number: SegmentNumber(
-                    u64::try_from(iobuf.lsn).unwrap()
-                        / u64::try_from(self.config.segment_size).unwrap(),
-                ),
                 pid,
-                len: if over_heap_threshold {
-                    // a HeapId is always 16 bytes
-                    16
-                } else {
-                    serialized_len
-                },
-            };
-
-            let inline_buf_len = if over_heap_threshold {
-                usize::try_from(
-                    // a HeapId is always 16 bytes
-                    message_header.serialized_size() + 16,
-                )
-                .unwrap()
-            } else {
-                usize::try_from(
-                    message_header.serialized_size() + serialized_len,
-                )
-                .unwrap()
-            };
-
-            trace!(
-                "reserving buf of len {} for pid {} with kind {:?}",
-                inline_buf_len,
-                pid,
-                kind
-            );
-
-            // try to claim space
-            let prospective_size = buf_offset + inline_buf_len;
-            // we don't reserve anything if we're within the last
-            // MAX_MSG_HEADER_LEN bytes of the buffer. during
-            // recovery, we assume that nothing can begin here,
-            // because headers are dynamically sized.
-            let red_zone = iobuf.capacity - buf_offset < MAX_MSG_HEADER_LEN;
-            let would_overflow = red_zone || prospective_size > iobuf.capacity;
-            if would_overflow {
-                // This buffer is too full to accept our write!
-                // Try to seal the buffer, and maybe write it if
-                // there are zero writers.
-                trace_once!("io buffer too full, spinning");
-                iobuf::maybe_seal_and_write_iobuf(
-                    &self.iobufs,
-                    &iobuf,
-                    header,
-                    true,
-                )?;
-                backoff.spin();
-                continue;
-            }
-
-            // attempt to claim by incrementing an unsealed header
-            let bumped_offset = header::bump_offset(header, inline_buf_len);
-
-            // check for maxed out IO buffer writers
-            if header::n_writers(bumped_offset) == header::MAX_WRITERS {
-                trace_once!(
-                    "spinning because our buffer has {} writers already",
-                    header::MAX_WRITERS
-                );
-                backoff.spin();
-                continue;
-            }
-
-            let claimed = header::incr_writers(bumped_offset);
-
-            if iobuf.cas_header(header, claimed).is_err() {
-                // CAS failed, start over
-                trace_once!("CAS failed while claiming buffer slot, spinning");
-                backoff.spin();
-                continue;
-            }
-
-            let log_offset = iobuf.offset;
-
-            // if we're giving out a reservation,
-            // the writer count should be positive
-            assert_ne!(header::n_writers(claimed), 0);
-
-            // should never have claimed a sealed buffer
-            assert!(!header::is_sealed(claimed));
-
-            // MAX is used to signify unreadiness of
-            // the underlying IO buffer, and if it's
-            // still set here, the buffer counters
-            // used to choose this IO buffer
-            // were incremented in a racy way.
-            assert_ne!(
-                log_offset,
-                LogOffset::max_value(),
-                "fucked up on iobuf with lsn {}\n{:?}",
-                reservation_lsn,
-                self
-            );
-
-            let destination = iobuf.get_mut_range(buf_offset, inline_buf_len);
-            let reservation_lid = log_offset + buf_offset as LogOffset;
-
-            trace!(
-                "reserved {} bytes at lsn {} lid {}",
-                inline_buf_len,
-                reservation_lsn,
-                reservation_lid,
-            );
-
-            bump_atomic_lsn(
-                &self.iobufs.max_reserved_lsn,
-                reservation_lsn + inline_buf_len as Lsn - 1,
-            );
-
-            let (heap_reservation, heap_id) = if over_heap_threshold {
-                let heap_reservation = self
-                    .config
-                    .heap
-                    .reserve(serialized_len + 13, reservation_lsn);
-                let heap_id = heap_reservation.heap_id;
-                (Some(heap_reservation), Some(heap_id))
-            } else {
-                (None, None)
-            };
-
-            self.iobufs.encapsulate(
                 item,
-                message_header,
-                destination,
-                heap_reservation,
-            )?;
-
-            #[cfg(feature = "metrics")]
-            M.log_reservation_success();
-
-            let pointer = if let Some(heap_id) = heap_id {
-                DiskPtr::new_heap_item(reservation_lid, heap_id)
-            } else if let Some(heap_id) = heap_rewrite {
-                DiskPtr::new_heap_item(reservation_lid, heap_id)
+                heap_rewrite,
+                over_heap_threshold,
+                serialized_len,
+                attempt,
+                guard,
+            )? {
+                return Ok(reservation);
             } else {
-                DiskPtr::new_inline(reservation_lid)
-            };
-
-            return Ok(Reservation {
-                iobuf,
-                log: self,
-                buf: destination,
-                flushed: false,
-                lsn: reservation_lsn,
-                pointer,
-                is_heap_item_rewrite: heap_rewrite.is_some(),
-                header_len: usize::try_from(message_header.serialized_size())
-                    .unwrap(),
-            });
+                backoff.spin();
+            }
         }
     }
 

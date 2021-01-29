@@ -161,6 +161,190 @@ impl IoBuf {
 
         res.map(|_| ())
     }
+
+    pub(crate) fn reserve<'a, T: Serialize + Debug>(
+        self: Arc<IoBuf>,
+        log: &'a Log,
+        kind: MessageKind,
+        pid: PageId,
+        item: &T,
+        heap_rewrite: Option<HeapId>,
+        over_heap_threshold: bool,
+        serialized_len: u64,
+        attempt: usize,
+        _: &Guard,
+    ) -> Result<Option<Reservation<'a>>> {
+        let header = self.get_header();
+        let buf_offset = header::offset(header);
+        let reservation_lsn = self.lsn + Lsn::try_from(buf_offset).unwrap();
+
+        macro_rules! trace_once {
+            ($($msg:expr),*) => {
+                if attempt <= 5 {
+                    trace!($($msg),*);
+                }
+            };
+        }
+
+        // skip if already sealed
+        if header::is_sealed(header) {
+            // already sealed, start over and hope cur
+            // has already been bumped by sealer.
+            trace_once!("io buffer already sealed, spinning");
+
+            return Ok(None);
+        }
+
+        // figure out how big the header + buf will be.
+        // this is variable because of varints used
+        // in the header.
+        let message_header = MessageHeader {
+            crc32: 0,
+            kind,
+            segment_number: SegmentNumber(
+                u64::try_from(self.lsn).unwrap()
+                    / u64::try_from(log.config.segment_size).unwrap(),
+            ),
+            pid,
+            len: if over_heap_threshold {
+                // a HeapId is always 16 bytes
+                16
+            } else {
+                serialized_len
+            },
+        };
+
+        let inline_buf_len = if over_heap_threshold {
+            usize::try_from(
+                // a HeapId is always 16 bytes
+                message_header.serialized_size() + 16,
+            )
+            .unwrap()
+        } else {
+            usize::try_from(message_header.serialized_size() + serialized_len)
+                .unwrap()
+        };
+
+        trace!(
+            "reserving buf of len {} for pid {} with kind {:?}",
+            inline_buf_len,
+            pid,
+            kind
+        );
+
+        // try to claim space
+        let prospective_size = buf_offset + inline_buf_len;
+        // we don't reserve anything if we're within the last
+        // MAX_MSG_HEADER_LEN bytes of the buffer. during
+        // recovery, we assume that nothing can begin here,
+        // because headers are dynamically sized.
+        let red_zone = self.capacity - buf_offset < MAX_MSG_HEADER_LEN;
+        let would_overflow = red_zone || prospective_size > self.capacity;
+        if would_overflow {
+            // This buffer is too full to accept our write!
+            // Try to seal the buffer, and maybe write it if
+            // there are zero writers.
+            trace_once!("io buffer too full, spinning");
+            maybe_seal_and_write_iobuf(&log.iobufs, &self, header, true)?;
+            return Ok(None);
+        }
+
+        // attempt to claim by incrementing an unsealed header
+        let bumped_offset = header::bump_offset(header, inline_buf_len);
+
+        // check for maxed out IO buffer writers
+        if header::n_writers(bumped_offset) == header::MAX_WRITERS {
+            trace_once!(
+                "spinning because our buffer has {} writers already",
+                header::MAX_WRITERS
+            );
+            return Ok(None);
+        }
+
+        let claimed = header::incr_writers(bumped_offset);
+
+        if self.cas_header(header, claimed).is_err() {
+            // CAS failed, start over
+            trace_once!("CAS failed while claiming buffer slot, spinning");
+            return Ok(None);
+        }
+
+        let log_offset = self.offset;
+
+        // if we're giving out a reservation,
+        // the writer count should be positive
+        assert_ne!(header::n_writers(claimed), 0);
+
+        // should never have claimed a sealed buffer
+        assert!(!header::is_sealed(claimed));
+
+        // MAX is used to signify unreadiness of
+        // the underlying IO buffer, and if it's
+        // still set here, the buffer counters
+        // used to choose this IO buffer
+        // were incremented in a racy way.
+        assert_ne!(
+            log_offset,
+            LogOffset::max_value(),
+            "fucked up on iobuf with lsn {}\n{:?}",
+            reservation_lsn,
+            self
+        );
+
+        let destination = self.get_mut_range(buf_offset, inline_buf_len);
+        let reservation_lid = log_offset + buf_offset as LogOffset;
+
+        trace!(
+            "reserved {} bytes at lsn {} lid {}",
+            inline_buf_len,
+            reservation_lsn,
+            reservation_lid,
+        );
+
+        bump_atomic_lsn(
+            &log.iobufs.max_reserved_lsn,
+            reservation_lsn + inline_buf_len as Lsn - 1,
+        );
+
+        let (heap_reservation, heap_id) = if over_heap_threshold {
+            let heap_reservation =
+                log.config.heap.reserve(serialized_len + 13, reservation_lsn);
+            let heap_id = heap_reservation.heap_id;
+            (Some(heap_reservation), Some(heap_id))
+        } else {
+            (None, None)
+        };
+
+        log.iobufs.encapsulate(
+            item,
+            message_header,
+            destination,
+            heap_reservation,
+        )?;
+
+        #[cfg(feature = "metrics")]
+        M.log_reservation_success();
+
+        let pointer = if let Some(heap_id) = heap_id {
+            DiskPtr::new_heap_item(reservation_lid, heap_id)
+        } else if let Some(heap_id) = heap_rewrite {
+            DiskPtr::new_heap_item(reservation_lid, heap_id)
+        } else {
+            DiskPtr::new_inline(reservation_lid)
+        };
+
+        Ok(Some(Reservation {
+            iobuf: self,
+            log,
+            buf: destination,
+            flushed: false,
+            lsn: reservation_lsn,
+            pointer,
+            is_heap_item_rewrite: heap_rewrite.is_some(),
+            header_len: usize::try_from(message_header.serialized_size())
+                .unwrap(),
+        }))
+    }
 }
 
 #[derive(Debug)]
@@ -1111,7 +1295,7 @@ pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
 /// Attempt to seal the current IO buffer, possibly
 /// writing it to disk if there are no other writers
 /// operating on it.
-pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
+fn maybe_seal_and_write_iobuf(
     iobufs: &Arc<IoBufs>,
     iobuf: &Arc<IoBuf>,
     header: Header,
