@@ -432,12 +432,18 @@ fn safe_usize(value: PageId) -> usize {
 #[test]
 fn lru_smoke_test() {
     use crate::pin;
+    use std::collections::HashSet;
 
     let lru = Lru::new(2);
+    let mut paged_out = HashSet::new();
     for i in 0..1000 {
         let guard = pin();
-        lru.accessed(i, 16, &guard);
+        for pid in lru.accessed(i, 16, &guard) {
+            assert!(paged_out.insert(pid));
+        }
     }
+
+    assert!(paged_out.len() >= 990);
 }
 
 #[test]
