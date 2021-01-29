@@ -14,11 +14,19 @@ pub(crate) enum ShutdownState {
 
 impl ShutdownState {
     fn is_running(self) -> bool {
-        if let ShutdownState::Running = self { true } else { false }
+        if let ShutdownState::Running = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn is_shutdown(self) -> bool {
-        if let ShutdownState::ShutDown = self { true } else { false }
+        if let ShutdownState::ShutDown = self {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -107,7 +115,9 @@ fn run(
         // this looks weird because it's a rust-style do-while
         // where the conditional is the full body
         while {
-            let made_progress = match pagecache.attempt_gc() {
+            let guard = pin();
+            let _cc = concurrency_control::read();
+            let made_progress = match pagecache.clean_log(&guard) {
                 Err(e) => {
                     error!(
                         "failed to clean file from periodic flush thread: {}",

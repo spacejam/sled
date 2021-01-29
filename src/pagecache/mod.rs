@@ -1101,40 +1101,6 @@ impl PageCacheInner {
         Ok((pid, new_pointer))
     }
 
-    /// Attempt to opportunistically rewrite data from a Draining
-    /// segment of the file to help with space amplification.
-    /// Returns Ok(true) if we had the opportunity to attempt to
-    /// move a page. Returns Ok(false) if there were no pages
-    /// to GC. Returns an Err if we encountered an IO problem
-    /// while performing this GC.
-    #[cfg(all(
-        not(miri),
-        any(
-            windows,
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "netbsd",
-            target_os = "ios",
-        )
-    ))]
-    pub(crate) fn attempt_gc(&self) -> Result<bool> {
-        let guard = pin();
-        let cc = concurrency_control::read();
-        let to_clean = self.log.iobufs.segment_cleaner.pop();
-        let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
-            self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
-                .map(|_| true)
-        } else {
-            Ok(false)
-        };
-        drop(cc);
-        guard.flush();
-        ret
-    }
-
     /// Initiate an atomic sequence of writes to the
     /// underlying log. Returns a `RecoveryGuard` which,
     /// when dropped, will record the current max reserved
@@ -1285,11 +1251,7 @@ impl PageCacheInner {
         let result =
             self.cas_page(pid, old, Update::Node(new), false, guard)?;
 
-        if let Some((pid_to_clean, segment_to_clean)) =
-            self.log.iobufs.segment_cleaner.pop()
-        {
-            self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
-        }
+        self.clean_log(guard)?;
 
         Ok(result.map_err(|fail| {
             let (pointer, shared) = fail.unwrap();
@@ -1305,14 +1267,17 @@ impl PageCacheInner {
     // (at least partially) located in. This happens when a
     // segment has had enough resident page replacements moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page(
-        &self,
-        pid: PageId,
-        segment_to_purge: LogOffset,
-        guard: &Guard,
-    ) -> Result<()> {
+    pub(crate) fn clean_log(&self, guard: &Guard) -> Result<bool> {
         #[cfg(feature = "metrics")]
-        let _measure = Measure::new(&M.rewrite_page);
+        let _measure = Measure::new(&M.clean_log);
+
+        let (pid, segment_to_purge) = if let Some((pid, segment_to_purge)) =
+            self.log.iobufs.segment_cleaner.pop()
+        {
+            (pid, segment_to_purge)
+        } else {
+            return Ok(false);
+        };
 
         trace!("rewriting pid {}", pid);
 
@@ -1337,7 +1302,7 @@ impl PageCacheInner {
                 });
 
             if already_moved {
-                return Ok(());
+                return Ok(false);
             }
 
             // if the page only has a single heap pointer in the log, rewrite
@@ -1436,7 +1401,7 @@ impl PageCacheInner {
 
                     trace!("rewriting pid {} succeeded", pid);
 
-                    return Ok(());
+                    return Ok(true);
                 } else {
                     if let Some(log_reservation) = log_reservation {
                         log_reservation.abort()?;
@@ -1474,7 +1439,7 @@ impl PageCacheInner {
                              the Free was replace'd",
                             pid, page_view.update
                         );
-                        return Ok(());
+                        return Ok(false);
                     }
                 };
 
@@ -1489,7 +1454,7 @@ impl PageCacheInner {
                     },
                 )?;
                 if res.is_ok() {
-                    return Ok(());
+                    return Ok(true);
                 }
             }
         }
