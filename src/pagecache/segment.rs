@@ -365,7 +365,6 @@ impl Segment {
             Segment::Free(_) => panic!("called lsn on Segment::Free"),
         }
     }
-
     /// Add a pid to the Segment. The caller must provide
     /// the Segment's LSN.
     fn insert_pid(&mut self, pid: PageId, lsn: Lsn, size: usize) {
@@ -519,7 +518,6 @@ impl SegmentAccountant {
                 Segment::Active(Active { rss, .. })
                 | Segment::Inactive(Inactive { rss, .. }) => *rss,
             };
-            #[cfg(feature = "metrics")]
             M.segment_utilization_startup.measure(segment_utilization as u64);
         }
 
@@ -1105,15 +1103,9 @@ impl SegmentAccountant {
     /// as whether the corresponding segment must be persisted using
     /// fsync due to having been allocated from the file's tip, rather
     /// than `sync_file_range` as is normal.
-    pub(super) fn next(&mut self, lsn: Lsn) -> Result<(LogOffset, bool)> {
+    pub(super) fn next(&mut self) -> Result<(LogOffset, Lsn, bool)> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.accountant_next);
-
-        assert_eq!(
-            lsn % self.config.segment_size as Lsn,
-            0,
-            "unaligned Lsn provided to next!"
-        );
 
         trace!("evaluating free list {:?} in SA::next", &self.free);
 
@@ -1129,6 +1121,13 @@ impl SegmentAccountant {
 
         // pin lsn to this segment
         let idx = self.segment_id(lid);
+
+        let lsn = self
+            .ordering
+            .iter()
+            .next_back()
+            .map(|(lsn, _)| lsn + self.config.segment_size as Lsn)
+            .unwrap_or(0);
 
         self.segments[idx].free_to_active(lsn);
 
@@ -1147,7 +1146,7 @@ impl SegmentAccountant {
             lid
         );
 
-        Ok((lid, from_tip))
+        Ok((lid, lsn, from_tip))
     }
 
     /// Returns an iterator over a snapshot of current segment

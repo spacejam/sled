@@ -541,18 +541,19 @@ impl IoBufs {
                 }
                 (None, None) => {
                     debug!("starting log for a totally fresh system");
-                    let next_lsn = 0;
-                    let (next_lid, from_tip) =
-                        segment_accountant.next(next_lsn)?;
+                    let (next_lid, next_lsn, from_tip) =
+                        segment_accountant.next()?;
+                    assert_eq!(next_lsn, 0);
                     (next_lid, next_lsn, from_tip)
                 }
-                (None, Some(next_lsn)) => {
-                    let (next_lid, from_tip) =
-                        segment_accountant.next(next_lsn)?;
+                (None, Some(recovered_lsn)) => {
+                    let (next_lid, next_lsn, from_tip) =
+                        segment_accountant.next()?;
                     debug!(
                         "starting log at clean offset {}, recovered lsn {}",
                         next_lid, next_lsn
                     );
+                    assert_eq!(recovered_lsn, next_lsn);
                     (next_lid, next_lsn, from_tip)
                 }
                 (Some(_), None) => unreachable!(),
@@ -1350,17 +1351,10 @@ fn maybe_seal_and_write_iobuf(
         iobufs
     );
 
-    // open new slot
-    let mut next_lsn = lsn;
-
     #[cfg(feature = "metrics")]
     let measure_assign_offset = Measure::new(&M.assign_offset);
 
-    let (next_offset, from_tip) = if maxed {
-        // roll lsn to the next offset
-        let lsn_idx = lsn / segment_size as Lsn;
-        next_lsn = (lsn_idx + 1) * segment_size as Lsn;
-
+    let (next_offset, next_lsn, from_tip) = if maxed {
         // mark unused as clear
         debug!(
             "rolling to new segment after clearing {}-{}",
@@ -1368,7 +1362,7 @@ fn maybe_seal_and_write_iobuf(
             lid + res_len as LogOffset,
         );
 
-        match iobufs.with_sa(|sa| sa.next(next_lsn)) {
+        match iobufs.with_sa(|sa| sa.next()) {
             Ok(ret) => ret,
             Err(e) => {
                 iobufs.config.set_global_error(e.clone());
@@ -1388,9 +1382,8 @@ fn maybe_seal_and_write_iobuf(
             lid,
             lid + res_len as LogOffset
         );
-        next_lsn += res_len as Lsn;
 
-        (lid + res_len as LogOffset, iobuf.from_tip)
+        (lid + res_len as LogOffset, lsn + res_len as Lsn, iobuf.from_tip)
     };
 
     // NB as soon as the "sealed" bit is 0, this allows new threads
