@@ -1561,7 +1561,6 @@ impl Tree {
     pub fn checksum(&self) -> Result<u32> {
         let mut hasher = crc32fast::Hasher::new();
         let mut iter = self.iter();
-        let _cc = concurrency_control::write();
         while let Some(kv_res) = iter.next_inner() {
             let (k, v) = kv_res?;
             hasher.update(&k);
@@ -2297,49 +2296,6 @@ impl Tree {
         }
 
         trace!("finished with merge of pid {}", child_pid);
-        Ok(())
-    }
-
-    // Remove all pages for this tree from the underlying
-    // PageCache. This will leave orphans behind if
-    // the tree crashes during gc.
-    pub(crate) fn gc_pages(
-        &self,
-        mut leftmost_chain: Vec<PageId>,
-    ) -> Result<()> {
-        let guard = pin();
-
-        while let Some(mut pid) = leftmost_chain.pop() {
-            loop {
-                let cursor_view =
-                    if let Some(view) = self.view_for_pid(pid, &guard)? {
-                        view
-                    } else {
-                        trace!(
-                            "encountered Free node pid {} while GC'ing tree",
-                            pid
-                        );
-                        break;
-                    };
-
-                let ret = self.context.pagecache.free(
-                    pid,
-                    cursor_view.node_view.0,
-                    &guard,
-                )?;
-
-                if ret.is_ok() {
-                    let next_pid = if let Some(next_pid) = cursor_view.next {
-                        next_pid
-                    } else {
-                        break;
-                    };
-                    assert_ne!(pid, next_pid.get());
-                    pid = next_pid.get();
-                }
-            }
-        }
-
         Ok(())
     }
 

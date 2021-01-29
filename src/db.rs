@@ -155,15 +155,10 @@ impl Db {
             return Ok(false);
         };
 
-        let _cc = concurrency_control::write();
-        let guard = pin();
-
-        // peg is for atomic recovery in case we crash
-        // half-way through this cleaning operation.
-        let peg = self.context.pin_log(&guard)?;
-
         // signal to all threads that this tree is no longer valid
         tree.root.store(u64::max_value(), SeqCst);
+
+        let guard = pin();
 
         let mut root_id =
             Some(self.context.pagecache.meta_pid_for_name(name_ref, &guard)?);
@@ -193,17 +188,63 @@ impl Db {
             }
         }
 
-        // record atomic recovery information into the log
-        peg.seal_batch()?;
-
-        // drop writer lock
+        // drop writer lock and asynchronously
         drop(tenants);
-
-        tree.gc_pages(leftmost_chain)?;
 
         guard.flush();
 
+        drop(guard);
+
+        self.gc_pages(leftmost_chain)?;
+
         Ok(true)
+    }
+
+    // Remove all pages for this tree from the underlying
+    // PageCache. This will leave orphans behind if
+    // the tree crashes during gc.
+    fn gc_pages(&self, mut leftmost_chain: Vec<PageId>) -> Result<()> {
+        let mut guard = pin();
+
+        let mut ops = 0;
+        while let Some(mut pid) = leftmost_chain.pop() {
+            loop {
+                ops += 1;
+                if ops % 64 == 0 {
+                    // we re-pin here to avoid memory blow-ups during
+                    // long-running tree removals.
+                    guard = pin();
+                }
+                let cursor_view =
+                    if let Some(view) = self.view_for_pid(pid, &guard)? {
+                        view
+                    } else {
+                        trace!(
+                            "encountered Free node pid {} while GC'ing tree",
+                            pid
+                        );
+                        break;
+                    };
+
+                let ret = self.context.pagecache.free(
+                    pid,
+                    cursor_view.node_view.0,
+                    &guard,
+                )?;
+
+                if ret.is_ok() {
+                    let next_pid = if let Some(next_pid) = cursor_view.next {
+                        next_pid
+                    } else {
+                        break;
+                    };
+                    assert_ne!(pid, next_pid.get());
+                    pid = next_pid.get();
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns the trees names saved in this Db.
@@ -400,7 +441,6 @@ impl Db {
         let tenants: BTreeMap<_, _> = tenants_mu.iter().collect();
 
         let mut hasher = crc32fast::Hasher::new();
-        let _cc = concurrency_control::write();
 
         for (name, tree) in &tenants {
             hasher.update(name);
