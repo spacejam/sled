@@ -240,6 +240,7 @@ impl Log {
                 over_heap_threshold,
                 serialized_len,
                 attempt,
+                true,
                 guard,
             )? {
                 return Ok(reservation);

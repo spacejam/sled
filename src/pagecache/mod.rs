@@ -1266,11 +1266,12 @@ impl PageCacheInner {
     // TODO this will replace clean_log below
     pub(crate) fn _clean_segments(&self, _guard: &Guard) -> Result<bool> {
         // see if we have enough pids to justify a segment
-        let pids_to_clean = if let Some(pids_to_clean) = todo!() {
-            pids_to_clean
-        } else {
-            return Ok(false);
-        };
+        let pids_to_clean: Vec<(PageId, LogOffset)> =
+            if let Some(pids_to_clean) = todo!() {
+                pids_to_clean
+            } else {
+                return Ok(false);
+            };
 
         // allocate a new `IoBuf` to hold the replacements
         let (next_offset, next_lsn, from_tip) =

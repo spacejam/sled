@@ -126,7 +126,9 @@ impl SegmentCleaner {
 
     fn remove_pids(&self, offset: LogOffset) {
         let mut inner = self.inner.lock();
-        inner.remove(&offset);
+        let _pids = inner.remove(&offset);
+        // TODO decide if this is OK or not
+        // assert!(pids.unwrap().is_empty());
     }
 }
 

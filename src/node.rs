@@ -1170,6 +1170,10 @@ impl Node {
                 }
             };
             */
+
+            // TODO always split nodes if they have enough children
+            // to make a fixed-stride downgrade painful
+
             let threshold = 1024 - crate::MAX_MSG_HEADER_LEN;
             self.probation_ops_remaining == 0
                 && self.len > threshold
@@ -1212,6 +1216,10 @@ impl Node {
                 }
             };
             */
+
+            // TODO never merge a fixed stride node if there
+            // are enough children to make a downgrade painful
+
             let threshold = 256 - crate::MAX_MSG_HEADER_LEN;
             self.len < threshold
         };

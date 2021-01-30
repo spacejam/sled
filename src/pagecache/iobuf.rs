@@ -169,6 +169,7 @@ impl IoBuf {
         over_heap_threshold: bool,
         serialized_len: u64,
         attempt: usize,
+        from_reserve: bool,
         _: &Guard,
     ) -> Result<Option<Reservation<'a>>> {
         let header = self.get_header();
@@ -242,7 +243,12 @@ impl IoBuf {
             // Try to seal the buffer, and maybe write it if
             // there are zero writers.
             trace_once!("io buffer too full, spinning");
-            maybe_seal_and_write_iobuf(&log.iobufs, &self, header, true)?;
+            maybe_seal_and_write_iobuf(
+                if from_reserve { Some(&log.iobufs) } else { None },
+                &self,
+                header,
+                true,
+            )?;
             return Ok(None);
         }
 
@@ -1138,7 +1144,7 @@ pub(crate) fn roll_iobuf(iobufs: &Arc<IoBufs>) -> Result<usize> {
         trace!("skipping roll_iobuf due to empty segment");
     } else {
         trace!("sealing ioubuf from  roll_iobuf");
-        maybe_seal_and_write_iobuf(iobufs, &iobuf, header, false)?;
+        maybe_seal_and_write_iobuf(Some(iobufs), &iobuf, header, false)?;
     }
 
     Ok(header::offset(header))
@@ -1208,7 +1214,7 @@ pub(in crate::pagecache) fn make_stable_inner(
             // nothing to write, don't bother sealing
             // current IO buffer.
         } else {
-            maybe_seal_and_write_iobuf(iobufs, &iobuf, header, false)?;
+            maybe_seal_and_write_iobuf(Some(iobufs), &iobuf, header, false)?;
             stable = iobufs.stable();
             // NB we have to continue here to possibly clear
             // the next io buffer, which may have dirty
@@ -1294,7 +1300,7 @@ pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
 /// writing it to disk if there are no other writers
 /// operating on it.
 fn maybe_seal_and_write_iobuf(
-    iobufs: &Arc<IoBufs>,
+    iobufs_opt: Option<&Arc<IoBufs>>,
     iobuf: &Arc<IoBuf>,
     header: Header,
     from_reserve: bool,
@@ -1309,7 +1315,6 @@ fn maybe_seal_and_write_iobuf(
     let lid = iobuf.offset;
     let lsn = iobuf.lsn;
     let capacity = iobuf.capacity;
-    let segment_size = iobufs.config.segment_size;
 
     if header::offset(header) > capacity {
         // a race happened, nothing we can do
@@ -1331,6 +1336,14 @@ fn maybe_seal_and_write_iobuf(
     }
 
     trace!("sealed iobuf with lsn {}", lsn);
+
+    let iobufs = if let Some(iobufs) = iobufs_opt {
+        iobufs
+    } else {
+        return Ok(());
+    };
+
+    let segment_size = iobufs.config.segment_size;
 
     assert!(
         capacity + SEG_HEADER_LEN >= res_len,
@@ -1452,6 +1465,7 @@ fn maybe_seal_and_write_iobuf(
         let iobuf = iobuf.clone();
         let _result = threadpool::write_to_log(iobuf, iobufs);
 
+        // TODO remove this wait and fix threadpool dependency cycles
         #[cfg(feature = "event_log")]
         _result.wait();
 
