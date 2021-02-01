@@ -155,7 +155,6 @@
     clippy::wrong_pub_self_convention,
 )]
 #![warn(clippy::multiple_crate_versions)]
-#![allow(clippy::mem_replace_with_default)] // Not using std::mem::take() due to MSRV of 1.37 (intro'd in 1.40)
 #![allow(clippy::match_like_matches_macro)] // Not using std::matches! due to MSRV of 1.37 (intro'd in 1.42)
 
 macro_rules! io_fail {
