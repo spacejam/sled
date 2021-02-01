@@ -72,7 +72,7 @@ pub(crate) enum SegmentOp {
     },
     Replace {
         pid: PageId,
-        old_cache_infos: im::Vector<CacheInfo>,
+        old_cache_infos: Vec<CacheInfo>,
         new_cache_info: CacheInfo,
     },
 }
@@ -778,7 +778,7 @@ impl SegmentAccountant {
     pub(super) fn mark_replace(
         &mut self,
         pid: PageId,
-        old_cache_infos: &im::Vector<CacheInfo>,
+        old_cache_infos: &[CacheInfo],
         new_cache_info: CacheInfo,
     ) -> Result<()> {
         #[cfg(feature = "metrics")]

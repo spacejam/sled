@@ -415,7 +415,7 @@ impl<'a> RecoveryGuard<'a> {
 #[derive(Debug, Clone)]
 pub struct Page {
     update: Option<Update>,
-    cache_infos: im::Vector<CacheInfo>,
+    cache_infos: Vec<CacheInfo>,
 }
 
 impl Page {
@@ -832,7 +832,7 @@ impl PageCache {
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(Update::Node(node)),
-            cache_infos: Default::default(),
+            cache_infos: Vec::default(),
         }));
 
         loop {
@@ -866,8 +866,10 @@ impl PageCache {
                 log_size: log_reservation.reservation_len() as u64,
             };
 
-            let mut new_cache_infos = old.cache_infos.clone();
-            new_cache_infos.push_back(cache_info);
+            let mut new_cache_infos =
+                Vec::with_capacity(old.cache_infos.len() + 1);
+            new_cache_infos.extend_from_slice(&old.cache_infos);
+            new_cache_infos.push(cache_info);
 
             let mut page_ptr = new_page.take().unwrap();
             page_ptr.cache_infos = new_cache_infos;
@@ -1085,8 +1087,7 @@ impl PageCacheInner {
 
             trace!("allocating pid {} for the first time", pid);
 
-            let new_page =
-                Page { update: None, cache_infos: Default::default() };
+            let new_page = Page { update: None, cache_infos: Vec::default() };
 
             let page_view = self.inner.insert(pid, new_page, guard);
 
@@ -1400,7 +1401,7 @@ impl PageCacheInner {
 
                 let new_page = Owned::new(Page {
                     update: page_view.update.clone(),
-                    cache_infos: im::Vector::unit(cache_info),
+                    cache_infos: vec![cache_info],
                 });
 
                 debug_delay();
@@ -1599,7 +1600,7 @@ impl PageCacheInner {
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(update),
-            cache_infos: Default::default(),
+            cache_infos: Vec::default(),
         }));
 
         loop {
@@ -1649,7 +1650,7 @@ impl PageCacheInner {
                     .unwrap(),
             };
 
-            page_ptr.cache_infos = im::Vector::unit(cache_info);
+            page_ptr.cache_infos = vec![cache_info];
 
             debug_delay();
             let result =
@@ -1817,12 +1818,13 @@ impl PageCacheInner {
                 page_view,
                 page_view.deref()
             );
-            if Some(&page_view.cache_infos[0])
+            if page_view.cache_infos.first()
                 == last_attempted_cache_info.as_ref()
             {
                 return Err(last_err.unwrap());
             } else {
-                last_attempted_cache_info = Some(page_view.cache_infos[0]);
+                last_attempted_cache_info =
+                    page_view.cache_infos.first().copied();
             }
 
             // need to page-in
@@ -2199,13 +2201,13 @@ impl PageCacheInner {
 
             trace!("load_snapshot pid {} {:?}", pid, state);
 
-            let mut cache_infos = im::Vector::default();
+            let mut cache_infos = Vec::default();
 
             let guard = pin();
 
             match *state {
                 PageState::Present { base, ref frags } => {
-                    cache_infos.push_back(CacheInfo {
+                    cache_infos.push(CacheInfo {
                         lsn: base.0,
                         pointer: base.1,
                         log_size: base.2,
@@ -2219,7 +2221,7 @@ impl PageCacheInner {
                             ts: 0,
                         };
 
-                        cache_infos.push_back(cache_info);
+                        cache_infos.push(cache_info);
                     }
                 }
                 PageState::Free(lsn, pointer) => {
@@ -2231,7 +2233,7 @@ impl PageCacheInner {
                         log_size: u64::try_from(MAX_MSG_HEADER_LEN).unwrap(),
                         ts: 0,
                     };
-                    cache_infos.push_back(cache_info);
+                    cache_infos.push(cache_info);
                     assert!(self.free.lock().insert(pid));
                 }
                 _ => panic!("tried to load a {:?}", state),

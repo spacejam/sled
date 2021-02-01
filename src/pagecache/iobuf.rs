@@ -438,7 +438,7 @@ impl IoBufs {
     pub(in crate::pagecache) fn sa_mark_replace(
         &self,
         pid: PageId,
-        old_cache_infos: &im::Vector<CacheInfo>,
+        old_cache_infos: &[CacheInfo],
         new_cache_info: CacheInfo,
         guard: &Guard,
     ) -> Result<()> {
@@ -459,7 +459,7 @@ impl IoBufs {
         } else {
             let op = SegmentOp::Replace {
                 pid,
-                old_cache_infos: old_cache_infos.clone(),
+                old_cache_infos: old_cache_infos.to_vec(),
                 new_cache_info,
             };
             self.deferred_segment_ops.push(op, guard);
