@@ -94,8 +94,13 @@ pub struct Metrics {
     pub accountant_next: Histogram,
     pub accountant_stabilize: Histogram,
     pub advance_snapshot: Histogram,
-    pub fuzzy_snapshot: Histogram,
     pub assign_offset: Histogram,
+    pub bytes_written_heap_item: CachePadded<AtomicUsize>,
+    pub bytes_written_heap_ptr: CachePadded<AtomicUsize>,
+    pub bytes_written_replace: CachePadded<AtomicUsize>,
+    pub bytes_written_link: CachePadded<AtomicUsize>,
+    pub bytes_written_other: CachePadded<AtomicUsize>,
+    pub fuzzy_snapshot: Histogram,
     pub compress: Histogram,
     pub decompress: Histogram,
     pub deserialize: Histogram,
@@ -322,6 +327,27 @@ impl Metrics {
             #[cfg(feature = "compression")]
             lat("decompress", &self.decompress),
         ]));
+
+        ret.push_str(&format!(
+            "heap item bytes: {}\n",
+            self.bytes_written_heap_item.load(Acquire)
+        ));
+        ret.push_str(&format!(
+            "heap pointer bytes: {}\n",
+            self.bytes_written_heap_ptr.load(Acquire)
+        ));
+        ret.push_str(&format!(
+            "node replace bytes: {}\n",
+            self.bytes_written_replace.load(Acquire)
+        ));
+        ret.push_str(&format!(
+            "node link bytes: {}\n",
+            self.bytes_written_link.load(Acquire)
+        ));
+        ret.push_str(&format!(
+            "other written bytes: {}\n",
+            self.bytes_written_other.load(Acquire)
+        ));
 
         ret.push_str(&format!(
             "{}\n",

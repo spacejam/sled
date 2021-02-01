@@ -219,6 +219,27 @@ impl Log {
             ),
         };
 
+        #[cfg(feature = "metrics")]
+        match kind {
+            MessageKind::HeapLink | MessageKind::HeapNode => {
+                M.bytes_written_heap_item
+                    .fetch_add(serialized_len as usize, Relaxed);
+                M.bytes_written_heap_ptr.fetch_add(16, Relaxed);
+            }
+            MessageKind::InlineNode => {
+                M.bytes_written_replace
+                    .fetch_add(serialized_len as usize, Relaxed);
+            }
+            MessageKind::InlineLink => {
+                M.bytes_written_link
+                    .fetch_add(serialized_len as usize, Relaxed);
+            }
+            _ => {
+                M.bytes_written_other
+                    .fetch_add(serialized_len as usize, Relaxed);
+            }
+        }
+
         loop {
             #[cfg(feature = "metrics")]
             M.log_reservation_attempted();
