@@ -34,6 +34,19 @@ impl IntoIterator for &'_ Tree {
     }
 }
 
+const fn out_of_bounds(numba: usize) -> bool {
+    numba > MAX_BLOB
+}
+
+#[cold]
+fn bounds_error() -> Result<()> {
+    Err(Error::Unsupported(
+        "Keys and values are limited to \
+        128gb on 64-bit platforms and
+        512mb on 32-bit platforms.".to_string()
+    ))
+}
+
 /// A flash-sympathetic persistent lock-free B+ tree.
 ///
 /// A `Tree` represents a single logical keyspace / namespace / bucket.
@@ -169,6 +182,10 @@ impl Tree {
             Measure::new(&M.tree_del)
         };
 
+        if out_of_bounds(key.len()) {
+            bounds_error()?;
+        }
+
         let View { node_view, pid, .. } =
             self.view_for_key(key.as_ref(), guard)?;
 
@@ -187,9 +204,12 @@ impl Tree {
         }
 
         let frag = if let Some(value) = value.clone() {
-            Link::Set(encoded_key.into(), value)
+            if out_of_bounds(value.len()) {
+                bounds_error()?;
+            }
+            Link::Set(encoded_key, value)
         } else {
-            Link::Del(encoded_key.into())
+            Link::Del(encoded_key)
         };
 
         let link =
@@ -638,9 +658,9 @@ impl Tree {
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key.into(), new.clone())
+                Link::Set(encoded_key, new.clone())
             } else {
-                Link::Del(encoded_key.into())
+                Link::Del(encoded_key)
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -899,7 +919,7 @@ impl Tree {
     pub async fn flush_async(&self) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
         if let Some(result) =
-            threadpool::spawn(move || pagecache.flush())?.await
+            threadpool::spawn(move || pagecache.flush()).await
         {
             result
         } else {
@@ -1146,9 +1166,9 @@ impl Tree {
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key.into(), new.clone())
+                Link::Set(encoded_key, new.clone())
             } else {
-                Link::Del(encoded_key.into())
+                Link::Del(encoded_key)
             };
             let link =
                 self.context.pagecache.link(pid, node_view.0, frag, &guard)?;
@@ -1541,7 +1561,6 @@ impl Tree {
     pub fn checksum(&self) -> Result<u32> {
         let mut hasher = crc32fast::Hasher::new();
         let mut iter = self.iter();
-        let _cc = concurrency_control::write();
         while let Some(kv_res) = iter.next_inner() {
             let (k, v) = kv_res?;
             hasher.update(&k);
@@ -1610,6 +1629,11 @@ impl Tree {
                 &parent,
                 guard,
             )?;
+            trace!(
+                "parent_split at {:?} child pid {} \
+                parent pid {} success: {}",
+                rhs_lo, rhs_pid, parent_view.pid, replace.is_ok()
+            );
             if replace.is_ok() {
                 #[cfg(feature = "metrics")]
                 M.tree_parent_split_success();
@@ -1664,6 +1688,8 @@ impl Tree {
                 .compare_exchange(from, new_root_pid, SeqCst, SeqCst)
                 .is_err()
             {
+                // `hint::spin_loop` requires Rust 1.49.
+                #[allow(deprecated)]
                 std::sync::atomic::spin_loop_hint();
             }
 
@@ -1740,23 +1766,37 @@ impl Tree {
         let mut unsplit_parent = None;
         let mut took_leftmost_branch = false;
 
-        macro_rules! retry {
-            () => {
-                trace!(
-                    "retrying at line {} when cursor was {}",
-                    line!(),
-                    cursor
-                );
-                cursor = self.root.load(Acquire);
-                root_pid = cursor;
-                parent_view = None;
-                unsplit_parent = None;
-                took_leftmost_branch = false;
-                continue;
-            };
-        }
+        // only merge or split nodes a few times
+        let mut smo_budget = 3_u8;
 
-        for _ in 0..MAX_LOOPS {
+        #[cfg(feature = "testing")]
+        let mut path = vec![];
+
+        for i in 0.. {
+            macro_rules! retry {
+                () => {
+                    trace!(
+                        "retrying at line {} when cursor was {}",
+                        line!(),
+                        cursor
+                    );
+                    if i > MAX_LOOPS {
+                        break;
+                    }
+                    smo_budget = smo_budget.saturating_sub(1);
+                    cursor = self.root.load(Acquire);
+                    root_pid = cursor;
+                    parent_view = None;
+                    unsplit_parent = None;
+                    took_leftmost_branch = false;
+
+                    #[cfg(feature = "testing")]
+                    path.clear();
+
+                    continue;
+                };
+            }
+
             if cursor == u64::max_value() {
                 // this collection has been explicitly removed
                 return Err(Error::CollectionNotFound(self.tree_id.clone()));
@@ -1769,6 +1809,9 @@ impl Tree {
             } else {
                 retry!();
             };
+
+            #[cfg(feature = "testing")]
+            path.push((cursor, view.clone()));
 
             // When we encounter a merge intention, we collaboratively help out
             if view.merging_child.is_some() {
@@ -1793,23 +1836,26 @@ impl Tree {
 
             if overshot {
                 // merge interfered, reload root and retry
+                log::trace!("overshot searching for {:?} on node {:?}", key.as_ref(), view.deref());
                 retry!();
             }
 
-            if view.should_split() {
+            if smo_budget > 0 && view.should_split() {
                 self.split_node(&view, &parent_view, root_pid, guard)?;
                 retry!();
             }
 
             if undershot {
                 // half-complete split detect & completion
-                cursor = view
+                let right_sibling = view
                     .next
                     .expect(
                         "if our hi bound is not Inf (inity), \
-                     we should have a right sibling",
+                         we should have a right sibling",
                     )
                     .get();
+                trace!("seeking right on undershot node, from {} to {}", cursor, right_sibling);
+                cursor = right_sibling;
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
                 } else if parent_view.is_none() && view.lo().is_empty() {
@@ -1827,6 +1873,7 @@ impl Tree {
                         retry!();
                     }
                 }
+
                 continue;
             } else if let Some(unsplit_parent) = unsplit_parent.take() {
                 // we have found the proper page for
@@ -1841,10 +1888,20 @@ impl Tree {
                     unsplit_parent.parent_split(view.lo(), cursor);
 
                 if split_applied.is_none() {
-                    // due to deep races, it's possible for the
+                    // Due to deep races, it's possible for the
                     // parent to already have a node for this lo key.
                     // if this is the case, we can skip the parent split
                     // because it's probably going to fail anyway.
+                    //
+                    // If a test is failing because of retrying in a
+                    // loop here, this has happened often histically
+                    // due to the Node::index_next_node method
+                    // returning a child that is off-by-one to the
+                    // left, always causing an undershoot.
+                    log::trace!("failed to apply parent split of \
+                        ({:?}, {}) to parent node {:?}",
+                        view.lo(), cursor, unsplit_parent
+                    );
                     retry!();
                 }
 
@@ -1871,7 +1928,8 @@ impl Tree {
             // would be merged into a different index, which
             // would add considerable complexity to this already
             // fairly complex implementation.
-            if !took_leftmost_branch
+            if smo_budget > 0
+                && !took_leftmost_branch
                 && parent_view.is_some()
                 && view.should_merge()
             {
@@ -1897,6 +1955,7 @@ impl Tree {
 
             if view.is_index {
                 let next = view.index_next_node(key.as_ref());
+                log::trace!("found next {} from node {:?}", next.1, view.deref());
                 took_leftmost_branch = next.0;
                 parent_view = Some(view);
                 cursor = next.1;
@@ -1905,6 +1964,16 @@ impl Tree {
                 return Ok(view);
             }
         }
+
+        #[cfg(feature = "testing")]
+        {
+            log::error!("failed to traverse tree while looking for key {:?}", key.as_ref());
+            log::error!("took path:");
+            for (pid, view) in path {
+                log::error!("pid: {} node: {:?}\n\n", pid, view.deref());
+            }
+        }
+
         panic!(
             "cannot find pid {} in view_for_key, looking for key {:?} in tree",
             cursor,
@@ -2230,49 +2299,6 @@ impl Tree {
         Ok(())
     }
 
-    // Remove all pages for this tree from the underlying
-    // PageCache. This will leave orphans behind if
-    // the tree crashes during gc.
-    pub(crate) fn gc_pages(
-        &self,
-        mut leftmost_chain: Vec<PageId>,
-    ) -> Result<()> {
-        let guard = pin();
-
-        while let Some(mut pid) = leftmost_chain.pop() {
-            loop {
-                let cursor_view =
-                    if let Some(view) = self.view_for_pid(pid, &guard)? {
-                        view
-                    } else {
-                        trace!(
-                            "encountered Free node pid {} while GC'ing tree",
-                            pid
-                        );
-                        break;
-                    };
-
-                let ret = self.context.pagecache.free(
-                    pid,
-                    cursor_view.node_view.0,
-                    &guard,
-                )?;
-
-                if ret.is_ok() {
-                    let next_pid = if let Some(next_pid) = cursor_view.next {
-                        next_pid
-                    } else {
-                        break;
-                    };
-                    assert_ne!(pid, next_pid.get());
-                    pid = next_pid.get();
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     #[doc(hidden)]
     pub fn verify_integrity(&self) -> Result<()> {
         // verification happens in attempt_fmt
@@ -2362,13 +2388,13 @@ impl Tree {
                 pid = next_pid.get();
             } else {
                 // we've traversed our level, time to bump down
-                let left_get_res = self.view_for_pid(left_most, &guard);
-                let left_node = if let Ok(Some(ref view)) = left_get_res {
+                let left_get_opt = self.view_for_pid(left_most, &guard)?;
+                let left_node = if let Some(ref view) = left_get_opt {
                     view
                 } else {
                     panic!(
                         "pagecache returned non-base node: {:?}",
-                        left_get_res
+                        left_get_opt
                     )
                 };
 

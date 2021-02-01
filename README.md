@@ -23,7 +23,7 @@
   </td>
   <td>
 <p align="center">
-  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="40%" height="auto" />
+  <img src="https://raw.githubusercontent.com/spacejam/sled/main/art/tree_face_anti-transphobia.png" width="40%" height="auto" />
   </p>
   </td>
  </tr>
@@ -86,7 +86,9 @@ If you would like to work with structured data without paying expensive deserial
 * flash-optimized log-structured storage
 * uses modern b-tree techniques such as prefix encoding and suffix
   truncation for reducing the storage costs of long keys with shared
-  prefixes
+  prefixes. If keys are the same length and sequential then the
+  system can avoid storing 99%+ of the key data in most cases,
+  essentially acting like a learned index
 
 # expectations, gotchas, advice
 
@@ -188,7 +190,7 @@ for a more detailed overview of where we're at and where we see things going!
 
 * rework the transaction API to eliminate surprises and limitations
 * reduce space and memory usage
-* the 1.0.0 release date is January 19, 2021 (sled's 5th birthday)
+* the 1.0.0 release date is imminent! just putting the final touches on, while performing intensive testing
 * combine merge operators with subscribers in a way that plays nicely with transactions
 * typed trees for low-friction serialization
 * replication support for both strongly and eventually consistent systems

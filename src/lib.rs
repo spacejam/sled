@@ -81,7 +81,7 @@
 //! # let _ = std::fs::remove_dir_all("my_db");
 //! ```
 #![doc(
-    html_logo_url = "https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png"
+    html_logo_url = "https://raw.githubusercontent.com/spacejam/sled/main/art/tree_face_anti-transphobia.png"
 )]
 #![deny(
     missing_docs,
@@ -179,12 +179,15 @@ macro_rules! testing_assert {
 }
 
 mod atomic_shim;
+mod backoff;
 mod batch;
+mod cache_padded;
 mod concurrency_control;
 mod config;
 mod context;
 mod db;
 mod dll;
+mod ebr;
 mod fastcmp;
 mod fastlock;
 mod fnv;
@@ -204,6 +207,7 @@ mod serialization;
 mod stack;
 mod subscriber;
 mod sys_limits;
+mod threadpool;
 pub mod transaction;
 mod tree;
 mod varint;
@@ -215,33 +219,6 @@ pub mod fail;
 #[cfg(feature = "docs")]
 pub mod doc;
 
-#[cfg(any(
-    miri,
-    not(any(
-        windows,
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
-    ))
-))]
-mod threadpool {
-    use super::{OneShot, Result};
-
-    /// Just execute a task without involving threads.
-    pub fn spawn<F, R>(work: F) -> Result<OneShot<R>>
-    where
-        F: FnOnce() -> R + Send + 'static,
-        R: Send + 'static,
-    {
-        let (promise_filler, promise) = OneShot::pair();
-        promise_filler.fill((work)());
-        Ok(promise)
-    }
-}
-
 #[cfg(all(
     not(miri),
     any(
@@ -252,20 +229,7 @@ mod threadpool {
         target_os = "freebsd",
         target_os = "openbsd",
         target_os = "netbsd",
-    )
-))]
-mod threadpool;
-
-#[cfg(all(
-    not(miri),
-    any(
-        windows,
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
+        target_os = "ios",
     )
 ))]
 mod flusher;
@@ -312,22 +276,17 @@ pub fn print_profile() {
 
 /// hidden re-export of items for testing purposes
 #[doc(hidden)]
-pub use {
-    self::{
-        config::RunningConfig,
-        lazy::Lazy,
-        pagecache::{
-            constants::{
-                MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, SEG_HEADER_LEN,
-            },
-            BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
-            PageCache, PageId,
+pub use self::{
+    config::RunningConfig,
+    lazy::Lazy,
+    pagecache::{
+        constants::{
+            MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, SEG_HEADER_LEN,
         },
-        serialization::Serialize,
+        BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
+        PageCache, PageId,
     },
-    crossbeam_epoch::{
-        pin as crossbeam_pin, Atomic, Guard as CrossbeamGuard, Owned, Shared,
-    },
+    serialization::Serialize,
 };
 
 pub use self::{
@@ -351,8 +310,14 @@ use self::{
 use {
     self::{
         atomic_shim::{AtomicI64 as AtomicLsn, AtomicU64},
+        backoff::Backoff,
+        cache_padded::CachePadded,
         concurrency_control::Protector,
         context::Context,
+        ebr::{
+            pin as crossbeam_pin, Atomic, Guard as CrossbeamGuard, Owned,
+            Shared,
+        },
         fastcmp::fastcmp,
         lru::Lru,
         meta::Meta,
@@ -362,9 +327,8 @@ use {
         subscriber::Subscribers,
         tree::TreeInner,
     },
-    crossbeam_utils::{Backoff, CachePadded},
     log::{debug, error, trace, warn},
-    pagecache::RecoveryGuard,
+    pagecache::{constants::MAX_BLOB, RecoveryGuard},
     parking_lot::{Condvar, Mutex, RwLock},
     std::{
         collections::BTreeMap,
@@ -374,7 +338,7 @@ use {
         sync::{
             atomic::{
                 AtomicUsize,
-                Ordering::{Acquire, Release, SeqCst},
+                Ordering::{Acquire, Relaxed, Release, SeqCst},
             },
             Arc,
         },

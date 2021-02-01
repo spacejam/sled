@@ -13,6 +13,8 @@ use super::{
 #[derive(PartialEq, Debug, Default)]
 #[cfg_attr(test, derive(Clone))]
 pub struct Snapshot {
+    /// The version of the snapshot format
+    pub version: u8,
     /// The last read message lsn
     pub stable_lsn: Option<Lsn>,
     /// The last read message lid

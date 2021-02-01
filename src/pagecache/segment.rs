@@ -212,15 +212,27 @@ impl Default for Segment {
 
 impl Segment {
     fn is_free(&self) -> bool {
-        if let Segment::Free(_) = self { true } else { false }
+        if let Segment::Free(_) = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn is_active(&self) -> bool {
-        if let Segment::Active { .. } = self { true } else { false }
+        if let Segment::Active { .. } = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn is_inactive(&self) -> bool {
-        if let Segment::Inactive { .. } = self { true } else { false }
+        if let Segment::Inactive { .. } = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
@@ -263,15 +275,24 @@ impl Segment {
                 config.heap.free(*heap_id);
             }
 
+            let max_pids = active.pids.len();
+
+            let mut pids =
+                std::mem::replace(&mut active.pids, Default::default());
+
+            for deferred_replaced_pid in &active.deferred_replaced_pids {
+                assert!(pids.remove(deferred_replaced_pid));
+            }
+
             let inactive = Segment::Inactive(Inactive {
                 lsn: active.lsn,
                 rss: active
                     .rss
                     .checked_sub(active.deferred_replaced_rss)
                     .unwrap(),
-                max_pids: active.pids.len(),
+                max_pids,
                 replaced_pids: active.deferred_replaced_pids.len(),
-                pids: &active.pids - &active.deferred_replaced_pids,
+                pids,
                 latest_replacement_lsn: active.latest_replacement_lsn,
             });
 
@@ -500,6 +521,16 @@ impl SegmentAccountant {
             };
             #[cfg(feature = "metrics")]
             M.segment_utilization_startup.measure(segment_utilization as u64);
+        }
+
+        if let Some(stable_lsn) = snapshot.stable_lsn {
+            // stabilize things now so that we don't force
+            // the first stabilizing thread to need
+            // to cope with a huge amount of segments.
+            ret.stabilize(
+                stable_lsn - Lsn::try_from(ret.config.segment_size).unwrap(),
+                true,
+            )?;
         }
 
         Ok(ret)
@@ -784,7 +815,9 @@ impl SegmentAccountant {
             && old_cache_infos[0].pointer.heap_id()
                 == new_cache_info.pointer.heap_id());
 
-        let mut removals = FastMap8::default();
+        // we use this as a 0-allocation state machine to accumulate
+        // how much data has been freed from each segment
+        let mut cumulative_segment = None;
 
         for old_cache_info in old_cache_infos {
             let old_ptr = &old_cache_info.pointer;
@@ -812,12 +845,25 @@ impl SegmentAccountant {
                 }
             }
 
-            let old_idx = self.segment_id(old_lid);
-            let entry = removals.entry(old_idx).or_insert(0);
-            *entry += old_cache_info.log_size;
+            let idx = self.segment_id(old_lid);
+            if let Some((old_idx, ref mut replaced_size)) = cumulative_segment {
+                if idx == old_idx {
+                    *replaced_size += old_cache_info.log_size;
+                } else {
+                    // apply the cumulative state and move to the next segment
+                    self.segments[old_idx].remove_pid(
+                        pid,
+                        lsn,
+                        usize::try_from(*replaced_size).unwrap(),
+                    );
+                    self.possibly_clean_or_free_segment(old_idx, lsn)?;
+                    cumulative_segment = Some((idx, old_cache_info.log_size));
+                }
+            } else {
+                cumulative_segment = Some((idx, old_cache_info.log_size));
+            }
         }
-
-        for (old_idx, replaced_size) in removals {
+        if let Some((old_idx, replaced_size)) = cumulative_segment {
             self.segments[old_idx].remove_pid(
                 pid,
                 lsn,
@@ -926,7 +972,14 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    pub(super) fn stabilize(&mut self, stable_lsn: Lsn) -> Result<()> {
+    pub(super) fn stabilize(
+        &mut self,
+        stable_lsn: Lsn,
+        in_startup: bool,
+    ) -> Result<()> {
+        #[cfg(feature = "metrics")]
+        let _measure = Measure::new(&M.accountant_stabilize);
+
         let segment_size = self.config.segment_size as Lsn;
         let lsn = ((stable_lsn / segment_size) - 1) * segment_size;
         trace!(
@@ -956,10 +1009,19 @@ impl SegmentAccountant {
             .map(|(lsn, _lid)| *lsn)
             .collect::<Vec<_>>();
 
-        self.max_stabilized_lsn = lsn;
+        // auto-tune collection in cases
+        // where we experience a blow-up,
+        // similar to the collection
+        // logic in the ebr module.
+        let bound = if in_startup {
+            std::usize::MAX
+        } else {
+            32.max(can_deactivate.len() / 16)
+        };
 
-        for lsn in can_deactivate {
+        for lsn in can_deactivate.into_iter().take(bound) {
             self.deactivate_segment(lsn)?;
+            self.max_stabilized_lsn = lsn;
         }
 
         Ok(())
@@ -1110,7 +1172,11 @@ impl SegmentAccountant {
         self.ordering
             .iter()
             .filter_map(move |(l, r)| {
-                if *l >= normalized_lsn { Some((*l, *r)) } else { None }
+                if *l >= normalized_lsn {
+                    Some((*l, *r))
+                } else {
+                    None
+                }
             })
             .collect()
     }
@@ -1129,20 +1195,10 @@ impl SegmentAccountant {
 
         assert!(!self.free.contains(&at), "double-free of a segment occurred");
 
-        let (completer, promise) = OneShot::pair();
-
         let config = self.config.clone();
 
         io_fail!(&config, "file truncation");
-        threadpool::spawn(move || {
-            debug!("truncating file to length {}", at);
-            let res = config
-                .file
-                .set_len(at)
-                .and_then(|_| config.file.sync_all())
-                .map_err(|e| e.into());
-            completer.fill(res);
-        })?;
+        let promise = threadpool::truncate(config, at);
 
         if self.async_truncations.insert(at, promise).is_some() {
             panic!(

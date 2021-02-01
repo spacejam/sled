@@ -8,10 +8,9 @@ use std::{
     sync::atomic::Ordering::{Acquire, Relaxed, Release},
 };
 
-use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
-
 use crate::{
     debug_delay,
+    ebr::{pin, Atomic, Guard, Owned, Shared},
     pagecache::{constants::MAX_PID_BITS, Page, PageView},
 };
 
@@ -149,7 +148,7 @@ impl PageTable {
         debug_delay();
         let res = tip.load(Acquire, guard);
 
-        assert!(!res.is_null());
+        assert!(!res.is_null(), "tried to get pid {}", pid);
 
         PageView { read: res, entry: tip }
     }

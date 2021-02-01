@@ -3,7 +3,7 @@ name: Rust
 on:
   pull_request:
     branches:
-    - master
+    - main
 
 jobs:
   clippy_check:

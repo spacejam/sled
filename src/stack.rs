@@ -6,9 +6,10 @@ use std::{
     sync::atomic::Ordering::{Acquire, Release},
 };
 
-use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
-
-use crate::debug_delay;
+use crate::{
+    debug_delay,
+    ebr::{pin, Atomic, Guard, Owned, Shared},
+};
 
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]
@@ -20,13 +21,14 @@ pub struct Node<T: Send + 'static> {
 impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            let mut cursor = self.next.load(Acquire, unprotected());
+            let guard = pin();
+            let mut cursor = self.next.load(Acquire, &guard);
 
             while !cursor.is_null() {
                 // we carefully unset the next pointer here to avoid
                 // a stack overflow when freeing long lists.
                 let node = cursor.into_owned();
-                cursor = node.next.swap(Shared::null(), Acquire, unprotected());
+                cursor = node.next.swap(Shared::null(), Acquire, &guard);
                 drop(node);
             }
         }
@@ -48,7 +50,8 @@ impl<T: Send + 'static> Default for Stack<T> {
 impl<T: Send + 'static> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
-            let curr = self.head.load(Acquire, unprotected());
+            let guard = pin();
+            let curr = self.head.load(Acquire, &guard);
             if !curr.as_raw().is_null() {
                 drop(curr.into_owned());
             }
@@ -64,7 +67,7 @@ where
         &self,
         formatter: &mut fmt::Formatter<'_>,
     ) -> Result<(), fmt::Error> {
-        let guard = crossbeam_epoch::pin();
+        let guard = pin();
         let head = self.head(&guard);
         let iter = Iter::from_ptr(head, &guard);
 
@@ -222,8 +225,8 @@ where
 #[test]
 #[cfg(not(miri))] // can't create threads
 fn basic_functionality() {
-    use crossbeam_epoch::pin;
-    use crossbeam_utils::CachePadded;
+    use crate::pin;
+    use crate::CachePadded;
     use std::sync::Arc;
     use std::thread;
 

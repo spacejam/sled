@@ -22,6 +22,7 @@ pub struct Context {
             target_os = "freebsd",
             target_os = "openbsd",
             target_os = "netbsd",
+            target_os = "ios",
         )
     ))]
     pub(crate) flusher: Arc<Mutex<Option<flusher::Flusher>>>,
@@ -56,6 +57,7 @@ impl Context {
                     target_os = "freebsd",
                     target_os = "openbsd",
                     target_os = "netbsd",
+                    target_os = "ios",
                 )
             ))]
             flusher: Arc::new(parking_lot::Mutex::new(None)),

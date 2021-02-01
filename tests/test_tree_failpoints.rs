@@ -1761,3 +1761,39 @@ fn failpoints_bug_35() {
         ));
     }
 }
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn failpoints_bug_36() {
+    // postmortem 1: in `Tree::attempt_fmt` a result from the pagecache
+    // was asserted on rather than propagated, which caused failpoints
+    // to turn into panics.
+    use BatchOp::*;
+    for _ in 0..50 {
+        assert!(prop_tree_crashes_nicely(
+            vec![
+                Op::Batched(vec![
+                    Set,
+                    Set,
+                    Del(203),
+                    Set,
+                    Del(14),
+                    Set,
+                    Set,
+                    Set,
+                    Del(209),
+                    Set,
+                    Set,
+                    Set,
+                    Set,
+                    Set
+                ]),
+                Op::Set,
+                Op::Restart,
+                Op::FailPoint("buffer write post", 17420268517488604084),
+                Op::Restart
+            ],
+            true
+        ))
+    }
+}

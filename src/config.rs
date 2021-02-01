@@ -187,7 +187,7 @@ impl Deref for Config {
 #[derive(Debug, Clone)]
 pub struct Inner {
     #[doc(hidden)]
-    pub cache_capacity: u64,
+    pub cache_capacity: usize,
     #[doc(hidden)]
     pub flush_every_ms: Option<u64>,
     #[doc(hidden)]
@@ -419,22 +419,23 @@ impl Config {
     }
 
     fn limit_cache_max_memory(&mut self) {
-        let limit = sys_limits::get_memory_limit();
-        if limit > 0 && self.cache_capacity > limit {
-            let m = Arc::make_mut(&mut self.0);
-            m.cache_capacity = limit;
-            error!(
-                "cache capacity is limited to the cgroup memory \
+        if let Some(limit) = sys_limits::get_memory_limit() {
+            if self.cache_capacity > limit {
+                let m = Arc::make_mut(&mut self.0);
+                m.cache_capacity = limit;
+                error!(
+                    "cache capacity is limited to the cgroup memory \
                  limit: {} bytes",
-                self.cache_capacity
-            );
+                    self.cache_capacity
+                );
+            }
         }
     }
 
     builder!(
         (
             cache_capacity,
-            u64,
+            usize,
             "maximum size in bytes for the system page cache"
         ),
         (

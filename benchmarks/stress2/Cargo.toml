@@ -10,6 +10,7 @@ panic = 'abort'
 codegen-units = 1
 lto = "fat"
 debug = true
+overflow-checks = true
 
 [features]
 default = []
@@ -22,6 +23,7 @@ metrics = ["sled/metrics"]
 measure_allocs = ["sled/measure_allocs"]
 jemalloc = ["jemallocator"]
 logging = ["env_logger", "log", "color-backtrace"]
+dh = ["dhat"]
 
 [dependencies]
 rand = "0.7.3"
@@ -30,6 +32,7 @@ log = { version = "0.4.8", optional = true }
 color-backtrace = { version = "0.3.0", optional = true }
 jemallocator = { version = "0.3.2", optional = true }
 num-format = "0.4.0"
+dhat = { version = "0.2.2", optional = true }
 
 [dependencies.sled]
 path = "../.."

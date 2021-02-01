@@ -5,6 +5,8 @@ use std::io;
 #[cfg(any(target_os = "linux"))]
 use {std::fs::File, std::io::Read};
 
+use std::convert::TryFrom;
+
 /// See the Kernel's documentation for more information about this subsystem,
 /// found at:  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
 ///
@@ -44,9 +46,7 @@ fn get_rlimit_as() -> io::Result<libc::rlimit> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub fn get_available_memory() -> io::Result<u64> {
-    use std::convert::TryFrom;
-
+pub fn get_available_memory() -> io::Result<usize> {
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
     if pages == -1 {
         return Err(io::Error::last_os_error());
@@ -57,13 +57,10 @@ pub fn get_available_memory() -> io::Result<u64> {
         return Err(io::Error::last_os_error());
     }
 
-    Ok(u64::try_from(pages).unwrap() * u64::try_from(page_size).unwrap())
+    Ok(usize::try_from(pages).unwrap() * usize::try_from(page_size).unwrap())
 }
 
-pub fn get_memory_limit() -> u64 {
-    // Maximum addressable memory space limit in u64
-    static MAX_USIZE: u64 = usize::max_value() as u64;
-
+pub fn get_memory_limit() -> Option<usize> {
     let mut max: u64 = 0;
 
     #[cfg(target_os = "linux")]
@@ -78,31 +75,25 @@ pub fn get_memory_limit() -> u64 {
         // running in a memory restricted environment.
         // src: https://github.com/dotnet/coreclr/blob/master/src/pal/src/misc/cgroup.cpp#L385-L428
         if max > 0x7FFF_FFFF_0000_0000 {
-            return 0;
+            return None;
         }
     }
 
+    #[allow(clippy::useless_conversion)]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Ok(rlim) = get_rlimit_as() {
-            let rlim_cur = Into::<u64>::into(rlim.rlim_cur);
+            let rlim_cur = u64::try_from(rlim.rlim_cur).unwrap();
             if max == 0 || rlim_cur < max {
                 max = rlim_cur;
             }
         }
 
         if let Ok(available) = get_available_memory() {
-            if max == 0 || available < max {
-                max = available;
+            if max == 0 || (available as u64) < max {
+                max = available as u64;
             }
         }
-    }
-
-    if max > MAX_USIZE {
-        // It is observed in practice when the memory is unrestricted, Linux
-        // control group returns a physical limit that is bigger than
-        // the address space
-        max = MAX_USIZE;
     }
 
     #[cfg(miri)]
@@ -116,5 +107,10 @@ pub fn get_memory_limit() -> u64 {
         max /= 40;
     }
 
-    max
+    let ret = usize::try_from(max).expect("cache limit not representable");
+    if ret == 0 {
+        None
+    } else {
+        Some(ret)
+    }
 }

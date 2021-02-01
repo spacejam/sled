@@ -175,7 +175,7 @@ impl Log {
         #[cfg(feature = "metrics")]
         M.reserve_sz.measure(max_buf_len);
 
-        let max_buf_size = usize::try_from(super::heap::MIN_SZ)
+        let max_buf_size = usize::try_from(super::heap::MIN_SZ * 15 / 16)
             .unwrap()
             .min(self.config.segment_size - SEG_HEADER_LEN);
 
@@ -249,7 +249,7 @@ impl Log {
                 // has already been bumped by sealer.
                 trace_once!("io buffer already sealed, spinning");
 
-                backoff.snooze();
+                backoff.spin();
 
                 continue;
             }
@@ -325,7 +325,7 @@ impl Log {
                     "spinning because our buffer has {} writers already",
                     header::MAX_WRITERS
                 );
-                backoff.snooze();
+                backoff.spin();
                 continue;
             }
 
@@ -459,15 +459,7 @@ impl Log {
             );
             let iobufs = self.iobufs.clone();
             let iobuf = iobuf.clone();
-            threadpool::spawn(move || {
-                if let Err(e) = iobufs.write_to_log(&iobuf) {
-                    error!(
-                        "hit error while writing iobuf with lsn {}: {:?}",
-                        lsn, e
-                    );
-                    iobufs.config.set_global_error(e);
-                }
-            })?;
+            threadpool::write_to_log(iobuf, iobufs);
 
             Ok(())
         } else {

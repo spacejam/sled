@@ -58,6 +58,7 @@ impl Db {
                 target_os = "freebsd",
                 target_os = "openbsd",
                 target_os = "netbsd",
+                target_os = "ios",
             )
         ))]
         {
@@ -154,15 +155,10 @@ impl Db {
             return Ok(false);
         };
 
-        let _cc = concurrency_control::write();
-        let guard = pin();
-
-        // peg is for atomic recovery in case we crash
-        // half-way through this cleaning operation.
-        let peg = self.context.pin_log(&guard)?;
-
         // signal to all threads that this tree is no longer valid
         tree.root.store(u64::max_value(), SeqCst);
+
+        let guard = pin();
 
         let mut root_id =
             Some(self.context.pagecache.meta_pid_for_name(name_ref, &guard)?);
@@ -192,17 +188,63 @@ impl Db {
             }
         }
 
-        // record atomic recovery information into the log
-        peg.seal_batch()?;
-
-        // drop writer lock
+        // drop writer lock and asynchronously
         drop(tenants);
-
-        tree.gc_pages(leftmost_chain)?;
 
         guard.flush();
 
+        drop(guard);
+
+        self.gc_pages(leftmost_chain)?;
+
         Ok(true)
+    }
+
+    // Remove all pages for this tree from the underlying
+    // PageCache. This will leave orphans behind if
+    // the tree crashes during gc.
+    fn gc_pages(&self, mut leftmost_chain: Vec<PageId>) -> Result<()> {
+        let mut guard = pin();
+
+        let mut ops = 0;
+        while let Some(mut pid) = leftmost_chain.pop() {
+            loop {
+                ops += 1;
+                if ops % 64 == 0 {
+                    // we re-pin here to avoid memory blow-ups during
+                    // long-running tree removals.
+                    guard = pin();
+                }
+                let cursor_view =
+                    if let Some(view) = self.view_for_pid(pid, &guard)? {
+                        view
+                    } else {
+                        trace!(
+                            "encountered Free node pid {} while GC'ing tree",
+                            pid
+                        );
+                        break;
+                    };
+
+                let ret = self.context.pagecache.free(
+                    pid,
+                    cursor_view.node_view.0,
+                    &guard,
+                )?;
+
+                if ret.is_ok() {
+                    let next_pid = if let Some(next_pid) = cursor_view.next {
+                        next_pid
+                    } else {
+                        break;
+                    };
+                    assert_ne!(pid, next_pid.get());
+                    pid = next_pid.get();
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns the trees names saved in this Db.
@@ -268,11 +310,11 @@ impl Db {
     /// ```
     /// # use sled as old_sled;
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let old = old_sled::open("my_old_db")?;
+    /// let old = old_sled::open("my_old__db")?;
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
-    /// let new = sled::open("my_new_db")?;
+    /// let new = sled::open("my_new__db")?;
     ///
     /// let export = old.export();
     /// new.import(export);
@@ -280,8 +322,8 @@ impl Db {
     /// assert_eq!(old.checksum()?, new.checksum()?);
     /// # drop(old);
     /// # drop(new);
-    /// # std::fs::remove_file("my_old_db");
-    /// # std::fs::remove_file("my_new_db");
+    /// # std::fs::remove_file("my_old__db");
+    /// # std::fs::remove_file("my_new__db");
     /// # Ok(()) }
     /// ```
     pub fn export(
@@ -399,7 +441,6 @@ impl Db {
         let tenants: BTreeMap<_, _> = tenants_mu.iter().collect();
 
         let mut hasher = crc32fast::Hasher::new();
-        let _cc = concurrency_control::write();
 
         for (name, tree) in &tenants {
             hasher.update(name);

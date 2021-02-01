@@ -11,7 +11,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-const SZ: usize = size_of::<usize>() * 2;
+const SZ: usize = size_of::<usize>();
 const CUTOFF: usize = SZ - 1;
 
 /// A buffer that may either be inline or remote and protected
@@ -143,7 +143,9 @@ impl IVec {
                 std::ptr::write_unaligned(data.as_mut_ptr() as _, ptr);
             }
 
-            assert_eq!(data[SZ - 1], 0);
+            // assert that the bottom 3 bits are empty, as we expect
+            // the buffer to always have an alignment of 8 (2 ^ 3).
+            assert_eq!(data[SZ - 1] & 0b111, 0);
         }
         Self(data)
     }
