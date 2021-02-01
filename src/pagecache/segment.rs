@@ -279,8 +279,7 @@ impl Segment {
 
             let max_pids = active.pids.len();
 
-            let mut pids =
-                std::mem::replace(&mut active.pids, Default::default());
+            let mut pids = std::mem::take(&mut active.pids);
 
             for deferred_replaced_pid in &active.deferred_replaced_pids {
                 assert!(pids.remove(deferred_replaced_pid));
@@ -298,10 +297,7 @@ impl Segment {
                 latest_replacement_lsn: active.latest_replacement_lsn,
             });
 
-            let can_free = mem::replace(
-                &mut active.can_free_upon_deactivation,
-                Default::default(),
-            );
+            let can_free = mem::take(&mut active.can_free_upon_deactivation);
 
             (inactive, can_free)
         } else {
@@ -317,7 +313,7 @@ impl Segment {
 
         if let Segment::Inactive(inactive) = self {
             assert!(lsn >= inactive.lsn);
-            let ret = mem::replace(&mut inactive.pids, Default::default());
+            let ret = mem::take(&mut inactive.pids);
             *self = Segment::Draining(Draining {
                 lsn: inactive.lsn,
                 max_pids: inactive.max_pids,
@@ -1025,6 +1021,26 @@ impl SegmentAccountant {
             self.max_stabilized_lsn = lsn;
         }
 
+        // if we have a lot of free segments in our whole file,
+        // let's start relocating the current tip to boil it down
+        let free_segs = self.segments.iter().filter(|s| s.is_free()).count();
+        let inactive_segs =
+            self.segments.iter().filter(|s| s.is_inactive()).count();
+        let free_ratio = (free_segs * 100) / (1 + free_segs + inactive_segs);
+
+        if free_ratio >= SEGMENT_CLEANUP_THRESHOLD && inactive_segs > 5 {
+            if let Some(last_index) =
+                self.segments.iter().rposition(Segment::is_inactive)
+            {
+                let segment_start =
+                    (last_index * self.config.segment_size) as LogOffset;
+
+                let to_clean =
+                    self.segments[last_index].inactive_to_draining(lsn);
+                self.segment_cleaner.add_pids(segment_start, to_clean);
+            }
+        }
+
         Ok(())
     }
 
@@ -1058,24 +1074,6 @@ impl SegmentAccountant {
         }
 
         self.possibly_clean_or_free_segment(idx, lsn)?;
-
-        // if we have a lot of free segments in our whole file,
-        // let's start relocating the current tip to boil it down
-        let free_segs = self.segments.iter().filter(|s| s.is_free()).count();
-        let inactive_segs =
-            self.segments.iter().filter(|s| s.is_inactive()).count();
-        let free_ratio = (free_segs * 100) / (1 + free_segs + inactive_segs);
-
-        if free_ratio >= SEGMENT_CLEANUP_THRESHOLD && inactive_segs > 5 {
-            let last_index =
-                self.segments.iter().rposition(Segment::is_inactive).unwrap();
-
-            let segment_start =
-                (last_index * self.config.segment_size) as LogOffset;
-
-            let to_clean = self.segments[last_index].inactive_to_draining(lsn);
-            self.segment_cleaner.add_pids(segment_start, to_clean);
-        }
 
         Ok(())
     }

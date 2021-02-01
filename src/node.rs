@@ -365,7 +365,7 @@ impl PartialEq<[u8]> for KeyRef<'_> {
 }
 
 struct Iter<'a> {
-    overlay: std::slice::Iter<'a, (IVec, Option<IVec>)>,
+    overlay: std::iter::Skip<im::ordmap::Iter<'a, IVec, Option<IVec>>>,
     node: &'a Inner,
     node_position: usize,
     node_back_position: usize,
@@ -547,7 +547,7 @@ pub struct Node {
     // the overlay accumulates new writes and tombstones
     // for deletions that have not yet been merged
     // into the inner backing node
-    pub(crate) overlay: Vec<(IVec, Option<IVec>)>,
+    pub(crate) overlay: im::OrdMap<IVec, Option<IVec>>,
     inner: Arc<Inner>,
 }
 
@@ -567,7 +567,7 @@ impl Deref for Node {
 impl Node {
     fn iter(&self) -> Iter<'_> {
         Iter {
-            overlay: self.overlay.iter(),
+            overlay: self.overlay.iter().skip(0),
             node: &self.inner,
             node_position: 0,
             next_a: None,
@@ -591,18 +591,24 @@ impl Node {
     }
 
     pub(crate) fn new_root(child_pid: u64) -> Node {
-        Node { overlay: vec![], inner: Arc::new(Inner::new_root(child_pid)) }
+        Node {
+            overlay: Default::default(),
+            inner: Arc::new(Inner::new_root(child_pid)),
+        }
     }
 
     pub(crate) fn new_hoisted_root(left: u64, at: &[u8], right: u64) -> Node {
         Node {
-            overlay: vec![],
+            overlay: Default::default(),
             inner: Arc::new(Inner::new_hoisted_root(left, at, right)),
         }
     }
 
     pub(crate) fn new_empty_leaf() -> Node {
-        Node { overlay: vec![], inner: Arc::new(Inner::new_empty_leaf()) }
+        Node {
+            overlay: Default::default(),
+            inner: Arc::new(Inner::new_empty_leaf()),
+        }
     }
 
     pub(crate) fn apply(&self, link: &Link) -> Node {
@@ -646,41 +652,23 @@ impl Node {
                 let mut ret = self.merge_overlay();
                 Arc::make_mut(&mut ret).merging_child =
                     Some(NonZeroU64::new(pid).unwrap());
-                Node { inner: ret, overlay: vec![] }
+                Node { inner: ret, overlay: Default::default() }
             }
             ChildMergeCap => {
                 let mut ret = self.merge_overlay();
                 Arc::make_mut(&mut ret).merging = true;
-                Node { inner: ret, overlay: vec![] }
+                Node { inner: ret, overlay: Default::default() }
             }
         }
     }
 
     fn insert(&self, key: &IVec, value: &IVec) -> Node {
-        let search = self.overlay.binary_search_by_key(&key, |(k, _)| k);
-        let overlay = match search {
-            Ok(idx) => {
-                let mut overlay = self.overlay.clone();
-                overlay[idx].1 = Some(value.clone());
-                overlay
-            }
-            Err(idx) => {
-                let mut overlay = Vec::with_capacity(self.overlay.len() + 1);
-                overlay.extend_from_slice(&self.overlay);
-                overlay.insert(idx, (key.clone(), Some(value.clone())));
-                overlay
-            }
-        };
+        let overlay = self.overlay.update(key.clone(), Some(value.clone()));
         Node { overlay, inner: self.inner.clone() }
     }
 
     fn remove(&self, key: &IVec) -> Node {
-        let mut overlay = self.overlay.clone();
-        let search = overlay.binary_search_by_key(&key, |(k, _)| k);
-        match search {
-            Ok(idx) => overlay[idx].1 = None,
-            Err(idx) => overlay.insert(idx, (key.clone(), None)),
-        }
+        let overlay = self.overlay.update(key.clone(), None);
         let ret = Node { overlay, inner: self.inner.clone() };
         log::trace!(
             "applying removal of key {:?} results in node {:?}",
@@ -701,8 +689,7 @@ impl Node {
                 return false;
             }
         }
-        self.overlay.binary_search_by_key(&key, |(k, _)| k).is_ok()
-            || self.inner.contains_key(self.prefix_encode(key))
+        self.overlay.contains_key(key) || self.inner.contains_key(key)
     }
 
     // Push the overlay into the backing node.
@@ -908,15 +895,8 @@ impl Node {
             return None;
         }
 
-        let mut overlay = self.overlay.clone();
-
         let value = Some(to.to_le_bytes().as_ref().into());
-
-        let search = overlay.binary_search_by_key(&encoded_sep, |(k, _)| k);
-        match search {
-            Ok(idx) => overlay[idx].1 = value,
-            Err(idx) => overlay.insert(idx, (encoded_sep.into(), value)),
-        }
+        let overlay = self.overlay.update(encoded_sep.into(), value);
 
         let new_inner =
             Node { overlay, inner: self.inner.clone() }.merge_overlay();
@@ -929,20 +909,10 @@ impl Node {
     pub(crate) fn node_kv_pair<'a>(
         &'a self,
         key: &'a [u8],
-    ) -> (IVec, Option<&'a [u8]>) {
-        assert!(key >= self.lo());
-        if let Some(hi) = self.hi() {
-            assert!(key < hi);
-        }
-
+    ) -> (IVec, Option<&[u8]>) {
         let encoded_key = self.prefix_encode(key);
-
-        let overlay_search =
-            self.overlay.binary_search_by_key(&encoded_key, |(k, _)| k);
-
-        if let Ok(idx) = overlay_search {
-            let v = self.overlay[idx].1.as_ref();
-            (encoded_key.into(), v.map(AsRef::as_ref))
+        if let Some(v) = self.overlay.get(encoded_key) {
+            (encoded_key.into(), v.as_ref().map(AsRef::as_ref))
         } else {
             // look for the key in our compacted inner node
             let search = self.find(encoded_key);
@@ -960,23 +930,13 @@ impl Node {
         bound: &Bound<IVec>,
     ) -> Option<(IVec, IVec)> {
         let (overlay, node_position) = match bound {
-            Bound::Unbounded => (self.overlay.iter(), 0),
+            Bound::Unbounded => (self.overlay.iter().skip(0), 0),
             Bound::Included(b) => {
-                let overlay_search =
-                    self.overlay.binary_search_by_key(&b, |(k, _)| k);
-                let overlay = match overlay_search {
-                    Ok(idx) => {
-                        if let (k, Some(v)) = &self.overlay[idx] {
-                            // short circuit return
-                            return Some((
-                                self.prefix_decode(KeyRef::Slice(k)),
-                                v.clone(),
-                            ));
-                        }
-                        self.overlay[idx + 1..].iter()
-                    }
-                    Err(idx) => self.overlay[idx..].iter(),
-                };
+                if let Some(Some(v)) = self.overlay.get(b) {
+                    // short circuit return
+                    return Some((b.clone(), v.clone()));
+                }
+                let overlay_search = self.overlay.range(b.clone()..).skip(0);
 
                 let inner_search = if &**b < self.lo() {
                     Err(0)
@@ -993,14 +953,13 @@ impl Node {
                     Err(idx) => idx,
                 };
 
-                (overlay, node_position)
+                (overlay_search, node_position)
             }
             Bound::Excluded(b) => {
-                let overlay_search =
-                    self.overlay.binary_search_by_key(&b, |(k, _)| k);
-                let overlay = match overlay_search {
-                    Ok(idx) => self.overlay[idx + 1..].iter(),
-                    Err(idx) => self.overlay[idx..].iter(),
+                let overlay_search = if self.overlay.contains_key(b) {
+                    self.overlay.range(b.clone()..).skip(1)
+                } else {
+                    self.overlay.range(b.clone()..).skip(0)
                 };
 
                 let inner_search = if &**b < self.lo() {
@@ -1013,7 +972,7 @@ impl Node {
                     Err(idx) => idx,
                 };
 
-                (overlay, node_position)
+                (overlay_search, node_position)
             }
         };
 
@@ -1044,23 +1003,9 @@ impl Node {
         bound: &Bound<IVec>,
     ) -> Option<(IVec, IVec)> {
         let (overlay, node_back_position) = match bound {
-            Bound::Unbounded => (self.overlay.iter(), self.children()),
+            Bound::Unbounded => (self.overlay.iter().skip(0), self.children()),
             Bound::Included(b) => {
-                let overlay_search =
-                    self.overlay.binary_search_by_key(&b, |(k, _)| k);
-                let overlay = match overlay_search {
-                    Ok(idx) => {
-                        if let (k, Some(v)) = &self.overlay[idx] {
-                            // short circuit return
-                            return Some((
-                                self.prefix_decode(KeyRef::Slice(k)),
-                                v.clone(),
-                            ));
-                        }
-                        self.overlay[..idx].iter()
-                    }
-                    Err(idx) => self.overlay[..idx].iter(),
-                };
+                let overlay = self.overlay.range(..=b.clone()).skip(0);
 
                 let inner_search = if &**b < self.lo() {
                     Err(0)
@@ -1080,13 +1025,7 @@ impl Node {
                 (overlay, node_back_position)
             }
             Bound::Excluded(b) => {
-                let overlay_search =
-                    self.overlay.binary_search_by_key(&b, |(k, _)| k);
-                #[allow(clippy::match_same_arms)]
-                let overlay = match overlay_search {
-                    Ok(idx) => self.overlay[..idx].iter(),
-                    Err(idx) => self.overlay[..idx].iter(),
-                };
+                let overlay = self.overlay.range(..b.clone()).skip(0);
 
                 let above_hi =
                     if let Some(hi) = self.hi() { &**b >= hi } else { false };

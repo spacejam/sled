@@ -2,12 +2,12 @@ use parking_lot::Mutex;
 
 use crate::{Lazy, Map};
 
-type HM = Map<&'static str, u64>;
+type Hm = Map<&'static str, u64>;
 
-static ACTIVE: Lazy<Mutex<HM>, fn() -> Mutex<HM>> = Lazy::new(init);
+static ACTIVE: Lazy<Mutex<Hm>, fn() -> Mutex<Hm>> = Lazy::new(init);
 
-fn init() -> Mutex<HM> {
-    Mutex::new(HM::default())
+fn init() -> Mutex<Hm> {
+    Mutex::new(Hm::default())
 }
 
 /// Returns `true` if the given failpoint is active.
