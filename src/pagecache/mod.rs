@@ -2056,16 +2056,17 @@ impl PageCacheInner {
                     // don't page-out Freed suckas
                     break;
                 }
-                let new_page = Owned::new(Page {
-                    update: None,
-                    cache_infos: page_view.cache_infos.clone(),
-                });
 
                 if page_view.cache_infos.len() > 1 {
                     // compress pages on page-out
                     self.rewrite_page(pid, None, guard)?;
                     continue 'pid;
                 }
+
+                let new_page = Owned::new(Page {
+                    update: None,
+                    cache_infos: page_view.cache_infos.clone(),
+                });
 
                 debug_delay();
                 if page_view
