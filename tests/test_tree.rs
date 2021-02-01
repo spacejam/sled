@@ -2736,3 +2736,73 @@ fn tree_bug_49() {
         0
     ))
 }
+
+#[ignore]
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_50() {
+    // postmortem:
+    for _ in 0..50 {
+        assert!(prop_tree_matches_btreemap(
+            vec![
+                Set(Key(vec![80; 33]), 5),
+                Restart,
+                Restart,
+                Restart,
+                Set(Key(vec![118; 17]), 67),
+                Set(Key(vec![6; 92]), 174),
+                Set(Key(vec![173; 3]), 54),
+                Restart,
+                Restart,
+                Set(Key(vec![72; 92]), 159),
+                Restart,
+                Merge(Key(vec![95; 36]), 254),
+                Merge(Key(vec![72; 36]), 49),
+                Merge(Key(vec![60; 6]), 169),
+                Set(Key(vec![150; 77]), 43),
+                Restart,
+                Merge(Key(vec![]), 68),
+                Merge(Key(vec![20; 80]), 0),
+                Merge(Key(vec![80; 1]), 135),
+                Set(Key(vec![15; 4]), 157),
+                Set(Key(vec![75; 92]), 220),
+                Merge(Key(vec![68; 92]), 7),
+                Restart,
+                Set(Key(vec![204; 92]), 183),
+                Restart,
+                Del(Key(vec![])),
+                Restart,
+                Restart,
+                Set(Key(vec![63; 92]), 243),
+                Set(Key(vec![65; 39]), 123),
+                Merge(Key(vec![]), 234),
+                Restart,
+                Set(Key(vec![213; 92]), 27),
+                Set(Key(vec![150; 92]), 238),
+                Set(Key(vec![73; 1]), 23),
+                Restart,
+                Restart,
+                GetLt(Key(vec![81; 1])),
+                Set(Key(vec![64; 77]), 138),
+                Restart,
+                Restart,
+                Set(Key(vec![78; 5]), 88),
+                Set(Key(vec![]), 231),
+                Set(Key(vec![]), 118),
+                Set(Key(vec![26; 4]), 218),
+                Set(Key(vec![]), 245),
+                Set(Key(vec![]), 237),
+                Set(Key(vec![243; 76]), 198),
+                Merge(Key(vec![]), 205),
+                Set(Key(vec![40; 69]), 108),
+                Set(Key(vec![]), 136),
+                Set(Key(vec![69; 9358]), 203),
+                Restart
+            ],
+            false,
+            false,
+            36,
+            179
+        ))
+    }
+}
