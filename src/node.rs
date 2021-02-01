@@ -13,9 +13,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{
-    pagecache::constants::PAGE_CONSOLIDATION_THRESHOLD, varint, IVec, Link,
-};
+use crate::{varint, IVec, Link};
 
 const ALIGNMENT: usize = align_of::<Header>();
 
@@ -1156,64 +1154,39 @@ impl Node {
 
     pub(crate) fn should_split(&self) -> bool {
         log::trace!("seeing if we should split node {:?}", self);
-        let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
+        let size_checks = if cfg!(any(test, feature = "lock_free_delays")) {
             self.iter().take(6).count() > 5
         } else {
-            /*
-            let threshold = match self.rewrite_generations {
-                0 => 24 * 1024,
-                1 => {
-                    64 * 1024
-                }
-                other => {
-                    128 * 1024
-                }
-            };
-            */
-            let threshold = 1024 - crate::MAX_MSG_HEADER_LEN;
-            self.probation_ops_remaining == 0
-                && self.len > threshold
-                && self.iter().take(2).count() == 2
+            let size_threshold = 1024 - crate::MAX_MSG_HEADER_LEN;
+            let child_threshold = 56 * 1024;
+
+            self.len > size_threshold || self.children > child_threshold
         };
 
         let safety_checks = self.merging_child.is_none()
             && !self.merging
-            && self.children
-                < std::u32::MAX
-                    - u32::try_from(PAGE_CONSOLIDATION_THRESHOLD).unwrap();
+            && self.iter().take(2).count() == 2
+            && self.probation_ops_remaining == 0;
 
-        if size_check {
+        if size_checks {
             log::trace!(
                 "should_split: {} is index: {} children: {} size: {}",
-                safety_checks && size_check,
+                safety_checks && size_checks,
                 self.is_index,
                 self.children,
                 self.rss()
             );
         }
 
-        safety_checks && size_check
+        safety_checks && size_checks
     }
 
     pub(crate) fn should_merge(&self) -> bool {
         let size_check = if cfg!(any(test, feature = "lock_free_delays")) {
             self.iter().take(2).count() < 2
-        /*
-        } else if self.is_index {
-            self.len < 4 * 1024
-        */
         } else {
-            /*
-            let threshold = match self.rewrite_generations {
-                0 => 10 * 1024,
-                1 => 30 * 1024,
-                other => {
-                    64 * 1024
-                }
-            };
-            */
-            let threshold = 256 - crate::MAX_MSG_HEADER_LEN;
-            self.len < threshold
+            let size_threshold = 256 - crate::MAX_MSG_HEADER_LEN;
+            self.len < size_threshold
         };
 
         let safety_checks = self.merging_child.is_none()
