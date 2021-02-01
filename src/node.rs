@@ -912,7 +912,7 @@ impl Node {
     ) -> (IVec, Option<&[u8]>) {
         let encoded_key = self.prefix_encode(key);
         if let Some(v) = self.overlay.get(encoded_key) {
-            (encoded_key.into(), v.as_ref().map(|v| v.as_ref()))
+            (encoded_key.into(), v.as_ref().map(AsRef::as_ref))
         } else {
             // look for the key in our compacted inner node
             let search = self.find(encoded_key);
