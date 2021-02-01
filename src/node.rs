@@ -13,9 +13,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{
-    pagecache::constants::PAGE_CONSOLIDATION_THRESHOLD, varint, IVec, Link,
-};
+use crate::{varint, IVec, Link};
 
 const ALIGNMENT: usize = align_of::<Header>();
 
