@@ -175,7 +175,7 @@ impl Log {
         #[cfg(feature = "metrics")]
         M.reserve_sz.measure(max_buf_len);
 
-        let max_buf_size = usize::try_from(super::heap::MIN_SZ)
+        let max_buf_size = usize::try_from(super::heap::MIN_SZ * 15 / 16)
             .unwrap()
             .min(self.config.segment_size - SEG_HEADER_LEN);
 
