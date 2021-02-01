@@ -466,7 +466,14 @@ impl Page {
     }
 
     pub(crate) fn log_size(&self) -> u64 {
-        self.cache_infos.iter().map(|ci| ci.log_size).sum()
+        let first = self.cache_infos[0].log_size;
+        let extrapolated_rest = if let Some(ci) = self.cache_infos.get(1) {
+            ci.log_size * (self.cache_infos.len() - 1) as u64
+        } else {
+            0
+        };
+
+        first + extrapolated_rest
     }
 
     fn ts(&self) -> u64 {
@@ -904,7 +911,7 @@ impl PageCache {
                         to_evict
                     );
                     if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard);
+                        self.page_out(to_evict, guard)?;
                     }
 
                     old.read = new_shared;
@@ -1125,7 +1132,7 @@ impl PageCacheInner {
         let cc = concurrency_control::read();
         let to_clean = self.log.iobufs.segment_cleaner.pop();
         let ret = if let Some((pid_to_clean, segment_to_clean)) = to_clean {
-            self.rewrite_page(pid_to_clean, segment_to_clean, &guard)
+            self.rewrite_page(pid_to_clean, Some(segment_to_clean), &guard)
                 .map(|_| true)
         } else {
             Ok(false)
@@ -1293,7 +1300,7 @@ impl PageCacheInner {
         if let Some((pid_to_clean, segment_to_clean)) =
             self.log.iobufs.segment_cleaner.pop()
         {
-            self.rewrite_page(pid_to_clean, segment_to_clean, guard)?;
+            self.rewrite_page(pid_to_clean, Some(segment_to_clean), guard)?;
         }
 
         Ok(result.map_err(|fail| {
@@ -1313,7 +1320,7 @@ impl PageCacheInner {
     fn rewrite_page(
         &self,
         pid: PageId,
-        segment_to_purge: LogOffset,
+        segment_to_purge: Option<LogOffset>,
         guard: &Guard,
     ) -> Result<()> {
         #[cfg(feature = "metrics")]
@@ -1321,28 +1328,30 @@ impl PageCacheInner {
 
         trace!("rewriting pid {}", pid);
 
-        let purge_segment_id =
-            segment_to_purge / self.config.segment_size as u64;
-
         loop {
             let page_view = self.inner.get(pid, guard);
 
-            let already_moved = !unsafe { page_view.read.deref() }
-                .cache_infos
-                .iter()
-                .any(|ce| {
-                    if let Some(lid) = ce.pointer.lid() {
-                        lid / self.config.segment_size as u64
-                            == purge_segment_id
-                    } else {
-                        // the item has been relocated off-log to
-                        // a slot in the heap.
-                        true
-                    }
-                });
+            if let Some(segment_to_purge) = segment_to_purge {
+                let purge_segment_id =
+                    segment_to_purge / self.config.segment_size as u64;
 
-            if already_moved {
-                return Ok(());
+                let already_moved = !unsafe { page_view.read.deref() }
+                    .cache_infos
+                    .iter()
+                    .any(|ce| {
+                        if let Some(lid) = ce.pointer.lid() {
+                            lid / self.config.segment_size as u64
+                                == purge_segment_id
+                        } else {
+                            // the item has been relocated off-log to
+                            // a slot in the heap.
+                            true
+                        }
+                    });
+
+                if already_moved {
+                    return Ok(());
+                }
             }
 
             // if the page only has a single heap pointer in the log, rewrite
@@ -1422,21 +1431,25 @@ impl PageCacheInner {
                         log_reservation.complete()?;
                     }
 
-                    // possibly evict an item now that our cache has grown
-                    let total_page_size =
-                        unsafe { new_shared.deref().log_size() };
-                    let to_evict = self.lru.accessed(
-                        pid,
-                        usize::try_from(total_page_size).unwrap(),
-                        guard,
-                    );
-                    trace!(
-                        "accessed pid {} -> paging out pids {:?}",
-                        pid,
-                        to_evict
-                    );
-                    if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard);
+                    // only call accessed & page_out if called from
+                    // something other than page_out itself
+                    if segment_to_purge.is_some() {
+                        // possibly evict an item now that our cache has grown
+                        let total_page_size =
+                            unsafe { new_shared.deref().log_size() };
+                        let to_evict = self.lru.accessed(
+                            pid,
+                            usize::try_from(total_page_size).unwrap(),
+                            guard,
+                        );
+                        trace!(
+                            "accessed pid {} -> paging out pids {:?}",
+                            pid,
+                            to_evict
+                        );
+                        if !to_evict.is_empty() {
+                            self.page_out(to_evict, guard)?;
+                        }
                     }
 
                     trace!("rewriting pid {} succeeded", pid);
@@ -1676,7 +1689,7 @@ impl PageCacheInner {
                         to_evict
                     );
                     if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard);
+                        self.page_out(to_evict, guard)?;
                     }
 
                     return Ok(Ok(PageView {
@@ -1794,7 +1807,7 @@ impl PageCacheInner {
                     to_evict
                 );
                 if !to_evict.is_empty() {
-                    self.page_out(to_evict, guard);
+                    self.page_out(to_evict, guard)?;
                 }
                 return Ok(Some(NodeView(page_view)));
             }
@@ -1869,7 +1882,7 @@ impl PageCacheInner {
             );
             trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
             if !to_evict.is_empty() {
-                self.page_out(to_evict, guard);
+                self.page_out(to_evict, guard)?;
             }
 
             let mut page_view = page_view;
@@ -2026,7 +2039,7 @@ impl PageCacheInner {
         }
     }
 
-    fn page_out(&self, to_evict: Vec<PageId>, guard: &Guard) {
+    fn page_out(&self, to_evict: Vec<PageId>, guard: &Guard) -> Result<()> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.page_out);
         for pid in to_evict {
@@ -2037,7 +2050,7 @@ impl PageCacheInner {
                 continue;
             }
 
-            loop {
+            'pid: loop {
                 let page_view = self.inner.get(pid, guard);
                 if page_view.is_free() {
                     // don't page-out Freed suckas
@@ -2047,6 +2060,12 @@ impl PageCacheInner {
                     update: None,
                     cache_infos: page_view.cache_infos.clone(),
                 });
+
+                if page_view.cache_infos.len() > 1 {
+                    // compress pages on page-out
+                    self.rewrite_page(pid, None, guard)?;
+                    continue 'pid;
+                }
 
                 debug_delay();
                 if page_view
@@ -2063,6 +2082,7 @@ impl PageCacheInner {
                 // keep looping until we page this sucka out
             }
         }
+        Ok(())
     }
 
     fn pull(&self, pid: PageId, lsn: Lsn, pointer: DiskPtr) -> Result<Update> {
