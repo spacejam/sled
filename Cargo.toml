@@ -35,7 +35,7 @@ compression = ["zstd"]
 lock_free_delays = []
 failpoints = []
 event_log = []
-metrics = []
+metrics = ["num-format"]
 no_logs = ["log/max_level_off"]
 no_inline = []
 measure_allocs = []
@@ -52,6 +52,7 @@ crc32fast = "1.2.1"
 log = "0.4.11"
 parking_lot = "0.11.1"
 color-backtrace = { version = "0.5.0", optional = true }
+num-format = { version = "0.4.0", optional = true }
 rio = { version = "0.9.4", optional = true }
 backtrace = { version = "0.3.55", optional = true }
 im = "15.0.0"
