@@ -466,7 +466,14 @@ impl Page {
     }
 
     pub(crate) fn log_size(&self) -> u64 {
-        self.cache_infos.iter().map(|ci| ci.log_size).sum()
+        let first = self.cache_infos[0].log_size;
+        let extrapolated_rest = if let Some(ci) = self.cache_infos.get(1) {
+            ci.log_size * (self.cache_infos.len() - 1) as u64
+        } else {
+            0
+        };
+
+        first + extrapolated_rest
     }
 
     fn ts(&self) -> u64 {
