@@ -364,8 +364,7 @@ impl PartialEq<[u8]> for KeyRef<'_> {
     }
 }
 
-
-pub struct Iter<'a> {
+struct Iter<'a> {
     overlay: std::iter::Skip<im::ordmap::Iter<'a, IVec, Option<IVec>>>,
     node: &'a Inner,
     node_position: usize,
@@ -1004,23 +1003,9 @@ impl Node {
         bound: &Bound<IVec>,
     ) -> Option<(IVec, IVec)> {
         let (overlay, node_back_position) = match bound {
-            Bound::Unbounded => (self.overlay.iter(), self.children()),
+            Bound::Unbounded => (self.overlay.iter().skip(0), self.children()),
             Bound::Included(b) => {
-                let overlay_search =
-                    self.overlay.binary_search_by_key(&b, |(k, _)| k);
-                let overlay = match overlay_search {
-                    Ok(idx) => {
-                        if let (k, Some(v)) = &self.overlay[idx] {
-                            // short circuit return
-                            return Some((
-                                self.prefix_decode(KeyRef::Slice(k)),
-                                v.clone(),
-                            ));
-                        }
-                        self.overlay[..idx].iter()
-                    }
-                    Err(idx) => self.overlay[..idx].iter(),
-                };
+                let overlay = self.overlay.range(..=b.clone()).skip(0);
 
                 let inner_search = if &**b < self.lo() {
                     Err(0)
@@ -1040,13 +1025,7 @@ impl Node {
                 (overlay, node_back_position)
             }
             Bound::Excluded(b) => {
-                let overlay_search =
-                    self.overlay.binary_search_by_key(&b, |(k, _)| k);
-                #[allow(clippy::match_same_arms)]
-                let overlay = match overlay_search {
-                    Ok(idx) => self.overlay[..idx].iter(),
-                    Err(idx) => self.overlay[..idx].iter(),
-                };
+                let overlay = self.overlay.range(..b.clone()).skip(0);
 
                 let above_hi =
                     if let Some(hi) = self.hi() { &**b >= hi } else { false };
