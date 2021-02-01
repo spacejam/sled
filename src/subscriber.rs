@@ -215,8 +215,7 @@ impl Drop for Subscribers {
         let watched = self.watched.read();
 
         for senders in watched.values() {
-            let senders =
-                std::mem::replace(&mut *senders.write(), Map::default());
+            let senders = std::mem::take(&mut *senders.write());
             for (_, (waker, sender)) in senders {
                 drop(sender);
                 if let Some(waker) = waker {
