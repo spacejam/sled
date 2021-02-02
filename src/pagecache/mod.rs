@@ -5,7 +5,6 @@
 pub mod constants;
 pub mod logger;
 
-mod disk_pointer;
 mod header;
 mod heap;
 pub(crate) mod iobuf;
@@ -17,6 +16,7 @@ mod parallel_io_polyfill;
 mod parallel_io_unix;
 #[cfg(all(windows, not(miri)))]
 mod parallel_io_windows;
+mod pointer;
 mod reservation;
 mod segment;
 mod snapshot;
@@ -43,6 +43,7 @@ use self::{
     iobuf::{roll_iobuf, IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
+    pointer::{Pointer, PointerRead},
     segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
 };
 
@@ -52,13 +53,13 @@ pub(crate) use self::{
         read_message, read_segment_header, MessageHeader, SegmentHeader,
         SegmentNumber,
     },
+    pointer::DiskPointer,
     reservation::Reservation,
     snapshot::{read_snapshot_or_default, PageState, Snapshot},
 };
 
 pub use self::{
     constants::{MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, SEG_HEADER_LEN},
-    disk_pointer::DiskPtr,
     logger::{Log, LogRead},
 };
 
@@ -282,7 +283,7 @@ pub struct NodeView<'g>(pub(crate) PageView<'g>);
 impl<'g> Deref for NodeView<'g> {
     type Target = Node;
     fn deref(&self) -> &Node {
-        self.0.as_node()
+        self.0.read.as_node()
     }
 }
 
@@ -298,37 +299,15 @@ impl<'g> Deref for MetaView<'g> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PageView<'g> {
-    pub(crate) read: Shared<'g, Page>,
-    pub(crate) entry: &'g Atomic<Page>,
+    pub(crate) ptr: Pointer,
+    pub(crate) read: PointerRead<'g>,
+    pub(crate) entry: &'g AtomicU64,
 }
 
 impl<'g> Deref for PageView<'g> {
-    type Target = Page;
-
-    fn deref(&self) -> &Page {
-        unsafe { self.read.deref() }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CacheInfo {
-    pub ts: u64,
-    pub lsn: Lsn,
-    pub pointer: DiskPtr,
-    pub log_size: u64,
-}
-
-#[cfg(test)]
-impl quickcheck::Arbitrary for CacheInfo {
-    fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> CacheInfo {
-        use rand::Rng;
-
-        CacheInfo {
-            ts: g.gen(),
-            lsn: g.gen(),
-            pointer: DiskPtr::arbitrary(g),
-            log_size: g.gen(),
-        }
+    type Target = PointerRead<'g>;
+    fn deref(&self) -> &PointerRead<'g> {
+        &self.read
     }
 }
 
@@ -410,87 +389,6 @@ impl<'a> RecoveryGuard<'a> {
     }
 }
 
-/// A page consists of a sequence of state transformations
-/// with associated storage parameters like disk pos, lsn, time.
-#[derive(Debug, Clone)]
-pub struct Page {
-    update: Option<Update>,
-    cache_infos: Vec<CacheInfo>,
-}
-
-impl Page {
-    fn to_page_state(&self) -> PageState {
-        let base = &self.cache_infos[0];
-        if self.is_free() {
-            PageState::Free(base.lsn, base.pointer)
-        } else {
-            let mut frags: Vec<(Lsn, DiskPtr, u64)> = vec![];
-
-            for cache_info in self.cache_infos.iter().skip(1) {
-                frags.push((
-                    cache_info.lsn,
-                    cache_info.pointer,
-                    cache_info.log_size,
-                ));
-            }
-
-            PageState::Present {
-                base: (base.lsn, base.pointer, base.log_size),
-                frags,
-            }
-        }
-    }
-
-    fn as_node(&self) -> &Node {
-        self.update.as_ref().unwrap().as_node()
-    }
-
-    fn as_meta(&self) -> &Meta {
-        self.update.as_ref().unwrap().as_meta()
-    }
-
-    fn as_counter(&self) -> u64 {
-        self.update.as_ref().unwrap().as_counter()
-    }
-
-    fn is_free(&self) -> bool {
-        if let Some(Update::Free) = self.update {
-            true
-        } else {
-            false
-        }
-    }
-
-    fn last_lsn(&self) -> Lsn {
-        self.cache_infos.last().map(|ci| ci.lsn).unwrap()
-    }
-
-    pub(crate) fn log_size(&self) -> u64 {
-        let first = self.cache_infos[0].log_size;
-        let extrapolated_rest = if let Some(ci) = self.cache_infos.get(1) {
-            ci.log_size * (self.cache_infos.len() - 1) as u64
-        } else {
-            0
-        };
-
-        first + extrapolated_rest
-    }
-
-    fn ts(&self) -> u64 {
-        self.cache_infos.last().map_or(0, |ci| ci.ts)
-    }
-
-    fn lone_heap_item(&self) -> Option<CacheInfo> {
-        if self.cache_infos.len() == 1
-            && self.cache_infos[0].pointer.is_heap_item()
-        {
-            Some(self.cache_infos[0])
-        } else {
-            None
-        }
-    }
-}
-
 /// A lock-free pagecache which supports linkmented pages
 /// for dramatically improving write throughput.
 #[derive(Clone)]
@@ -556,7 +454,7 @@ impl Drop for PageCacheInner {
                 .meta_before_restart(self.get_meta(&guard).deref().clone());
 
             for pid in 0..*self.next_pid_to_allocate.lock() {
-                let pte = self.inner.get(pid, &guard);
+                let pte = self.inner.get(pid);
                 let pointers =
                     pte.cache_infos.iter().map(|ci| ci.pointer).collect();
                 pages_before_restart.insert(pid, pointers);
@@ -683,7 +581,7 @@ impl PageCache {
         let mut was_recovered = true;
 
         let guard = pin();
-        if !pc.inner.contains_pid(META_PID, &guard) {
+        if !pc.inner.contains_pid(META_PID) {
             // set up meta
             was_recovered = false;
 
@@ -698,7 +596,7 @@ impl PageCache {
                 );
         }
 
-        if !pc.inner.contains_pid(COUNTER_PID, &guard) {
+        if !pc.inner.contains_pid(COUNTER_PID) {
             // set up idgen
             was_recovered = false;
 
@@ -975,7 +873,7 @@ impl PageCache {
                 guard = pin();
             }
             'inner: loop {
-                let pg_view = self.inner.get(pid, &guard);
+                let pg_view = self.inner.get(pid);
                 if pg_view.cache_infos.is_empty() {
                     // there is a benign race with the thread
                     // that is allocating this page. the allocating
@@ -983,6 +881,11 @@ impl PageCache {
                     // and it does not yet have any storage tracking
                     // information.
                     std::thread::yield_now();
+                /*
+                } else if pg_view.cache_infos.len() > 1 {
+                    // compress pages on snapshot
+                    self.rewrite_page(pid, None, &guard)?;
+                */
                 } else {
                     let page_state = pg_view.to_page_state();
                     page_states.push(page_state);
@@ -1060,7 +963,7 @@ impl PageCacheInner {
         let (pid, page_view) = if let Some(pid) = free_opt {
             trace!("re-allocating pid {}", pid);
 
-            let page_view = self.inner.get(pid, guard);
+            let page_view = self.inner.get(pid);
             assert!(
                 page_view.is_free(),
                 "failed to re-allocate pid {} which \
@@ -1089,7 +992,7 @@ impl PageCacheInner {
 
             let new_page = Page { update: None, cache_infos: Vec::default() };
 
-            let page_view = self.inner.insert(pid, new_page, guard);
+            let page_view = self.inner.insert(pid, new_page);
 
             (pid, page_view)
         };
@@ -1329,7 +1232,7 @@ impl PageCacheInner {
         trace!("rewriting pid {}", pid);
 
         loop {
-            let page_view = self.inner.get(pid, guard);
+            let page_view = self.inner.get(pid);
 
             if let Some(segment_to_purge) = segment_to_purge {
                 let purge_segment_id =
@@ -1361,18 +1264,17 @@ impl PageCacheInner {
                 trace!("rewriting pointer to heap item with pid {}", pid);
 
                 let snapshot_min_lsn = self.snapshot_min_lsn.load(Acquire);
-                let original_lsn = lone_cache_info.pointer.original_lsn();
-                let skip_log = original_lsn < snapshot_min_lsn;
+                let skip_log = page_view.is_merged_into_snapshot();
 
                 let heap_id = lone_cache_info.pointer.heap_id().unwrap();
 
                 let (log_reservation, cache_info) = if skip_log {
                     trace!(
-                        "allowing heap pointer for pid {} with original lsn of {} \
+                        "allowing heap pointer for pid {}: {:?} \
                         to be forgotten from the log, as it is contained in the \
                         snapshot which has a minimum lsn of {}",
                         pid,
-                        original_lsn,
+                        heap_id,
                         snapshot_min_lsn
                     );
 
@@ -1477,7 +1379,7 @@ impl PageCacheInner {
                     node.increment_rewrite_generations();
                     (node_view.0, Update::Node(node))
                 } else {
-                    let page_view = self.inner.get(pid, guard);
+                    let page_view = self.inner.get(pid);
 
                     if page_view.is_free() {
                         (page_view, Update::Free)
@@ -1728,7 +1630,7 @@ impl PageCacheInner {
     pub(crate) fn get_meta<'g>(&self, guard: &'g Guard) -> MetaView<'g> {
         trace!("getting page iter for META");
 
-        let page_view = self.inner.get(META_PID, guard);
+        let page_view = self.inner.get(META_PID);
 
         if page_view.update.is_none() {
             panic!(Error::ReportableBug(
@@ -1748,7 +1650,7 @@ impl PageCacheInner {
     ) -> (PageView<'g>, u64) {
         trace!("getting page iter for idgen");
 
-        let page_view = self.inner.get(COUNTER_PID, guard);
+        let page_view = self.inner.get(COUNTER_PID);
 
         if page_view.update.is_none() {
             panic!(Error::ReportableBug(
@@ -1787,7 +1689,7 @@ impl PageCacheInner {
             // we loop here because if the page we want to
             // pull is moved, we want to retry. but if we
             // get a corruption and then
-            page_view = self.inner.get(pid, guard);
+            page_view = self.inner.get(pid);
 
             if page_view.is_free() {
                 return Ok(None);
@@ -2051,7 +1953,7 @@ impl PageCacheInner {
             }
 
             'pid: loop {
-                let page_view = self.inner.get(pid, guard);
+                let page_view = self.inner.get(pid);
                 if page_view.is_free() {
                     // don't page-out Freed suckas
                     break;
@@ -2254,7 +2156,7 @@ impl PageCacheInner {
             };
             let page = Page { update, cache_infos };
 
-            self.inner.insert(pid, page, &guard);
+            self.inner.insert(pid, page);
         }
 
         Ok(())

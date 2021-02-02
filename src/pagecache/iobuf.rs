@@ -428,24 +428,24 @@ impl IoBufs {
     pub(in crate::pagecache) fn sa_mark_link(
         &self,
         pid: PageId,
-        cache_info: CacheInfo,
+        disk_pointer: DiskPointer,
         guard: &Guard,
     ) {
-        let op = SegmentOp::Link { pid, cache_info };
+        let op = SegmentOp::Link { pid, disk_pointer };
         self.deferred_segment_ops.push(op, guard);
     }
 
     pub(in crate::pagecache) fn sa_mark_replace(
         &self,
         pid: PageId,
-        old_cache_infos: &[CacheInfo],
-        new_cache_info: CacheInfo,
+        old_disk_pointers: &[DiskPointer],
+        new_disk_pointer: DiskPointer,
         guard: &Guard,
     ) -> Result<()> {
         let worked: Option<Result<()>> = self.try_with_sa(|sa| {
             #[cfg(feature = "metrics")]
             let start = clock();
-            sa.mark_replace(pid, old_cache_infos, new_cache_info)?;
+            sa.mark_replace(pid, old_disk_pointers, new_disk_pointer)?;
             for op in self.deferred_segment_ops.take_iter(guard) {
                 sa.apply_op(op)?;
             }
@@ -459,8 +459,8 @@ impl IoBufs {
         } else {
             let op = SegmentOp::Replace {
                 pid,
-                old_cache_infos: old_cache_infos.to_vec(),
-                new_cache_info,
+                old_disk_pointers: old_disk_pointers.to_vec(),
+                new_disk_pointer,
             };
             self.deferred_segment_ops.push(op, guard);
             Ok(())
@@ -595,9 +595,8 @@ impl IoBufs {
             #[cfg(feature = "metrics")]
             let serialization_timer = Measure::new(&M.serialize);
             heap_buf[0] = header.kind.into();
-            heap_buf[5..13].copy_from_slice(
-                &heap_reservation.heap_id.original_lsn.to_le_bytes(),
-            );
+            heap_buf[5..13]
+                .copy_from_slice(&heap_reservation.lsn.to_le_bytes());
             let heap_buf_ref: &mut &mut [u8] = &mut &mut heap_buf[13..];
             item.serialize_into(heap_buf_ref);
             #[cfg(feature = "metrics")]

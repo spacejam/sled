@@ -282,8 +282,8 @@ pub use self::{
         constants::{
             MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, SEG_HEADER_LEN,
         },
-        BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
-        PageCache, PageId,
+        BatchManifest, Log, LogKind, LogOffset, LogRead, Lsn, PageCache,
+        PageId,
     },
     serialization::Serialize,
 };
@@ -322,6 +322,7 @@ use {
         meta::Meta,
         node::Node,
         oneshot::{OneShot, OneShotFiller},
+        pagecache::DiskPointer,
         result::CasResult,
         subscriber::Subscribers,
         tree::TreeInner,

@@ -10,7 +10,7 @@ pub struct Reservation<'a> {
     pub(super) iobuf: Arc<IoBuf>,
     pub(super) buf: &'a mut [u8],
     pub(super) flushed: bool,
-    pub pointer: DiskPtr,
+    pub pointer: DiskPointer,
     pub lsn: Lsn,
     pub(super) is_heap_item_rewrite: bool,
     pub(super) header_len: usize,
@@ -30,7 +30,7 @@ impl<'a> Drop for Reservation<'a> {
 impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
-    pub fn abort(mut self) -> Result<(Lsn, DiskPtr)> {
+    pub fn abort(mut self) -> Result<(Lsn, DiskPointer)> {
         if self.pointer.is_heap_item() && !self.is_heap_item_rewrite {
             // we can instantly free this heap item because its pointer
             // is assumed to have failed to have been installed into
@@ -38,7 +38,7 @@ impl<'a> Reservation<'a> {
             // on it.
 
             trace!(
-                "removing heap item for aborted reservation at lsn {}",
+                "removing heap item for aborted reservation at {:?}",
                 self.pointer
             );
 

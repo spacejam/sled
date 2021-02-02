@@ -1,9 +1,9 @@
 use std::{collections::BTreeMap, io};
 
 use super::{
-    pread_exact_or_eof, read_message, read_segment_header, BasedBuf, DiskPtr,
-    LogKind, LogOffset, LogRead, Lsn, SegmentHeader, SegmentNumber,
-    MAX_MSG_HEADER_LEN, SEG_HEADER_LEN,
+    pread_exact_or_eof, read_message, read_segment_header, BasedBuf,
+    DiskPointer, LogKind, LogOffset, LogRead, Lsn, SegmentHeader,
+    SegmentNumber, MAX_MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 use crate::*;
 
@@ -18,7 +18,7 @@ pub struct LogIter {
 }
 
 impl Iterator for LogIter {
-    type Item = (LogKind, PageId, Lsn, DiskPtr, u64);
+    type Item = (LogKind, PageId, Lsn, DiskPointer, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
         // If segment is None, get next on segment_iter, panic

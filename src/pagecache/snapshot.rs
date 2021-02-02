@@ -5,7 +5,8 @@ use crate::*;
 
 use super::{
     arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
-    BasedBuf, DiskPtr, HeapId, LogIter, LogKind, LogOffset, Lsn, MessageKind,
+    BasedBuf, DiskPointer, HeapId, LogIter, LogKind, LogOffset, Lsn,
+    MessageKind,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -42,17 +43,17 @@ pub enum PageState {
     /// and the size tells us how much storage it uses
     /// on the disk.
     Present {
-        base: (Lsn, DiskPtr, u64),
-        frags: Vec<(Lsn, DiskPtr, u64)>,
+        base: (Lsn, DiskPointer, u64),
+        frags: Vec<(Lsn, DiskPointer, u64)>,
     },
 
     /// This is a free page.
-    Free(Lsn, DiskPtr),
+    Free(Lsn, DiskPointer),
     Uninitialized,
 }
 
 impl PageState {
-    fn push(&mut self, item: (Lsn, DiskPtr, u64)) {
+    fn push(&mut self, item: (Lsn, DiskPointer, u64)) {
         match *self {
             PageState::Present { base, ref mut frags } => {
                 if frags.last().map_or(base.0, |f| f.0) < item.0 {

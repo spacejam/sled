@@ -8,10 +8,10 @@ use std::{
 
 use crate::{
     pagecache::{
-        BatchManifest, HeapId, MessageHeader, PageState, SegmentNumber,
-        Snapshot,
+        BatchManifest, DiskPointer, HeapId, MessageHeader, PageState,
+        SegmentNumber, Snapshot,
     },
-    varint, DiskPtr, Error, IVec, Link, Meta, Node, Result,
+    varint, Error, IVec, Link, Meta, Node, Result,
 };
 
 /// Items that may be serialized and deserialized
@@ -267,18 +267,21 @@ impl Serialize for u8 {
 
 impl Serialize for HeapId {
     fn serialized_size(&self) -> u64 {
-        16
+        8
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        NonVarU64(self.location).serialize_into(buf);
-        self.original_lsn.serialize_into(buf);
+        NonVarU64(((self.slab as u64) << 32) + self.index as u64)
+            .serialize_into(buf);
     }
 
-    fn deserialize(buf: &mut &[u8]) -> Result<HeapId> {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        const INDEX_MASK: u64 = (1 << 32) - 1;
+        let hid_u64 = NonVarU64::deserialize(buf)?.0;
+        let original_lsn = i64::deserialize(buf)?;
         Ok(HeapId {
-            location: NonVarU64::deserialize(buf)?.0,
-            original_lsn: i64::deserialize(buf)?,
+            slab: u8::try_from(hid_u64 >> 32).unwrap(),
+            index: u32::try_from(hid_u64 & INDEX_MASK).unwrap(),
         })
     }
 }
@@ -503,44 +506,24 @@ impl Serialize for Node {
     }
 }
 
-impl Serialize for DiskPtr {
+impl Serialize for DiskPointer {
     fn serialized_size(&self) -> u64 {
-        match self {
-            DiskPtr::Inline(a) => 1 + a.serialized_size(),
-            DiskPtr::Heap(a, b) => {
-                1 + a.serialized_size() + b.serialized_size()
-            }
-        }
+        8
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
-        match self {
-            DiskPtr::Inline(log_offset) => {
-                0_u8.serialize_into(buf);
-                log_offset.serialize_into(buf);
-            }
-            DiskPtr::Heap(log_offset, heap_id) => {
-                1_u8.serialize_into(buf);
-                log_offset.serialize_into(buf);
-                heap_id.serialize_into(buf);
-            }
-        }
+        buf[..8].copy_from_slice(&self.0);
+        scoot(buf, 8);
     }
 
-    fn deserialize(buf: &mut &[u8]) -> Result<DiskPtr> {
-        if buf.len() < 2 {
+    fn deserialize(buf: &mut &[u8]) -> Result<DiskPointer> {
+        if buf.len() < 8 {
             return Err(Error::corruption(None));
         }
-        let discriminant = buf[0];
-        *buf = &buf[1..];
-        Ok(match discriminant {
-            0 => DiskPtr::Inline(u64::deserialize(buf)?),
-            1 => DiskPtr::Heap(
-                Serialize::deserialize(buf)?,
-                HeapId::deserialize(buf)?,
-            ),
-            _ => return Err(Error::corruption(None)),
-        })
+
+        let array = buf[..8].try_into().unwrap();
+        *buf = &buf[8..];
+        Ok(DiskPointer(array))
     }
 }
 
@@ -588,7 +571,7 @@ impl Serialize for PageState {
         Ok(match len {
             0 => PageState::Free(
                 i64::deserialize(buf)?,
-                DiskPtr::deserialize(buf)?,
+                DiskPointer::deserialize(buf)?,
             ),
             _ => PageState::Present {
                 base: Serialize::deserialize(buf)?,

@@ -31,11 +31,12 @@ pub type SlabId = u8;
 pub type SlabIdx = u32;
 
 /// A unique identifier for a particular slot in the heap
+#[repr(C)]
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Copy, PartialOrd, Ord, Eq, PartialEq, Hash)]
 pub struct HeapId {
-    pub location: u64,
-    pub original_lsn: Lsn,
+    pub index: u32,
+    pub slab: u8,
 }
 
 impl Debug for HeapId {
@@ -43,42 +44,29 @@ impl Debug for HeapId {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
-        let (slab, idx, original_lsn) = self.decompose();
+        let (slab, idx) = self.decompose();
         f.debug_struct("HeapId")
             .field("slab", &slab)
-            .field("idx", &idx)
-            .field("original_lsn", &original_lsn)
+            .field("index", &idx)
             .finish()
     }
 }
 
 impl HeapId {
-    pub fn decompose(&self) -> (SlabId, SlabIdx, Lsn) {
-        const IDX_MASK: u64 = (1 << 32) - 1;
-        let slab_id =
-            u8::try_from((self.location >> 32).trailing_zeros()).unwrap();
-        let slab_idx = u32::try_from(self.location & IDX_MASK).unwrap();
-        (slab_id, slab_idx, self.original_lsn)
+    pub fn decompose(&self) -> (SlabId, SlabIdx) {
+        (self.slab, self.index)
     }
 
-    pub fn compose(
-        slab_id: SlabId,
-        slab_idx: SlabIdx,
-        original_lsn: Lsn,
-    ) -> HeapId {
-        let slab = 1 << (32 + u64::from(slab_id));
-        let heap_id = slab | u64::from(slab_idx);
-        HeapId { location: heap_id, original_lsn }
+    pub fn compose(slab: SlabId, index: SlabIdx) -> HeapId {
+        HeapId { slab, index }
     }
 
     fn offset(&self) -> u64 {
-        let (slab_id, idx, _) = self.decompose();
-        slab_id_to_size(slab_id) * u64::from(idx)
+        slab_id_to_size(self.slab) * u64::from(self.index)
     }
 
     fn slab_size(&self) -> u64 {
-        let (slab_id, _idx, _lsn) = self.decompose();
-        slab_id_to_size(slab_id)
+        slab_id_to_size(self.slab)
     }
 }
 
@@ -102,6 +90,7 @@ fn size_to_slab_id(size: u64) -> SlabId {
 
 pub(crate) struct Reservation {
     slab_free: Arc<Stack<u32>>,
+    pub lsn: Lsn,
     completed: bool,
     file: File,
     pub heap_id: HeapId,
@@ -111,8 +100,7 @@ pub(crate) struct Reservation {
 impl Drop for Reservation {
     fn drop(&mut self) {
         if !self.completed {
-            let (_slab_id, idx, _) = self.heap_id.decompose();
-            self.slab_free.push(idx, &pin());
+            self.slab_free.push(self.heap_id.index, &pin());
         }
     }
 }
@@ -205,7 +193,7 @@ impl Heap {
 
         for page_state in &snapshot.pt {
             for heap_id in page_state.heap_ids() {
-                let (slab_id, idx, _lsn) = heap_id.decompose();
+                let (slab_id, idx) = heap_id.decompose();
 
                 // set the bit for this slot
                 let block = idx / 64;
@@ -236,21 +224,20 @@ impl Heap {
     pub fn read(
         &self,
         heap_id: HeapId,
+        maximum_lsn: Option<Lsn>,
         use_compression: bool,
     ) -> Result<(MessageKind, Vec<u8>)> {
         log::trace!("Heap::read({:?})", heap_id);
-        let (slab_id, slab_idx, original_lsn) = heap_id.decompose();
-        self.slabs[slab_id as usize].read(
-            slab_idx,
-            original_lsn,
+        self.slabs[heap_id.slab as usize].read(
+            heap_id.index,
+            maximum_lsn,
             use_compression,
         )
     }
 
     pub fn free(&self, heap_id: HeapId) {
         log::trace!("Heap::free({:?})", heap_id);
-        let (slab_id, slab_idx, _) = heap_id.decompose();
-        self.slabs[slab_id as usize].free(slab_idx)
+        self.slabs[heap_id.slab as usize].free(heap_id.index)
     }
 
     pub fn reserve(&self, size: u64, original_lsn: Lsn) -> Reservation {
@@ -298,7 +285,7 @@ impl Slab {
     fn read(
         &self,
         slab_idx: SlabIdx,
-        original_lsn: Lsn,
+        maximum_lsn: Option<Lsn>,
         use_compression: bool,
     ) -> Result<(MessageKind, Vec<u8>)> {
         let bs = slab_id_to_size(self.slab_id);
@@ -322,13 +309,15 @@ impl Slab {
             let actual_lsn = Lsn::from_le_bytes(
                 heap_buf[5..13].as_ref().try_into().unwrap(),
             );
-            if actual_lsn != original_lsn {
-                log::debug!(
+            if let Some(maximum_lsn) = maximum_lsn {
+                if actual_lsn > maximum_lsn {
+                    log::debug!(
                     "heap slot lsn {} does not match expected original lsn {}",
                     actual_lsn,
-                    original_lsn
+                    maximum_lsn
                 );
-                return Err(Error::corruption(None));
+                    return Err(Error::corruption(None));
+                }
             }
             let buf = heap_buf[13..].to_vec();
             let buf = if use_compression {
@@ -369,7 +358,7 @@ impl Slab {
             slab_id_to_size(self.slab_id),
         );
 
-        let heap_id = HeapId::compose(self.slab_id, idx, original_lsn);
+        let heap_id = HeapId::compose(self.slab_id, idx);
 
         Reservation {
             slab_free: self.free.clone(),
@@ -377,6 +366,7 @@ impl Slab {
             file: self.file.try_clone().unwrap(),
             from_tip,
             heap_id,
+            lsn: original_lsn,
         }
     }
 

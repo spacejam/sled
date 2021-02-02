@@ -68,12 +68,12 @@ use crate::*;
 pub(crate) enum SegmentOp {
     Link {
         pid: PageId,
-        cache_info: CacheInfo,
+        disk_pointer: DiskPointer,
     },
     Replace {
         pid: PageId,
-        old_cache_infos: Vec<CacheInfo>,
-        new_cache_info: CacheInfo,
+        old_disk_pointers: Vec<DiskPointer>,
+        new_disk_pointer: DiskPointer,
     },
 }
 

@@ -3,7 +3,7 @@ use std::fs::File;
 use super::{
     arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, decompress, header,
     iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr,
-    Arc, BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
+    Arc, BasedBuf, DiskPointer, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
     MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
     COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, SEG_HEADER_LEN,
 };
@@ -47,8 +47,13 @@ impl Log {
     }
 
     /// read a buffer from the disk
-    pub fn read(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<LogRead> {
-        trace!("reading log lsn {} ptr {}", lsn, ptr);
+    pub fn read(
+        &self,
+        pid: PageId,
+        lsn: Lsn,
+        ptr: DiskPointer,
+    ) -> Result<LogRead> {
+        trace!("reading log lsn {} ptr {:?}", lsn, ptr);
 
         let expected_segment_number = SegmentNumber(
             u64::try_from(lsn).unwrap()
@@ -70,8 +75,10 @@ impl Log {
             // here because it might not still
             // exist in the inline log.
             let heap_id = ptr.heap_id().unwrap();
-            self.config.heap.read(heap_id, self.config.use_compression).map(
-                |(kind, buf)| {
+            self.config
+                .heap
+                .read(heap_id, None, self.config.use_compression)
+                .map(|(kind, buf)| {
                     let header = MessageHeader {
                         kind,
                         pid,
@@ -80,8 +87,7 @@ impl Log {
                         len: 0,
                     };
                     LogRead::Heap(header, buf, heap_id, 0)
-                },
-            )
+                })
         }
     }
 
@@ -855,8 +861,14 @@ pub(crate) fn read_message<R: ReadAt>(
         | MessageKind::HeapMeta => {
             assert_eq!(buf.len(), 16);
             let heap_id = HeapId::deserialize(&mut &buf[..]).unwrap();
+            let maximum_lsn =
+                expected_segment_number.0 as Lsn * config.segment_size as Lsn;
 
-            match config.heap.read(heap_id, config.use_compression) {
+            match config.heap.read(
+                heap_id,
+                Some(maximum_lsn),
+                config.use_compression,
+            ) {
                 Ok((kind, buf)) => {
                     assert_eq!(header.kind, kind);
                     trace!(

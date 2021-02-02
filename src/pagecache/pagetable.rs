@@ -2,16 +2,18 @@
 #![allow(unsafe_code)]
 
 use std::{
-    alloc::{alloc_zeroed, Layout},
+    alloc::{alloc_zeroed, dealloc, Layout},
     convert::TryFrom,
     mem::{align_of, size_of},
-    sync::atomic::Ordering::{Acquire, Relaxed, Release},
+    sync::atomic::{
+        AtomicPtr, AtomicU64,
+        Ordering::{Acquire, Relaxed, Release},
+    },
 };
 
 use crate::{
     debug_delay,
-    ebr::{pin, Atomic, Guard, Owned, Shared},
-    pagecache::{constants::MAX_PID_BITS, Page, PageView},
+    pagecache::{constants::MAX_PID_BITS, PageView, Pointer},
 };
 
 #[cfg(feature = "metrics")]
@@ -29,81 +31,78 @@ const FAN_MASK: u64 = (NODE2_FAN_OUT - 1) as u64;
 pub type PageId = u64;
 
 struct Node1 {
-    children: [Atomic<Node2>; NODE1_FAN_OUT],
+    children: [AtomicPtr<Node2>; NODE1_FAN_OUT],
 }
 
 struct Node2 {
-    children: [Atomic<Page>; NODE2_FAN_OUT],
+    children: [AtomicU64; NODE2_FAN_OUT],
 }
 
 impl Node1 {
-    fn new() -> Owned<Self> {
+    fn new() -> *mut Self {
         let size = size_of::<Self>();
         let align = align_of::<Self>();
 
         unsafe {
             let layout = Layout::from_size_align_unchecked(size, align);
 
-            #[allow(clippy::cast_ptr_alignment)]
-            let ptr = alloc_zeroed(layout) as *mut Self;
-
-            Owned::from_raw(ptr)
+            alloc_zeroed(layout) as *mut Self
         }
     }
 }
 
 impl Node2 {
-    fn new() -> Owned<Node2> {
+    fn new() -> *mut Node2 {
         let size = size_of::<Self>();
         let align = align_of::<Self>();
 
         unsafe {
             let layout = Layout::from_size_align_unchecked(size, align);
 
-            #[allow(clippy::cast_ptr_alignment)]
-            let ptr = alloc_zeroed(layout) as *mut Self;
-
-            Owned::from_raw(ptr)
+            alloc_zeroed(layout) as *mut Self
         }
     }
 }
 
 impl Drop for Node1 {
     fn drop(&mut self) {
-        drop_iter(self.children.iter());
+        for child in self.children.iter() {
+            let shared_child = child.load(Relaxed);
+            if shared_child.is_null() {
+                // this does not leak because the PageTable is
+                // assumed to be dense.
+                break;
+            }
+            unsafe {
+                std::ptr::drop_in_place(shared_child);
+            }
+        }
     }
 }
 
 impl Drop for Node2 {
     fn drop(&mut self) {
-        drop_iter(self.children.iter());
-    }
-}
-
-fn drop_iter<T>(iter: core::slice::Iter<'_, Atomic<T>>) {
-    let guard = pin();
-    for child in iter {
-        let shared_child = child.load(Relaxed, &guard);
-        if shared_child.is_null() {
-            // this does not leak because the PageTable is
-            // assumed to be dense.
-            break;
-        }
-        unsafe {
-            drop(shared_child.into_owned());
+        for child in self.children.iter() {
+            let shared_child = child.load(Relaxed);
+            if shared_child == 0 {
+                // this does not leak because the PageTable is
+                // assumed to be dense.
+                break;
+            }
+            todo!();
         }
     }
 }
 
 /// A simple lock-free radix tree.
 pub struct PageTable {
-    head: Atomic<Node1>,
+    head: AtomicPtr<Node1>,
 }
 
 impl Default for PageTable {
     fn default() -> Self {
         let head = Node1::new();
-        Self { head: Atomic::from(head) }
+        Self { head: AtomicPtr::from(head) }
     }
 }
 
@@ -117,17 +116,15 @@ impl PageTable {
     pub(crate) fn insert<'g>(
         &self,
         pid: PageId,
-        item: Page,
-        guard: &'g Guard,
+        item: Pointer,
     ) -> PageView<'g> {
         debug_delay();
-        let tip = self.traverse(pid, guard);
+        let tip = self.traverse(pid);
 
-        let shared = Owned::new(item).into_shared(guard);
-        let old = tip.swap(shared, Release, guard);
-        assert!(old.is_null());
+        let old = tip.swap(u64::from_le_bytes(item.0), Release);
+        assert_eq!(old, 0);
 
-        PageView { read: shared, entry: tip }
+        PageView { ptr: item, entry: tip, read: item.read() }
     }
 
     /// Try to get a value from the tree.
@@ -135,70 +132,68 @@ impl PageTable {
     /// # Panics
     ///
     /// Panics if the page has never been allocated.
-    pub(crate) fn get<'g>(
-        &self,
-        pid: PageId,
-        guard: &'g Guard,
-    ) -> PageView<'g> {
+    pub(crate) fn get<'g>(&self, pid: PageId) -> PageView<'g> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.get_pagetable);
         debug_delay();
-        let tip = self.traverse(pid, guard);
+        let tip = self.traverse(pid);
 
         debug_delay();
-        let res = tip.load(Acquire, guard);
+        let res = tip.load(Acquire);
 
-        assert!(!res.is_null(), "tried to get pid {}", pid);
+        assert_ne!(res, 0, "tried to get pid {}", pid);
 
-        PageView { read: res, entry: tip }
+        let ptr = Pointer(res.to_le_bytes());
+        PageView { ptr, entry: tip, read: ptr.read() }
     }
 
-    pub(crate) fn contains_pid(&self, pid: PageId, guard: &Guard) -> bool {
+    pub(crate) fn contains_pid(&self, pid: PageId) -> bool {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.get_pagetable);
         debug_delay();
-        let tip = self.traverse(pid, guard);
+        let tip = self.traverse(pid);
 
         debug_delay();
-        let res = tip.load(Acquire, guard);
+        let res = tip.load(Acquire);
 
-        !res.is_null()
+        res != 0
     }
 
-    fn traverse<'g>(&self, k: PageId, guard: &'g Guard) -> &'g Atomic<Page> {
+    fn traverse<'g>(&self, k: PageId) -> &'g AtomicU64 {
         let (l1k, l2k) = split_fanout(k);
 
         debug_delay();
-        let head = self.head.load(Acquire, guard);
+        let head = self.head.load(Acquire);
 
         debug_delay();
-        let l1 = unsafe { &head.deref().children };
+        let l1 = unsafe { &(*head).children };
 
         debug_delay();
-        let mut l2_ptr = l1[l1k].load(Acquire, guard);
+        let mut l2_ptr = l1[l1k].load(Acquire);
 
         if l2_ptr.is_null() {
             let next_child = Node2::new();
 
             debug_delay();
-            let ret = l1[l1k].compare_and_set(
-                Shared::null(),
+            let ret = l1[l1k].compare_exchange(
+                std::ptr::null_mut(),
                 next_child,
                 Release,
-                guard,
+                Acquire,
             );
 
             l2_ptr = match ret {
                 Ok(next_child) => next_child,
-                Err(returned) => {
-                    drop(returned.new);
-                    returned.current
+                Err(current) => {
+                    free(next_child);
+
+                    current
                 }
             };
         }
 
         debug_delay();
-        let l2 = unsafe { &l2_ptr.deref().children };
+        let l2 = unsafe { &(*l2_ptr).children };
 
         &l2[l2k]
     }
@@ -229,11 +224,18 @@ fn safe_usize(value: PageId) -> usize {
 
 impl Drop for PageTable {
     fn drop(&mut self) {
-        let guard = pin();
-        let head = self.head.load(Relaxed, &guard);
+        let head = self.head.load(Relaxed);
         unsafe {
-            drop(head.into_owned());
+            std::ptr::drop_in_place(head);
         }
+        free(head);
+    }
+}
+
+fn free<T>(item: *mut T) {
+    let layout = Layout::new::<T>();
+    unsafe {
+        dealloc(item as *mut u8, layout);
     }
 }
 
