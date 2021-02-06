@@ -13,7 +13,7 @@ use std::{
 
 use crate::{
     debug_delay,
-    pagecache::{constants::MAX_PID_BITS, PageView, Pointer},
+    pagecache::{constants::MAX_PID_BITS, PagePointer, PageView},
 };
 
 #[cfg(feature = "metrics")]
@@ -116,7 +116,7 @@ impl PageTable {
     pub(crate) fn insert<'g>(
         &self,
         pid: PageId,
-        item: Pointer,
+        item: PagePointer,
     ) -> PageView<'g> {
         debug_delay();
         let tip = self.traverse(pid);
@@ -143,7 +143,7 @@ impl PageTable {
 
         assert_ne!(res, 0, "tried to get pid {}", pid);
 
-        let ptr = Pointer(res.to_le_bytes());
+        let ptr = PagePointer(res.to_le_bytes());
         PageView { ptr, entry: tip, read: ptr.read() }
     }
 

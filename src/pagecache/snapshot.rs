@@ -5,8 +5,8 @@ use crate::*;
 
 use super::{
     arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
-    BasedBuf, DiskPointer, HeapId, LogIter, LogKind, LogOffset, Lsn,
-    MessageKind,
+    BasedBuf, HeapId, LogIter, LogKind, LogOffset, Lsn, MessageKind,
+    PagePointer,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -38,22 +38,22 @@ pub enum PageState {
     /// directory, but still get a small pointer that
     /// gets written into the log. The sizes are used
     /// for the garbage collection statistics on
-    /// segments. The lsn and the DiskPtr can be used
+    /// segments. The lsn and the PagePointer can be used
     /// for actually reading the item off the disk,
     /// and the size tells us how much storage it uses
     /// on the disk.
     Present {
-        base: (Lsn, DiskPointer, u64),
-        frags: Vec<(Lsn, DiskPointer, u64)>,
+        base: (Lsn, PagePointer, u64),
+        frags: Vec<(Lsn, PagePointer, u64)>,
     },
 
     /// This is a free page.
-    Free(Lsn, DiskPointer),
+    Free(Lsn, PagePointer),
     Uninitialized,
 }
 
 impl PageState {
-    fn push(&mut self, item: (Lsn, DiskPointer, u64)) {
+    fn push(&mut self, item: (Lsn, PagePointer, u64)) {
         match *self {
             PageState::Present { base, ref mut frags } => {
                 if frags.last().map_or(base.0, |f| f.0) < item.0 {
@@ -151,13 +151,13 @@ impl Snapshot {
         log_kind: LogKind,
         pid: PageId,
         lsn: Lsn,
-        disk_ptr: DiskPtr,
+        disk_pointer: PagePointer,
         sz: u64,
     ) -> Result<()> {
         trace!(
             "trying to deserialize buf for pid {} ptr {} lsn {}",
             pid,
-            disk_ptr,
+            disk_pointer,
             lsn
         );
         #[cfg(feature = "metrics")]
@@ -178,14 +178,14 @@ impl Snapshot {
                 trace!(
                     "compact of pid {} at ptr {} lsn {}",
                     pid,
-                    disk_ptr,
+                    disk_pointer,
                     lsn,
                 );
 
                 let pid_usize = usize::try_from(pid).unwrap();
 
                 self.pt[pid_usize] = PageState::Present {
-                    base: (lsn, disk_ptr, sz),
+                    base: (lsn, disk_pointer, sz),
                     frags: vec![],
                 };
             }
@@ -199,16 +199,16 @@ impl Snapshot {
                     trace!(
                         "append of pid {} at lid {} lsn {}",
                         pid,
-                        disk_ptr,
+                        disk_pointer,
                         lsn,
                     );
 
-                    lids.push((lsn, disk_ptr, sz));
+                    lids.push((lsn, disk_pointer, sz));
                 } else {
                     trace!(
                         "skipping dangling append of pid {} at lid {} lsn {}",
                         pid,
-                        disk_ptr,
+                        disk_pointer,
                         lsn,
                     );
                     if pushed {
@@ -223,9 +223,14 @@ impl Snapshot {
                 }
             }
             LogKind::Free => {
-                trace!("free of pid {} at ptr {} lsn {}", pid, disk_ptr, lsn);
+                trace!(
+                    "free of pid {} at ptr {} lsn {}",
+                    pid,
+                    disk_pointer,
+                    lsn
+                );
                 self.pt[usize::try_from(pid).unwrap()] =
-                    PageState::Free(lsn, disk_ptr);
+                    PageState::Free(lsn, disk_pointer);
             }
             LogKind::Corrupted | LogKind::Skip => {
                 error!(

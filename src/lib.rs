@@ -322,7 +322,6 @@ use {
         meta::Meta,
         node::Node,
         oneshot::{OneShot, OneShotFiller},
-        pagecache::DiskPointer,
         result::CasResult,
         subscriber::Subscribers,
         tree::TreeInner,

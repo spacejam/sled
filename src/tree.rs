@@ -1718,7 +1718,7 @@ impl Tree {
             let node_view_opt = self.context.pagecache.get(pid, guard)?;
             // if let Some((tree_ptr, ref leaf, size)) = &frag_opt {
             if let Some(node_view) = &node_view_opt {
-                let size = todo!();
+                let size = node_view.0.log_size();
                 let view = View { node_view: *node_view, pid, size };
                 if view.merging_child.is_some() {
                     self.merge_node(

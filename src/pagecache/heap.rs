@@ -25,7 +25,7 @@ pub(crate) const MIN_SZ: u64 = 32 * 1024;
 #[cfg(feature = "testing")]
 pub(crate) const MIN_SZ: u64 = 128;
 
-const MIN_TRAILING_ZEROS: u64 = MIN_SZ.trailing_zeros() as u64;
+pub(crate) const MIN_TRAILING_ZEROS: u64 = MIN_SZ.trailing_zeros() as u64;
 
 pub type SlabId = u8;
 pub type SlabIdx = u32;

@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     pagecache::{
-        BatchManifest, DiskPointer, HeapId, MessageHeader, PageState,
+        BatchManifest, HeapId, MessageHeader, PagePointer, PageState,
         SegmentNumber, Snapshot,
     },
     varint, Error, IVec, Link, Meta, Node, Result,
@@ -506,7 +506,7 @@ impl Serialize for Node {
     }
 }
 
-impl Serialize for DiskPointer {
+impl Serialize for PagePointer {
     fn serialized_size(&self) -> u64 {
         8
     }
@@ -516,14 +516,14 @@ impl Serialize for DiskPointer {
         scoot(buf, 8);
     }
 
-    fn deserialize(buf: &mut &[u8]) -> Result<DiskPointer> {
+    fn deserialize(buf: &mut &[u8]) -> Result<PagePointer> {
         if buf.len() < 8 {
             return Err(Error::corruption(None));
         }
 
         let array = buf[..8].try_into().unwrap();
         *buf = &buf[8..];
-        Ok(DiskPointer(array))
+        Ok(PagePointer(array))
     }
 }
 
@@ -571,7 +571,7 @@ impl Serialize for PageState {
         Ok(match len {
             0 => PageState::Free(
                 i64::deserialize(buf)?,
-                DiskPointer::deserialize(buf)?,
+                PagePointer::deserialize(buf)?,
             ),
             _ => PageState::Present {
                 base: Serialize::deserialize(buf)?,

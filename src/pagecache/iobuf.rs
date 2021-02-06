@@ -428,7 +428,7 @@ impl IoBufs {
     pub(in crate::pagecache) fn sa_mark_link(
         &self,
         pid: PageId,
-        disk_pointer: DiskPointer,
+        disk_pointer: PagePointer,
         guard: &Guard,
     ) {
         let op = SegmentOp::Link { pid, disk_pointer };
@@ -438,8 +438,8 @@ impl IoBufs {
     pub(in crate::pagecache) fn sa_mark_replace(
         &self,
         pid: PageId,
-        old_disk_pointers: &[DiskPointer],
-        new_disk_pointer: DiskPointer,
+        old_disk_pointers: &[PagePointer],
+        new_disk_pointer: PagePointer,
         guard: &Guard,
     ) -> Result<()> {
         let worked: Option<Result<()>> = self.try_with_sa(|sa| {
@@ -874,7 +874,7 @@ impl IoBufs {
 
         // NB the below deferred logic is important to ensure
         // that we never actually free a segment until all threads
-        // that may have witnessed a DiskPtr that points into it
+        // that may have witnessed a PagePointer that points into it
         // have completed their (crossbeam-epoch)-pinned operations.
         let guard = pin();
         let max_header_stable_lsn = self.max_header_stable_lsn.clone();

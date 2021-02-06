@@ -10,7 +10,7 @@ pub struct Reservation<'a> {
     pub(super) iobuf: Arc<IoBuf>,
     pub(super) buf: &'a mut [u8],
     pub(super) flushed: bool,
-    pub pointer: DiskPointer,
+    pub pointer: PagePointer,
     pub lsn: Lsn,
     pub(super) is_heap_item_rewrite: bool,
     pub(super) header_len: usize,
@@ -30,7 +30,7 @@ impl<'a> Drop for Reservation<'a> {
 impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
-    pub fn abort(mut self) -> Result<(Lsn, DiskPointer)> {
+    pub fn abort(mut self) -> Result<(Lsn, PagePointer)> {
         if self.pointer.is_heap_item() && !self.is_heap_item_rewrite {
             // we can instantly free this heap item because its pointer
             // is assumed to have failed to have been installed into
@@ -50,7 +50,7 @@ impl<'a> Reservation<'a> {
 
     /// Complete the reservation, placing the buffer on disk. returns
     /// the log sequence number of the write, and the file offset.
-    pub fn complete(mut self) -> Result<(Lsn, DiskPtr)> {
+    pub fn complete(mut self) -> Result<(Lsn, PagePointer)> {
         self.flush(true)
     }
 
@@ -69,12 +69,12 @@ impl<'a> Reservation<'a> {
     /// Will panic if the reservation is not the correct
     /// size to hold a serialized Lsn.
     #[doc(hidden)]
-    pub fn mark_writebatch(self, peg_lsn: Lsn) -> Result<(Lsn, DiskPtr)> {
+    pub fn mark_writebatch(self, peg_lsn: Lsn) -> Result<(Lsn, PagePointer)> {
         trace!(
             "writing batch required stable lsn {} into \
-             BatchManifest at lid {:?} peg_lsn {}",
+             BatchManifest at location {} peg_lsn {}",
             peg_lsn,
-            self.pointer.lid(),
+            self.pointer,
             self.lsn
         );
 
@@ -99,7 +99,7 @@ impl<'a> Reservation<'a> {
         }
     }
 
-    fn flush(&mut self, valid: bool) -> Result<(Lsn, DiskPtr)> {
+    fn flush(&mut self, valid: bool) -> Result<(Lsn, PagePointer)> {
         if self.flushed {
             panic!("flushing already-flushed reservation!");
         }

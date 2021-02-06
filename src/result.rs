@@ -9,7 +9,7 @@ use std::{
 use backtrace::Backtrace;
 
 use crate::{
-    pagecache::{DiskPointer, PageView},
+    pagecache::{PagePointer, PageView},
     IVec,
 };
 
@@ -46,7 +46,7 @@ pub enum Error {
     /// Corruption has been detected in the storage file.
     Corruption {
         /// The file location that corrupted data was found at.
-        at: Option<DiskPointer>,
+        at: Option<PagePointer>,
         /// A backtrace for where the corruption was encountered.
         #[cfg(feature = "testing")]
         bt: Backtrace,
@@ -61,7 +61,7 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn corruption(at: Option<DiskPointer>) -> Error {
+    pub(crate) fn corruption(at: Option<PagePointer>) -> Error {
         Error::Corruption {
             at,
             #[cfg(feature = "testing")]

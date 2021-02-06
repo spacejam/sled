@@ -43,7 +43,7 @@ use self::{
     iobuf::{roll_iobuf, IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
-    pointer::{Pointer, PointerRead},
+    pointer::{PersistedCounter, PersistedMeta, PersistedNode, PointerRead},
     segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
 };
 
@@ -53,7 +53,7 @@ pub(crate) use self::{
         read_message, read_segment_header, MessageHeader, SegmentHeader,
         SegmentNumber,
     },
-    pointer::DiskPointer,
+    pointer::PagePointer,
     reservation::Reservation,
     snapshot::{read_snapshot_or_default, PageState, Snapshot},
 };
@@ -299,7 +299,7 @@ impl<'g> Deref for MetaView<'g> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PageView<'g> {
-    pub(crate) ptr: Pointer,
+    pub(crate) ptr: PagePointer,
     pub(crate) read: PointerRead<'g>,
     pub(crate) entry: &'g AtomicU64,
 }
@@ -712,10 +712,11 @@ impl PageCache {
             }
         }
 
-        let node = old.as_node().apply(&new);
+        let old_node = old.as_node();
+        let node = old_node.apply(&new);
 
         // see if we should short-circuit replace
-        if old.cache_infos.len() >= PAGE_CONSOLIDATION_THRESHOLD {
+        if old_node.frags.len() >= PAGE_CONSOLIDATION_THRESHOLD {
             log::trace!("skipping link, replacing pid {} with {:?}", pid, node);
             let short_circuit = self.replace(pid, old, &node, guard)?;
             return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
@@ -728,9 +729,11 @@ impl PageCache {
             node
         );
 
-        let mut new_page = Some(Owned::new(Page {
-            update: Some(Update::Node(node)),
-            cache_infos: Vec::default(),
+        let mut new_page = Some(Owned::new(PersistedNode {
+            node,
+            base_page_pointer: old_node.base_page_pointer,
+            frags: vec![],
+            ts: 0,
         }));
 
         loop {
@@ -755,26 +758,17 @@ impl PageCache {
             // Here, we bump it by 1, to signal that
             // the underlying state is fundamentally
             // changing.
-            let ts = old.ts() + 1;
+            let ts = old_node.ts + 1;
 
-            let cache_info = CacheInfo {
-                lsn,
-                pointer,
-                ts,
-                log_size: log_reservation.reservation_len() as u64,
-            };
-
-            let mut new_cache_infos =
-                Vec::with_capacity(old.cache_infos.len() + 1);
-            new_cache_infos.extend_from_slice(&old.cache_infos);
-            new_cache_infos.push(cache_info);
+            let mut new_frags = Vec::with_capacity(old_node.frags.len() + 1);
+            new_frags.extend_from_slice(&old_node.frags);
+            new_frags.push(pointer);
 
             let mut page_ptr = new_page.take().unwrap();
-            page_ptr.cache_infos = new_cache_infos;
+            page_ptr.frags = new_frags;
 
             debug_delay();
-            let result =
-                old.entry.compare_and_set(old.read, page_ptr, SeqCst, guard);
+            let result = old.entry.compare_and_swap(old.read, page_ptr, SeqCst);
 
             match result {
                 Ok(new_shared) => {
@@ -786,7 +780,7 @@ impl PageCache {
 
                     assert_ne!(old.last_lsn(), 0);
 
-                    self.log.iobufs.sa_mark_link(pid, cache_info, guard);
+                    self.log.iobufs.sa_mark_link(pid, page_ptr, guard);
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
@@ -1260,15 +1254,15 @@ impl PageCacheInner {
             // if the page only has a single heap pointer in the log, rewrite
             // the pointer in a new segment without touching the big heap
             // slot that the pointer references.
-            if let Some(lone_cache_info) = page_view.lone_heap_item() {
+            if page_view.ptr.is_lone_log_and_heap() {
                 trace!("rewriting pointer to heap item with pid {}", pid);
 
                 let snapshot_min_lsn = self.snapshot_min_lsn.load(Acquire);
                 let skip_log = page_view.is_merged_into_snapshot();
 
-                let heap_id = lone_cache_info.pointer.heap_id().unwrap();
+                let heap_id = page_view.ptr.heap_id();
 
-                let (log_reservation, cache_info) = if skip_log {
+                let (log_reservation, page_pointer) = if skip_log {
                     trace!(
                         "allowing heap pointer for pid {}: {:?} \
                         to be forgotten from the log, as it is contained in the \
@@ -1278,27 +1272,12 @@ impl PageCacheInner {
                         snapshot_min_lsn
                     );
 
-                    let cache_info = CacheInfo {
-                        pointer: DiskPtr::Heap(None, heap_id),
-                        ..lone_cache_info
-                    };
-
-                    (None, cache_info)
+                    (None, PagePointer::new_heap(heap_id))
                 } else {
                     let log_reservation =
                         self.log.rewrite_heap_pointer(pid, heap_id, guard)?;
 
-                    let cache_info = CacheInfo {
-                        ts: page_view.ts(),
-                        lsn: log_reservation.lsn,
-                        pointer: log_reservation.pointer,
-                        log_size: u64::try_from(
-                            log_reservation.reservation_len(),
-                        )
-                        .unwrap(),
-                    };
-
-                    (Some(log_reservation), cache_info)
+                    (Some(log_reservation), log_reservation.pointer)
                 };
 
                 let new_page = Owned::new(Page {
@@ -1491,15 +1470,16 @@ impl PageCacheInner {
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Update>> {
         trace!(
-            "cas_page called on pid {} to {:?} with old ts {:?}",
+            "cas_page called on pid {} to {:?} with old page pointer {}",
             pid,
             update,
-            old.ts()
+            old.ptr
         );
 
         let log_kind = log_kind_from_update(&update);
         trace!("cas_page on pid {} has log kind: {:?}", pid, log_kind);
 
+        let old_node = old.as_node();
         let mut new_page = Some(Owned::new(Page {
             update: Some(update),
             cache_infos: Vec::default(),
@@ -1542,7 +1522,7 @@ impl PageCacheInner {
             // Here, we only bump it up by 1 if the
             // update represents a fundamental change
             // that SHOULD cause CAS failures.
-            let ts = if is_rewrite { old.ts() } else { old.ts() + 1 };
+            let ts = if is_rewrite { old_node.ts } else { old_node.ts + 1 };
 
             let cache_info = CacheInfo {
                 ts,
@@ -1632,14 +1612,6 @@ impl PageCacheInner {
 
         let page_view = self.inner.get(META_PID);
 
-        if page_view.update.is_none() {
-            panic!(Error::ReportableBug(
-                "failed to retrieve META page \
-                 which should always be present"
-                    .into(),
-            ))
-        }
-
         MetaView(page_view)
     }
 
@@ -1652,15 +1624,7 @@ impl PageCacheInner {
 
         let page_view = self.inner.get(COUNTER_PID);
 
-        if page_view.update.is_none() {
-            panic!(Error::ReportableBug(
-                "failed to retrieve counter page \
-                 which should always be present"
-                    .into(),
-            ))
-        }
-
-        let counter = page_view.as_counter();
+        let counter = page_view.read.as_counter().counter;
         (page_view, counter)
     }
 
@@ -1850,10 +1814,15 @@ impl PageCacheInner {
                 let old = self.idgen_persists.swap(necessary_persists, Release);
                 assert_eq!(old, persisted);
 
-                if self
-                    .cas_page(COUNTER_PID, key, counter_update, false, &guard)?
-                    .is_err()
-                {
+                let res = self.cas_page(
+                    COUNTER_PID,
+                    key,
+                    counter_update,
+                    false,
+                    &guard,
+                )?;
+
+                if res.is_err() {
                     // CAS failed
                     continue;
                 }
@@ -1988,7 +1957,12 @@ impl PageCacheInner {
         Ok(())
     }
 
-    fn pull(&self, pid: PageId, lsn: Lsn, pointer: DiskPtr) -> Result<Update> {
+    fn pull(
+        &self,
+        pid: PageId,
+        lsn: Lsn,
+        pointer: PagePointer,
+    ) -> Result<Update> {
         use MessageKind::*;
 
         trace!("pulling pid {} lsn {} pointer {} from disk", pid, lsn, pointer);
