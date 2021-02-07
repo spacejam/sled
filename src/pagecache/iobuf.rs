@@ -428,24 +428,32 @@ impl IoBufs {
     pub(in crate::pagecache) fn sa_mark_link(
         &self,
         pid: PageId,
-        disk_pointer: PagePointer,
+        log_offset: LogOffset,
         guard: &Guard,
     ) {
-        let op = SegmentOp::Link { pid, disk_pointer };
+        let op = SegmentOp::Link { pid, log_offset };
         self.deferred_segment_ops.push(op, guard);
     }
 
     pub(in crate::pagecache) fn sa_mark_replace(
         &self,
         pid: PageId,
-        old_disk_pointers: &[PagePointer],
-        new_disk_pointer: PagePointer,
+        old_log_offsets: &[(SizeClass, LogOffset)],
+        old_heap_items: &[HeapId],
+        new_log_offset: LogOffset,
+        lsn: Lsn,
         guard: &Guard,
     ) -> Result<()> {
         let worked: Option<Result<()>> = self.try_with_sa(|sa| {
             #[cfg(feature = "metrics")]
             let start = clock();
-            sa.mark_replace(pid, old_disk_pointers, new_disk_pointer)?;
+            sa.mark_replace(
+                pid,
+                old_log_offsets,
+                old_heap_items,
+                new_log_offset,
+                lsn,
+            )?;
             for op in self.deferred_segment_ops.take_iter(guard) {
                 sa.apply_op(op)?;
             }
@@ -459,8 +467,10 @@ impl IoBufs {
         } else {
             let op = SegmentOp::Replace {
                 pid,
-                old_disk_pointers: old_disk_pointers.to_vec(),
-                new_disk_pointer,
+                old_log_offsets: old_log_offsets.to_vec(),
+                old_heap_items: old_heap_items.to_vec(),
+                new_log_offset,
+                lsn,
             };
             self.deferred_segment_ops.push(op, guard);
             Ok(())

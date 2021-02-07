@@ -43,7 +43,9 @@ use self::{
     iobuf::{roll_iobuf, IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
-    pointer::{PersistedCounter, PersistedMeta, PersistedNode, PointerRead},
+    pointer::{
+        PersistedCounter, PersistedMeta, PersistedNode, PointerRead, SizeClass,
+    },
     segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
 };
 
@@ -792,19 +794,7 @@ impl PageCache {
                     // possibly evict an item now that our cache has grown
                     let total_page_size =
                         unsafe { new_shared.deref().log_size() };
-                    let to_evict = self.lru.accessed(
-                        pid,
-                        usize::try_from(total_page_size).unwrap(),
-                        guard,
-                    );
-                    trace!(
-                        "accessed pid {} -> paging out pids {:?}",
-                        pid,
-                        to_evict
-                    );
-                    if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard)?;
-                    }
+                    self.lru_access(pid, total_page_size, guard)?;
 
                     old.read = new_shared;
 
@@ -1258,7 +1248,7 @@ impl PageCacheInner {
                 trace!("rewriting pointer to heap item with pid {}", pid);
 
                 let snapshot_min_lsn = self.snapshot_min_lsn.load(Acquire);
-                let skip_log = page_view.is_merged_into_snapshot();
+                let skip_log = page_view.ptr.is_merged_into_snapshot();
 
                 let heap_id = page_view.ptr.heap_id();
 
@@ -1280,17 +1270,14 @@ impl PageCacheInner {
                     (Some(log_reservation), log_reservation.pointer)
                 };
 
-                let new_page = Owned::new(Page {
-                    update: page_view.update.clone(),
-                    cache_infos: vec![cache_info],
-                });
+                let new_page = todo!();
 
                 debug_delay();
-                let result = page_view.entry.compare_and_set(
-                    page_view.read,
+                let result = page_view.entry.compare_exchange(
+                    todo!(), // page_view.read,
                     new_page,
                     SeqCst,
-                    guard,
+                    SeqCst,
                 );
 
                 if let Ok(new_shared) = result {
@@ -1300,8 +1287,8 @@ impl PageCacheInner {
 
                     self.log.iobufs.sa_mark_replace(
                         pid,
-                        &page_view.cache_infos,
-                        cache_info,
+                        &page_view.page_pointers,
+                        page_pointer,
                         guard,
                     )?;
 
@@ -1318,19 +1305,7 @@ impl PageCacheInner {
                         // possibly evict an item now that our cache has grown
                         let total_page_size =
                             unsafe { new_shared.deref().log_size() };
-                        let to_evict = self.lru.accessed(
-                            pid,
-                            usize::try_from(total_page_size).unwrap(),
-                            guard,
-                        );
-                        trace!(
-                            "accessed pid {} -> paging out pids {:?}",
-                            pid,
-                            to_evict
-                        );
-                        if !to_evict.is_empty() {
-                            self.page_out(to_evict, guard)?;
-                        }
+                        self.lru_access(pid, total_page_size, &guard)?;
                     }
 
                     trace!("rewriting pid {} succeeded", pid);
@@ -1392,6 +1367,16 @@ impl PageCacheInner {
                 }
             }
         }
+    }
+
+    fn lru_access(&self, pid: PageId, size: u64, guard: &Guard) -> Result<()> {
+        let to_evict =
+            self.lru.accessed(pid, usize::try_from(size).unwrap(), guard);
+        trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
+        if !to_evict.is_empty() {
+            self.page_out(to_evict, guard)?;
+        }
+        Ok(())
     }
 
     /// Traverses all files and calculates their total physical
@@ -1480,13 +1465,17 @@ impl PageCacheInner {
         trace!("cas_page on pid {} has log kind: {:?}", pid, log_kind);
 
         let old_node = old.as_node();
-        let mut new_page = Some(Owned::new(Page {
+        let mut new_page = todo!();
+
+        /*
+        Some(Owned::new(Page {
             update: Some(update),
             cache_infos: Vec::default(),
         }));
+        */
 
         loop {
-            let mut page_ptr = new_page.take().unwrap();
+            let mut page_ptr = todo!(); //new_page.take().unwrap();
             let log_reservation = match &*page_ptr.update.as_ref().unwrap() {
                 Update::Counter(ref c) => {
                     self.log.reserve(log_kind, pid, c, guard)?
@@ -1524,6 +1513,7 @@ impl PageCacheInner {
             // that SHOULD cause CAS failures.
             let ts = if is_rewrite { old_node.ts } else { old_node.ts + 1 };
 
+            /*
             let cache_info = CacheInfo {
                 ts,
                 lsn,
@@ -1533,10 +1523,16 @@ impl PageCacheInner {
             };
 
             page_ptr.cache_infos = vec![cache_info];
+            */
+            todo!("set page pointer");
 
             debug_delay();
-            let result =
-                old.entry.compare_and_set(old.read, page_ptr, SeqCst, guard);
+            let result = old.entry.compare_exchange(
+                todo!(), // old.read,
+                page_ptr,
+                SeqCst,
+                SeqCst,
+            );
 
             match result {
                 Ok(new_shared) => {
@@ -1547,8 +1543,8 @@ impl PageCacheInner {
                     trace!("cas_page succeeded on pid {}", pid);
                     self.log.iobufs.sa_mark_replace(
                         pid,
-                        &old.cache_infos,
-                        cache_info,
+                        &old.page_pointers,
+                        page_pointer,
                         guard,
                     )?;
 
@@ -1560,19 +1556,7 @@ impl PageCacheInner {
                     // possibly evict an item now that our cache has grown
                     let total_page_size =
                         unsafe { new_shared.deref().log_size() };
-                    let to_evict = self.lru.accessed(
-                        pid,
-                        usize::try_from(total_page_size).unwrap(),
-                        guard,
-                    );
-                    trace!(
-                        "accessed pid {} -> paging out pids {:?}",
-                        pid,
-                        to_evict
-                    );
-                    if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard)?;
-                    }
+                    self.lru_access(pid, total_page_size, guard)?;
 
                     return Ok(Ok(PageView {
                         read: new_shared,
@@ -1662,19 +1646,7 @@ impl PageCacheInner {
             if page_view.update.is_some() {
                 // possibly evict an item now that our cache has grown
                 let total_page_size = page_view.log_size();
-                let to_evict = self.lru.accessed(
-                    pid,
-                    usize::try_from(total_page_size).unwrap(),
-                    guard,
-                );
-                trace!(
-                    "accessed pid {} -> paging out pids {:?}",
-                    pid,
-                    to_evict
-                );
-                if !to_evict.is_empty() {
-                    self.page_out(to_evict, guard)?;
-                }
+                self.lru_access(pid, total_page_size, guard)?;
                 return Ok(Some(NodeView(page_view)));
             }
 
@@ -1719,17 +1691,21 @@ impl PageCacheInner {
         updates.truncate(1);
         let base = updates.pop().unwrap();
 
-        let page = Owned::new(Page {
+        let page = todo!();
+
+        /*
+        Owned::new(Page {
             update: Some(base),
             cache_infos: page_view.cache_infos.clone(),
         });
+        */
 
         debug_delay();
-        let result = page_view.entry.compare_and_set(
-            page_view.read,
+        let result = page_view.entry.compare_exchange(
+            todo!(), //page_view.read,
             page,
             SeqCst,
-            guard,
+            SeqCst,
         );
 
         if let Ok(new_shared) = result {
@@ -1741,15 +1717,7 @@ impl PageCacheInner {
 
             // possibly evict an item now that our cache has grown
             let total_page_size = unsafe { new_shared.deref().log_size() };
-            let to_evict = self.lru.accessed(
-                pid,
-                usize::try_from(total_page_size).unwrap(),
-                guard,
-            );
-            trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
-            if !to_evict.is_empty() {
-                self.page_out(to_evict, guard)?;
-            }
+            self.lru_access(pid, total_page_size, guard)?;
 
             let mut page_view = page_view;
             page_view.read = new_shared;
@@ -1934,15 +1902,23 @@ impl PageCacheInner {
                     continue 'pid;
                 }
 
-                let new_page = Owned::new(Page {
+                let new_page = todo!();
+                /*
+                Owned::new(Page {
                     update: None,
                     cache_infos: page_view.cache_infos.clone(),
                 });
+                */
 
                 debug_delay();
                 if page_view
                     .entry
-                    .compare_and_set(page_view.read, new_page, SeqCst, guard)
+                    .compare_exchange(
+                        todo!(), //page_view.read,
+                        new_page,
+                        SeqCst,
+                        SeqCst,
+                    )
                     .is_ok()
                 {
                     unsafe {
