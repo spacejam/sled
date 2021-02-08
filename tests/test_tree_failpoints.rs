@@ -70,6 +70,8 @@ impl Arbitrary for Op {
             "write_blob write kind_byte",
             "write_blob write buf",
             "file truncation",
+            "pwrite",
+            "pwrite partial",
         ];
 
         if g.gen_bool(1. / 30.) {

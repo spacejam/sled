@@ -3,13 +3,13 @@ use std::fs::File;
 use std::io;
 use std::os::unix::fs::FileExt;
 
-use super::LogOffset;
+use super::{LogOffset, Result};
 
 pub(crate) fn pread_exact_or_eof(
     file: &File,
     mut buf: &mut [u8],
     offset: LogOffset,
-) -> io::Result<usize> {
+) -> Result<usize> {
     let mut total = 0_usize;
     while !buf.is_empty() {
         match file.read_at(buf, offset + u64::try_from(total).unwrap()) {
@@ -20,7 +20,7 @@ pub(crate) fn pread_exact_or_eof(
                 buf = &mut tmp[n..];
             }
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.into()),
         }
     }
     Ok(total)
@@ -30,14 +30,29 @@ pub(crate) fn pread_exact(
     file: &File,
     buf: &mut [u8],
     offset: LogOffset,
-) -> io::Result<()> {
-    file.read_exact_at(buf, offset)
+) -> Result<()> {
+    file.read_exact_at(buf, offset).map_err(From::from)
 }
 
 pub(crate) fn pwrite_all(
     file: &File,
     buf: &[u8],
     offset: LogOffset,
-) -> io::Result<()> {
-    file.write_all_at(buf, offset)
+) -> Result<()> {
+    #[cfg(feature = "failpoints")]
+    {
+        crate::debug_delay();
+        if crate::fail::is_active("pwrite") {
+            return Err(crate::Error::FailPoint);
+        }
+
+        if crate::fail::is_active("pwrite partial") && !buf.is_empty() {
+            // TODO perturb the length more
+            let len = buf.len() / 2;
+
+            file.write_all_at(&buf[..len], offset)?;
+            return Err(crate::Error::FailPoint);
+        }
+    };
+    file.write_all_at(buf, offset).map_err(From::from)
 }

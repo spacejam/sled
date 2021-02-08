@@ -678,31 +678,23 @@ pub(crate) fn read_segment_header(
 }
 
 pub(crate) trait ReadAt {
-    fn pread_exact(&self, dst: &mut [u8], at: u64) -> std::io::Result<()>;
+    fn pread_exact(&self, dst: &mut [u8], at: u64) -> Result<()>;
 
-    fn pread_exact_or_eof(
-        &self,
-        dst: &mut [u8],
-        at: u64,
-    ) -> std::io::Result<usize>;
+    fn pread_exact_or_eof(&self, dst: &mut [u8], at: u64) -> Result<usize>;
 }
 
 impl ReadAt for File {
-    fn pread_exact(&self, dst: &mut [u8], at: u64) -> std::io::Result<()> {
+    fn pread_exact(&self, dst: &mut [u8], at: u64) -> Result<()> {
         pread_exact(self, dst, at)
     }
 
-    fn pread_exact_or_eof(
-        &self,
-        dst: &mut [u8],
-        at: u64,
-    ) -> std::io::Result<usize> {
+    fn pread_exact_or_eof(&self, dst: &mut [u8], at: u64) -> Result<usize> {
         pread_exact_or_eof(self, dst, at)
     }
 }
 
 impl ReadAt for BasedBuf {
-    fn pread_exact(&self, dst: &mut [u8], mut at: u64) -> std::io::Result<()> {
+    fn pread_exact(&self, dst: &mut [u8], mut at: u64) -> Result<()> {
         if at < self.offset
             || u64::try_from(dst.len()).unwrap() + at
                 > u64::try_from(self.buf.len()).unwrap() + self.offset
@@ -710,7 +702,8 @@ impl ReadAt for BasedBuf {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "failed to fill buffer",
-            ));
+            )
+            .into());
         }
         at -= self.offset;
         let at_usize = usize::try_from(at).unwrap();
@@ -719,18 +712,15 @@ impl ReadAt for BasedBuf {
         Ok(())
     }
 
-    fn pread_exact_or_eof(
-        &self,
-        dst: &mut [u8],
-        mut at: u64,
-    ) -> std::io::Result<usize> {
+    fn pread_exact_or_eof(&self, dst: &mut [u8], mut at: u64) -> Result<usize> {
         if at < self.offset
             || u64::try_from(self.buf.len()).unwrap() < at - self.offset
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "failed to fill buffer",
-            ));
+            )
+            .into());
         }
         at -= self.offset;
 
