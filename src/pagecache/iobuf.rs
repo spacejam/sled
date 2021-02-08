@@ -429,9 +429,11 @@ impl IoBufs {
         &self,
         pid: PageId,
         log_offset: LogOffset,
+        size: SizeClass,
+        lsn: Lsn,
         guard: &Guard,
     ) {
-        let op = SegmentOp::Link { pid, log_offset };
+        let op = SegmentOp::Link { pid, log_offset, size, lsn };
         self.deferred_segment_ops.push(op, guard);
     }
 
@@ -441,6 +443,7 @@ impl IoBufs {
         old_log_offsets: &[(SizeClass, LogOffset)],
         old_heap_items: &[HeapId],
         new_log_offset: LogOffset,
+        new_size: SizeClass,
         lsn: Lsn,
         guard: &Guard,
     ) -> Result<()> {
@@ -452,6 +455,7 @@ impl IoBufs {
                 old_log_offsets,
                 old_heap_items,
                 new_log_offset,
+                new_size.size(),
                 lsn,
             )?;
             for op in self.deferred_segment_ops.take_iter(guard) {
@@ -470,6 +474,7 @@ impl IoBufs {
                 old_log_offsets: old_log_offsets.to_vec(),
                 old_heap_items: old_heap_items.to_vec(),
                 new_log_offset,
+                new_size,
                 lsn,
             };
             self.deferred_segment_ops.push(op, guard);

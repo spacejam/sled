@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, io};
 use super::{
     pread_exact_or_eof, read_message, read_segment_header, BasedBuf, LogKind,
     LogOffset, LogRead, Lsn, PagePointer, SegmentHeader, SegmentNumber,
-    MAX_MSG_HEADER_LEN, SEG_HEADER_LEN,
+    SizeClass, MAX_MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 use crate::*;
 
@@ -89,7 +89,7 @@ impl Iterator for LogIter {
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
-                        PagePointer::new_heap_item(lid, heap_id),
+                        PagePointer::new_heap(heap_id),
                         u64::from(inline_len),
                     ));
                 }
@@ -104,7 +104,7 @@ impl Iterator for LogIter {
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
-                        PagePointer::log(lid),
+                        PagePointer::new_log(SizeClass::from(inline_len), lid),
                         u64::from(inline_len),
                     ));
                 }

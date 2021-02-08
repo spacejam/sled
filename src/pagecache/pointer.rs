@@ -60,8 +60,32 @@ impl TruncatedLogOffset {
 pub(crate) struct SizeClass(u8);
 
 impl SizeClass {
-    pub const fn size(&self) -> u64 {
+    pub const fn size(&self) -> usize {
         1 << self.0
+    }
+}
+
+impl From<u32> for SizeClass {
+    fn from(item: u32) -> SizeClass {
+        SizeClass(
+            u8::try_from(item.next_power_of_two().trailing_zeros()).unwrap(),
+        )
+    }
+}
+
+impl From<u64> for SizeClass {
+    fn from(item: u64) -> SizeClass {
+        SizeClass(
+            u8::try_from(item.next_power_of_two().trailing_zeros()).unwrap(),
+        )
+    }
+}
+
+impl From<usize> for SizeClass {
+    fn from(item: usize) -> SizeClass {
+        SizeClass(
+            u8::try_from(item.next_power_of_two().trailing_zeros()).unwrap(),
+        )
     }
 }
 
@@ -129,6 +153,13 @@ impl PagePointer {
         }
     }
 
+    pub fn forget_heap_log_coordinates(&mut self) {
+        if let read @ PointerRead::LogAndHeap { ptr, .. } = self.read() {
+            let log_and_heap = read.as_log_and_heap();
+            *self = PagePointer::new_heap(log_and_heap.heap_id);
+        }
+    }
+
     pub fn lid(&self) -> Option<LogOffset> {
         match self.read() {
             PointerRead::Log { base, .. } | PointerRead::Free { base } => {
@@ -140,6 +171,11 @@ impl PagePointer {
 
     const fn kind(&self) -> PointerKind {
         unsafe { std::mem::transmute(self.0[7]) }
+    }
+
+    pub fn is_heap_item(&self) -> bool {
+        let kind = self.kind();
+        kind == PointerKind::LogAndHeap || kind == PointerKind::Heap
     }
 
     pub fn heap_id(&self) -> HeapId {
@@ -183,11 +219,17 @@ impl PagePointer {
         ])
     }
 
-    pub fn new_log(size_po2: u8, at: LogOffset) -> PagePointer {
+    pub fn new_log(size_class: SizeClass, at: LogOffset) -> PagePointer {
         let at = TruncatedLogOffset::from_u64(at);
         let kind = PointerKind::LogAndHeap as u8;
         PagePointer([
-            at.0[0], at.0[1], at.0[2], at.0[3], at.0[4], at.0[5], size_po2,
+            at.0[0],
+            at.0[1],
+            at.0[2],
+            at.0[3],
+            at.0[4],
+            at.0[5],
+            size_class.0,
             kind,
         ])
     }
@@ -213,6 +255,10 @@ impl PagePointer {
 
     pub fn is_lone_log_and_heap(&self) -> bool {
         self.kind() == PointerKind::LogAndHeap
+    }
+
+    pub fn is_inline(&self) -> bool {
+        self.kind() == PointerKind::Log
     }
 
     pub fn is_merged_into_snapshot(&self) -> bool {
@@ -244,8 +290,16 @@ impl<'a> PointerRead<'a> {
             Heap { size_po2, .. }
             | Log { size_po2, .. }
             | LogAndHeap { size_po2, .. }
-            | InMemory { size_po2, .. } => size_po2.size(),
+            | InMemory { size_po2, .. } => size_po2.size() as u64,
             _ => 0,
+        }
+    }
+
+    pub fn as_log_and_heap(&self) -> &LogAndHeap {
+        if let PointerRead::LogAndHeap { ptr, .. } = self {
+            &ptr.deref()
+        } else {
+            panic!("called as_log_and_heap on {:?}", self);
         }
     }
 
@@ -291,7 +345,7 @@ impl Deref for PersistedCounter {
 #[derive(Debug)]
 pub(crate) struct LogAndHeap {
     pub log_offset: TruncatedLogOffset,
-    pub HeapId: HeapId,
+    pub heap_id: HeapId,
     pub log_lsn: Lsn,
 }
 

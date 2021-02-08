@@ -42,7 +42,7 @@ impl<'a> Reservation<'a> {
                 self.pointer
             );
 
-            self.log.config.heap.free(self.pointer.heap_id().unwrap());
+            self.log.config.heap.free(self.pointer.heap_id());
         }
 
         self.flush(false)

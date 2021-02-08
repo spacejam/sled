@@ -74,7 +74,7 @@ impl Log {
             // we short-circuit the inline read
             // here because it might not still
             // exist in the inline log.
-            let heap_id = ptr.heap_id().unwrap();
+            let heap_id = ptr.heap_id();
             self.config
                 .heap
                 .read(heap_id, None, self.config.use_compression)

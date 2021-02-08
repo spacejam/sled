@@ -77,6 +77,7 @@ pub(crate) enum SegmentOp {
         old_log_offsets: Vec<(SizeClass, LogOffset)>,
         old_heap_items: Vec<HeapId>,
         new_log_offset: LogOffset,
+        new_size: SizeClass,
         lsn: Lsn,
     },
 }
@@ -768,19 +769,21 @@ impl SegmentAccountant {
         use SegmentOp::*;
         match op {
             Link { pid, log_offset, size, lsn } => {
-                self.mark_link(*pid, *log_offset, *size, *lsn)
+                self.mark_link(*pid, *log_offset, size.size(), *lsn)
             }
             Replace {
                 pid,
                 old_heap_items,
                 old_log_offsets,
                 new_log_offset,
+                new_size,
                 lsn,
             } => self.mark_replace(
                 *pid,
                 old_log_offsets,
                 old_heap_items,
                 *new_log_offset,
+                new_size.size(),
                 *lsn,
             )?,
         }
@@ -887,7 +890,7 @@ impl SegmentAccountant {
             segment.lsn()
         );
 
-        segment.insert_pid(pid, segment_lsn);
+        segment.insert_pid(pid, segment_lsn, size);
     }
 
     fn possibly_clean_or_free_segment(
