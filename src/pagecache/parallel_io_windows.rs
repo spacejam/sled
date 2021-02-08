@@ -19,14 +19,15 @@ fn seek_read_exact<F: FileExt>(
                 offset += n as u64;
             }
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.into()),
         }
     }
     if !buf.is_empty() {
         Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             "failed to fill whole buffer",
-        ))
+        )
+        .into())
     } else {
         Ok(())
     }
@@ -43,14 +44,15 @@ fn seek_write_all<F: FileExt>(
                 return Err(io::Error::new(
                     io::ErrorKind::WriteZero,
                     "failed to write whole buffer",
-                ));
+                )
+                .into());
             }
             Ok(n) => {
                 buf = &buf[n..];
                 offset += n as u64;
             }
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.into()),
         }
     }
     Ok(())
@@ -71,7 +73,7 @@ pub(crate) fn pread_exact_or_eof(
                 buf = &mut tmp[n..];
             }
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.into()),
         }
     }
     Ok(total)
@@ -83,7 +85,7 @@ pub(crate) fn pread_exact(
     offset: LogOffset,
 ) -> Result<()> {
     let mut f = file.try_clone()?;
-    seek_read_exact(&mut f, buf, offset)
+    seek_read_exact(&mut f, buf, offset).map_err(From::from)
 }
 
 pub(crate) fn pwrite_all(
@@ -92,5 +94,5 @@ pub(crate) fn pwrite_all(
     offset: LogOffset,
 ) -> Result<()> {
     let mut f = file.try_clone()?;
-    seek_write_all(&mut f, buf, offset)
+    seek_write_all(&mut f, buf, offset).map_err(From::from)
 }
