@@ -99,20 +99,16 @@ impl PageState {
 
         match *self {
             PageState::Present { base, ref frags } => {
-                if let Some(heap_id) = base.1.heap_id() {
-                    ret.push(heap_id);
+                if base.1.is_heap_item() {
+                    ret.push(base.1.heap_id());
                 }
                 for (_, ptr, _) in frags {
-                    if let Some(heap_id) = ptr.heap_id() {
-                        ret.push(heap_id);
+                    if ptr.is_heap_item() {
+                        ret.push(ptr.heap_id());
                     }
                 }
             }
-            PageState::Free(_, ptr) => {
-                if let Some(heap_id) = ptr.heap_id() {
-                    ret.push(heap_id);
-                }
-            }
+            PageState::Free(..) => {}
             PageState::Uninitialized => {
                 panic!("called heap_ids on Uninitialized")
             }
