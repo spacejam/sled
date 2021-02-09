@@ -244,12 +244,17 @@ impl PagePointer {
         ])
     }
 
-    pub fn new_log_and_heap(size_po2: u8, at: LogOffset) -> PagePointer {
+    pub fn new_log_and_heap(
+        size: SizeClass,
+        lid: LogOffset,
+        heap_id: HeapId,
+        lsn: Lsn,
+    ) -> PagePointer {
         let kind = PointerKind::LogAndHeap as u8;
-        let at = TruncatedLogOffset::from_u64(at);
+        todo!("allocate LogAndHeap");
+        let at = TruncatedLogOffset::from_u64(lid);
         PagePointer([
-            at.0[0], at.0[1], at.0[2], at.0[3], at.0[4], at.0[5], size_po2,
-            kind,
+            at.0[0], at.0[1], at.0[2], at.0[3], at.0[4], at.0[5], size.0, kind,
         ])
     }
 

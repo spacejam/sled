@@ -432,11 +432,21 @@ impl Log {
             M.log_reservation_success();
 
             let pointer = if let Some(heap_id) = heap_id {
-                PagePointer::new_heap_item(reservation_lid, heap_id)
+                PagePointer::new_log_and_heap(
+                    serialized_len.into(),
+                    reservation_lid,
+                    heap_id,
+                    reservation_lsn,
+                )
             } else if let Some(heap_id) = heap_rewrite {
-                PagePointer::new_heap_item(reservation_lid, heap_id)
+                PagePointer::new_log_and_heap(
+                    serialized_len.into(),
+                    reservation_lid,
+                    heap_id,
+                    reservation_lsn,
+                )
             } else {
-                PagePointer::new_inline(reservation_lid)
+                PagePointer::new_log(serialized_len.into(), reservation_lid)
             };
 
             return Ok(Reservation {
