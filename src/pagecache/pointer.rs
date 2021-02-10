@@ -101,8 +101,14 @@ pub(crate) enum PointerKind {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(crate) struct PagePointer(pub [u8; 8]);
+
+impl Drop for PagePointer {
+    fn drop(&mut self) {
+        todo!("free in-memory/log and heap");
+    }
+}
 
 impl Default for PagePointer {
     fn default() -> PagePointer {
@@ -117,6 +123,14 @@ impl fmt::Debug for PagePointer {
 }
 
 impl PagePointer {
+    pub fn to_u64(&self) -> u64 {
+        u64::from_le_bytes(self.0)
+    }
+
+    pub fn from_u64(u: u64) -> PagePointer {
+        PagePointer(u.to_le_bytes())
+    }
+
     pub fn read<'a>(&'a self) -> PointerRead<'a> {
         let size_po2 = SizeClass(self.0[6]);
         let base = TruncatedLogOffset([
