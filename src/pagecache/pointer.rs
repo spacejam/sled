@@ -101,14 +101,8 @@ pub(crate) enum PointerKind {
 }
 
 #[repr(C)]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct PagePointer(pub [u8; 8]);
-
-impl Drop for PagePointer {
-    fn drop(&mut self) {
-        todo!("free in-memory/log and heap");
-    }
-}
 
 impl Default for PagePointer {
     fn default() -> PagePointer {
@@ -295,6 +289,16 @@ pub(crate) enum PointerRead<'a> {
 }
 
 impl<'a> PointerRead<'a> {
+    pub fn defer_destroy(self, guard: &crate::Guard) {
+        match self {
+            PointerRead::LogAndHeap { ptr, .. } => guard.defer_destroy(ptr),
+            PointerRead::InMemory { ptr, .. } => guard.defer_destroy(ptr),
+            _ => {
+                // no need to drop anything
+            }
+        }
+    }
+
     pub fn is_free(&self) -> bool {
         if let PointerRead::Free { .. } = self {
             true

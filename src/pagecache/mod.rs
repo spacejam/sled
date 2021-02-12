@@ -776,13 +776,17 @@ impl PageCache {
                 Ok(new_shared) => {
                     trace!("link of pid {} succeeded", pid);
 
-                    unsafe {
-                        guard.defer_destroy(old.read);
-                    }
+                    old.read.defer_destroy(&guard);
 
                     assert_ne!(old.last_lsn(), 0);
 
-                    self.log.iobufs.sa_mark_link(pid, page_ptr, guard);
+                    self.log.iobufs.sa_mark_link(
+                        pid,
+                        pointer.lid().unwrap(),
+                        log_reservation.buf.len().into(),
+                        lsn,
+                        guard,
+                    );
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
@@ -974,9 +978,7 @@ impl PageCacheInner {
 
             trace!("allocating pid {} for the first time", pid);
 
-            let new_page = Page { update: None, cache_infos: Vec::default() };
-
-            let page_view = self.inner.insert(pid, new_page);
+            let page_view = self.inner.insert(pid, PagePointer::default());
 
             (pid, page_view)
         };
@@ -1281,14 +1283,15 @@ impl PageCacheInner {
                 );
 
                 if let Ok(new_shared) = result {
-                    unsafe {
-                        guard.defer_destroy(page_view.read);
-                    }
+                    page_view.read.defer_destroy(guard);
 
                     self.log.iobufs.sa_mark_replace(
                         pid,
-                        &page_view.page_pointers,
-                        page_pointer,
+                        old_log_offsets,
+                        old_heap_items,
+                        page_pointer.lid().unwrap(),
+                        log_reservation.buf.len().into(),
+                        lsn,
                         guard,
                     )?;
 
@@ -1536,9 +1539,7 @@ impl PageCacheInner {
 
             match result {
                 Ok(new_shared) => {
-                    unsafe {
-                        guard.defer_destroy(old.read);
-                    }
+                    old.read.defer_destroy(guard);
 
                     trace!("cas_page succeeded on pid {}", pid);
                     self.log.iobufs.sa_mark_replace(
@@ -1711,9 +1712,7 @@ impl PageCacheInner {
         if let Ok(new_shared) = result {
             trace!("fix-up for pid {} succeeded", pid);
 
-            unsafe {
-                guard.defer_destroy(page_view.read);
-            }
+            page_view.read.defer_destroy(guard);
 
             // possibly evict an item now that our cache has grown
             let total_page_size = unsafe { new_shared.deref().log_size() };
@@ -1921,9 +1920,7 @@ impl PageCacheInner {
                     )
                     .is_ok()
                 {
-                    unsafe {
-                        guard.defer_destroy(page_view.read);
-                    }
+                    page_view.read.defer_destroy(guard);
 
                     break;
                 }
