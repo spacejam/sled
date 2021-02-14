@@ -1287,11 +1287,10 @@ impl PageCacheInner {
 
                     self.log.iobufs.sa_mark_replace(
                         pid,
-                        old_log_offsets,
-                        old_heap_items,
+                        &page_view,
                         page_pointer.lid().unwrap(),
                         log_reservation.buf.len().into(),
-                        lsn,
+                        log_reservation.lsn,
                         guard,
                     )?;
 
@@ -1544,8 +1543,10 @@ impl PageCacheInner {
                     trace!("cas_page succeeded on pid {}", pid);
                     self.log.iobufs.sa_mark_replace(
                         pid,
-                        &old.page_pointers,
-                        page_pointer,
+                        &old,
+                        log_reservation.pointer,
+                        log_reservation.buf.len().into(),
+                        lsn,
                         guard,
                     )?;
 

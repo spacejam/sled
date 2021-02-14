@@ -440,13 +440,14 @@ impl IoBufs {
     pub(in crate::pagecache) fn sa_mark_replace(
         &self,
         pid: PageId,
-        old_log_offsets: &[(SizeClass, LogOffset)],
-        old_heap_items: &[HeapId],
+        old: &PageView<'_>,
         new_log_offset: LogOffset,
         new_size: SizeClass,
         lsn: Lsn,
         guard: &Guard,
     ) -> Result<()> {
+        let old_log_offsets: &[(SizeClass, LogOffset)] = todo!();
+        let old_heap_items: &[HeapId] = todo!();
         let worked: Option<Result<()>> = self.try_with_sa(|sa| {
             #[cfg(feature = "metrics")]
             let start = clock();

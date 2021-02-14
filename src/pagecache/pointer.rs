@@ -289,6 +289,32 @@ pub(crate) enum PointerRead<'a> {
 }
 
 impl<'a> PointerRead<'a> {
+    pub fn iter_lids(&self, pid: u64) -> impl Iterator<Item = PagePointer> {
+        use PointerRead::*;
+        let (base, rest) = match self {
+            Heap { .. } => (None, vec![]),
+            Free { base } | Log { base, .. } => (Some(base.to_u64()), vec![]),
+            LogAndHeap { ptr, .. } => (Some(ptr.deref().lid()), vec![]),
+            InMemory { .. } => match pid {
+                0 => (Some(self.as_meta().base.to_u64()), vec![]),
+                1 => (Some(self.as_counter().base.to_u64()), vec![]),
+                _ => self.as_node().iter_pointers(),
+            },
+        };
+
+        std::iter::once(base.into_iter()).chain(rest.into_iter())
+    }
+
+    pub fn exists_on_segment(
+        &self,
+        segment: LogOffset,
+        segment_size: u64,
+        pid: u64,
+    ) -> bool {
+        let sid = segment / segment_size;
+        self.as_node().iter_lids().any(|pp| pp.to_u64() / segment_size == sid)
+    }
+
     pub fn defer_destroy(self, guard: &crate::Guard) {
         match self {
             PointerRead::LogAndHeap { ptr, .. } => guard.defer_destroy(ptr),
@@ -354,7 +380,7 @@ impl<'a> PointerRead<'a> {
 #[derive(Debug)]
 pub(crate) struct PersistedCounter {
     pub counter: u64,
-    pub page_pointer: PagePointer,
+    pub base: PagePointer,
 }
 
 impl Deref for PersistedCounter {
@@ -372,10 +398,16 @@ pub(crate) struct LogAndHeap {
     pub log_lsn: Lsn,
 }
 
+impl LogAndHeap {
+    fn lid(&self) -> LogOffset {
+        self.log_offset.to_u64()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct PersistedMeta {
     pub meta: Meta,
-    pub page_pointer: PagePointer,
+    pub base: PagePointer,
 }
 
 impl Deref for PersistedMeta {
@@ -399,6 +431,12 @@ impl Deref for PersistedNode {
 
     fn deref(&self) -> &Node {
         &self.node
+    }
+}
+
+impl PersistedNode {
+    pub fn iter_lids(&self) -> impl Iterator<Item = &PagePointer> {
+        std::iter::once(&self.base).chain(&self.frags)
     }
 }
 
