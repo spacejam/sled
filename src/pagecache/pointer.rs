@@ -41,7 +41,7 @@ impl std::fmt::Display for PagePointer {
 pub(crate) struct TruncatedLogOffset([u8; 6]);
 
 impl TruncatedLogOffset {
-    pub fn to_u64(&self) -> LogOffset {
+    pub fn to_lid(&self) -> LogOffset {
         u64::from_le_bytes([
             self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5],
             0, 0,
@@ -171,7 +171,7 @@ impl PagePointer {
     pub fn lid(&self) -> Option<LogOffset> {
         match self.read() {
             PointerRead::Log { base, .. } | PointerRead::Free { base } => {
-                Some(base.to_u64())
+                Some(base.to_lid())
             }
             _ => None,
         }
@@ -288,21 +288,38 @@ pub(crate) enum PointerRead<'a> {
     InMemory { size_po2: SizeClass, ptr: Shared<'a, PersistedNode> },
 }
 
+struct LidIter<'a> {
+    base: Option<&'a LogOffset>,
+    rest: Box<dyn Iterator<Item = LogOffset>>,
+}
+
+impl<'a> Iterator for LidIter<'a> {
+    type Item = LogOffset;
+
+    fn next(&mut self) -> Option<LogOffset> {
+        todo!()
+    }
+}
+
 impl<'a> PointerRead<'a> {
-    pub fn iter_lids(&self, pid: u64) -> impl Iterator<Item = PagePointer> {
+    pub fn iter_lids<'b>(
+        &'b self,
+        pid: u64,
+    ) -> Box<dyn 'b + Iterator<Item = LogOffset>> {
         use PointerRead::*;
-        let (base, rest) = match self {
-            Heap { .. } => (None, vec![]),
-            Free { base } | Log { base, .. } => (Some(base.to_u64()), vec![]),
-            LogAndHeap { ptr, .. } => (Some(ptr.deref().lid()), vec![]),
+
+        let base: Option<LogOffset> = match self {
+            Heap { .. } => None,
+            Free { base } | Log { base, .. } => Some(base.to_lid()),
+            LogAndHeap { ptr, .. } => Some(ptr.deref().lid()),
             InMemory { .. } => match pid {
-                0 => (Some(self.as_meta().base.to_u64()), vec![]),
-                1 => (Some(self.as_counter().base.to_u64()), vec![]),
-                _ => self.as_node().iter_pointers(),
+                0 => self.as_meta().base.lid(),
+                1 => self.as_counter().base.lid(),
+                _ => return Box::new(self.as_node().iter_lids()),
             },
         };
 
-        std::iter::once(base.into_iter()).chain(rest.into_iter())
+        Box::new(base.into_iter())
     }
 
     pub fn exists_on_segment(
@@ -312,7 +329,7 @@ impl<'a> PointerRead<'a> {
         pid: u64,
     ) -> bool {
         let sid = segment / segment_size;
-        self.as_node().iter_lids().any(|pp| pp.to_u64() / segment_size == sid)
+        self.as_node().iter_lids().any(|pp| pp / segment_size == sid)
     }
 
     pub fn defer_destroy(self, guard: &crate::Guard) {
@@ -400,7 +417,11 @@ pub(crate) struct LogAndHeap {
 
 impl LogAndHeap {
     fn lid(&self) -> LogOffset {
-        self.log_offset.to_u64()
+        self.log_offset.to_lid()
+    }
+
+    fn page_pointer(&self) -> PagePointer {
+        PagePointer::new_log(self.heap_id.slab_size().into(), self.lid())
     }
 }
 
@@ -435,8 +456,11 @@ impl Deref for PersistedNode {
 }
 
 impl PersistedNode {
-    pub fn iter_lids(&self) -> impl Iterator<Item = &PagePointer> {
-        std::iter::once(&self.base).chain(&self.frags)
+    pub fn iter_lids<'a>(&'a self) -> impl 'a + Iterator<Item = LogOffset> {
+        self.base
+            .lid()
+            .into_iter()
+            .chain(self.frags.iter().filter_map(PagePointer::lid))
     }
 }
 

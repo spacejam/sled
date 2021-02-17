@@ -1,5 +1,4 @@
-//! `pagecache` is a lock-free pagecache and log for building high-performance
-//! databases.
+//! `pagecache` is a lock-free pagecache built on a lock-free log.
 #![allow(unsafe_code)]
 
 pub mod constants;

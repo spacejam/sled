@@ -65,7 +65,7 @@ impl HeapId {
         slab_id_to_size(self.slab) * u64::from(self.index)
     }
 
-    fn slab_size(&self) -> u64 {
+    pub fn slab_size(&self) -> u64 {
         slab_id_to_size(self.slab)
     }
 }
