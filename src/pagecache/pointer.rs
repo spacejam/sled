@@ -288,38 +288,45 @@ pub(crate) enum PointerRead<'a> {
     InMemory { size_po2: SizeClass, ptr: Shared<'a, PersistedNode> },
 }
 
-struct LidIter<'a> {
-    base: Option<&'a LogOffset>,
-    rest: Box<dyn Iterator<Item = LogOffset>>,
+enum LidIter<'a> {
+    Base(Option<LogOffset>),
+    Node(
+        std::iter::Chain<
+            std::option::IntoIter<LogOffset>,
+            std::iter::FilterMap<
+                std::slice::Iter<'a, PagePointer>,
+                for<'r> fn(&'r PagePointer) -> Option<LogOffset>,
+            >,
+        >,
+    ),
 }
 
 impl<'a> Iterator for LidIter<'a> {
     type Item = LogOffset;
 
     fn next(&mut self) -> Option<LogOffset> {
-        todo!()
+        match self {
+            LidIter::Base(ref mut b) => b.take(),
+            LidIter::Node(ref mut t) => t.next(),
+        }
     }
 }
 
 impl<'a> PointerRead<'a> {
-    pub fn iter_lids<'b>(
-        &'b self,
-        pid: u64,
-    ) -> Box<dyn 'b + Iterator<Item = LogOffset>> {
+    pub fn iter_lids<'b>(&'b self, pid: u64) -> LidIter<'b> {
+        use LidIter::*;
         use PointerRead::*;
 
-        let base: Option<LogOffset> = match self {
-            Heap { .. } => None,
-            Free { base } | Log { base, .. } => Some(base.to_lid()),
-            LogAndHeap { ptr, .. } => Some(ptr.deref().lid()),
+        match self {
+            Heap { .. } => Base(None),
+            Free { base } | Log { base, .. } => Base(Some(base.to_lid())),
+            LogAndHeap { ptr, .. } => Base(Some(ptr.deref().lid())),
             InMemory { .. } => match pid {
-                0 => self.as_meta().base.lid(),
-                1 => self.as_counter().base.lid(),
-                _ => return Box::new(self.as_node().iter_lids()),
+                0 => Base(self.as_meta().base.lid()),
+                1 => Base(self.as_counter().base.lid()),
+                _ => Node(self.as_node().iter_lids()),
             },
-        };
-
-        Box::new(base.into_iter())
+        }
     }
 
     pub fn exists_on_segment(
@@ -456,11 +463,20 @@ impl Deref for PersistedNode {
 }
 
 impl PersistedNode {
-    pub fn iter_lids<'a>(&'a self) -> impl 'a + Iterator<Item = LogOffset> {
+    #[allow(trivial_casts)]
+    pub fn iter_lids<'a>(
+        &'a self,
+    ) -> std::iter::Chain<
+        std::option::IntoIter<LogOffset>,
+        std::iter::FilterMap<
+            std::slice::Iter<'a, PagePointer>,
+            for<'r> fn(&'r PagePointer) -> Option<LogOffset>,
+        >,
+    > {
         self.base
             .lid()
             .into_iter()
-            .chain(self.frags.iter().filter_map(PagePointer::lid))
+            .chain(self.frags.iter().filter_map(PagePointer::lid as _))
     }
 }
 
