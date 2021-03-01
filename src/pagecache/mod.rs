@@ -42,9 +42,7 @@ use self::{
     iobuf::{roll_iobuf, IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagetable::PageTable,
-    pointer::{
-        PersistedCounter, PersistedMeta, PersistedNode, PointerRead, SizeClass,
-    },
+    pointer::{PersistedNode, PointerRead, SizeClass},
     segment::{SegmentAccountant, SegmentCleaner, SegmentOp},
 };
 
@@ -732,8 +730,8 @@ impl PageCache {
 
         let mut new_page = Some(Owned::new(PersistedNode {
             node,
-            base_page_pointer: old_node.base_page_pointer,
-            frags: vec![],
+            base: old_node.base,
+            frags: old_node.frags.clone(),
             ts: 0,
         }));
 
@@ -761,15 +759,13 @@ impl PageCache {
             // changing.
             let ts = old_node.ts + 1;
 
-            let mut new_frags = Vec::with_capacity(old_node.frags.len() + 1);
-            new_frags.extend_from_slice(&old_node.frags);
-            new_frags.push(pointer);
-
             let mut page_ptr = new_page.take().unwrap();
-            page_ptr.frags = new_frags;
+            page_ptr.frags.push(pointer);
+            page_ptr.ts = ts;
 
             debug_delay();
-            let result = old.entry.compare_and_swap(old.read, page_ptr, SeqCst);
+            let result =
+                old.entry.compare_and_swap(old.ptr.to_u64(), page_ptr, SeqCst);
 
             match result {
                 Ok(new_shared) => {
@@ -2051,39 +2047,21 @@ impl PageCacheInner {
 
             trace!("load_snapshot pid {} {:?}", pid, state);
 
-            let mut cache_infos = Vec::default();
+            let mut page_pointers = Vec::default();
 
             let guard = pin();
 
             match *state {
                 PageState::Present { base, ref frags } => {
-                    cache_infos.push(CacheInfo {
-                        lsn: base.0,
-                        pointer: base.1,
-                        log_size: base.2,
-                        ts: 0,
-                    });
-                    for (lsn, pointer, sz) in frags {
-                        let cache_info = CacheInfo {
-                            lsn: *lsn,
-                            pointer: *pointer,
-                            log_size: *sz,
-                            ts: 0,
-                        };
-
-                        cache_infos.push(cache_info);
+                    page_pointers.push(base);
+                    for pointer in frags {
+                        page_pointers.push(*pointer);
                     }
                 }
-                PageState::Free(lsn, pointer) => {
+                PageState::Free(base) => {
                     // blow away any existing state
                     trace!("load_snapshot freeing pid {}", pid);
-                    let cache_info = CacheInfo {
-                        lsn,
-                        pointer,
-                        log_size: u64::try_from(MAX_MSG_HEADER_LEN).unwrap(),
-                        ts: 0,
-                    };
-                    cache_infos.push(cache_info);
+                    page_pointers.push(base);
                     assert!(self.free.lock().insert(pid));
                 }
                 _ => panic!("tried to load a {:?}", state),
@@ -2093,15 +2071,19 @@ impl PageCacheInner {
             trace!("installing page for pid {}", pid);
 
             let update = if pid == META_PID || pid == COUNTER_PID {
-                let update =
-                    self.pull(pid, cache_infos[0].lsn, cache_infos[0].pointer)?;
+                let update = self.pull(
+                    pid,
+                    page_pointers[0].lsn,
+                    page_pointers[0].pointer,
+                )?;
                 Some(update)
             } else if state.is_free() {
                 Some(Update::Free)
             } else {
                 None
             };
-            let page = Page { update, cache_infos };
+
+            let page = todo!();
 
             self.inner.insert(pid, page);
         }
