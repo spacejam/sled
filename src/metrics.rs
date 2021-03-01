@@ -324,7 +324,8 @@ impl Metrics {
             lat("pull", &self.pull),
             lat("page_out", &self.page_out),
         ]));
-        let hit_ratio = (self.get_page.count() - self.pull.count()) * 100
+        let hit_ratio = self.get_page.count().saturating_sub(self.pull.count())
+            * 100
             / (self.get_page.count() + 1);
         ret.push_str(&format!("hit ratio: {}%\n", hit_ratio));
 
@@ -361,7 +362,7 @@ impl Metrics {
         let log_reservation_attempts =
             std::cmp::max(1, self.log_reservation_attempts.load(Acquire));
         let log_reservation_retry_rate =
-            (log_reservation_attempts - log_reservations) * 100
+            log_reservation_attempts.saturating_sub(log_reservations) * 100
                 / (log_reservations + 1);
         ret.push_str(&format!(
             "log reservations:             {:>15}\n",
