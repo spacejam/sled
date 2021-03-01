@@ -1662,6 +1662,9 @@ impl PageCacheInner {
                     page_view.cache_infos.first().copied();
             }
 
+            #[cfg(feature = "metrics")]
+            let _measure = Measure::new(&M.pull);
+
             // need to page-in
             let updates_result: Result<Vec<Update>> = page_view
                 .cache_infos
@@ -1935,8 +1938,6 @@ impl PageCacheInner {
         use MessageKind::*;
 
         trace!("pulling pid {} lsn {} pointer {} from disk", pid, lsn, pointer);
-        #[cfg(feature = "metrics")]
-        let _measure = Measure::new(&M.pull);
 
         let expected_segment_number: SegmentNumber = SegmentNumber(
             u64::try_from(lsn).unwrap()
