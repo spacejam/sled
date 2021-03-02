@@ -183,6 +183,7 @@ for a more detailed overview of where we're at and where we see things going!
 
 * if reliability is your primary constraint, use SQLite. sled is beta.
 * if storage price performance is your primary constraint, use RocksDB. sled uses too much space sometimes.
+* if you have a multi-process workload that rarely writes, use LMDB. sled is architected for use with long-running, highly-concurrent workloads such as stateful services or higher-level databases.
 * quite young, should be considered unstable for the time being.
 * the on-disk format is going to change in ways that require [manual migrations](https://docs.rs/sled/latest/sled/struct.Db.html#method.export) before the `1.0.0` release!
 
