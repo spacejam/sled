@@ -1057,6 +1057,23 @@ fn create_tree() {
 }
 
 #[test]
+fn contains_tree() {
+    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+    let tree_one = db.open_tree("tree 1").unwrap();
+    let tree_two = db.open_tree("tree 2").unwrap();
+
+    drop(tree_one);
+    drop(tree_two);
+
+    assert_eq!(false, db.contains_tree("tree 3").unwrap());
+    assert_eq!(true, db.contains_tree("tree 1").unwrap());
+    assert_eq!(true, db.contains_tree("tree 2").unwrap());
+
+    assert!(db.drop_tree("tree 1").unwrap());
+    assert_eq!(false, db.contains_tree("tree 1").unwrap());
+}
+
+#[test]
 #[cfg_attr(miri, ignore)]
 fn tree_import_export() -> Result<()> {
     common::setup_logger();
