@@ -1074,6 +1074,19 @@ fn contains_tree() {
 }
 
 #[test]
+fn one_shot_subscriber() {
+    let db = Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
+    let mut s1 = db.watch_prefix_limited(b"".to_vec(), 1);
+
+    db.insert(b"pim", b"pam".to_vec()).unwrap();
+    assert_eq!(s1.next().unwrap().iter().next().unwrap().2.to_owned().unwrap(),b"pam");
+    db.remove(b"pim").unwrap();
+    assert_eq!(s1.next().unwrap().iter().next().unwrap().1.to_owned(),b"pim");
+
+    assert_eq!(db.len(), 0);
+}
+
+#[test]
 #[cfg_attr(miri, ignore)]
 fn tree_import_export() -> Result<()> {
     common::setup_logger();

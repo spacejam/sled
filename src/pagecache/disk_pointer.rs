@@ -36,7 +36,11 @@ impl DiskPtr {
     }
 
     pub(crate) fn heap_id(&self) -> Option<HeapId> {
-        if let DiskPtr::Heap(_, heap_id) = self { Some(*heap_id) } else { None }
+        if let DiskPtr::Heap(_, heap_id) = self {
+            Some(*heap_id)
+        } else {
+            None
+        }
     }
 
     #[doc(hidden)]
@@ -62,7 +66,11 @@ impl DiskPtr {
     }
 
     pub(crate) fn heap_pointer_merged_into_snapshot(&self) -> bool {
-        if let DiskPtr::Heap(None, _) = self { true } else { false }
+        if let DiskPtr::Heap(None, _) = self {
+            true
+        } else {
+            false
+        }
     }
 }
 
