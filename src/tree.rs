@@ -897,7 +897,8 @@ impl Tree {
     /// Oneshot like subscriber, takes 1 event at the time. If you do more than 1 insert or remove 
     /// one after the other without taking the event in the subscriber it will block the program.:
     /// ```
-    /// let config = Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
+    /// use sled::Config;
+    /// let db = Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
     /// let mut s1 = db.watch_prefix_limited(b"".to_vec(), 1);
     /// 
     /// db.insert(b"pim", b"pam".to_vec()).unwrap();

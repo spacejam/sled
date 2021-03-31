@@ -1075,6 +1075,7 @@ fn contains_tree() {
 
 #[test]
 fn one_shot_subscriber() {
+    use sled::Config;
     let db = Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
     let mut s1 = db.watch_prefix_limited(b"".to_vec(), 1);
 
