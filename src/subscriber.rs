@@ -113,6 +113,7 @@ type Senders = Map<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 pub struct Subscriber {
     id: usize,
     rx: Receiver<OneShot<Option<Event>>>,
+    existing: Option<OneShot<Option<Event>>>,
     home: Arc<RwLock<Senders>>,
 }
 
@@ -153,29 +154,41 @@ impl Subscriber {
                 };
         }
     }
+
+    fn poll_oneshot(
+        self: &mut Pin<&mut Self>,
+        mut oneshot: OneShot<Option<Event>>,
+        cx: &mut Context<'_>,
+    ) -> Option<Poll<Option<Event>>> {
+        match Future::poll(Pin::new(&mut oneshot), cx) {
+            Poll::Ready(Some(event)) => Some(Poll::Ready(event)),
+            Poll::Ready(None) => None,
+            Poll::Pending => {
+                self.existing = Some(oneshot);
+                Some(Poll::Pending)
+            }
+        }
+    }
 }
 
 impl Future for Subscriber {
     type Output = Option<Event>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
         loop {
-            match self.rx.try_recv() {
-                Ok(mut future_rx) => {
-                    #[allow(unsafe_code)]
-                    let future_rx =
-                        unsafe { std::pin::Pin::new_unchecked(&mut future_rx) };
+            if let Some(future_rx) = self.existing.take() {
+                if let Some(poll) = self.poll_oneshot(future_rx, cx) {
+                    return poll;
+                }
+            }
 
-                    match Future::poll(future_rx, cx) {
-                        Poll::Ready(Some(event)) => {
-                            return Poll::Ready(event);
-                        }
-                        Poll::Ready(None) => {
-                            continue;
-                        }
-                        Poll::Pending => {
-                            return Poll::Pending;
-                        }
+            match self.rx.try_recv() {
+                Ok(future_rx) => {
+                    if let Some(poll) = self.poll_oneshot(future_rx, cx) {
+                        return poll;
                     }
                 }
                 Err(TryRecvError::Empty) => break,
@@ -257,7 +270,7 @@ impl Subscribers {
 
         w_senders.insert(id, (None, tx));
 
-        Subscriber { id, rx, home: arc_senders.clone() }
+        Subscriber { id, rx, existing: None, home: arc_senders.clone() }
     }
 
     pub(crate) fn reserve_batch(
