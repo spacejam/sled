@@ -108,12 +108,16 @@ impl Subscriber {
     /// an error if no event arrives within the provided `Duration`
     /// or if the backing `Db` shuts down.
     pub fn next_timeout(
-        &self,
+        &mut self,
         mut timeout: Duration,
     ) -> std::result::Result<Event, std::sync::mpsc::RecvTimeoutError> {
         loop {
             let start = Instant::now();
-            let future_rx = self.rx.recv_timeout(timeout)?;
+            let mut future_rx = if let Some(future_rx) = self.existing.take() {
+                future_rx
+            } else {
+                self.rx.recv_timeout(timeout)?
+            };
             timeout =
                 if let Some(timeout) = timeout.checked_sub(start.elapsed()) {
                     timeout
@@ -122,8 +126,13 @@ impl Subscriber {
                 };
 
             let start = Instant::now();
-            if let Some(event) = future_rx.wait_timeout(timeout)? {
-                return Ok(event);
+            match future_rx.wait_timeout(timeout) {
+                Ok(Some(event)) => return Ok(event),
+                Ok(None) => (),
+                Err(timeout_error) => {
+                    self.existing = Some(future_rx);
+                    return Err(timeout_error);
+                }
             }
             timeout =
                 if let Some(timeout) = timeout.checked_sub(start.elapsed()) {
