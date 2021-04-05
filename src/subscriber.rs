@@ -229,8 +229,7 @@ impl Drop for Subscribers {
 impl Subscribers {
     pub(crate) fn register(
         &self,
-        prefix: &[u8],
-        channel_limit: usize,
+        prefix: &[u8]
     ) -> Subscriber {
         self.ever_used.store(true, Relaxed);
         let r_mu = {
@@ -252,7 +251,7 @@ impl Subscribers {
             }
         };
 
-        let (tx, rx) = sync_channel(channel_limit);
+        let (tx, rx) = sync_channel(1024);
 
         let arc_senders = &r_mu[prefix];
         let mut w_senders = arc_senders.write();

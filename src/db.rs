@@ -473,8 +473,8 @@ impl Db {
 
     /// Returns a true value if one of the tree names linked
     /// to the database is found, if not a false will be returned.
-    pub fn contains_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<bool> {
-        Ok(self.tenants.read().iter().any(|(tree_name, _)| tree_name.eq(&name)))
+    pub fn contains_tree<V: AsRef<[u8]>>(&self, name: V) -> bool {
+        self.tenants.read().iter().any(|(tree_name, _)| tree_name.eq(&name))
     }
 }
 

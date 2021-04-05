@@ -886,37 +886,7 @@ impl Tree {
     /// # }
     /// ```
     pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
-        self.subscribers.register(prefix.as_ref(), 1024)
-    }
-
-    /// Does exactly the same thing as `watch_prefix`, but gives you the choice
-    /// of how long the channel is and where the `Event` structs are stored.
-    ///
-    /// # Examples
-    ///
-    /// Oneshot like subscriber, takes 1 event at the time. If you do more than 1 insert or remove 
-    /// one after the other without taking the event in the subscriber it will block the program.:
-    /// ```
-    /// use sled::Config;
-    /// let db = Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
-    /// let mut s1 = db.watch_prefix_limited(b"".to_vec(), 1);
-    /// 
-    /// db.insert(b"pim", b"pam".to_vec()).unwrap();
-    /// assert_eq!(s1.next().unwrap().iter().next().unwrap().2.to_owned().unwrap(),b"pam");
-    /// db.remove(b"pim").unwrap();
-    /// assert_eq!(s1.next().unwrap().iter().next().unwrap().1.to_owned(),b"pim");
-    /// 
-    /// assert_eq!(db.len(), 0);
-    /// ```
-    pub fn watch_prefix_limited<P: AsRef<[u8]>>(
-        &self,
-        prefix: P,
-        channel_limit: usize,
-    ) -> Subscriber {
-        if channel_limit == 0 {
-            warn!("The subscribers channel size is set to 0.");
-        }
-        self.subscribers.register(prefix.as_ref(), channel_limit)
+        self.subscribers.register(prefix.as_ref())
     }
 
     /// Synchronously flushes all dirty IO buffers and calls

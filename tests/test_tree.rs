@@ -1065,26 +1065,12 @@ fn contains_tree() {
     drop(tree_one);
     drop(tree_two);
 
-    assert_eq!(false, db.contains_tree("tree 3").unwrap());
-    assert_eq!(true, db.contains_tree("tree 1").unwrap());
-    assert_eq!(true, db.contains_tree("tree 2").unwrap());
+    assert_eq!(false, db.contains_tree("tree 3"));
+    assert_eq!(true, db.contains_tree("tree 1"));
+    assert_eq!(true, db.contains_tree("tree 2"));
 
     assert!(db.drop_tree("tree 1").unwrap());
-    assert_eq!(false, db.contains_tree("tree 1").unwrap());
-}
-
-#[test]
-fn one_shot_subscriber() {
-    use sled::Config;
-    let db = Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
-    let mut s1 = db.watch_prefix_limited(b"".to_vec(), 1);
-
-    db.insert(b"pim", b"pam".to_vec()).unwrap();
-    assert_eq!(s1.next().unwrap().iter().next().unwrap().2.to_owned().unwrap(),b"pam");
-    db.remove(b"pim").unwrap();
-    assert_eq!(s1.next().unwrap().iter().next().unwrap().1.to_owned(),b"pim");
-
-    assert_eq!(db.len(), 0);
+    assert_eq!(false, db.contains_tree("tree 1"));
 }
 
 #[test]
