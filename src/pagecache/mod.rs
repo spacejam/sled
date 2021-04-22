@@ -1637,9 +1637,6 @@ impl PageCacheInner {
             // Here, we only bump it up by 1 if the
             // update represents a fundamental change
             // that SHOULD cause CAS failures.
-            // Here, we only bump it up by 1 if the
-            // update represents a fundamental change
-            // that SHOULD cause CAS failures.
             let ts = if is_rewrite { old.ts() } else { old.ts() + 1 };
 
             let cache_info = CacheInfo {
