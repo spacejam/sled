@@ -50,7 +50,7 @@ unsafe impl<T: Send> Sync for FastLock<T> {}
 unsafe impl<T: Send> Send for FastLock<T> {}
 
 impl<T> FastLock<T> {
-    pub fn new(inner: T) -> FastLock<T> {
+    pub const fn new(inner: T) -> FastLock<T> {
         FastLock { lock: AtomicBool::new(false), inner: UnsafeCell::new(inner) }
     }
 
@@ -60,6 +60,10 @@ impl<T> FastLock<T> {
 
         let success = lock_result.is_ok();
 
-        if success { Some(FastLockGuard { mu: self }) } else { None }
+        if success {
+            Some(FastLockGuard { mu: self })
+        } else {
+            None
+        }
     }
 }

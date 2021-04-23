@@ -13,7 +13,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 ///
 /// Internally, the epoch is represented as an integer that wraps around at some unspecified point
 /// and a flag that represents whether it is pinned or unpinned.
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) struct Epoch {
     /// The least significant bit is set if pinned. The rest of the bits hold the epoch.
     data: usize,
@@ -21,16 +21,15 @@ pub(super) struct Epoch {
 
 impl Epoch {
     /// Returns the starting epoch in unpinned state.
-    #[inline]
-    pub(super) fn starting() -> Self {
-        Self::default()
+    pub(super) const fn starting() -> Self {
+        Epoch { data: 0 }
     }
 
     /// Returns the number of epochs `self` is ahead of `rhs`.
     ///
     /// Internally, epochs are represented as numbers in the range `(isize::MIN / 2) .. (isize::MAX
     /// / 2)`, so the returned distance will be in the same interval.
-    pub(super) fn wrapping_sub(self, rhs: Self) -> usize {
+    pub(super) const fn wrapping_sub(self, rhs: Self) -> usize {
         // The result is the same with `(self.data & !1).wrapping_sub(rhs.data & !1) as isize >> 1`,
         // because the possible difference of LSB in `(self.data & !1).wrapping_sub(rhs.data & !1)`
         // will be ignored in the shift operation.
@@ -38,28 +37,24 @@ impl Epoch {
     }
 
     /// Returns `true` if the epoch is marked as pinned.
-    #[inline]
-    pub(super) fn is_pinned(self) -> bool {
+    pub(super) const fn is_pinned(self) -> bool {
         (self.data & 1) == 1
     }
 
     /// Returns the same epoch, but marked as pinned.
-    #[inline]
-    pub(super) fn pinned(self) -> Epoch {
+    pub(super) const fn pinned(self) -> Epoch {
         Epoch { data: self.data | 1 }
     }
 
     /// Returns the same epoch, but marked as unpinned.
-    #[inline]
-    pub(super) fn unpinned(self) -> Epoch {
+    pub(super) const fn unpinned(self) -> Epoch {
         Epoch { data: self.data & !1 }
     }
 
     /// Returns the successor epoch.
     ///
     /// The returned epoch will be marked as pinned only if the previous one was as well.
-    #[inline]
-    pub(super) fn successor(self) -> Epoch {
+    pub(super) const fn successor(self) -> Epoch {
         Epoch { data: self.data.wrapping_add(2) }
     }
 }
@@ -74,8 +69,7 @@ pub(super) struct AtomicEpoch {
 
 impl AtomicEpoch {
     /// Creates a new atomic epoch.
-    #[inline]
-    pub(super) fn new(epoch: Epoch) -> Self {
+    pub(super) const fn new(epoch: Epoch) -> Self {
         let data = AtomicUsize::new(epoch.data);
         AtomicEpoch { data }
     }

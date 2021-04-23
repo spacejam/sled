@@ -13,8 +13,7 @@ use super::Guard;
 
 /// Given ordering for the success case in a compare-exchange operation, returns the strongest
 /// appropriate ordering for the failure case.
-#[inline]
-pub(crate) fn strongest_failure_ordering(ord: Ordering) -> Ordering {
+pub(crate) const fn strongest_failure_ordering(ord: Ordering) -> Ordering {
     use self::Ordering::*;
     match ord {
         Relaxed | Release => Relaxed,

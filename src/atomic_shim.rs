@@ -130,7 +130,7 @@ mod shim {
     }
 
     impl AtomicI64 {
-        pub fn new(v: i64) -> Self {
+        pub const fn new(v: i64) -> Self {
             Self { value: const_rwlock(v) }
         }
 

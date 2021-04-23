@@ -1634,8 +1634,9 @@ impl Tree {
                 parent pid {} success: {}",
                 rhs_lo, rhs_pid, parent_view.pid, replace.is_ok()
             );
+
+            #[cfg(feature = "metrics")]
             if replace.is_ok() {
-                #[cfg(feature = "metrics")]
                 M.tree_parent_split_success();
             } else {
                 // Parent splits are an optimization

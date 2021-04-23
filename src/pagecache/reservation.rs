@@ -55,7 +55,7 @@ impl<'a> Reservation<'a> {
     }
 
     /// Returns the length of the on-log reservation.
-    pub(crate) fn reservation_len(&self) -> usize {
+    pub(crate) const fn reservation_len(&self) -> usize {
         self.buf.len()
     }
 

@@ -12,10 +12,10 @@ rustup update --no-self-update
 
 RUSTFLAGS="--cfg miri" cargo check
 
-rustup toolchain install 1.40.0 --no-self-update
+rustup toolchain install 1.46.0 --no-self-update
 cargo clean
 rm Cargo.lock
-cargo +1.40.0 check
+cargo +1.46.0 check
 
 for target in $targets; do
   echo "setting up $target..."

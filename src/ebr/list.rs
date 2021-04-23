@@ -83,7 +83,7 @@ pub struct Iter<'g, T, C: IsElement<T>> {
 }
 
 /// An error that occurs during iteration over the list.
-#[derive(PartialEq, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IterError {
     /// A concurrent thread modified the state of the list at the same place that this iterator
     /// was inspecting. Subsequent iteration will restart from the beginning of the list.

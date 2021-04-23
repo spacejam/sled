@@ -64,7 +64,7 @@ use crate::pagecache::*;
 use crate::*;
 
 /// A operation that can be applied asynchronously.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) enum SegmentOp {
     Link {
         pid: PageId,
@@ -145,12 +145,12 @@ impl Drop for SegmentAccountant {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 struct Free {
     previous_lsn: Option<Lsn>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 struct Active {
     lsn: Lsn,
     rss: usize,
@@ -172,7 +172,7 @@ struct Inactive {
     latest_replacement_lsn: Lsn,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 struct Draining {
     lsn: Lsn,
     max_pids: usize,
@@ -185,7 +185,7 @@ struct Draining {
 /// fragments from different pages. Over time, we track
 /// when segments become reusable and allow them to be
 /// overwritten for new data.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 enum Segment {
     /// the segment is marked for reuse, should never receive
     /// new pids,
@@ -211,28 +211,16 @@ impl Default for Segment {
 }
 
 impl Segment {
-    fn is_free(&self) -> bool {
-        if let Segment::Free(_) = self {
-            true
-        } else {
-            false
-        }
+    const fn is_free(&self) -> bool {
+        matches!(self, Segment::Free(_))
     }
 
-    fn is_active(&self) -> bool {
-        if let Segment::Active { .. } = self {
-            true
-        } else {
-            false
-        }
+    const fn is_active(&self) -> bool {
+        matches!(self, Segment::Active { .. })
     }
 
-    fn is_inactive(&self) -> bool {
-        if let Segment::Inactive { .. } = self {
-            true
-        } else {
-            false
-        }
+    const fn is_inactive(&self) -> bool {
+        matches!(self, Segment::Inactive { .. })
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
@@ -461,7 +449,7 @@ impl Segment {
         }
     }
 
-    fn can_free(&self) -> bool {
+    const fn can_free(&self) -> bool {
         if let Segment::Draining(draining) = self {
             draining.replaced_pids == draining.max_pids
         } else {
@@ -540,7 +528,8 @@ impl SegmentAccountant {
                 + if file_len % segment_size as u64 == 0 { 0 } else { 1 };
 
         // generate segments from snapshot lids
-        let mut segments = vec![Segment::default(); number_of_segments];
+        let mut segments = vec![];
+        segments.resize_with(number_of_segments, Segment::default);
 
         // sometimes the current segment is still empty, after only
         // recovering the segment header but no valid messages yet
@@ -1010,7 +999,7 @@ impl SegmentAccountant {
         // similar to the collection
         // logic in the ebr module.
         let bound = if in_startup {
-            std::usize::MAX
+            usize::MAX
         } else {
             32.max(can_deactivate.len() / 16)
         };
@@ -1215,7 +1204,7 @@ impl SegmentAccountant {
         // TODO never resize like this, make it a single
         // responsibility when the tip is bumped / truncated.
         if self.segments.len() < idx + 1 {
-            self.segments.resize(idx + 1, Segment::default());
+            self.segments.resize_with(idx + 1, Segment::default);
         }
 
         idx

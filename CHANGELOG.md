@@ -46,6 +46,7 @@
   platforms and 512mb on 32-bit platforms.
 * #1281 `Config`'s `cache_capacity` is now a usize, as u64
   doesn't make sense for things that must fit in memory anyway.
+* #1319 Bump MSRV to 1.46.
 
 ## Bug Fixes
 
