@@ -70,10 +70,7 @@ impl PageState {
     }
 
     pub(crate) fn is_free(&self) -> bool {
-        match *self {
-            PageState::Free(_, _) => true,
-            _ => false,
-        }
+        matches!(self, PageState::Free(_, _))
     }
 
     #[cfg(feature = "testing")]

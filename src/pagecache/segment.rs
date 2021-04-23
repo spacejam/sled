@@ -212,27 +212,15 @@ impl Default for Segment {
 
 impl Segment {
     fn is_free(&self) -> bool {
-        if let Segment::Free(_) = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, Segment::Free(_))
     }
 
     fn is_active(&self) -> bool {
-        if let Segment::Active { .. } = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, Segment::Active { .. })
     }
 
     fn is_inactive(&self) -> bool {
-        if let Segment::Inactive { .. } = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, Segment::Inactive { .. })
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {

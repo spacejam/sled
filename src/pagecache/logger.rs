@@ -570,10 +570,7 @@ pub enum LogRead {
 impl LogRead {
     /// Return true if we read a successful Inline or Heap value.
     pub fn is_successful(&self) -> bool {
-        match *self {
-            LogRead::Inline(..) | LogRead::Heap(..) => true,
-            _ => false,
-        }
+        matches!(self, LogRead::Inline(..) | LogRead::Heap(..))
     }
 
     /// Return the underlying data read from a log read, if successful.

@@ -454,11 +454,7 @@ impl Page {
     }
 
     fn is_free(&self) -> bool {
-        if let Some(Update::Free) = self.update {
-            true
-        } else {
-            false
-        }
+        matches!(self.update, Some(Update::Free))
     }
 
     fn last_lsn(&self) -> Lsn {

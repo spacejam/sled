@@ -126,6 +126,7 @@
     clippy::manual_find_map,
     clippy::map_entry,
     clippy::map_flatten,
+    clippy::match_like_matches_macro,
     clippy::match_same_arms,
     clippy::maybe_infinite_iter,
     clippy::mem_forget,
