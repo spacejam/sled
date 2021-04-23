@@ -59,6 +59,9 @@ fn bounds_error() -> Result<()> {
 /// like the "default" `Tree`. This is the only `Tree` that cannot
 /// be deleted via `Db::drop_tree`.
 ///
+/// When a `Db` or `Tree` is dropped, `flush` is called to attempt
+/// to flush all buffered writes to disk.
+///
 /// # Examples
 ///
 /// ```
@@ -899,6 +902,8 @@ impl Tree {
     /// measure the performance impact of using it on
     /// realistic sustained workloads running on realistic
     /// hardware.
+    ///
+    /// This is called automatically on drop.
     pub fn flush(&self) -> Result<usize> {
         self.context.pagecache.flush()
     }
