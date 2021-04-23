@@ -517,7 +517,7 @@ impl Drop for Log {
 }
 
 /// All log messages are prepended with this header
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone)]
 pub struct MessageHeader {
     pub crc32: u32,
     pub kind: MessageKind,
@@ -527,7 +527,7 @@ pub struct MessageHeader {
 }
 
 /// A number representing a segment number.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 #[repr(transparent)]
 pub struct SegmentNumber(pub u64);
 
@@ -541,7 +541,7 @@ impl std::ops::Deref for SegmentNumber {
 
 /// A segment's header contains the new base LSN and a reference
 /// to the previous log segment.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone)]
 pub struct SegmentHeader {
     pub lsn: Lsn,
     pub max_stable_lsn: Lsn,

@@ -214,7 +214,7 @@ impl fmt::Debug for Bag {
 const fn no_op_func() {}
 
 /// A pair of an epoch and a bag.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 struct SealedBag {
     epoch: Epoch,
     bag: Bag,
