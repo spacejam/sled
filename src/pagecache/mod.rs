@@ -307,7 +307,7 @@ impl<'g> Deref for PageView<'g> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CacheInfo {
     pub ts: u64,
     pub lsn: Lsn,

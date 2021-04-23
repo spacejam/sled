@@ -517,7 +517,7 @@ impl Drop for Log {
 }
 
 /// All log messages are prepended with this header
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct MessageHeader {
     pub crc32: u32,
     pub kind: MessageKind,
