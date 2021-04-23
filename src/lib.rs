@@ -83,18 +83,21 @@
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/spacejam/sled/main/art/tree_face_anti-transphobia.png"
 )]
-#![deny(
-    missing_docs,
-    future_incompatible,
-    nonstandard_style,
-    rust_2018_idioms,
-    missing_copy_implementations,
-    trivial_casts,
-    trivial_numeric_casts,
-    unsafe_code,
-    unused_qualifications
+#![cfg_attr(
+    feature = "testing",
+    deny(
+        missing_docs,
+        future_incompatible,
+        nonstandard_style,
+        rust_2018_idioms,
+        missing_copy_implementations,
+        trivial_casts,
+        trivial_numeric_casts,
+        unsafe_code,
+        unused_qualifications,
+    )
 )]
-#![deny(
+#![cfg_attr(feature = "testing", deny(
     // over time, consider enabling the commented-out lints below
     clippy::cast_lossless,
     clippy::cast_possible_truncation,
@@ -153,9 +156,8 @@
     clippy::wildcard_dependencies,
     // clippy::wildcard_enum_match_arm,
     clippy::wrong_pub_self_convention,
-)]
+))]
 #![warn(clippy::multiple_crate_versions)]
-#![allow(clippy::match_like_matches_macro)] // Not using std::matches! due to MSRV of 1.37 (intro'd in 1.42)
 
 macro_rules! io_fail {
     ($config:expr, $e:expr) => {
