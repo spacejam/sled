@@ -173,7 +173,7 @@ impl Drop for Flusher {
             let _ = self.sc.wait_for(&mut shutdown, Duration::from_millis(100));
             count += 1;
 
-            testing_assert!(count < 5);
+            testing_assert!(count < 15);
         }
 
         let mut join_handle_opt = self.join_handle.lock();

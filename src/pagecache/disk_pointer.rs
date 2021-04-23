@@ -38,10 +38,11 @@ impl DiskPtr {
     }
 
     #[doc(hidden)]
-    pub fn lid(&self) -> Option<LogOffset> {
+    pub const fn lid(&self) -> Option<LogOffset> {
         match self {
             DiskPtr::Inline(lid) => Some(*lid),
-            DiskPtr::Heap(lid, _) => lid.map(NonZeroU64::get),
+            DiskPtr::Heap(Some(lid), _) => Some(lid.get()),
+            DiskPtr::Heap(None, _) => None,
         }
     }
 
