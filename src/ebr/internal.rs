@@ -311,7 +311,7 @@ impl Global {
                     log::warn!(
                         "EBR collector grew to {} items",
                         SIZE_HINT.load(Ordering::Relaxed)
-                    )
+                    );
                 });
             }
         }

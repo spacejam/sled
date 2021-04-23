@@ -1728,11 +1728,14 @@ impl PageCacheInner {
         let page_view = self.inner.get(META_PID, guard);
 
         if page_view.update.is_none() {
-            panic!(Error::ReportableBug(
-                "failed to retrieve META page \
+            panic!(
+                "{:?}",
+                Error::ReportableBug(
+                    "failed to retrieve META page \
                  which should always be present"
-                    .into(),
-            ))
+                        .into(),
+                )
+            )
         }
 
         MetaView(page_view)
@@ -1748,11 +1751,14 @@ impl PageCacheInner {
         let page_view = self.inner.get(COUNTER_PID, guard);
 
         if page_view.update.is_none() {
-            panic!(Error::ReportableBug(
-                "failed to retrieve counter page \
+            panic!(
+                "{:?}",
+                Error::ReportableBug(
+                    "failed to retrieve counter page \
                  which should always be present"
-                    .into(),
-            ))
+                        .into(),
+                )
+            )
         }
 
         let counter = page_view.as_counter();
