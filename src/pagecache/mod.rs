@@ -893,19 +893,7 @@ impl PageCache {
                     // possibly evict an item now that our cache has grown
                     let total_page_size =
                         unsafe { new_shared.deref().log_size() };
-                    let to_evict = self.lru.accessed(
-                        pid,
-                        usize::try_from(total_page_size).unwrap(),
-                        guard,
-                    );
-                    trace!(
-                        "accessed pid {} -> paging out pids {:?}",
-                        pid,
-                        to_evict
-                    );
-                    if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard)?;
-                    }
+                    self.lru_access(pid, total_page_size, guard)?;
 
                     old.read = new_shared;
 
@@ -1430,19 +1418,7 @@ impl PageCacheInner {
                         // possibly evict an item now that our cache has grown
                         let total_page_size =
                             unsafe { new_shared.deref().log_size() };
-                        let to_evict = self.lru.accessed(
-                            pid,
-                            usize::try_from(total_page_size).unwrap(),
-                            guard,
-                        );
-                        trace!(
-                            "accessed pid {} -> paging out pids {:?}",
-                            pid,
-                            to_evict
-                        );
-                        if !to_evict.is_empty() {
-                            self.page_out(to_evict, guard)?;
-                        }
+                        self.lru_access(pid, total_page_size, guard)?;
                     }
 
                     trace!("rewriting pid {} succeeded", pid);
@@ -1504,6 +1480,16 @@ impl PageCacheInner {
                 }
             }
         }
+    }
+
+    fn lru_access(&self, pid: PageId, size: u64, guard: &Guard) -> Result<()> {
+        let to_evict =
+            self.lru.accessed(pid, usize::try_from(size).unwrap(), guard);
+        trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
+        if !to_evict.is_empty() {
+            self.page_out(to_evict, guard)?;
+        }
+        Ok(())
     }
 
     /// Traverses all files and calculates their total physical
@@ -1668,19 +1654,7 @@ impl PageCacheInner {
                     // possibly evict an item now that our cache has grown
                     let total_page_size =
                         unsafe { new_shared.deref().log_size() };
-                    let to_evict = self.lru.accessed(
-                        pid,
-                        usize::try_from(total_page_size).unwrap(),
-                        guard,
-                    );
-                    trace!(
-                        "accessed pid {} -> paging out pids {:?}",
-                        pid,
-                        to_evict
-                    );
-                    if !to_evict.is_empty() {
-                        self.page_out(to_evict, guard)?;
-                    }
+                    self.lru_access(pid, total_page_size, guard)?;
 
                     return Ok(Ok(PageView {
                         read: new_shared,
@@ -1792,19 +1766,7 @@ impl PageCacheInner {
             if page_view.update.is_some() {
                 // possibly evict an item now that our cache has grown
                 let total_page_size = page_view.log_size();
-                let to_evict = self.lru.accessed(
-                    pid,
-                    usize::try_from(total_page_size).unwrap(),
-                    guard,
-                );
-                trace!(
-                    "accessed pid {} -> paging out pids {:?}",
-                    pid,
-                    to_evict
-                );
-                if !to_evict.is_empty() {
-                    self.page_out(to_evict, guard)?;
-                }
+                self.lru_access(pid, total_page_size, guard)?;
                 return Ok(Some(NodeView(page_view)));
             }
 
@@ -1874,15 +1836,7 @@ impl PageCacheInner {
 
             // possibly evict an item now that our cache has grown
             let total_page_size = unsafe { new_shared.deref().log_size() };
-            let to_evict = self.lru.accessed(
-                pid,
-                usize::try_from(total_page_size).unwrap(),
-                guard,
-            );
-            trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
-            if !to_evict.is_empty() {
-                self.page_out(to_evict, guard)?;
-            }
+            self.lru_access(pid, total_page_size, guard)?;
 
             let mut page_view = page_view;
             page_view.read = new_shared;
