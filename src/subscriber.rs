@@ -113,6 +113,7 @@ type Senders = Map<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 pub struct Subscriber {
     id: usize,
     rx: Receiver<OneShot<Option<Event>>>,
+    existing: Option<OneShot<Option<Event>>>,
     home: Arc<RwLock<Senders>>,
 }
 
@@ -128,12 +129,16 @@ impl Subscriber {
     /// an error if no event arrives within the provided `Duration`
     /// or if the backing `Db` shuts down.
     pub fn next_timeout(
-        &self,
+        &mut self,
         mut timeout: Duration,
     ) -> std::result::Result<Event, std::sync::mpsc::RecvTimeoutError> {
         loop {
             let start = Instant::now();
-            let future_rx = self.rx.recv_timeout(timeout)?;
+            let mut future_rx = if let Some(future_rx) = self.existing.take() {
+                future_rx
+            } else {
+                self.rx.recv_timeout(timeout)?
+            };
             timeout =
                 if let Some(timeout) = timeout.checked_sub(start.elapsed()) {
                     timeout
@@ -142,8 +147,13 @@ impl Subscriber {
                 };
 
             let start = Instant::now();
-            if let Some(event) = future_rx.wait_timeout(timeout)? {
-                return Ok(event);
+            match future_rx.wait_timeout(timeout) {
+                Ok(Some(event)) => return Ok(event),
+                Ok(None) => (),
+                Err(timeout_error) => {
+                    self.existing = Some(future_rx);
+                    return Err(timeout_error);
+                }
             }
             timeout =
                 if let Some(timeout) = timeout.checked_sub(start.elapsed()) {
@@ -158,28 +168,30 @@ impl Subscriber {
 impl Future for Subscriber {
     type Output = Option<Event>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
         loop {
-            match self.rx.try_recv() {
-                Ok(mut future_rx) => {
-                    #[allow(unsafe_code)]
-                    let future_rx =
-                        unsafe { std::pin::Pin::new_unchecked(&mut future_rx) };
-
-                    match Future::poll(future_rx, cx) {
-                        Poll::Ready(Some(event)) => {
-                            return Poll::Ready(event);
-                        }
-                        Poll::Ready(None) => {
-                            continue;
-                        }
-                        Poll::Pending => {
-                            return Poll::Pending;
-                        }
+            let mut future_rx = if let Some(future_rx) = self.existing.take() {
+                future_rx
+            } else {
+                match self.rx.try_recv() {
+                    Ok(future_rx) => future_rx,
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        return Poll::Ready(None)
                     }
                 }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return Poll::Ready(None),
+            };
+
+            match Future::poll(Pin::new(&mut future_rx), cx) {
+                Poll::Ready(Some(event)) => return Poll::Ready(event),
+                Poll::Ready(None) => continue,
+                Poll::Pending => {
+                    self.existing = Some(future_rx);
+                    return Poll::Pending;
+                }
             }
         }
         let mut home = self.home.write();
@@ -260,7 +272,7 @@ impl Subscribers {
 
         w_senders.insert(id, (None, tx));
 
-        Subscriber { id, rx, home: arc_senders.clone() }
+        Subscriber { id, rx, existing: None, home: arc_senders.clone() }
     }
 
     pub(crate) fn reserve_batch(

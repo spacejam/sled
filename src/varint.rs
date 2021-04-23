@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 
 /// Returns the number of bytes that this varint will need
-pub fn size(int: u64) -> usize {
+pub const fn size(int: u64) -> usize {
     if int <= 240 {
         1
     } else if int <= 2287 {

@@ -168,7 +168,7 @@ pub enum LogKind {
     Corrupted,
 }
 
-fn log_kind_from_update(update: &Update) -> LogKind {
+const fn log_kind_from_update(update: &Update) -> LogKind {
     match update {
         Update::Free => LogKind::Free,
         Update::Link(..) => LogKind::Link,
@@ -225,8 +225,7 @@ fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
 
 use std::convert::{TryFrom, TryInto};
 
-#[inline]
-pub(crate) fn lsn_to_arr(number: Lsn) -> [u8; 8] {
+pub(crate) const fn lsn_to_arr(number: Lsn) -> [u8; 8] {
     number.to_le_bytes()
 }
 
@@ -235,8 +234,7 @@ pub(crate) fn arr_to_lsn(arr: &[u8]) -> Lsn {
     Lsn::from_le_bytes(arr.try_into().unwrap())
 }
 
-#[inline]
-pub(crate) fn u64_to_arr(number: u64) -> [u8; 8] {
+pub(crate) const fn u64_to_arr(number: u64) -> [u8; 8] {
     number.to_le_bytes()
 }
 
@@ -245,8 +243,7 @@ pub(crate) fn arr_to_u32(arr: &[u8]) -> u32 {
     u32::from_le_bytes(arr.try_into().unwrap())
 }
 
-#[inline]
-pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
+pub(crate) const fn u32_to_arr(number: u32) -> [u8; 4] {
     number.to_le_bytes()
 }
 
@@ -310,7 +307,7 @@ impl<'g> Deref for PageView<'g> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CacheInfo {
     pub ts: u64,
     pub lsn: Lsn,
@@ -453,12 +450,8 @@ impl Page {
         self.update.as_ref().unwrap().as_counter()
     }
 
-    fn is_free(&self) -> bool {
-        if let Some(Update::Free) = self.update {
-            true
-        } else {
-            false
-        }
+    const fn is_free(&self) -> bool {
+        matches!(self.update, Some(Update::Free))
     }
 
     fn last_lsn(&self) -> Lsn {
@@ -1637,9 +1630,6 @@ impl PageCacheInner {
             // Here, we only bump it up by 1 if the
             // update represents a fundamental change
             // that SHOULD cause CAS failures.
-            // Here, we only bump it up by 1 if the
-            // update represents a fundamental change
-            // that SHOULD cause CAS failures.
             let ts = if is_rewrite { old.ts() } else { old.ts() + 1 };
 
             let cache_info = CacheInfo {
@@ -1731,11 +1721,14 @@ impl PageCacheInner {
         let page_view = self.inner.get(META_PID, guard);
 
         if page_view.update.is_none() {
-            panic!(Error::ReportableBug(
-                "failed to retrieve META page \
+            panic!(
+                "{:?}",
+                Error::ReportableBug(
+                    "failed to retrieve META page \
                  which should always be present"
-                    .into(),
-            ))
+                        .into(),
+                )
+            )
         }
 
         MetaView(page_view)
@@ -1751,11 +1744,14 @@ impl PageCacheInner {
         let page_view = self.inner.get(COUNTER_PID, guard);
 
         if page_view.update.is_none() {
-            panic!(Error::ReportableBug(
-                "failed to retrieve counter page \
+            panic!(
+                "{:?}",
+                Error::ReportableBug(
+                    "failed to retrieve counter page \
                  which should always be present"
-                    .into(),
-            ))
+                        .into(),
+                )
+            )
         }
 
         let counter = page_view.as_counter();

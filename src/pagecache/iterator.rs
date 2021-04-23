@@ -270,7 +270,7 @@ impl LogIter {
     }
 }
 
-fn valid_entry_offset(lid: LogOffset, segment_len: usize) -> bool {
+const fn valid_entry_offset(lid: LogOffset, segment_len: usize) -> bool {
     let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;
 
     let max_lid =

@@ -4,7 +4,7 @@ use super::{HeapId, LogOffset};
 use crate::*;
 
 /// A pointer to a location on disk or an off-log heap item.
-#[derive(Debug, Clone, PartialOrd, Ord, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DiskPtr {
     /// Points to a value stored in the single-file log.
     Inline(LogOffset),
@@ -13,7 +13,7 @@ pub enum DiskPtr {
 }
 
 impl DiskPtr {
-    pub(crate) fn new_inline(l: LogOffset) -> Self {
+    pub(crate) const fn new_inline(l: LogOffset) -> Self {
         DiskPtr::Inline(l)
     }
 
@@ -21,21 +21,15 @@ impl DiskPtr {
         DiskPtr::Heap(Some(NonZeroU64::new(lid).unwrap()), heap_id)
     }
 
-    pub(crate) fn is_inline(&self) -> bool {
-        match self {
-            DiskPtr::Inline(_) => true,
-            DiskPtr::Heap(_, _) => false,
-        }
+    pub(crate) const fn is_inline(&self) -> bool {
+        matches!(self, DiskPtr::Inline(_))
     }
 
-    pub(crate) fn is_heap_item(&self) -> bool {
-        match self {
-            DiskPtr::Inline(_) => false,
-            DiskPtr::Heap(_, _) => true,
-        }
+    pub(crate) const fn is_heap_item(&self) -> bool {
+        matches!(self, DiskPtr::Heap(_, _))
     }
 
-    pub(crate) fn heap_id(&self) -> Option<HeapId> {
+    pub(crate) const fn heap_id(&self) -> Option<HeapId> {
         if let DiskPtr::Heap(_, heap_id) = self {
             Some(*heap_id)
         } else {
@@ -65,12 +59,8 @@ impl DiskPtr {
         }
     }
 
-    pub(crate) fn heap_pointer_merged_into_snapshot(&self) -> bool {
-        if let DiskPtr::Heap(None, _) = self {
-            true
-        } else {
-            false
-        }
+    pub(crate) const fn heap_pointer_merged_into_snapshot(&self) -> bool {
+        matches!(self, DiskPtr::Heap(None, _))
     }
 }
 

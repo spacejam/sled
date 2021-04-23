@@ -118,11 +118,7 @@ impl PartialEq for Error {
             }
             #[cfg(feature = "failpoints")]
             FailPoint => {
-                if let FailPoint = *other {
-                    true
-                } else {
-                    false
-                }
+                matches!(other, FailPoint)
             }
             Corruption { at: l, .. } => {
                 if let Corruption { at: r, .. } = *other {

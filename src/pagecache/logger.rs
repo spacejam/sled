@@ -527,7 +527,7 @@ pub struct MessageHeader {
 }
 
 /// A number representing a segment number.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 #[repr(transparent)]
 pub struct SegmentNumber(pub u64);
 
@@ -541,7 +541,7 @@ impl std::ops::Deref for SegmentNumber {
 
 /// A segment's header contains the new base LSN and a reference
 /// to the previous log segment.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone)]
 pub struct SegmentHeader {
     pub lsn: Lsn,
     pub max_stable_lsn: Lsn,
@@ -569,11 +569,8 @@ pub enum LogRead {
 
 impl LogRead {
     /// Return true if we read a successful Inline or Heap value.
-    pub fn is_successful(&self) -> bool {
-        match *self {
-            LogRead::Inline(..) | LogRead::Heap(..) => true,
-            _ => false,
-        }
+    pub const fn is_successful(&self) -> bool {
+        matches!(self, LogRead::Inline(..) | LogRead::Heap(..))
     }
 
     /// Return the underlying data read from a log read, if successful.

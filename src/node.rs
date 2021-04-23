@@ -116,14 +116,14 @@ fn apply_computed_distance(mut buf: &mut [u8], mut distance: usize) {
 // dimension that must be numerically represented
 // in a way that preserves lexicographic ordering.
 fn shared_distance(base: &[u8], search: &[u8]) -> usize {
-    fn f1(base: &[u8], search: &[u8]) -> usize {
+    const fn f1(base: &[u8], search: &[u8]) -> usize {
         (search[search.len() - 1] - base[search.len() - 1]) as usize
     }
     fn f2(base: &[u8], search: &[u8]) -> usize {
         (u16::from_be_bytes(search.try_into().unwrap()) as usize)
             - (u16::from_be_bytes(base.try_into().unwrap()) as usize)
     }
-    fn f3(base: &[u8], search: &[u8]) -> usize {
+    const fn f3(base: &[u8], search: &[u8]) -> usize {
         (u32::from_be_bytes([0, search[0], search[1], search[2]]) as usize)
             - (u32::from_be_bytes([0, base[0], base[1], base[2]]) as usize)
     }
@@ -774,8 +774,7 @@ impl Node {
         ret.merging_child = self.merging_child;
         ret.probation_ops_remaining =
             self.probation_ops_remaining.saturating_sub(
-                u8::try_from(self.overlay.len().min(std::u8::MAX as usize))
-                    .unwrap(),
+                u8::try_from(self.overlay.len().min(u8::MAX as usize)).unwrap(),
             );
 
         log::trace!("merged node {:?} into {:?}", self, ret);
@@ -1247,7 +1246,7 @@ impl Inner {
         next: Option<NonZeroU64>,
         items: &[(KeyRef<'_>, &[u8])],
     ) -> Inner {
-        assert!(items.len() <= std::u32::MAX as usize);
+        assert!(items.len() <= u32::MAX as usize);
 
         // determine if we need to use varints and offset
         // indirection tables, or if everything is equal
@@ -1340,7 +1339,7 @@ impl Inner {
 
         let fixed_value_length = fixed_value_length
             .and_then(|fvl| {
-                if fvl < std::u16::MAX as usize {
+                if fvl < u16::MAX as usize {
                     // we add 1 to the fvl to
                     // represent Some(0) in
                     // less space.
@@ -1678,7 +1677,7 @@ impl Inner {
 
         let start = offsets_buf_start + (index * self.offset_bytes as usize);
 
-        let mask = std::usize::MAX
+        let mask = usize::MAX
             >> (8
                 * (tf!(size_of::<usize>(), u32)
                     - u32::from(self.offset_bytes)));
@@ -1867,12 +1866,12 @@ impl Inner {
         let test_jitter_left = rand::thread_rng().gen_range(0, 16);
 
         #[cfg(not(test))]
-        let test_jitter_left = std::u8::MAX as usize;
+        let test_jitter_left = u8::MAX as usize;
 
         let additional_left_prefix = self.lo()[self.prefix_len as usize..]
             .iter()
             .zip(split_key[self.prefix_len as usize..].iter())
-            .take((std::u8::MAX - self.prefix_len) as usize)
+            .take((u8::MAX - self.prefix_len) as usize)
             .take_while(|(a, b)| a == b)
             .count()
             .min(test_jitter_left);
@@ -1881,13 +1880,13 @@ impl Inner {
         let test_jitter_right = rand::thread_rng().gen_range(0, 16);
 
         #[cfg(not(test))]
-        let test_jitter_right = std::u8::MAX as usize;
+        let test_jitter_right = u8::MAX as usize;
 
         let additional_right_prefix = if let Some(hi) = self.hi() {
             split_key[self.prefix_len as usize..]
                 .iter()
                 .zip(hi[self.prefix_len as usize..].iter())
-                .take((std::u8::MAX - self.prefix_len) as usize)
+                .take((u8::MAX - self.prefix_len) as usize)
                 .take_while(|(a, b)| a == b)
                 .count()
                 .min(test_jitter_right)
@@ -1942,7 +1941,7 @@ impl Inner {
         left.rewrite_generations =
             if split_point == 1 { 0 } else { self.rewrite_generations };
         left.probation_ops_remaining =
-            tf!((self.children() / 2).min(std::u8::MAX as usize), u8);
+            tf!((self.children() / 2).min(u8::MAX as usize), u8);
 
         let mut right = Inner::new(
             &split_key,
@@ -2028,12 +2027,12 @@ impl Inner {
             let test_jitter = rand::thread_rng().gen_range(0, 16);
 
             #[cfg(not(test))]
-            let test_jitter = std::u8::MAX as usize;
+            let test_jitter = u8::MAX as usize;
 
             self.lo()
                 .iter()
                 .zip(right_hi)
-                .take(std::u8::MAX as usize)
+                .take(u8::MAX as usize)
                 .take_while(|(a, b)| a == b)
                 .count()
                 .min(test_jitter)
@@ -2108,7 +2107,7 @@ impl Inner {
         self.children() == 0
     }
 
-    pub(crate) fn rss(&self) -> u64 {
+    pub(crate) const fn rss(&self) -> u64 {
         self.len as u64
     }
 
@@ -2426,7 +2425,7 @@ impl Inner {
 mod prefix {
     use crate::IVec;
 
-    pub(super) fn empty() -> &'static [u8] {
+    pub(super) const fn empty() -> &'static [u8] {
         &[]
     }
 
