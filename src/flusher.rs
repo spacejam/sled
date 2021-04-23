@@ -13,11 +13,11 @@ pub(crate) enum ShutdownState {
 }
 
 impl ShutdownState {
-    fn is_running(self) -> bool {
+    const fn is_running(self) -> bool {
         matches!(self, ShutdownState::Running)
     }
 
-    fn is_shutdown(self) -> bool {
+    const fn is_shutdown(self) -> bool {
         matches!(self, ShutdownState::ShutDown)
     }
 }

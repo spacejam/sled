@@ -433,7 +433,7 @@ impl TransactionalTrees {
 }
 
 /// A simple constructor for `Err(TransactionError::Abort(_))`
-pub fn abort<A, T>(t: T) -> ConflictableTransactionResult<A, T> {
+pub const fn abort<A, T>(t: T) -> ConflictableTransactionResult<A, T> {
     Err(ConflictableTransactionError::Abort(t))
 }
 

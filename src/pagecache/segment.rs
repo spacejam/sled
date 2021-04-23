@@ -211,15 +211,15 @@ impl Default for Segment {
 }
 
 impl Segment {
-    fn is_free(&self) -> bool {
+    const fn is_free(&self) -> bool {
         matches!(self, Segment::Free(_))
     }
 
-    fn is_active(&self) -> bool {
+    const fn is_active(&self) -> bool {
         matches!(self, Segment::Active { .. })
     }
 
-    fn is_inactive(&self) -> bool {
+    const fn is_inactive(&self) -> bool {
         matches!(self, Segment::Inactive { .. })
     }
 
@@ -449,7 +449,7 @@ impl Segment {
         }
     }
 
-    fn can_free(&self) -> bool {
+    const fn can_free(&self) -> bool {
         if let Segment::Draining(draining) = self {
             draining.replaced_pids == draining.max_pids
         } else {

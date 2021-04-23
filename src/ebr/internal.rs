@@ -75,7 +75,7 @@ impl Bag {
     }
 
     /// Returns `true` if the bag is empty.
-    pub(super) fn is_empty(&self) -> bool {
+    pub(super) const fn is_empty(&self) -> bool {
         self.len == 0
     }
 
@@ -211,7 +211,7 @@ impl fmt::Debug for Bag {
     }
 }
 
-fn no_op_func() {}
+const fn no_op_func() {}
 
 /// A pair of an epoch and a bag.
 #[derive(Default, Debug)]
@@ -225,7 +225,7 @@ unsafe impl Sync for SealedBag {}
 
 impl SealedBag {
     /// Checks if it is safe to drop the bag w.r.t. the given global epoch.
-    fn is_expired(&self, global_epoch: Epoch) -> bool {
+    const fn is_expired(&self, global_epoch: Epoch) -> bool {
         // A pinned participant can witness at most one epoch advancement. Therefore, any bag that
         // is within one epoch of the current one cannot be destroyed yet.
         global_epoch.wrapping_sub(self.epoch) >= 2

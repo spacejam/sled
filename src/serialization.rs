@@ -431,7 +431,7 @@ fn shift_i64_opt(value_opt: &Option<i64>) -> i64 {
     }
 }
 
-fn unshift_i64_opt(value: i64) -> Option<i64> {
+const fn unshift_i64_opt(value: i64) -> Option<i64> {
     if value == 0 {
         None
     } else if value.signum() == -1 {

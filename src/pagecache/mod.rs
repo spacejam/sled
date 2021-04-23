@@ -168,7 +168,7 @@ pub enum LogKind {
     Corrupted,
 }
 
-fn log_kind_from_update(update: &Update) -> LogKind {
+const fn log_kind_from_update(update: &Update) -> LogKind {
     match update {
         Update::Free => LogKind::Free,
         Update::Link(..) => LogKind::Link,
@@ -225,8 +225,7 @@ fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
 
 use std::convert::{TryFrom, TryInto};
 
-#[inline]
-pub(crate) fn lsn_to_arr(number: Lsn) -> [u8; 8] {
+pub(crate) const fn lsn_to_arr(number: Lsn) -> [u8; 8] {
     number.to_le_bytes()
 }
 
@@ -235,8 +234,7 @@ pub(crate) fn arr_to_lsn(arr: &[u8]) -> Lsn {
     Lsn::from_le_bytes(arr.try_into().unwrap())
 }
 
-#[inline]
-pub(crate) fn u64_to_arr(number: u64) -> [u8; 8] {
+pub(crate) const fn u64_to_arr(number: u64) -> [u8; 8] {
     number.to_le_bytes()
 }
 
@@ -245,8 +243,7 @@ pub(crate) fn arr_to_u32(arr: &[u8]) -> u32 {
     u32::from_le_bytes(arr.try_into().unwrap())
 }
 
-#[inline]
-pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
+pub(crate) const fn u32_to_arr(number: u32) -> [u8; 4] {
     number.to_le_bytes()
 }
 
@@ -453,7 +450,7 @@ impl Page {
         self.update.as_ref().unwrap().as_counter()
     }
 
-    fn is_free(&self) -> bool {
+    const fn is_free(&self) -> bool {
         matches!(self.update, Some(Update::Free))
     }
 

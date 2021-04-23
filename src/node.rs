@@ -116,14 +116,14 @@ fn apply_computed_distance(mut buf: &mut [u8], mut distance: usize) {
 // dimension that must be numerically represented
 // in a way that preserves lexicographic ordering.
 fn shared_distance(base: &[u8], search: &[u8]) -> usize {
-    fn f1(base: &[u8], search: &[u8]) -> usize {
+    const fn f1(base: &[u8], search: &[u8]) -> usize {
         (search[search.len() - 1] - base[search.len() - 1]) as usize
     }
     fn f2(base: &[u8], search: &[u8]) -> usize {
         (u16::from_be_bytes(search.try_into().unwrap()) as usize)
             - (u16::from_be_bytes(base.try_into().unwrap()) as usize)
     }
-    fn f3(base: &[u8], search: &[u8]) -> usize {
+    const fn f3(base: &[u8], search: &[u8]) -> usize {
         (u32::from_be_bytes([0, search[0], search[1], search[2]]) as usize)
             - (u32::from_be_bytes([0, base[0], base[1], base[2]]) as usize)
     }
@@ -2107,7 +2107,7 @@ impl Inner {
         self.children() == 0
     }
 
-    pub(crate) fn rss(&self) -> u64 {
+    pub(crate) const fn rss(&self) -> u64 {
         self.len as u64
     }
 
@@ -2425,7 +2425,7 @@ impl Inner {
 mod prefix {
     use crate::IVec;
 
-    pub(super) fn empty() -> &'static [u8] {
+    pub(super) const fn empty() -> &'static [u8] {
         &[]
     }
 

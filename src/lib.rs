@@ -130,7 +130,6 @@
     clippy::match_same_arms,
     clippy::maybe_infinite_iter,
     clippy::mem_forget,
-    // clippy::missing_const_for_fn,
     // clippy::missing_docs_in_private_items,
     clippy::module_name_repetitions,
     clippy::multiple_inherent_impl,
@@ -155,10 +154,16 @@
     clippy::unseparated_literal_suffix,
     clippy::used_underscore_binding,
     clippy::wildcard_dependencies,
-    // clippy::wildcard_enum_match_arm,
     clippy::wrong_pub_self_convention,
 ))]
-#![warn(clippy::multiple_crate_versions)]
+#![cfg_attr(
+    feature = "testing",
+    warn(
+        clippy::missing_const_for_fn,
+        clippy::multiple_crate_versions,
+        // clippy::wildcard_enum_match_arm,
+    )
+)]
 
 macro_rules! io_fail {
     ($config:expr, $e:expr) => {

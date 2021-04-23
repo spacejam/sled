@@ -18,8 +18,7 @@ pub struct Backoff {
 
 impl Backoff {
     /// Creates a new `Backoff`.
-    #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Backoff { step: Cell::new(0) }
     }
 

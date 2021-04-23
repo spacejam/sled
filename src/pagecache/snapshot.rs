@@ -69,7 +69,7 @@ impl PageState {
         }
     }
 
-    pub(crate) fn is_free(&self) -> bool {
+    pub(crate) const fn is_free(&self) -> bool {
         matches!(self, PageState::Free(_, _))
     }
 
