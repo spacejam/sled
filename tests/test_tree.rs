@@ -650,7 +650,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
         let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
             barrier.wait();
-            let sub = db.watch_prefix(b"k1");
+            let mut sub = db.watch_prefix(b"k1");
             drop(db);
 
             while sub.next_timeout(Duration::from_millis(100)).is_ok() {}
