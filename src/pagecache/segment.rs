@@ -998,7 +998,7 @@ impl SegmentAccountant {
         // similar to the collection
         // logic in the ebr module.
         let bound = if in_startup {
-            std::usize::MAX
+            usize::MAX
         } else {
             32.max(can_deactivate.len() / 16)
         };

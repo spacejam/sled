@@ -226,7 +226,7 @@ impl From<u64> for CacheAccess {
         let sz = usize::try_from((u << 56) >> 56).unwrap();
         assert_ne!(sz, 0);
         let pid = u >> 8;
-        assert!(pid < u64::from(std::u32::MAX));
+        assert!(pid < u64::from(u32::MAX));
         CacheAccess {
             pid: u32::try_from(pid).unwrap(),
             sz: u8::try_from(sz).unwrap(),
