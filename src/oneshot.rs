@@ -63,8 +63,12 @@ impl<T> OneShot<T> {
     /// returning an error if not filled
     /// before a given timeout or if the
     /// system shuts down before then.
+    ///
+    /// Upon a successful receive, the
+    /// oneshot should be dropped, as it
+    /// will never yield that value again.
     pub fn wait_timeout(
-        self,
+        &mut self,
         mut timeout: Duration,
     ) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
         let mut inner = self.mu.lock();
