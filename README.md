@@ -161,7 +161,7 @@ extreme::run(async move {
 
 # minimum supported Rust version (MSRV)
 
-We support Rust 1.43.0 and up.
+We support Rust 1.46.0 and up.
 
 # architecture
 
