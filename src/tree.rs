@@ -43,7 +43,8 @@ fn bounds_error() -> Result<()> {
     Err(Error::Unsupported(
         "Keys and values are limited to \
         128gb on 64-bit platforms and
-        512mb on 32-bit platforms.".to_string()
+        512mb on 32-bit platforms."
+            .to_string(),
     ))
 }
 
@@ -499,8 +500,7 @@ impl Tree {
 
         trace!("getting key {:?}", key.as_ref());
 
-        let View { node_view, .. } =
-            self.view_for_key(key.as_ref(), &guard)?;
+        let View { node_view, .. } = self.view_for_key(key.as_ref(), &guard)?;
 
         let pair = node_view.node_kv_pair(key.as_ref());
 
@@ -519,8 +519,7 @@ impl Tree {
 
         trace!("getting key {:?}", key);
 
-        let View { node_view,  .. } =
-            self.view_for_key(key.as_ref(), guard)?;
+        let View { node_view, .. } = self.view_for_key(key.as_ref(), guard)?;
 
         let pair = node_view.node_kv_pair(key.as_ref());
         let val = pair.1.map(IVec::from);
@@ -918,8 +917,7 @@ impl Tree {
     #[allow(clippy::used_underscore_binding)]
     pub async fn flush_async(&self) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
-        if let Some(result) =
-            threadpool::spawn(move || pagecache.flush()).await
+        if let Some(result) = threadpool::spawn(move || pagecache.flush()).await
         {
             result
         } else {
@@ -1632,7 +1630,10 @@ impl Tree {
             trace!(
                 "parent_split at {:?} child pid {} \
                 parent pid {} success: {}",
-                rhs_lo, rhs_pid, parent_view.pid, replace.is_ok()
+                rhs_lo,
+                rhs_pid,
+                parent_view.pid,
+                replace.is_ok()
             );
 
             #[cfg(feature = "metrics")]
@@ -1837,7 +1838,11 @@ impl Tree {
 
             if overshot {
                 // merge interfered, reload root and retry
-                log::trace!("overshot searching for {:?} on node {:?}", key.as_ref(), view.deref());
+                log::trace!(
+                    "overshot searching for {:?} on node {:?}",
+                    key.as_ref(),
+                    view.deref()
+                );
                 retry!();
             }
 
@@ -1855,7 +1860,11 @@ impl Tree {
                          we should have a right sibling",
                     )
                     .get();
-                trace!("seeking right on undershot node, from {} to {}", cursor, right_sibling);
+                trace!(
+                    "seeking right on undershot node, from {} to {}",
+                    cursor,
+                    right_sibling
+                );
                 cursor = right_sibling;
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
@@ -1899,9 +1908,12 @@ impl Tree {
                     // due to the Node::index_next_node method
                     // returning a child that is off-by-one to the
                     // left, always causing an undershoot.
-                    log::trace!("failed to apply parent split of \
+                    log::trace!(
+                        "failed to apply parent split of \
                         ({:?}, {}) to parent node {:?}",
-                        view.lo(), cursor, unsplit_parent
+                        view.lo(),
+                        cursor,
+                        unsplit_parent
                     );
                     retry!();
                 }
@@ -1956,7 +1968,11 @@ impl Tree {
 
             if view.is_index {
                 let next = view.index_next_node(key.as_ref());
-                log::trace!("found next {} from node {:?}", next.1, view.deref());
+                log::trace!(
+                    "found next {} from node {:?}",
+                    next.1,
+                    view.deref()
+                );
                 took_leftmost_branch = next.0;
                 parent_view = Some(view);
                 cursor = next.1;
@@ -1968,7 +1984,10 @@ impl Tree {
 
         #[cfg(feature = "testing")]
         {
-            log::error!("failed to traverse tree while looking for key {:?}", key.as_ref());
+            log::error!(
+                "failed to traverse tree while looking for key {:?}",
+                key.as_ref()
+            );
             log::error!("took path:");
             for (pid, view) in path {
                 log::error!("pid: {} node: {:?}\n\n", pid, view.deref());
@@ -2139,7 +2158,8 @@ impl Tree {
         // we assume caller only merges when
         // the node to be merged is not the
         // leftmost child.
-        let mut cursor_pid = parent_view.iter_index_pids().nth(merge_index).unwrap();
+        let mut cursor_pid =
+            parent_view.iter_index_pids().nth(merge_index).unwrap();
 
         // searching for the left sibling to merge the target page into
         loop {
@@ -2173,7 +2193,8 @@ impl Tree {
                 }
 
                 merge_index -= 1;
-                cursor_pid = parent_view.iter_index_pids().nth(merge_index).unwrap();
+                cursor_pid =
+                    parent_view.iter_index_pids().nth(merge_index).unwrap();
 
                 continue;
             };
