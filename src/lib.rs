@@ -104,7 +104,6 @@
     clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
-    clippy::checked_conversions,
     clippy::decimal_literal_representation,
     clippy::doc_markdown,
     // clippy::else_if_without_else,
