@@ -9,6 +9,8 @@
   which is enabled when compiling with the `metrics` feature.
 * #1254 `IVec` data will now always have an alignment of 8,
   which may enable interesting architecture-specific use cases.
+* #1307 & #1315 `Db::contains_tree` can be used to see if a
+  `Tree` with a given name already exists.
 
 ## Improvements
 
