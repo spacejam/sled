@@ -957,17 +957,36 @@ impl PageCache {
             }
             'inner: loop {
                 let pg_view = self.inner.get(pid, &guard);
-                if pg_view.cache_infos.is_empty() {
-                    // there is a benign race with the thread
-                    // that is allocating this page. the allocating
-                    // thread has not yet written the new page to disk,
-                    // and it does not yet have any storage tracking
-                    // information.
-                    std::thread::yield_now();
-                } else {
-                    let page_state = pg_view.to_page_state();
-                    page_states.push(page_state);
-                    break 'inner;
+
+                match &*pg_view.cache_infos {
+                    &[_single_cache_info] => {
+                        let page_state = pg_view.to_page_state();
+                        page_states.push(page_state);
+                        break 'inner;
+                    }
+                    &[_first_of_several, ..] => {
+                        // If a page has multiple disk locations,
+                        // rewrite it to a single one before storing
+                        // a single 8-byte pointer to its cold location.
+                        if let Err(e) = self.rewrite_page(pid, None, &guard) {
+                            log::error!(
+                                "aborting fuzzy snapshot attempt after \
+                                failing to rewrite pid {}: {:?}",
+                                pid,
+                                e
+                            );
+                            return Err(e);
+                        }
+                        continue 'inner;
+                    }
+                    &[] => {
+                        // there is a benign race with the thread
+                        // that is allocating this page. the allocating
+                        // thread has not yet written the new page to disk,
+                        // and it does not yet have any storage tracking
+                        // information.
+                        std::thread::yield_now();
+                    }
                 }
 
                 // break out of this loop if the overall system
