@@ -19,6 +19,7 @@ use crate::{OneShot, Result};
 ))]
 mod queue {
     use std::{
+        cell::RefCell,
         collections::VecDeque,
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -30,6 +31,14 @@ mod queue {
     use parking_lot::{Condvar, Mutex};
 
     use crate::{debug_delay, Lazy, OneShot};
+
+    thread_local! {
+        static WORKER: RefCell<bool> = RefCell::new(false);
+    }
+
+    fn is_worker() -> bool {
+        WORKER.with(|w| *w.borrow())
+    }
 
     pub(super) static BLOCKING_QUEUE: Lazy<Queue, fn() -> Queue> =
         Lazy::new(Default::default);
@@ -76,7 +85,11 @@ mod queue {
             promise_filler.fill((work)());
         };
 
-        queue.send(Box::new(task));
+        if is_worker() {
+            task();
+        } else {
+            queue.send(Box::new(task));
+        }
 
         promise
     }
@@ -125,6 +138,8 @@ mod queue {
 
         fn perform_work(&'static self, elastic: bool, temporary: bool) {
             const MAX_TEMPORARY_THREADS: usize = 16;
+
+            WORKER.with(|w| *w.borrow_mut() = true);
 
             self.spawning.store(false, Ordering::SeqCst);
 
