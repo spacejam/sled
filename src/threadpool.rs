@@ -86,6 +86,14 @@ mod queue {
         };
 
         if is_worker() {
+            // NB this could prevent deadlocks because
+            // if a threadpool thread spawns work into
+            // the threadpool's queue, which it later
+            // blocks on the completion of, it would be
+            // possible for threadpool threads to block
+            // forever on the completion of work that
+            // exists in the queue but will never be
+            // scheduled.
             task();
         } else {
             queue.send(Box::new(task));
