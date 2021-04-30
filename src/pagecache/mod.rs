@@ -21,7 +21,10 @@ mod reservation;
 mod segment;
 mod snapshot;
 
-use std::ops::Deref;
+use std::{
+    fmt,
+    ops::{Add, AddAssign, Deref},
+};
 
 use crate::*;
 
@@ -75,6 +78,55 @@ pub type PageId = u64;
 #[derive(Default, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Debug)]
 #[repr(transparent)]
 pub struct BatchManifest(pub Lsn);
+
+/// A power of two size
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(transparent)]
+pub struct SizeClass(pub(super) u8);
+
+impl fmt::Display for SizeClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SizeClass({} -> {})", self.0, self.size())
+    }
+}
+
+impl Add for SizeClass {
+    type Output = SizeClass;
+
+    fn add(self, other: SizeClass) -> SizeClass {
+        SizeClass::from(self.size() + other.size())
+    }
+}
+
+impl AddAssign for SizeClass {
+    fn add_assign(&mut self, other: SizeClass) {
+        *self = *self + other;
+    }
+}
+
+impl SizeClass {
+    pub const fn size(self) -> usize {
+        1 << self.0
+    }
+
+    pub fn from(item: usize) -> SizeClass {
+        SizeClass(
+            u8::try_from(item.next_power_of_two().trailing_zeros()).unwrap(),
+        )
+    }
+
+    pub fn from_u64(item: u64) -> SizeClass {
+        SizeClass(
+            u8::try_from(item.next_power_of_two().trailing_zeros()).unwrap(),
+        )
+    }
+
+    pub fn from_u32(item: u32) -> SizeClass {
+        SizeClass(
+            u8::try_from(item.next_power_of_two().trailing_zeros()).unwrap(),
+        )
+    }
+}
 
 /// A buffer with an associated offset. Useful for
 /// batching many reads over a file segment.
@@ -312,7 +364,7 @@ pub struct CacheInfo {
     pub ts: u64,
     pub lsn: Lsn,
     pub pointer: DiskPtr,
-    pub log_size: u64,
+    pub log_size: SizeClass,
 }
 
 #[cfg(test)]
@@ -324,7 +376,7 @@ impl quickcheck::Arbitrary for CacheInfo {
             ts: g.gen(),
             lsn: g.gen(),
             pointer: DiskPtr::arbitrary(g),
-            log_size: g.gen(),
+            log_size: SizeClass(g.gen()),
         }
     }
 }
@@ -421,7 +473,7 @@ impl Page {
         if self.is_free() {
             PageState::Free(base.lsn, base.pointer)
         } else {
-            let mut frags: Vec<(Lsn, DiskPtr, u64)> = vec![];
+            let mut frags: Vec<(Lsn, DiskPtr, SizeClass)> = vec![];
 
             for cache_info in self.cache_infos.iter().skip(1) {
                 frags.push((
@@ -459,9 +511,9 @@ impl Page {
     }
 
     pub(crate) fn log_size(&self) -> u64 {
-        let first = self.cache_infos[0].log_size;
+        let first = self.cache_infos[0].log_size.size() as u64;
         let extrapolated_rest = if let Some(ci) = self.cache_infos.get(1) {
-            ci.log_size * (self.cache_infos.len() - 1) as u64
+            ci.log_size.size() as u64 * (self.cache_infos.len() - 1) as u64
         } else {
             0
         };
@@ -856,7 +908,7 @@ impl PageCache {
                 lsn,
                 pointer,
                 ts,
-                log_size: log_reservation.reservation_len() as u64,
+                log_size: SizeClass::from(log_reservation.reservation_len()),
             };
 
             let mut new_cache_infos =
@@ -1390,10 +1442,9 @@ impl PageCacheInner {
                         ts: page_view.ts(),
                         lsn: log_reservation.lsn,
                         pointer: log_reservation.pointer,
-                        log_size: u64::try_from(
+                        log_size: SizeClass::from(
                             log_reservation.reservation_len(),
-                        )
-                        .unwrap(),
+                        ),
                     };
 
                     (Some(log_reservation), cache_info)
@@ -1641,8 +1692,7 @@ impl PageCacheInner {
                 ts,
                 lsn,
                 pointer: new_pointer,
-                log_size: u64::try_from(log_reservation.reservation_len())
-                    .unwrap(),
+                log_size: SizeClass::from(log_reservation.reservation_len()),
             };
 
             page_ptr.cache_infos = vec![cache_info];
@@ -2201,7 +2251,7 @@ impl PageCacheInner {
                     let cache_info = CacheInfo {
                         lsn,
                         pointer,
-                        log_size: u64::try_from(MAX_MSG_HEADER_LEN).unwrap(),
+                        log_size: SizeClass::from(MAX_MSG_HEADER_LEN),
                         ts: 0,
                     };
                     cache_infos.push(cache_info);

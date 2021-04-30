@@ -6,6 +6,7 @@ use crate::*;
 use super::{
     arr_to_u32, pwrite_all, raw_segment_iter_from, u32_to_arr, u64_to_arr,
     BasedBuf, DiskPtr, HeapId, LogIter, LogKind, LogOffset, Lsn, MessageKind,
+    SizeClass,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -42,8 +43,8 @@ pub enum PageState {
     /// and the size tells us how much storage it uses
     /// on the disk.
     Present {
-        base: (Lsn, DiskPtr, u64),
-        frags: Vec<(Lsn, DiskPtr, u64)>,
+        base: (Lsn, DiskPtr, SizeClass),
+        frags: Vec<(Lsn, DiskPtr, SizeClass)>,
     },
 
     /// This is a free page.
@@ -52,7 +53,7 @@ pub enum PageState {
 }
 
 impl PageState {
-    fn push(&mut self, item: (Lsn, DiskPtr, u64)) {
+    fn push(&mut self, item: (Lsn, DiskPtr, SizeClass)) {
         match *self {
             PageState::Present { base, ref mut frags } => {
                 if frags.last().map_or(base.0, |f| f.0) < item.0 {
@@ -181,7 +182,7 @@ impl Snapshot {
                 let pid_usize = usize::try_from(pid).unwrap();
 
                 self.pt[pid_usize] = PageState::Present {
-                    base: (lsn, disk_ptr, sz),
+                    base: (lsn, disk_ptr, SizeClass::from_u64(sz)),
                     frags: vec![],
                 };
             }
@@ -199,7 +200,7 @@ impl Snapshot {
                         lsn,
                     );
 
-                    lids.push((lsn, disk_ptr, sz));
+                    lids.push((lsn, disk_ptr, SizeClass::from_u64(sz)));
                 } else {
                     trace!(
                         "skipping dangling append of pid {} at lid {} lsn {}",

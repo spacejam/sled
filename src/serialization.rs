@@ -9,7 +9,7 @@ use std::{
 use crate::{
     pagecache::{
         BatchManifest, HeapId, MessageHeader, PageState, SegmentNumber,
-        Snapshot,
+        SizeClass, Snapshot,
     },
     varint, DiskPtr, Error, IVec, Link, Meta, Node, Result,
 };
@@ -242,6 +242,26 @@ impl Serialize for bool {
         let value = buf[0] != 0;
         *buf = &buf[1..];
         Ok(value)
+    }
+}
+
+impl Serialize for SizeClass {
+    fn serialized_size(&self) -> u64 {
+        1
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        buf[0] = self.0;
+        scoot(buf, 1);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<SizeClass> {
+        if buf.is_empty() {
+            return Err(Error::corruption(None));
+        }
+        let value = buf[0];
+        *buf = &buf[1..];
+        Ok(SizeClass(value))
     }
 }
 
@@ -787,14 +807,27 @@ mod qc {
                 // for the base fragment
                 let n = g.gen_range(0, 255);
 
-                let base = (g.gen(), DiskPtr::arbitrary(g), g.gen());
+                let base =
+                    (g.gen(), DiskPtr::arbitrary(g), SizeClass::arbitrary(g));
                 let frags = (0..n)
-                    .map(|_| (g.gen(), DiskPtr::arbitrary(g), g.gen()))
+                    .map(|_| {
+                        (
+                            g.gen(),
+                            DiskPtr::arbitrary(g),
+                            SizeClass::arbitrary(g),
+                        )
+                    })
                     .collect();
                 PageState::Present { base, frags }
             } else {
                 PageState::Free(g.gen(), DiskPtr::arbitrary(g))
             }
+        }
+    }
+
+    impl Arbitrary for SizeClass {
+        fn arbitrary<G: Gen>(g: &mut G) -> SizeClass {
+            SizeClass(g.gen())
         }
     }
 
