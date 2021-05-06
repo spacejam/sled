@@ -55,7 +55,7 @@ jobs:
     - name: cargo test
       run: |
         rustup update --no-self-update
-        cargo test --release --no-default-features --features=testing -- --nocapture
+        sudo cargo test --release --no-default-features --features=testing -- --nocapture
     - uses: actions/upload-artifact@v2
       if: ${{ failure() && runner.os == 'linux' }}
       with:
