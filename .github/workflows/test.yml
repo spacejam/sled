@@ -46,6 +46,10 @@ jobs:
         ulimit -c unlimited
         echo "$PWD/core-dumps/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
         mkdir core-dumps
+    - name: macOS coredump setup
+      if: ${{ runner.os == 'macOS' }}
+      run: |
+        ulimit -c unlimited
     - name: cargo test
       run: |
         rustup update --no-self-update
@@ -56,6 +60,14 @@ jobs:
         name: core-dump-upload
         path: |
           ./core-dumps/*
+          ./target/release/deps/test_*
+    - uses: actions/upload-artifact@v2
+      if: ${{ failure() && runner.os == 'macOS' }}
+      with:
+        name: core-dump-upload
+        path: |
+          /cores/*
+          ./target/release/deps/test_*
   examples:
     name: Example Tests
     runs-on: ubuntu-latest
