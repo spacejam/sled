@@ -40,10 +40,21 @@ jobs:
         key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
           ${{ runner.os }}-
+    - name: linux coredump setup
+      if: ${{ runner.os == 'linux' }}
+      run: |
+        echo "$PWD/core-dumps/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
+        mkdir core-dumps
     - name: cargo test
       run: |
         rustup update --no-self-update
         cargo test --release --no-default-features --features=testing -- --nocapture
+    - uses: actions/upload-artifact@v2
+      if: ${{ failure() && runner.os == 'linux' }}
+      with:
+        name: core-dump-upload
+        path: |
+          ./core-dumps/*
   examples:
     name: Example Tests
     runs-on: ubuntu-latest
