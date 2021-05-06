@@ -42,7 +42,7 @@ jobs:
           ${{ runner.os }}-
     - name: cargo test
       run: |
-        if [[ ${{ runner.os }} == "macos-latest" ]]; then
+        if [[ ${{ runner.os }} == "macOS" ]]; then
           export RUSTFLAGS="-C target-cpu=native -C link-args=-Wl,-stack_size,4194304"
         else
           export RUSTFLAGS="-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
