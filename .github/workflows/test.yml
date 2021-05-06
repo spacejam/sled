@@ -49,7 +49,7 @@ jobs:
     - name: macOS coredump setup
       if: ${{ runner.os == 'macOS' }}
       run: |
-        ulimit -c unlimited
+        sudo ulimit -c unlimited
     - name: cargo test
       run: |
         rustup update --no-self-update
