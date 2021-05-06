@@ -124,6 +124,7 @@ jobs:
         name: core-dump-upload
         path: |
           ./benchmarks/stress2/core-dumps/*
+          ./benchmarks/stress2/target/release/stress2
   sanitizers:
     name: Sanitizers
     env:
