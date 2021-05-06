@@ -197,6 +197,8 @@ mod ebr;
 mod fastcmp;
 mod fastlock;
 mod fnv;
+#[cfg(feature = "event_log")]
+mod gdb;
 mod histogram;
 mod iter;
 mod ivec;

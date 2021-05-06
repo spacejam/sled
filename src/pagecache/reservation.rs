@@ -21,7 +21,7 @@ impl<'a> Drop for Reservation<'a> {
         // We auto-abort if the user never uses a reservation.
         if !self.flushed {
             if let Err(e) = self.flush(false) {
-                self.log.config.set_global_error(e);
+                self.log.iobufs.set_global_error(e);
             }
         }
     }
@@ -52,11 +52,6 @@ impl<'a> Reservation<'a> {
     /// the log sequence number of the write, and the file offset.
     pub fn complete(mut self) -> Result<(Lsn, DiskPtr)> {
         self.flush(true)
-    }
-
-    /// Returns the length of the on-log reservation.
-    pub(crate) const fn reservation_len(&self) -> usize {
-        self.buf.len()
     }
 
     /// Refills the reservation buffer with new data.

@@ -544,7 +544,24 @@ impl Config {
                 // that happen, causing locks to be held
                 // for long periods of time, so we should
                 // block to wait on reopening files.
-                file.lock_exclusive()
+                let start = std::time::Instant::now();
+                loop {
+                    let ret = file.try_lock_exclusive();
+
+                    if ret.is_ok() {
+                        break ret;
+                    }
+
+                    if start.elapsed() > std::time::Duration::from_secs(10) {
+                        log::error!(
+                            "failed to open file in exclusive mode: {:?}",
+                            ret
+                        );
+                        break ret;
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
             } else {
                 file.try_lock_exclusive()
             };
@@ -759,13 +776,11 @@ impl Deref for RunningConfig {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        if !self.temporary {
-            return;
+        if self.temporary {
+            // Our files are temporary, so nuke them.
+            debug!("removing temporary storage file {:?}", self.get_path());
+            let _res = fs::remove_dir_all(&self.get_path());
         }
-
-        // Our files are temporary, so nuke them.
-        debug!("removing temporary storage file {:?}", self.get_path());
-        let _res = fs::remove_dir_all(&self.get_path());
     }
 }
 

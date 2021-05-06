@@ -109,13 +109,19 @@ impl Log {
         heap_pointer: HeapId,
         guard: &Guard,
     ) -> Result<Reservation<'_>> {
-        self.reserve_inner(
+        let ret = self.reserve_inner(
             LogKind::Replace,
             pid,
             &heap_pointer,
             Some(heap_pointer),
             guard,
-        )
+        );
+
+        if let Err(e) = &ret {
+            self.iobufs.set_global_error(e.clone());
+        }
+
+        ret
     }
 
     /// Tries to claim a reservation for writing a buffer to a
@@ -144,17 +150,29 @@ impl Log {
                 let compressed_buf =
                     compress(&buf, self.config.compression_factor).unwrap();
 
-                return self.reserve_inner(
+                let ret = self.reserve_inner(
                     log_kind,
                     pid,
                     &IVec::from(compressed_buf),
                     None,
                     guard,
                 );
+
+                if let Err(e) = &ret {
+                    self.iobufs.set_global_error(e.clone());
+                }
+
+                return ret;
             }
         }
 
-        self.reserve_inner(log_kind, pid, item, None, guard)
+        let ret = self.reserve_inner(log_kind, pid, item, None, guard);
+
+        if let Err(e) = &ret {
+            self.iobufs.set_global_error(e.clone());
+        }
+
+        ret
     }
 
     fn reserve_inner<T: Serialize + Debug>(

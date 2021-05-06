@@ -84,8 +84,7 @@ fn run(
             Err(e) => {
                 error!("failed to flush from periodic flush thread: {}", e);
 
-                #[cfg(feature = "failpoints")]
-                pagecache.set_failpoint(e);
+                pagecache.log.iobufs.set_global_error(e);
 
                 *shutdown = ShutdownState::ShutDown;
 
@@ -114,8 +113,7 @@ fn run(
                         e
                     );
 
-                    #[cfg(feature = "failpoints")]
-                    pagecache.set_failpoint(e);
+                    pagecache.log.iobufs.set_global_error(e);
 
                     *shutdown = ShutdownState::ShutDown;
 

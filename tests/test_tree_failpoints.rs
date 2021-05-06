@@ -1799,3 +1799,58 @@ fn failpoints_bug_36() {
         ))
     }
 }
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn failpoints_bug_37() {
+    // postmortem 1: global errors were not being properly set
+    use BatchOp::*;
+    for _ in 0..100 {
+        assert!(prop_tree_crashes_nicely(
+            vec![
+                Op::Batched(vec![Set, Set, Set, Set, Set, Set, Set]),
+                Op::FailPoint("pwrite", 13605093379298630254),
+                Op::Restart,
+            ],
+            false
+        ))
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn failpoints_bug_38() {
+    // postmortem 1: global errors were not being properly set
+    use BatchOp::*;
+    for _ in 0..100 {
+        assert!(prop_tree_crashes_nicely(
+            vec![
+                Op::Batched(vec![
+                    Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+                ]),
+                Op::FailPoint("pwrite partial", 18422008228777642734),
+                Op::Set,
+            ],
+            false
+        ))
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn failpoints_bug_39() {
+    // postmortem 1:
+    use BatchOp::*;
+    for _ in 0..100 {
+        assert!(prop_tree_crashes_nicely(
+            vec![
+                Op::Batched(vec![
+                    Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
+                    Set, Set, Set, Set, Set, Set, Set, Set,
+                ]),
+                Op::Restart,
+            ],
+            false
+        ))
+    }
+}

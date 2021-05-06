@@ -548,7 +548,7 @@ pub struct Node {
     // for deletions that have not yet been merged
     // into the inner backing node
     pub(crate) overlay: im::OrdMap<IVec, Option<IVec>>,
-    inner: Arc<Inner>,
+    pub(crate) inner: Arc<Inner>,
 }
 
 impl Clone for Node {

@@ -574,7 +574,7 @@ impl Serialize for PageState {
             PageState::Present { base, frags } => {
                 (1 + frags.len() as u64).serialize_into(buf);
                 base.serialize_into(buf);
-                serialize_3tuple_ref_sequence(frags.iter(), buf);
+                serialize_2tuple_ref_sequence(frags.iter(), buf);
             }
             _ => panic!("tried to serialize {:?}", self),
         }
@@ -648,17 +648,15 @@ where
     }
 }
 
-fn serialize_3tuple_ref_sequence<'a, XS, A, B, C>(xs: XS, buf: &mut &mut [u8])
+fn serialize_2tuple_ref_sequence<'a, XS, A, B>(xs: XS, buf: &mut &mut [u8])
 where
-    XS: Iterator<Item = &'a (A, B, C)>,
+    XS: Iterator<Item = &'a (A, B)>,
     A: Serialize + 'a,
     B: Serialize + 'a,
-    C: Serialize + 'a,
 {
     for item in xs {
         item.0.serialize_into(buf);
         item.1.serialize_into(buf);
-        item.2.serialize_into(buf);
     }
 }
 
@@ -787,10 +785,9 @@ mod qc {
                 // for the base fragment
                 let n = g.gen_range(0, 255);
 
-                let base = (g.gen(), DiskPtr::arbitrary(g), g.gen());
-                let frags = (0..n)
-                    .map(|_| (g.gen(), DiskPtr::arbitrary(g), g.gen()))
-                    .collect();
+                let base = (g.gen(), DiskPtr::arbitrary(g));
+                let frags =
+                    (0..n).map(|_| (g.gen(), DiskPtr::arbitrary(g))).collect();
                 PageState::Present { base, frags }
             } else {
                 PageState::Free(g.gen(), DiskPtr::arbitrary(g))

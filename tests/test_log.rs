@@ -359,7 +359,7 @@ fn multi_segment_log_iteration() -> Result<()> {
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
 
-    while let Some((_, pid, _, _, _)) = iter.next() {
+    while let Some((_, pid, _, _)) = iter.next() {
         if pid <= 3 {
             // this page is for the meta page, counter page, or the default
             // tree's leaf or index nodes

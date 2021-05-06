@@ -1371,10 +1371,14 @@ fn tree_bug_08() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_09() {
-    // postmortem: was failing to load existing snapshots on initialization.
+    // postmortem 1: was failing to load existing snapshots on initialization.
     // would encounter uninitialized segments at the log tip and overwrite
     // the first segment (indexed by LSN of 0) in the segment accountant
     // ordering, skipping over important updates.
+    //
+    // postmortem 2: page size tracking was inconsistent in SA. completely
+    // removed exact size tracking, and went back to simpler pure-page
+    // tenancy model.
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![189]), 36),
