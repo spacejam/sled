@@ -110,6 +110,12 @@ jobs:
         pushd benchmarks/stress2
         cargo run --release -- --duration=60
         rm -rf default.sled
+    - name: core debug
+      if: ${{ failure() }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install gdb
+        ls
   sanitizers:
     name: Sanitizers
     env:
