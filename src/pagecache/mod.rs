@@ -782,7 +782,7 @@ impl PageCache {
                 *cr % fail_seed == 0
             });
 
-            if false && inject_failure {
+            if inject_failure {
                 debug!(
                     "injecting a randomized failure in the link of pid {}",
                     pid
