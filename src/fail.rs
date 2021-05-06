@@ -19,7 +19,16 @@ pub fn is_active(name: &'static str) -> bool {
         if *bitset == 0 {
             active.remove(&name);
         }
-        bit != 0
+        let ret = bit != 0;
+
+        if ret {
+            log::error!(
+                "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! FailPoint {} triggered",
+                name
+            );
+        }
+
+        ret
     } else {
         false
     }
@@ -33,4 +42,14 @@ pub fn set(name: &'static str, bitset: u64) {
 /// Clear all active failpoints.
 pub fn reset() {
     ACTIVE.lock().clear();
+}
+
+/// Temporarily pause all fault injection
+pub fn pause_faults() -> Hm {
+    std::mem::take(&mut ACTIVE.lock())
+}
+
+/// Restore fault injection
+pub fn restore_faults(hm: Hm) {
+    *ACTIVE.lock() = hm;
 }

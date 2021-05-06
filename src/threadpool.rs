@@ -164,6 +164,9 @@ mod queue {
                 let task_opt = self.recv_timeout(wait_limit);
 
                 if let Some((task, outstanding_work)) = task_opt {
+                    // execute the work sent to this thread
+                    (task)();
+
                     // spin up some help if we're falling behind
 
                     let temporary_threads =
@@ -195,9 +198,6 @@ mod queue {
                                 .fetch_sub(1, Ordering::SeqCst);
                         }
                     }
-
-                    // execute the work sent to this thread
-                    (task)();
 
                     unemployed_loops = 0;
                 } else {
@@ -261,11 +261,17 @@ pub fn truncate(config: crate::RunningConfig, at: u64) -> OneShot<Result<()>> {
     spawn_to(
         move || {
             log::debug!("truncating file to length {}", at);
-            config
+            let ret: Result<()> = config
                 .file
                 .set_len(at)
                 .and_then(|_| config.file.sync_all())
-                .map_err(|e| e.into())
+                .map_err(|e| e.into());
+
+            if let Err(e) = &ret {
+                config.set_global_error(e.clone());
+            }
+
+            ret
         },
         &queue::TRUNCATE_QUEUE,
     )
@@ -276,6 +282,7 @@ pub fn take_fuzzy_snapshot(pc: crate::pagecache::PageCache) -> OneShot<()> {
         move || {
             if let Err(e) = pc.take_fuzzy_snapshot() {
                 log::error!("failed to write snapshot: {:?}", e);
+                pc.log.iobufs.set_global_error(e);
             }
         },
         &queue::SNAPSHOT_QUEUE,
@@ -298,15 +305,7 @@ pub(crate) fn write_to_log(
 
                 // store error before notifying so that waiting threads will see
                 // it
-                iobufs.config.set_global_error(e);
-
-                let intervals = iobufs.intervals.lock();
-
-                // having held the mutex makes this linearized
-                // with the notify below.
-                drop(intervals);
-
-                let _notified = iobufs.interval_updated.notify_all();
+                iobufs.set_global_error(e);
             }
         },
         &queue::IO_QUEUE,

@@ -26,20 +26,6 @@ impl Meta {
     pub(crate) fn del_root(&mut self, name: &[u8]) -> Option<PageId> {
         self.inner.remove(name)
     }
-
-    /// Return the current rooted tenants in Meta
-    pub(crate) fn tenants(&self) -> BTreeMap<IVec, PageId> {
-        self.inner.clone()
-    }
-
-    pub(crate) fn rss(&self) -> u64 {
-        self.inner
-            .iter()
-            .map(|(k, _pid)| {
-                k.len() as u64 + std::mem::size_of::<PageId>() as u64
-            })
-            .sum()
-    }
 }
 
 /// Open or create a new disk-backed Tree with its own keyspace,

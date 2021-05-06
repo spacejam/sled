@@ -42,8 +42,8 @@ pub enum PageState {
     /// and the size tells us how much storage it uses
     /// on the disk.
     Present {
-        base: (Lsn, DiskPtr, u64),
-        frags: Vec<(Lsn, DiskPtr, u64)>,
+        base: (Lsn, DiskPtr),
+        frags: Vec<(Lsn, DiskPtr)>,
     },
 
     /// This is a free page.
@@ -52,7 +52,7 @@ pub enum PageState {
 }
 
 impl PageState {
-    fn push(&mut self, item: (Lsn, DiskPtr, u64)) {
+    fn push(&mut self, item: (Lsn, DiskPtr)) {
         match *self {
             PageState::Present { base, ref mut frags } => {
                 if frags.last().map_or(base.0, |f| f.0) < item.0 {
@@ -78,7 +78,7 @@ impl PageState {
         match *self {
             PageState::Present { base, ref frags } => {
                 let mut offsets = vec![base.1.lid()];
-                for (_, ptr, _) in frags {
+                for (_, ptr) in frags {
                     offsets.push(ptr.lid());
                 }
                 offsets
@@ -98,7 +98,7 @@ impl PageState {
                 if let Some(heap_id) = base.1.heap_id() {
                     ret.push(heap_id);
                 }
-                for (_, ptr, _) in frags {
+                for (_, ptr) in frags {
                     if let Some(heap_id) = ptr.heap_id() {
                         ret.push(heap_id);
                     }
@@ -148,7 +148,6 @@ impl Snapshot {
         pid: PageId,
         lsn: Lsn,
         disk_ptr: DiskPtr,
-        sz: u64,
     ) -> Result<()> {
         trace!(
             "trying to deserialize buf for pid {} ptr {} lsn {}",
@@ -180,10 +179,8 @@ impl Snapshot {
 
                 let pid_usize = usize::try_from(pid).unwrap();
 
-                self.pt[pid_usize] = PageState::Present {
-                    base: (lsn, disk_ptr, sz),
-                    frags: vec![],
-                };
+                self.pt[pid_usize] =
+                    PageState::Present { base: (lsn, disk_ptr), frags: vec![] };
             }
             LogKind::Link => {
                 // Because we rewrite pages over time, we may have relocated
@@ -199,7 +196,7 @@ impl Snapshot {
                         lsn,
                     );
 
-                    lids.push((lsn, disk_ptr, sz));
+                    lids.push((lsn, disk_ptr));
                 } else {
                     trace!(
                         "skipping dangling append of pid {} at lid {} lsn {}",
@@ -243,7 +240,7 @@ impl Snapshot {
                 }
                 PageState::Present { ref mut base, ref mut frags } => {
                     base.1.forget_heap_log_coordinates();
-                    for (_, ref mut ptr, _) in frags {
+                    for (_, ref mut ptr) in frags {
                         ptr.forget_heap_log_coordinates();
                     }
                 }
@@ -267,7 +264,7 @@ fn advance_snapshot(
 
     let old_stable_lsn = snapshot.stable_lsn;
 
-    while let Some((log_kind, pid, lsn, ptr, sz)) = iter.next() {
+    while let Some((log_kind, pid, lsn, ptr)) = iter.next() {
         trace!(
             "in advance_snapshot looking at item with pid {} lsn {} ptr {}",
             pid,
@@ -287,7 +284,7 @@ fn advance_snapshot(
             continue;
         }
 
-        snapshot.apply(log_kind, pid, lsn, ptr, sz)?;
+        snapshot.apply(log_kind, pid, lsn, ptr)?;
     }
 
     // `snapshot.tip_lid` can be set based on 4 possibilities for the tip of the

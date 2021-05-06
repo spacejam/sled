@@ -12,15 +12,7 @@ macro_rules! io_fail {
         {
             debug_delay();
             if crate::fail::is_active($e) {
-                $self.config.set_global_error(Error::FailPoint);
-                // wake up any waiting threads so they don't stall forever
-                let _mu = $self.intervals.lock();
-
-                // having held the mutex makes this linearized
-                // with the notify below.
-                drop(_mu);
-
-                let _notified = $self.interval_updated.notify_all();
+                $self.set_global_error(Error::FailPoint);
                 return Err(Error::FailPoint);
             }
         };
@@ -943,6 +935,20 @@ impl IoBufs {
         std::mem::forget(arc.clone());
         arc
     }
+
+    pub(crate) fn set_global_error(&self, e: Error) {
+        self.config.set_global_error(e);
+
+        // wake up any waiting threads
+        // so they don't stall forever
+        let intervals = self.intervals.lock();
+
+        // having held the mutex makes this linearized
+        // with the notify below.
+        drop(intervals);
+
+        let _notified = self.interval_updated.notify_all();
+    }
 }
 
 pub(crate) fn roll_iobuf(iobufs: &Arc<IoBufs>) -> Result<usize> {
@@ -1007,6 +1013,7 @@ pub(in crate::pagecache) fn make_stable_inner(
 
     while stable < lsn {
         if let Err(e) = iobufs.config.global_error() {
+            error!("bailing out of stabilization code due to detected IO error: {:?}", e);
             let intervals = iobufs.intervals.lock();
 
             // having held the mutex makes this linearized
@@ -1065,10 +1072,18 @@ pub(in crate::pagecache) fn make_stable_inner(
         if stable < lsn {
             trace!("waiting on cond var for make_stable({})", lsn);
 
-            if cfg!(feature = "event_log") {
+            #[cfg(not(feature = "event_log"))]
+            {
+                // wait forever when running in prod
+                iobufs.interval_updated.wait(&mut intervals);
+            }
+
+            #[cfg(feature = "event_log")]
+            {
+                // while testing, panic if we take too long to stabilize
                 let timeout = iobufs.interval_updated.wait_for(
                     &mut intervals,
-                    std::time::Duration::from_secs(30),
+                    std::time::Duration::from_secs(5),
                 );
                 if timeout.timed_out() {
                     fn tn() -> String {
@@ -1087,8 +1102,6 @@ pub(in crate::pagecache) fn make_stable_inner(
                         intervals
                     );
                 }
-            } else {
-                iobufs.interval_updated.wait(&mut intervals);
             }
         } else {
             debug!("make_stable({}) returning", lsn);
@@ -1187,14 +1200,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         match iobufs.with_sa(|sa| sa.next(next_lsn)) {
             Ok(ret) => ret,
             Err(e) => {
-                iobufs.config.set_global_error(e.clone());
-                let intervals = iobufs.intervals.lock();
-
-                // having held the mutex makes this linearized
-                // with the notify below.
-                drop(intervals);
-
-                let _notified = iobufs.interval_updated.notify_all();
+                iobufs.set_global_error(e.clone());
                 return Err(e);
             }
         }
@@ -1285,6 +1291,12 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
 
         Ok(())
     } else {
+        trace!(
+            "currently {} other writers, so we will let one of them write \
+            the iobuf with lsn {} to disk",
+            header::n_writers(sealed),
+            lsn
+        );
         Ok(())
     }
 }

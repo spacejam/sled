@@ -14,7 +14,6 @@ use crate::{atomic_shim::AtomicU64, pagecache::NodeView, *};
 pub(crate) struct View<'g> {
     pub node_view: NodeView<'g>,
     pub pid: PageId,
-    pub size: u64,
 }
 
 impl<'g> Deref for View<'g> {
@@ -1723,10 +1722,8 @@ impl Tree {
     ) -> Result<Option<View<'g>>> {
         loop {
             let node_view_opt = self.context.pagecache.get(pid, guard)?;
-            // if let Some((tree_ptr, ref leaf, size)) = &frag_opt {
             if let Some(node_view) = &node_view_opt {
-                let size = node_view.0.log_size();
-                let view = View { node_view: *node_view, pid, size };
+                let view = View { node_view: *node_view, pid };
                 if view.merging_child.is_some() {
                     self.merge_node(
                         &view,

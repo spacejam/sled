@@ -22,6 +22,8 @@ jobs:
           args: --all-features
   default:
     name: Cargo Test on ${{ matrix.os }}
+    env:
+      RUST_BACKTRACE: 1
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -33,16 +35,27 @@ jobs:
       uses: actions/cache@v1
       env:
         cache-name: cache-target
-        RUST_BACKTRACE: 1
       with:
         path: target
         key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
           ${{ runner.os }}-
+    - name: linux coredump setup
+      if: ${{ runner.os == 'linux' }}
+      run: |
+        ulimit -c unlimited
+        echo "$PWD/core-dumps/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
+        mkdir core-dumps
     - name: cargo test
       run: |
         rustup update --no-self-update
         cargo test --release --no-default-features --features=testing -- --nocapture
+    - uses: actions/upload-artifact@v2
+      if: ${{ failure() && runner.os == 'linux' }}
+      with:
+        name: core-dump-upload
+        path: |
+          ./core-dumps/*
   examples:
     name: Example Tests
     runs-on: ubuntu-latest
@@ -74,6 +87,9 @@ jobs:
         scripts/cross_compile.sh
   burn-in:
     name: Burn In
+    env:
+      RUSTFLAGS: "-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
+      RUST_BACKTRACE: 1
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
@@ -90,10 +106,35 @@ jobs:
       run: |
         set -eo pipefail
         pushd benchmarks/stress2
+        ulimit -c unlimited
+        echo "$PWD/core-dumps/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
+        mkdir core-dumps
         cargo run --release -- --duration=60
         rm -rf default.sled
+    - name: core debug
+      if: ${{ failure() }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install gdb
+        pushd benchmarks/stress2
+        echo "first backtrace:"
+        gdb target/release/stress2 core-dumps/* -batch -ex 'bt -frame-info source-and-location'
+        echo ""
+        echo ""
+        echo ""
+        echo "all backtraces:"
+        gdb target/release/stress2 core-dumps/* -batch -ex 't a a bt -frame-info source-and-location'
+    - uses: actions/upload-artifact@v2
+      if: ${{ failure() }}
+      with:
+        name: core-dump-upload
+        path: |
+          ./benchmarks/stress2/core-dumps/*
+          ./benchmarks/stress2/target/release/stress2
   sanitizers:
     name: Sanitizers
+    env:
+      RUST_BACKTRACE: 1
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1

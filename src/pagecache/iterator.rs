@@ -18,7 +18,7 @@ pub struct LogIter {
 }
 
 impl Iterator for LogIter {
-    type Item = (LogKind, PageId, Lsn, DiskPtr, u64);
+    type Item = (LogKind, PageId, Lsn, DiskPtr);
 
     fn next(&mut self) -> Option<Self::Item> {
         // If segment is None, get next on segment_iter, panic
@@ -90,7 +90,6 @@ impl Iterator for LogIter {
                         header.pid,
                         lsn,
                         DiskPtr::new_heap_item(lid, heap_id),
-                        u64::from(inline_len),
                     ));
                 }
                 Ok(LogRead::Inline(header, _buf, inline_len)) => {
@@ -105,7 +104,6 @@ impl Iterator for LogIter {
                         header.pid,
                         lsn,
                         DiskPtr::Inline(lid),
-                        u64::from(inline_len),
                     ));
                 }
                 Ok(LogRead::BatchManifest(last_lsn_in_batch, inline_len)) => {

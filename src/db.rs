@@ -90,15 +90,15 @@ impl Db {
 
         let mut tenants = ret.tenants.write();
 
-        for (id, root) in context.pagecache.get_meta(&guard).tenants() {
+        for (id, root) in &context.pagecache.get_meta(&guard).inner {
             let tree = Tree(Arc::new(TreeInner {
                 tree_id: id.clone(),
                 subscribers: Subscribers::default(),
                 context: context.clone(),
-                root: AtomicU64::new(root),
+                root: AtomicU64::new(*root),
                 merge_operator: RwLock::new(None),
             }));
-            assert!(tenants.insert(id, tree).is_none());
+            assert!(tenants.insert(id.clone(), tree).is_none());
         }
 
         drop(tenants);

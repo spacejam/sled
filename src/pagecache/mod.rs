@@ -21,7 +21,7 @@ mod reservation;
 mod segment;
 mod snapshot;
 
-use std::ops::Deref;
+use std::{fmt, ops::Deref};
 
 use crate::*;
 
@@ -312,7 +312,6 @@ pub struct CacheInfo {
     pub ts: u64,
     pub lsn: Lsn,
     pub pointer: DiskPtr,
-    pub log_size: u64,
 }
 
 #[cfg(test)]
@@ -320,12 +319,7 @@ impl quickcheck::Arbitrary for CacheInfo {
     fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> CacheInfo {
         use rand::Rng;
 
-        CacheInfo {
-            ts: g.gen(),
-            lsn: g.gen(),
-            pointer: DiskPtr::arbitrary(g),
-            log_size: g.gen(),
-        }
+        CacheInfo { ts: g.gen(), lsn: g.gen(), pointer: DiskPtr::arbitrary(g) }
     }
 }
 
@@ -416,25 +410,25 @@ pub struct Page {
 }
 
 impl Page {
+    pub(crate) fn rss(&self) -> Option<u64> {
+        match &self.update {
+            Some(Update::Node(ref node)) => Some(node.rss()),
+            _ => None,
+        }
+    }
+
     fn to_page_state(&self) -> PageState {
         let base = &self.cache_infos[0];
         if self.is_free() {
             PageState::Free(base.lsn, base.pointer)
         } else {
-            let mut frags: Vec<(Lsn, DiskPtr, u64)> = vec![];
+            let mut frags: Vec<(Lsn, DiskPtr)> = vec![];
 
             for cache_info in self.cache_infos.iter().skip(1) {
-                frags.push((
-                    cache_info.lsn,
-                    cache_info.pointer,
-                    cache_info.log_size,
-                ));
+                frags.push((cache_info.lsn, cache_info.pointer));
             }
 
-            PageState::Present {
-                base: (base.lsn, base.pointer, base.log_size),
-                frags,
-            }
+            PageState::Present { base: (base.lsn, base.pointer), frags }
         }
     }
 
@@ -456,17 +450,6 @@ impl Page {
 
     fn last_lsn(&self) -> Lsn {
         self.cache_infos.last().map(|ci| ci.lsn).unwrap()
-    }
-
-    pub(crate) fn log_size(&self) -> u64 {
-        let first = self.cache_infos[0].log_size;
-        let extrapolated_rest = if let Some(ci) = self.cache_infos.get(1) {
-            ci.log_size * (self.cache_infos.len() - 1) as u64
-        } else {
-            0
-        };
-
-        first + extrapolated_rest
     }
 
     fn ts(&self) -> u64 {
@@ -585,8 +568,13 @@ impl PageCache {
                 "\n\n~~~~ regenerating snapshot for idempotency test ~~~~\n"
             );
 
+            let paused_faults = crate::fail::pause_faults();
+
             let snapshot2 = read_snapshot_or_default(&config)
                 .expect("second read snapshot");
+
+            crate::fail::restore_faults(paused_faults);
+
             assert_eq!(
                 snapshot.active_segment, snapshot2.active_segment,
                 "snapshot active_segment diverged across recoveries.\n\n \
@@ -852,12 +840,7 @@ impl PageCache {
             // changing.
             let ts = old.ts() + 1;
 
-            let cache_info = CacheInfo {
-                lsn,
-                pointer,
-                ts,
-                log_size: log_reservation.reservation_len() as u64,
-            };
+            let cache_info = CacheInfo { lsn, pointer, ts };
 
             let mut new_cache_infos =
                 Vec::with_capacity(old.cache_infos.len() + 1);
@@ -891,9 +874,9 @@ impl PageCache {
                     log_reservation.complete()?;
 
                     // possibly evict an item now that our cache has grown
-                    let total_page_size =
-                        unsafe { new_shared.deref().log_size() };
-                    self.lru_access(pid, total_page_size, guard)?;
+                    if let Some(rss) = unsafe { new_shared.deref().rss() } {
+                        self.lru_access(pid, rss, guard)?;
+                    }
 
                     old.read = new_shared;
 
@@ -931,7 +914,7 @@ impl PageCache {
         }
     }
 
-    pub(crate) fn take_fuzzy_snapshot(self) -> Result<()> {
+    pub(crate) fn take_fuzzy_snapshot(&self) -> Result<()> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.fuzzy_snapshot);
         let lock = self.snapshot_lock.try_lock();
@@ -944,7 +927,10 @@ impl PageCache {
         let stable_lsn_before: Lsn = self.log.stable_offset();
 
         // This is how we determine the number of the pages we will snapshot.
-        let pid_bound = *self.next_pid_to_allocate.lock();
+        let pid_bound = {
+            let mu = self.next_pid_to_allocate.lock();
+            *mu
+        };
 
         let pid_bound_usize = assert_usize(pid_bound);
 
@@ -1182,37 +1168,6 @@ impl PageCacheInner {
         Ok(RecoveryGuard { batch_res })
     }
 
-    #[doc(hidden)]
-    #[cfg(feature = "failpoints")]
-    #[cfg(all(
-        not(miri),
-        any(
-            windows,
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "netbsd",
-            target_os = "ios",
-        )
-    ))]
-    pub(crate) fn set_failpoint(&self, e: Error) {
-        if let Error::FailPoint = e {
-            self.config.set_global_error(e);
-
-            // wake up any waiting threads
-            // so they don't stall forever
-            let intervals = self.log.iobufs.intervals.lock();
-
-            // having held the mutex makes this linearized
-            // with the notify below.
-            drop(intervals);
-
-            let _notified = self.log.iobufs.interval_updated.notify_all();
-        }
-    }
-
     /// Free a particular page.
     pub(crate) fn free<'g>(
         &self,
@@ -1390,10 +1345,6 @@ impl PageCacheInner {
                         ts: page_view.ts(),
                         lsn: log_reservation.lsn,
                         pointer: log_reservation.pointer,
-                        log_size: u64::try_from(
-                            log_reservation.reservation_len(),
-                        )
-                        .unwrap(),
                     };
 
                     (Some(log_reservation), cache_info)
@@ -1435,9 +1386,9 @@ impl PageCacheInner {
                     // something other than page_out itself
                     if segment_to_purge.is_some() {
                         // possibly evict an item now that our cache has grown
-                        let total_page_size =
-                            unsafe { new_shared.deref().log_size() };
-                        self.lru_access(pid, total_page_size, guard)?;
+                        if let Some(rss) = unsafe { new_shared.deref().rss() } {
+                            self.lru_access(pid, rss, guard)?;
+                        }
                     }
 
                     trace!("rewriting pid {} succeeded", pid);
@@ -1520,7 +1471,7 @@ impl PageCacheInner {
     #[doc(hidden)]
     pub(crate) fn space_amplification(&self) -> Result<f64> {
         let on_disk_bytes = self.size_on_disk()? as f64;
-        let logical_size = (self.logical_size_of_all_pages()?
+        let logical_size = (self.logical_size_of_all_tree_pages()?
             + self.config.segment_size as u64)
             as f64;
 
@@ -1562,14 +1513,12 @@ impl PageCacheInner {
         Ok(size)
     }
 
-    fn logical_size_of_all_pages(&self) -> Result<u64> {
+    fn logical_size_of_all_tree_pages(&self) -> Result<u64> {
         let guard = pin();
-        let meta_size = self.get_meta(&guard).rss();
-        let idgen_size = std::mem::size_of::<u64>() as u64;
-
-        let mut ret = meta_size + idgen_size;
         let min_pid = COUNTER_PID + 1;
         let next_pid_to_allocate = *self.next_pid_to_allocate.lock();
+
+        let mut ret = 0;
         for pid in min_pid..next_pid_to_allocate {
             if let Some(node_cell) = self.get(pid, &guard)? {
                 ret += node_cell.rss();
@@ -1637,13 +1586,7 @@ impl PageCacheInner {
             // that SHOULD cause CAS failures.
             let ts = if is_rewrite { old.ts() } else { old.ts() + 1 };
 
-            let cache_info = CacheInfo {
-                ts,
-                lsn,
-                pointer: new_pointer,
-                log_size: u64::try_from(log_reservation.reservation_len())
-                    .unwrap(),
-            };
+            let cache_info = CacheInfo { ts, lsn, pointer: new_pointer };
 
             page_ptr.cache_infos = vec![cache_info];
 
@@ -1671,9 +1614,9 @@ impl PageCacheInner {
                     let _pointer = log_reservation.complete()?;
 
                     // possibly evict an item now that our cache has grown
-                    let total_page_size =
-                        unsafe { new_shared.deref().log_size() };
-                    self.lru_access(pid, total_page_size, guard)?;
+                    if let Some(rss) = unsafe { new_shared.deref().rss() } {
+                        self.lru_access(pid, rss, guard)?;
+                    }
 
                     return Ok(Ok(PageView {
                         read: new_shared,
@@ -1784,8 +1727,9 @@ impl PageCacheInner {
 
             if page_view.update.is_some() {
                 // possibly evict an item now that our cache has grown
-                let total_page_size = page_view.log_size();
-                self.lru_access(pid, total_page_size, guard)?;
+                if let Some(rss) = page_view.rss() {
+                    self.lru_access(pid, rss, guard)?;
+                }
                 return Ok(Some(NodeView(page_view)));
             }
 
@@ -1854,8 +1798,9 @@ impl PageCacheInner {
             }
 
             // possibly evict an item now that our cache has grown
-            let total_page_size = unsafe { new_shared.deref().log_size() };
-            self.lru_access(pid, total_page_size, guard)?;
+            if let Some(rss) = unsafe { new_shared.deref().rss() } {
+                self.lru_access(pid, rss, guard)?;
+            }
 
             let mut page_view = page_view;
             page_view.read = new_shared;
@@ -2181,16 +2126,11 @@ impl PageCacheInner {
                     cache_infos.push(CacheInfo {
                         lsn: base.0,
                         pointer: base.1,
-                        log_size: base.2,
                         ts: 0,
                     });
-                    for (lsn, pointer, sz) in frags {
-                        let cache_info = CacheInfo {
-                            lsn: *lsn,
-                            pointer: *pointer,
-                            log_size: *sz,
-                            ts: 0,
-                        };
+                    for (lsn, pointer) in frags {
+                        let cache_info =
+                            CacheInfo { lsn: *lsn, pointer: *pointer, ts: 0 };
 
                         cache_infos.push(cache_info);
                     }
@@ -2198,12 +2138,7 @@ impl PageCacheInner {
                 PageState::Free(lsn, pointer) => {
                     // blow away any existing state
                     trace!("load_snapshot freeing pid {}", pid);
-                    let cache_info = CacheInfo {
-                        lsn,
-                        pointer,
-                        log_size: u64::try_from(MAX_MSG_HEADER_LEN).unwrap(),
-                        ts: 0,
-                    };
+                    let cache_info = CacheInfo { lsn, pointer, ts: 0 };
                     cache_infos.push(cache_info);
                     assert!(self.free.lock().insert(pid));
                 }
