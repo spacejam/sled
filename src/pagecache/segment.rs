@@ -136,8 +136,8 @@ impl Drop for SegmentAccountant {
         for segment in &self.segments {
             let segment_utilization = match segment {
                 Segment::Free(_) | Segment::Draining(_) => 0,
-                Segment::Active(Active { rss, .. })
-                | Segment::Inactive(Inactive { rss, .. }) => *rss,
+                Segment::Active(Active { pids, .. })
+                | Segment::Inactive(Inactive { pids, .. }) => pids.len(),
             };
             M.segment_utilization_shutdown.measure(segment_utilization as u64);
         }
@@ -492,8 +492,8 @@ impl SegmentAccountant {
         for segment in &ret.segments {
             let segment_utilization = match segment {
                 Segment::Free(_) | Segment::Draining(_) => 0,
-                Segment::Active(Active { rss, .. })
-                | Segment::Inactive(Inactive { rss, .. }) => *rss,
+                Segment::Active(Active { pids, .. })
+                | Segment::Inactive(Inactive { pids, .. }) => pids.len(),
             };
             #[cfg(feature = "metrics")]
             M.segment_utilization_startup.measure(segment_utilization as u64);
