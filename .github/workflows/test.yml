@@ -64,6 +64,8 @@ jobs:
     - name: macos chmod cores
       if: ${{ failure() && runner.os == 'macOS' }}
       run: |
+        ls -lth
+        ls -lth /
         sudo chmod -R +rwx /cores/*
     - uses: actions/upload-artifact@v2
       if: ${{ failure() && runner.os == 'macOS' }}
