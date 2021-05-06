@@ -57,14 +57,18 @@ jobs:
     - uses: actions/upload-artifact@v2
       if: ${{ failure() && runner.os == 'linux' }}
       with:
-        name: core-dump-upload
+        name: linux-core-dumps
         path: |
           ./core-dumps/*
           ./target/release/deps/test_*
+    - name: macos chmod cores
+      if: ${{ failure() && runner.os == 'macOS' }}
+      run: |
+        sudo chmod -R +rwx /cores/*
     - uses: actions/upload-artifact@v2
       if: ${{ failure() && runner.os == 'macOS' }}
       with:
-        name: core-dump-upload
+        name: macos-core-dumps
         path: |
           /cores/*
           ./target/release/deps/test_*
@@ -139,7 +143,7 @@ jobs:
     - uses: actions/upload-artifact@v2
       if: ${{ failure() }}
       with:
-        name: core-dump-upload
+        name: linux-core-dumps
         path: |
           ./benchmarks/stress2/core-dumps/*
           ./benchmarks/stress2/target/release/stress2
