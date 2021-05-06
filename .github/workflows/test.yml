@@ -40,13 +40,22 @@ jobs:
         key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
           ${{ runner.os }}-
-    - name: cargo test
+    - name: cargo test macos
+      if: ${{ runner.os == "macOS" }}
       run: |
-        if [[ ${{ runner.os }} == "macOS" ]]; then
-          export RUSTFLAGS="-C target-cpu=native -C link-args=-Wl,-stack_size,4194304"
-        else
-          export RUSTFLAGS="-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
-        fi
+        export RUSTFLAGS="-C target-cpu=native -C link-args=-Wl,-stack_size,4194304"
+        rustup update --no-self-update
+        cargo test --release --no-default-features --features=testing -- --nocapture
+    - name: cargo test linux
+      if: ${{ runner.os == "linux" }}
+      run: |
+        export RUSTFLAGS="-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
+        rustup update --no-self-update
+        cargo test --release --no-default-features --features=testing -- --nocapture
+    - name: cargo test windows
+      if: ${{ runner.os == "windows" }}
+      run: |
+        export RUSTFLAGS="-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
         rustup update --no-self-update
         cargo test --release --no-default-features --features=testing -- --nocapture
   examples:
