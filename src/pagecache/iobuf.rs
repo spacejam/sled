@@ -1086,7 +1086,6 @@ pub(in crate::pagecache) fn make_stable_inner(
                     std::time::Duration::from_secs(5),
                 );
                 if timeout.timed_out() {
-                    crate::gdb::print_stacktraces();
                     fn tn() -> String {
                         std::thread::current()
                             .name()
