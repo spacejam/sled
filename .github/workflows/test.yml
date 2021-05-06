@@ -116,7 +116,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install gdb
-        ls benchmarks/stress2/core-dumps
+        pushd benchmarks/stress2
+        gdb target/release/stress2 core-dumps/* -batch -ex 't a a bt -frame-info source-and-location'
     - uses: actions/upload-artifact@v2
       if: ${{ failure() }}
       with:
