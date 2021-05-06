@@ -116,13 +116,13 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install gdb
-        ls core-dumps
+        ls benchmarks/stress2/core-dumps
     - uses: actions/upload-artifact@v2
       if: ${{ failure() }}
       with:
         name: core-dump-upload
         path: |
-          ./core-dumps/*
+          ./benchmarks/stress2/core-dumps/*
   sanitizers:
     name: Sanitizers
     env:
