@@ -55,7 +55,7 @@ jobs:
     - name: cargo test windows
       if: ${{ runner.os == 'windows' }}
       run: |
-        export RUSTFLAGS="-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
+        setx RUSTFLAGS "-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
         rustup update --no-self-update
         cargo test --release --no-default-features --features=testing -- --nocapture
   examples:
