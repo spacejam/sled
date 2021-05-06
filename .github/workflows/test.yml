@@ -22,6 +22,8 @@ jobs:
           args: --all-features
   default:
     name: Cargo Test on ${{ matrix.os }}
+    env:
+      RUST_BACKTRACE: 1
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -33,7 +35,6 @@ jobs:
       uses: actions/cache@v1
       env:
         cache-name: cache-target
-        RUST_BACKTRACE: 1
       with:
         path: target
         key: ${{ runner.os }}-${{ env.cache-name }}
@@ -74,6 +75,8 @@ jobs:
         scripts/cross_compile.sh
   burn-in:
     name: Burn In
+    env:
+      RUST_BACKTRACE: 1
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
@@ -94,6 +97,8 @@ jobs:
         rm -rf default.sled
   sanitizers:
     name: Sanitizers
+    env:
+      RUST_BACKTRACE: 1
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
