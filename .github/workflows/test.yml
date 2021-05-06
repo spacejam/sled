@@ -43,6 +43,7 @@ jobs:
     - name: linux coredump setup
       if: ${{ runner.os == 'linux' }}
       run: |
+        ulimit -c unlimited
         echo "$PWD/core-dumps/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
         mkdir core-dumps
     - name: cargo test
@@ -105,6 +106,7 @@ jobs:
       run: |
         set -eo pipefail
         pushd benchmarks/stress2
+        ulimit -c unlimited
         echo "$PWD/core-dumps/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
         mkdir core-dumps
         cargo run --release -- --duration=60
