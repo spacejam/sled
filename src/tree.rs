@@ -1809,6 +1809,12 @@ impl Tree {
             let node_opt = self.view_for_pid(cursor, guard)?;
 
             let view = if let Some(view) = node_opt {
+                // merging_child should be handled in view_for_pid.
+                assert!(
+                    view.merging_child.is_none(),
+                    "view_for_pid somehow returned a view for a \
+                    node with a merging_child without handling it."
+                );
                 view
             } else {
                 retry!();
@@ -1817,15 +1823,7 @@ impl Tree {
             #[cfg(feature = "testing")]
             path.push((cursor, view.clone()));
 
-            // When we encounter a merge intention, we collaboratively help out
-            if view.merging_child.is_some() {
-                self.merge_node(
-                    &view,
-                    view.merging_child.unwrap().get(),
-                    guard,
-                )?;
-                retry!();
-            } else if view.merging {
+            if view.merging {
                 // we missed the parent merge intention due to a benign race,
                 // so go around again and try to help out if necessary
                 retry!();
