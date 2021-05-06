@@ -111,7 +111,7 @@ jobs:
         mkdir core-dumps
         cargo run --release -- --duration=60
         rm -rf default.sled
-    - name: core debug
+    - name: print backtraces with gdb
       if: ${{ failure() }}
       run: |
         sudo apt-get update
