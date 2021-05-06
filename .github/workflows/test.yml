@@ -117,6 +117,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install gdb
         pushd benchmarks/stress2
+        echo "first backtrace:"
+        gdb target/release/stress2 core-dumps/* -batch -ex 'bt -frame-info source-and-location'
+        echo ""
+        echo ""
+        echo ""
+        echo "all backtraces:"
         gdb target/release/stress2 core-dumps/* -batch -ex 't a a bt -frame-info source-and-location'
     - uses: actions/upload-artifact@v2
       if: ${{ failure() }}
