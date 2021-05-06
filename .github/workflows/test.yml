@@ -50,6 +50,8 @@ jobs:
       if: ${{ runner.os == 'macOS' }}
       run: |
         sudo ulimit -c unlimited
+        ulimit -c unlimited
+        sudo chmod +rwx /cores
     - name: cargo test
       run: |
         rustup update --no-self-update
