@@ -43,7 +43,7 @@ jobs:
     - name: cargo test macos
       if: ${{ runner.os == "macOS" }}
       run: |
-        export RUSTFLAGS="-C target-cpu=native -C link-args=-Wl,-stack_size,4194304"
+        export RUSTFLAGS="-C target-cpu=native -C link-args=-Wl,-stack_size,0x800000"
         rustup update --no-self-update
         cargo test --release --no-default-features --features=testing -- --nocapture
     - name: cargo test linux
