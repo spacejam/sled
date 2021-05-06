@@ -94,6 +94,8 @@ jobs:
       run: |
         set -eo pipefail
         pushd benchmarks/stress2
+        echo "$PWD/core-dumps/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
+        mkdir core-dumps
         cargo run --release -- --duration=60
         rm -rf default.sled
     - name: core debug
@@ -101,7 +103,13 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install gdb
-        ls
+        ls core-dumps
+    - uses: actions/upload-artifact@v2
+      if: ${{ failure() }}
+      with:
+        name: core-dump-upload
+        path: |
+          ./core-dumps/*
   sanitizers:
     name: Sanitizers
     env:
