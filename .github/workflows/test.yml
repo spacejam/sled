@@ -23,7 +23,6 @@ jobs:
   default:
     name: Cargo Test on ${{ matrix.os }}
     env:
-      RUSTFLAGS: "-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
       RUST_BACKTRACE: 1
     runs-on: ${{ matrix.os }}
     strategy:
@@ -41,7 +40,24 @@ jobs:
         key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
           ${{ runner.os }}-
-    - name: cargo test
+    - name: cargo test (ubuntu)
+      if: ${{ runner.os == "ubuntu-latest" }}
+      env:
+        RUSTFLAGS: "-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
+      run: |
+        rustup update --no-self-update
+        cargo test --release --no-default-features --features=testing -- --nocapture
+    - name: cargo test (macos)
+      if: ${{ runner.os == "macos-latest" }}
+      env:
+        RUSTFLAGS: "-C target-cpu=native -C link-args=-Wl,-stack_size,4194304"
+      run: |
+        rustup update --no-self-update
+        cargo test --release --no-default-features --features=testing -- --nocapture
+    - name: cargo test (windows)
+      if: ${{ runner.os == "windows-latest" }}
+      env:
+        RUSTFLAGS: "-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
       run: |
         rustup update --no-self-update
         cargo test --release --no-default-features --features=testing -- --nocapture
