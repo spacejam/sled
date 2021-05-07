@@ -3,9 +3,9 @@ set -eo pipefail
 
 pushd benchmarks/stress2
 
-rustup component add rust-src
-rustup toolchain install nightly --no-self-update
-rustup update --no-self-update
+rustup toolchain install nightly
+rustup toolchain install nightly --component rust-src
+rustup update
 
 export SLED_LOCK_FREE_DELAY_INTENSITY=2000
 
