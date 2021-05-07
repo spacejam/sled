@@ -34,11 +34,13 @@ jobs:
     - name: Cache target
       uses: actions/cache@v1
       env:
-        cache-name: cache-target-and-lockfile
+        cache-name: cache-default-target-and-lockfile
       with:
         path: |
           target
           Cargo.lock
+          ~/.rustup
+          ~/.cargo
         key: ${{ runner.os }}-${{ env.cache-name }}
     - name: linux coredump setup
       if: ${{ runner.os == 'linux' }}
@@ -65,11 +67,13 @@ jobs:
     - name: Cache target
       uses: actions/cache@v1
       env:
-        cache-name: cache-target-and-lockfile
+        cache-name: cache-examples-target-and-lockfile
       with:
         path: |
           target
           Cargo.lock
+          ~/.rustup
+          ~/.cargo
         key: ${{ runner.os }}-${{ env.cache-name }}
     - name: example tests
       run: |
@@ -97,11 +101,13 @@ jobs:
     - name: Cache target
       uses: actions/cache@v1
       env:
-        cache-name: cache-target-and-lockfile
+        cache-name: cache-stress2-target-and-lockfile
       with:
         path: |
-          target
-          Cargo.lock
+          benchmarks/stress2/target
+          benchmarks/stress2/Cargo.lock
+          ~/.rustup
+          ~/.cargo
         key: ${{ runner.os }}-${{ env.cache-name }}
     - name: burn in
       run: |
@@ -142,9 +148,13 @@ jobs:
     - name: Cache rustup
       uses: actions/cache@v1
       env:
-        cache-name: cache-target-and-lockfile
+        cache-name: cache-sanitizers-target-and-lockfile
       with:
-        path: ~/.rustup
+        path: |
+          ~/.rustup
+          ~/.cargo
+          benchmarks/stress2/target
+          benchmarks/stress2/Cargo.lock
         key: ${{ runner.os }}-${{ env.cache-name }}
     - name: sanitizers
       run: |
