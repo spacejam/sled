@@ -1279,13 +1279,11 @@ impl Inner {
             None
         };
 
-        let mut fixed_key_length = items.first().and_then(|(k, _)| {
-            if k.is_empty() {
-                None
-            } else {
-                Some(k.len())
-            }
-        });
+        let mut fixed_key_length = match items {
+            [(kr, _), ..] if !kr.is_empty() => Some(kr.len()),
+            _ => None,
+        };
+
         let mut fixed_value_length = items.first().map(|(_, v)| v.len());
 
         let mut dynamic_key_storage_size = 0;
@@ -1420,6 +1418,26 @@ impl Inner {
             assert!(fixed_value_length.is_some());
         }
 
+        let header = ret.header_mut();
+        header.fixed_key_length = fixed_key_length;
+        header.fixed_value_length = fixed_value_length;
+        header.lo_len = lo.len() as u64;
+        header.hi_len = hi.map(|hi| hi.len() as u64).unwrap_or(0);
+        header.fixed_key_stride = fixed_key_stride;
+        header.offset_bytes = offset_bytes;
+        header.children = tf!(items.len(), u32);
+        header.prefix_len = prefix_len;
+        header.version = 1;
+        header.next = next;
+        header.is_index = is_index;
+        header.merging_child = None;
+        header.merging = false;
+        header.probation_ops_remaining = 0;
+        header.activity_sketch = 0;
+        header.rewrite_generations = 0;
+
+        /*
+         * TODO use UnsafeCell to allow this to soundly work
         *ret.header_mut() = Header {
             rewrite_generations: 0,
             activity_sketch: 0,
@@ -1438,6 +1456,7 @@ impl Inner {
             next,
             is_index,
         };
+        */
 
         ret.lo_mut().copy_from_slice(lo);
 
