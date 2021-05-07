@@ -104,7 +104,6 @@ jobs:
         path: |
           benchmarks/stress2/target
           benchmarks/stress2/Cargo.lock
-          ~/.rustup
         key: ${{ runner.os }}-${{ env.cache-name }}
     - name: burn in
       run: |
