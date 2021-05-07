@@ -40,7 +40,6 @@ jobs:
           target
           Cargo.lock
           ~/.rustup
-          ~/.cargo
         key: ${{ runner.os }}-${{ env.cache-name }}
     - name: linux coredump setup
       if: ${{ runner.os == 'linux' }}
@@ -73,7 +72,6 @@ jobs:
           target
           Cargo.lock
           ~/.rustup
-          ~/.cargo
         key: ${{ runner.os }}-${{ env.cache-name }}
     - name: example tests
       run: |
@@ -107,7 +105,6 @@ jobs:
           benchmarks/stress2/target
           benchmarks/stress2/Cargo.lock
           ~/.rustup
-          ~/.cargo
         key: ${{ runner.os }}-${{ env.cache-name }}
     - name: burn in
       run: |
@@ -152,7 +149,6 @@ jobs:
       with:
         path: |
           ~/.rustup
-          ~/.cargo
           benchmarks/stress2/target
           benchmarks/stress2/Cargo.lock
         key: ${{ runner.os }}-${{ env.cache-name }}
