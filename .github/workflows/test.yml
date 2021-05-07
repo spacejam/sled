@@ -36,7 +36,9 @@ jobs:
       env:
         cache-name: cache-target
       with:
-        path: target
+        path: |
+          target
+          Cargo.lock
         key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
           ${{ runner.os }}-
@@ -67,7 +69,9 @@ jobs:
       env:
         cache-name: cache-target
       with:
-        path: target
+        path: |
+          target
+          Cargo.lock
         key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
           ${{ runner.os }}-
@@ -99,7 +103,9 @@ jobs:
       env:
         cache-name: cache-target
       with:
-        path: target
+        path: |
+          target
+          Cargo.lock
         key: ${{ runner.os }}-${{ env.cache-name }}
         restore-keys: |
           ${{ runner.os }}-
