@@ -4,7 +4,6 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::{self, Debug},
     fs::File,
-    mem::{transmute, MaybeUninit},
     path::Path,
     sync::{
         atomic::{AtomicU32, Ordering::Acquire},
@@ -186,14 +185,16 @@ pub(crate) struct Heap {
 
 impl Heap {
     pub fn start<P: AsRef<Path>>(p: P) -> Result<Heap> {
-        let mut slabs: [MaybeUninit<Slab>; 32] = unsafe { std::mem::zeroed() };
+        let mut slabs = vec![];
 
         for slab_id in 0..32 {
             let slab = Slab::start(&p, slab_id)?;
-            slabs[slab_id as usize] = MaybeUninit::new(slab);
+            slabs.push(slab);
         }
 
-        Ok(Heap { slabs: unsafe { transmute(slabs) } })
+        let slabs: [Slab; 32] = slabs.try_into().unwrap();
+
+        Ok(Heap { slabs })
     }
 
     pub fn gc_unknown_items(&self, snapshot: &crate::pagecache::Snapshot) {
