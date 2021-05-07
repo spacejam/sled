@@ -34,14 +34,12 @@ jobs:
     - name: Cache target
       uses: actions/cache@v1
       env:
-        cache-name: cache-target
+        cache-name: cache-target-and-lockfile
       with:
         path: |
           target
           Cargo.lock
         key: ${{ runner.os }}-${{ env.cache-name }}
-        restore-keys: |
-          ${{ runner.os }}-
     - name: linux coredump setup
       if: ${{ runner.os == 'linux' }}
       run: |
@@ -67,14 +65,12 @@ jobs:
     - name: Cache target
       uses: actions/cache@v1
       env:
-        cache-name: cache-target
+        cache-name: cache-target-and-lockfile
       with:
         path: |
           target
           Cargo.lock
         key: ${{ runner.os }}-${{ env.cache-name }}
-        restore-keys: |
-          ${{ runner.os }}-
     - name: example tests
       run: |
         rustup update --no-self-update
@@ -101,14 +97,12 @@ jobs:
     - name: Cache target
       uses: actions/cache@v1
       env:
-        cache-name: cache-target
+        cache-name: cache-target-and-lockfile
       with:
         path: |
           target
           Cargo.lock
         key: ${{ runner.os }}-${{ env.cache-name }}
-        restore-keys: |
-          ${{ runner.os }}-
     - name: burn in
       run: |
         set -eo pipefail
@@ -148,12 +142,10 @@ jobs:
     - name: Cache rustup
       uses: actions/cache@v1
       env:
-        cache-name: cache-target
+        cache-name: cache-target-and-lockfile
       with:
         path: ~/.rustup
         key: ${{ runner.os }}-${{ env.cache-name }}
-        restore-keys: |
-          ${{ runner.os }}-
     - name: sanitizers
       run: |
         set -eo pipefail
