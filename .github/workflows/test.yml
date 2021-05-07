@@ -91,7 +91,6 @@ jobs:
   burn-in:
     name: Burn In
     env:
-      RUSTFLAGS: "-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
       RUST_BACKTRACE: 1
     runs-on: ubuntu-latest
     steps:
