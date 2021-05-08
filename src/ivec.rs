@@ -145,6 +145,7 @@ impl IVec {
 
             // assert that the bottom 3 bits are empty, as we expect
             // the buffer to always have an alignment of 8 (2 ^ 3).
+            #[cfg(not(miri))]
             assert_eq!(data[SZ - 1] & 0b111, 0);
         }
         Self(data)
