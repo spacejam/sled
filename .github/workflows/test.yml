@@ -173,4 +173,5 @@ jobs:
         key: ${{ runner.os }}-${{ env.cache-name }}
     - name: sanitizers
       run: |
+        rustup toolchain install nightly
         yes | cargo +nightly miri test --features=testing -- -Zmiri-disable-isolation
