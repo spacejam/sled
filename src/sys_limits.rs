@@ -60,6 +60,12 @@ pub fn get_available_memory() -> io::Result<usize> {
     Ok(usize::try_from(pages).unwrap() * usize::try_from(page_size).unwrap())
 }
 
+#[cfg(miri)]
+pub fn get_memory_limit() -> Option<usize> {
+    None
+}
+
+#[cfg(not(miri))]
 pub fn get_memory_limit() -> Option<usize> {
     let mut max: u64 = 0;
 
