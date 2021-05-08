@@ -154,3 +154,23 @@ jobs:
       run: |
         set -eo pipefail
         scripts/sanitizers.sh
+  miri:
+    name: Miri
+    env:
+      RUST_BACKTRACE: 1
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Cache rustup
+      uses: actions/cache@v1
+      env:
+        cache-name: cache-miri-target-and-lockfile
+      with:
+        path: |
+          ~/.rustup
+          target
+          Cargo.lock
+        key: ${{ runner.os }}-${{ env.cache-name }}
+    - name: sanitizers
+      run: |
+        yes | cargo +nightly miri test --features=testing -- -Zmiri-disable-isolation
