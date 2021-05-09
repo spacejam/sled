@@ -33,9 +33,8 @@ fn uninitialized_node(len: usize) -> Inner {
 
     unsafe {
         let ptr = alloc_zeroed(layout);
-        assert_ne!(ptr, std::ptr::null_mut());
-        let ptr = fatten(ptr, len);
-        Inner { ptr }
+        let cell_ptr = fatten(ptr, len);
+        Inner { ptr: cell_ptr }
     }
 }
 
@@ -1261,7 +1260,7 @@ impl Inner {
     }
 
     #[inline]
-    fn buf_mut(&self) -> &mut [u8] {
+    fn buf_mut(&mut self) -> &mut [u8] {
         unsafe { &mut *(*self.ptr).get_mut() }
     }
 
