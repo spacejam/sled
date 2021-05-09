@@ -199,4 +199,5 @@ jobs:
         rustup toolchain install nightly
         rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
         export RUSTFLAGS="-Zsanitizer=memory -Zsanitizer-memory-track-origins"
+        export MSAN_OPTIONS=verbosity=2
         cargo +nightly test --release -Zbuild-std --target x86_64-unknown-linux-gnu --features=testing -- tree
