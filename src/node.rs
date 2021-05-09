@@ -1261,7 +1261,7 @@ impl Inner {
 
     #[inline]
     fn buf_mut(&mut self) -> &mut [u8] {
-        unsafe { &mut *(*self.ptr).get_mut() }
+        unsafe { &mut *(*self.ptr).get() }
     }
 
     unsafe fn from_raw(buf: &[u8]) -> Inner {
