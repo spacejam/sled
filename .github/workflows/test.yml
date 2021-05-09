@@ -40,7 +40,7 @@ jobs:
           target
           Cargo.lock
           ~/.rustup
-        key: ${{ runner.os }}-${{ env.cache-name }}
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
     - name: linux coredump setup
       if: ${{ runner.os == 'linux' }}
       run: |
@@ -72,7 +72,7 @@ jobs:
           target
           Cargo.lock
           ~/.rustup
-        key: ${{ runner.os }}-${{ env.cache-name }}
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
     - name: example tests
       run: |
         rustup update --no-self-update
@@ -103,7 +103,7 @@ jobs:
         path: |
           benchmarks/stress2/target
           benchmarks/stress2/Cargo.lock
-        key: ${{ runner.os }}-${{ env.cache-name }}
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
     - name: burn in
       run: |
         set -eo pipefail
@@ -149,7 +149,7 @@ jobs:
           ~/.rustup
           benchmarks/stress2/target
           benchmarks/stress2/Cargo.lock
-        key: ${{ runner.os }}-${{ env.cache-name }}
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
     - name: sanitizers
       run: |
         set -eo pipefail
@@ -170,7 +170,7 @@ jobs:
           ~/.rustup
           target
           Cargo.lock
-        key: ${{ runner.os }}-${{ env.cache-name }}
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
     - name: sanitizers
       run: |
         rustup toolchain install nightly
