@@ -177,3 +177,27 @@ jobs:
         rustup component add miri --toolchain nightly-x86_64-unknown-linux-gnu
         export MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-ignore-leaks -Zmiri-disable-stacked-borrows -Zmiri-disable-validation"
         yes | cargo +nightly miri test --doc
+  msan_tree_tests:
+    name: MSAN tree tests
+    env:
+      RUST_BACKTRACE: 1
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Cache rustup
+      uses: actions/cache@v2
+      env:
+        cache-name: cache-msan-tree-target-and-lockfile
+      with:
+        path: |
+          ~/.rustup
+          target
+          Cargo.lock
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
+    - name: sanitizers
+      run: |
+        rustup toolchain install nightly
+        export RUSTFLAGS="-Zsanitizer=memory -Zsanitizer-memory-track-origins"
+        rm target/x86_64-unknown-linux-gnu/release/deps/test_tree-*
+        cargo +nightly build --release --tests -Zbuild-std --target x86_64-unknown-linux-gnu --features=testing
+        target/x86_64-unknown-linux-gnu/release/deps/test_tree-*
