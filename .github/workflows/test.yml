@@ -174,4 +174,5 @@ jobs:
     - name: sanitizers
       run: |
         rustup toolchain install nightly
+        rustup component add miri --toolchain nightly-x86_64-unknown-linux-gnu
         yes | cargo +nightly miri test --features=testing -- -Zmiri-disable-isolation
