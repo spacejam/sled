@@ -32,7 +32,7 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Cache target
-      uses: actions/cache@v1
+      uses: actions/cache@v2
       env:
         cache-name: cache-default-target-and-lockfile
       with:
@@ -64,7 +64,7 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Cache target
-      uses: actions/cache@v1
+      uses: actions/cache@v2
       env:
         cache-name: cache-examples-target-and-lockfile
       with:
@@ -96,7 +96,7 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Cache target
-      uses: actions/cache@v1
+      uses: actions/cache@v2
       env:
         cache-name: cache-stress2-target-and-lockfile
       with:
@@ -141,7 +141,7 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Cache rustup
-      uses: actions/cache@v1
+      uses: actions/cache@v2
       env:
         cache-name: cache-sanitizers-target-and-lockfile
       with:
@@ -162,7 +162,7 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Cache rustup
-      uses: actions/cache@v1
+      uses: actions/cache@v2
       env:
         cache-name: cache-miri-target-and-lockfile
       with:
