@@ -30,7 +30,8 @@ default = []
 # internal testing use only. It injects many delays and performs several
 # test-only configurations that cause performance to drop significantly.
 # It will cause your tests to take much more time, and possibly time out etc...
-testing = ["event_log", "lock_free_delays", "compression", "failpoints", "backtrace"]
+testing = ["event_log", "lock_free_delays", "light_testing"]
+light_testing = ["compression", "failpoints", "backtrace", "memshred"]
 compression = ["zstd"]
 lock_free_delays = []
 failpoints = []
@@ -44,6 +45,7 @@ io_uring = ["rio"]
 docs = []
 miri_optimizations = []
 mutex = []
+memshred = []
 
 [dependencies]
 libc = "0.2.81"
