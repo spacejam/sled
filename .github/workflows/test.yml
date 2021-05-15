@@ -111,6 +111,7 @@ jobs:
         ulimit -c unlimited
         echo "$PWD/core-dumps/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
         mkdir core-dumps
+        rm -rf default.sled || true
         cargo run --release -- --duration=60
         rm -rf default.sled
     - name: print backtraces with gdb
