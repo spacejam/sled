@@ -117,7 +117,7 @@ impl EventLog {
                                 .collect();
                             let locations_after_restart: Vec<_> = par
                                 .get(&pid)
-                                .unwrap()
+                                .unwrap_or_else(|| panic!("pid {} no longer present after restart", pid))
                                 .iter()
                                 .copied()
                                 .collect();
