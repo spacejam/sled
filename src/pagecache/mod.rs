@@ -1453,15 +1453,12 @@ impl PageCacheInner {
     }
 
     fn lru_access(&self, pid: PageId, size: u64, guard: &Guard) -> Result<()> {
-        /*
-        TODO: find memory issue in LRU
         let to_evict =
             self.lru.accessed(pid, usize::try_from(size).unwrap(), guard);
         trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
         if !to_evict.is_empty() {
             self.page_out(to_evict, guard)?;
         }
-        */
         Ok(())
     }
 
