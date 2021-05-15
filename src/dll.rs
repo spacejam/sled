@@ -196,7 +196,11 @@ impl DoublyLinkedList {
         }
     }
 
-    pub(crate) fn pop_tail(&mut self) -> Option<CacheAccess> {
+    // NB: returns the Box<Node> instead of just the Option<CacheAccess>
+    // because the LRU is a map to the Node as well, and if the LRU
+    // accessed the map via PID, it would cause a use after free if
+    // we had already freed the Node in this function.
+    pub(crate) fn pop_tail(&mut self) -> Option<Box<Node>> {
         if self.tail.is_null() {
             return None;
         }
@@ -214,7 +218,7 @@ impl DoublyLinkedList {
 
             tail.unwire();
 
-            Some(**tail)
+            Some(tail)
         }
     }
 
