@@ -413,7 +413,7 @@ impl Shard {
 
             let node = self.dll.pop_tail().unwrap();
 
-            self.entries.remove(&node.pid);
+            assert!(self.entries.remove(&node.pid));
 
             to_evict.push(node.pid);
 
