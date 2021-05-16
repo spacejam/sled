@@ -100,6 +100,7 @@ fn bounds_error() -> Result<()> {
 /// # Ok(()) }
 /// ```
 #[derive(Clone)]
+#[doc(alias("keyspace", "bucket", "table"))]
 pub struct Tree(pub(crate) Arc<TreeInner>);
 
 #[allow(clippy::module_name_repetitions)]
@@ -150,6 +151,7 @@ impl Tree {
     /// assert_eq!(db.insert(&[1, 2, 3], vec![1]), Ok(Some(sled::IVec::from(&[0]))));
     /// # Ok(()) }
     /// ```
+    #[doc(alias("set"))]
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
@@ -542,6 +544,7 @@ impl Tree {
     /// assert_eq!(db.remove(&[1]), Ok(None));
     /// # Ok(()) }
     /// ```
+    #[doc(alias("delete", "del"))]
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         let mut guard = pin();
         let _cc = concurrency_control::read();
@@ -607,6 +610,7 @@ impl Tree {
     /// # Ok(()) }
     /// ```
     #[allow(clippy::needless_pass_by_value)]
+    #[doc(alias("cas", "tas", "test_and_set", "test_and_swap", "compare_and_set"))]
     pub fn compare_and_swap<K, OV, NV>(
         &self,
         key: K,
