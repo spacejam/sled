@@ -155,4 +155,27 @@ jobs:
       run: |
         set -eo pipefail
         scripts/sanitizers.sh
-
+  msan_tree_tests:
+    name: MSAN doc tests
+    env:
+      RUST_BACKTRACE: 1
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Cache rustup
+      uses: actions/cache@v2
+      env:
+        cache-name: cache-msan-tree-target-and-lockfile
+      with:
+        path: |
+          ~/.rustup
+          target
+          Cargo.lock
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
+    - name: sanitizers
+      run: |
+        rustup toolchain install nightly
+        rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+        export RUSTFLAGS="-Zsanitizer=memory -Zsanitizer-memory-track-origins"
+        export MSAN_OPTIONS=verbosity=2
+        cargo +nightly test --doc -Zbuild-std --target x86_64-unknown-linux-gnu --features=light_testing -- --nocapture --test-threads=1
