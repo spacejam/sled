@@ -1753,7 +1753,8 @@ impl Inner {
                 tmp.as_mut_ptr() as *mut u8,
                 len,
             );
-            tmp.assume_init() & mask
+            *tmp.as_mut_ptr() &= mask;
+            tmp.assume_init()
         }
     }
 
