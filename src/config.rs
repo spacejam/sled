@@ -758,6 +758,7 @@ impl Deref for RunningConfig {
     }
 }
 
+#[cfg(all(not(miri), any(windows, target_os = "linux", target_os = "macos")))]
 impl Drop for RunningConfig {
     fn drop(&mut self) {
         use fs2::FileExt;
