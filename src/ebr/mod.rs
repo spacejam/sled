@@ -85,7 +85,7 @@ unsafe fn unprotected() -> &'static Guard {
     // not implement `Sync`. To get around the problem, we create a static `usize` initialized to
     // zero and then transmute it into a `Guard`. This is safe because `usize` and `Guard`
     // (consisting of a single pointer) have the same representation in memory.
-    static UNPROTECTED: &[u8] = &[0; std::mem::size_of::<Guard>()];
+    static UNPROTECTED: &[usize] = &[0_usize; std::mem::size_of::<Guard>()];
     #[allow(trivial_casts)]
     &*(UNPROTECTED as *const _ as *const Guard)
 }

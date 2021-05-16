@@ -4,6 +4,7 @@
 
 use std::{
     alloc::{alloc_zeroed, dealloc, Layout},
+    cell::UnsafeCell,
     cmp::Ordering::{self, Equal, Greater, Less},
     convert::{TryFrom, TryInto},
     fmt,
@@ -32,7 +33,8 @@ fn uninitialized_node(len: usize) -> Inner {
 
     unsafe {
         let ptr = alloc_zeroed(layout);
-        Inner { ptr, len }
+        let cell_ptr = fatten(ptr, len);
+        Inner { ptr: cell_ptr }
     }
 }
 
@@ -1098,7 +1100,7 @@ impl Node {
             let size_threshold = 1024 - crate::MAX_MSG_HEADER_LEN;
             let child_threshold = 56 * 1024;
 
-            self.len > size_threshold || self.children > child_threshold
+            self.len() > size_threshold || self.children > child_threshold
         };
 
         let safety_checks = self.merging_child.is_none()
@@ -1124,7 +1126,7 @@ impl Node {
             self.iter().take(2).count() < 2
         } else {
             let size_threshold = 256 - crate::MAX_MSG_HEADER_LEN;
-            self.len < size_threshold
+            self.len() < size_threshold
         };
 
         let safety_checks = self.merging_child.is_none()
@@ -1138,8 +1140,18 @@ impl Node {
 /// An immutable sorted string table
 #[must_use]
 pub struct Inner {
-    ptr: *mut u8,
-    pub len: usize,
+    ptr: *mut UnsafeCell<[u8]>,
+}
+
+/// <https://users.rust-lang.org/t/construct-fat-pointer-to-struct/29198/9>
+#[allow(trivial_casts)]
+fn fatten(data: *mut u8, len: usize) -> *mut UnsafeCell<[u8]> {
+    // Requirements of slice::from_raw_parts.
+    assert!(!data.is_null());
+    assert!(isize::try_from(len).is_ok());
+
+    let slice = unsafe { core::slice::from_raw_parts(data as *const (), len) };
+    slice as *const [()] as *mut _
 }
 
 impl PartialEq<Inner> for Inner {
@@ -1159,22 +1171,22 @@ unsafe impl Send for Inner {}
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        let layout = Layout::from_size_align(self.len, ALIGNMENT).unwrap();
+        let layout = Layout::from_size_align(self.len(), ALIGNMENT).unwrap();
         unsafe {
-            dealloc(self.ptr, layout);
+            dealloc(self.ptr(), layout);
         }
     }
 }
 
 impl AsRef<[u8]> for Inner {
     fn as_ref(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+        self.buf()
     }
 }
 
 impl AsMut<[u8]> for Inner {
     fn as_mut(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
+        self.buf_mut()
     }
 }
 
@@ -1232,6 +1244,26 @@ fn is_linear(a: &KeyRef<'_>, b: &KeyRef<'_>, stride: u16) -> bool {
 }
 
 impl Inner {
+    #[inline]
+    fn ptr(&self) -> *mut u8 {
+        unsafe { (*self.ptr).get() as *mut u8 }
+    }
+
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.buf().len()
+    }
+
+    #[inline]
+    fn buf(&self) -> &[u8] {
+        unsafe { &*(*self.ptr).get() }
+    }
+
+    #[inline]
+    fn buf_mut(&mut self) -> &mut [u8] {
+        unsafe { &mut *(*self.ptr).get() }
+    }
+
     unsafe fn from_raw(buf: &[u8]) -> Inner {
         let mut ret = uninitialized_node(buf.len());
         ret.as_mut().copy_from_slice(buf);
@@ -1279,13 +1311,11 @@ impl Inner {
             None
         };
 
-        let mut fixed_key_length = items.first().and_then(|(k, _)| {
-            if k.is_empty() {
-                None
-            } else {
-                Some(k.len())
-            }
-        });
+        let mut fixed_key_length = match items {
+            [(kr, _), ..] if !kr.is_empty() => Some(kr.len()),
+            _ => None,
+        };
+
         let mut fixed_value_length = items.first().map(|(_, v)| v.len());
 
         let mut dynamic_key_storage_size = 0;
@@ -1420,6 +1450,26 @@ impl Inner {
             assert!(fixed_value_length.is_some());
         }
 
+        let header = ret.header_mut();
+        header.fixed_key_length = fixed_key_length;
+        header.fixed_value_length = fixed_value_length;
+        header.lo_len = lo.len() as u64;
+        header.hi_len = hi.map(|hi| hi.len() as u64).unwrap_or(0);
+        header.fixed_key_stride = fixed_key_stride;
+        header.offset_bytes = offset_bytes;
+        header.children = tf!(items.len(), u32);
+        header.prefix_len = prefix_len;
+        header.version = 1;
+        header.next = next;
+        header.is_index = is_index;
+
+        /*
+        header.merging_child = None;
+        header.merging = false;
+        header.probation_ops_remaining = 0;
+        header.activity_sketch = 0;
+        header.rewrite_generations = 0;
+         * TODO use UnsafeCell to allow this to soundly work
         *ret.header_mut() = Header {
             rewrite_generations: 0,
             activity_sketch: 0,
@@ -1438,6 +1488,7 @@ impl Inner {
             next,
             is_index,
         };
+        */
 
         ret.lo_mut().copy_from_slice(lo);
 
@@ -1696,13 +1747,14 @@ impl Inner {
         // function from 7-11% down to 0.5-2% in a monotonic insertion workload.
         #[allow(unsafe_code)]
         unsafe {
-            let ptr: *const u8 = self.ptr.add(start);
+            let ptr: *const u8 = self.ptr().add(start);
             std::ptr::copy_nonoverlapping(
                 ptr,
                 tmp.as_mut_ptr() as *mut u8,
                 len,
             );
-            tmp.assume_init() & mask
+            *tmp.as_mut_ptr() &= mask;
+            tmp.assume_init()
         }
     }
 
@@ -2095,7 +2147,7 @@ impl Inner {
     }
 
     fn header(&self) -> &Header {
-        assert_eq!(self.ptr as usize % 8, 0);
+        assert_eq!(self.ptr() as usize % 8, 0);
         unsafe { &*(self.ptr as *mut u64 as *mut Header) }
     }
 
@@ -2107,8 +2159,8 @@ impl Inner {
         self.children() == 0
     }
 
-    pub(crate) const fn rss(&self) -> u64 {
-        self.len as u64
+    pub(crate) fn rss(&self) -> u64 {
+        self.len() as u64
     }
 
     fn children(&self) -> usize {

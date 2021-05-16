@@ -100,6 +100,9 @@ fn bounds_error() -> Result<()> {
 /// # Ok(()) }
 /// ```
 #[derive(Clone)]
+#[doc(alias = "keyspace")]
+#[doc(alias = "bucket")]
+#[doc(alias = "table")]
 pub struct Tree(pub(crate) Arc<TreeInner>);
 
 #[allow(clippy::module_name_repetitions)]
@@ -150,6 +153,7 @@ impl Tree {
     /// assert_eq!(db.insert(&[1, 2, 3], vec![1]), Ok(Some(sled::IVec::from(&[0]))));
     /// # Ok(()) }
     /// ```
+    #[doc(alias = "set")]
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
@@ -542,6 +546,8 @@ impl Tree {
     /// assert_eq!(db.remove(&[1]), Ok(None));
     /// # Ok(()) }
     /// ```
+    #[doc(alias = "delete")]
+    #[doc(alias = "del")]
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         let mut guard = pin();
         let _cc = concurrency_control::read();
@@ -607,6 +613,10 @@ impl Tree {
     /// # Ok(()) }
     /// ```
     #[allow(clippy::needless_pass_by_value)]
+    #[doc(alias = "cas")]
+    #[doc(alias = "tas")]
+    #[doc(alias = "test_and_swap")]
+    #[doc(alias = "compare_and_set")]
     pub fn compare_and_swap<K, OV, NV>(
         &self,
         key: K,
@@ -1809,6 +1819,12 @@ impl Tree {
             let node_opt = self.view_for_pid(cursor, guard)?;
 
             let view = if let Some(view) = node_opt {
+                // merging_child should be handled in view_for_pid.
+                assert!(
+                    view.merging_child.is_none(),
+                    "view_for_pid somehow returned a view for a \
+                    node with a merging_child without handling it."
+                );
                 view
             } else {
                 retry!();
@@ -1817,15 +1833,7 @@ impl Tree {
             #[cfg(feature = "testing")]
             path.push((cursor, view.clone()));
 
-            // When we encounter a merge intention, we collaboratively help out
-            if view.merging_child.is_some() {
-                self.merge_node(
-                    &view,
-                    view.merging_child.unwrap().get(),
-                    guard,
-                )?;
-                retry!();
-            } else if view.merging {
+            if view.merging {
                 // we missed the parent merge intention due to a benign race,
                 // so go around again and try to help out if necessary
                 retry!();

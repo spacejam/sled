@@ -102,9 +102,27 @@ impl<'a> Reservation<'a> {
         self.flushed = true;
 
         if !valid {
-            // don't actually zero the message, still check its hash
-            // on recovery to find corruption.
             self.buf[4] = MessageKind::Canceled.into();
+
+            // zero the message contents to prevent UB
+            #[allow(unsafe_code)]
+            unsafe {
+                std::ptr::write_bytes(
+                    self.buf[self.header_len..].as_mut_ptr(),
+                    0,
+                    self.buf.len() - self.header_len,
+                )
+            }
+        }
+
+        // zero the crc bytes to prevent UB
+        #[allow(unsafe_code)]
+        unsafe {
+            std::ptr::write_bytes(
+                self.buf[..].as_mut_ptr(),
+                0,
+                std::mem::size_of::<u32>(),
+            )
         }
 
         let crc32 = calculate_message_crc32(

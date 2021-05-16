@@ -145,6 +145,7 @@ impl IVec {
 
             // assert that the bottom 3 bits are empty, as we expect
             // the buffer to always have an alignment of 8 (2 ^ 3).
+            #[cfg(not(miri))]
             assert_eq!(data[SZ - 1] & 0b111, 0);
         }
         Self(data)
@@ -160,14 +161,32 @@ impl IVec {
         unsafe { &*(self.remote_ptr() as *mut RemoteHeader) }
     }
 
+    #[cfg(miri)]
+    fn inline_len(&self) -> usize {
+        (self.trailer() >> 1) as usize
+    }
+
+    #[cfg(miri)]
+    fn is_inline(&self) -> bool {
+        self.trailer() & 1 == 1
+    }
+
+    #[cfg(miri)]
+    fn trailer(&self) -> u8 {
+        self.deref()[SZ - 1]
+    }
+
+    #[cfg(not(miri))]
     const fn inline_len(&self) -> usize {
         (self.trailer() >> 1) as usize
     }
 
+    #[cfg(not(miri))]
     const fn is_inline(&self) -> bool {
         self.trailer() & 1 == 1
     }
 
+    #[cfg(not(miri))]
     const fn trailer(&self) -> u8 {
         self.0[SZ - 1]
     }

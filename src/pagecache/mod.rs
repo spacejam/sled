@@ -643,7 +643,7 @@ impl PageCache {
         // now we read it back in
         pc.load_snapshot(&snapshot)?;
 
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "event_log")]
         {
             // NB this must be before idgen/meta are initialized
             // because they may cas_page on initial page-in.

@@ -549,22 +549,24 @@ impl SegmentAccountant {
 
         let add = |pid,
                    lsn: Lsn,
-                   lid: Option<LogOffset>,
+                   lid_opt: Option<LogOffset>,
                    segments: &mut Vec<Segment>| {
-            if lid.is_none() {
+            let lid = if let Some(lid) = lid_opt {
+                lid
+            } else {
                 trace!(
                     "skipping segment GC for pid {} with a heap \
                     ptr already in the snapshot",
                     pid
                 );
                 return;
-            }
-            let idx = assert_usize(lid.unwrap() / segment_size as LogOffset);
+            };
+            let idx = assert_usize(lid / segment_size as LogOffset);
             trace!(
                 "adding lsn: {} lid: {} for pid {} to segment {} \
                 during SA recovery",
                 lsn,
-                lid.unwrap(),
+                lid,
                 pid,
                 idx
             );

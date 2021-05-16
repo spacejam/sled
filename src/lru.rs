@@ -411,13 +411,21 @@ impl Shard {
                 break;
             }
 
-            let min_pid = self.dll.pop_tail().unwrap();
+            let node = self.dll.pop_tail().unwrap();
 
-            self.entries.remove(&min_pid.pid);
+            assert!(self.entries.remove(&node.pid));
 
-            to_evict.push(min_pid.pid);
+            to_evict.push(node.pid);
 
-            self.size -= min_pid.size();
+            self.size -= node.size();
+
+            // NB: node is stored in our entries map
+            // via a raw pointer, which points to
+            // the same allocation used in the DLL.
+            // We have to be careful to free node
+            // only after removing it from both
+            // the DLL and our entries map.
+            drop(node);
         }
 
         to_evict

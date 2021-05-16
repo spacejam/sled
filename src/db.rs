@@ -12,6 +12,7 @@ const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 /// to disk, using the same method used by
 /// `Tree::flush`.
 #[derive(Clone)]
+#[doc(alias = "database")]
 pub struct Db {
     #[doc(hidden)]
     pub context: Context,

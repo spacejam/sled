@@ -3,10 +3,21 @@ set -eo pipefail
 
 pushd benchmarks/stress2
 
-rustup toolchain install nightly --no-self-update
-rustup update --no-self-update
+rustup toolchain install nightly
+rustup toolchain install nightly --component rust-src
+rustup update
 
 export SLED_LOCK_FREE_DELAY_INTENSITY=2000
+
+echo "msan"
+cargo clean
+export RUSTFLAGS="-Zsanitizer=memory -Zsanitizer-memory-track-origins"
+cargo +nightly build -Zbuild-std --target x86_64-unknown-linux-gnu
+sudo rm -rf default.sled
+sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 --set-prop=100000000 --val-len=1000 --entries=100 --threads=100
+sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 --entries=100
+sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30
+unset MSAN_OPTIONS
 
 echo "asan"
 cargo clean

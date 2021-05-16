@@ -1,10 +1,40 @@
-#[cfg(not(feature = "testing"))]
+#[cfg(not(any(feature = "testing", feature = "light_testing")))]
 compile_error!(
     "please run tests using the \"testing\" feature, \
      which enables additional checks at runtime and \
      causes more race conditions to jump out by \
      inserting delays in concurrent code."
 );
+
+// the memshred feature causes all allocated and deallocated
+// memory to be set to a specific non-zero value of 0xa1 for
+// uninitialized allocations and 0xde for deallocated memory,
+// in the hope that it will cause memory errors to surface
+// more quickly.
+#[cfg(feature = "memshred")]
+mod alloc {
+    use std::alloc::{Layout, System};
+
+    #[global_allocator]
+    static ALLOCATOR: Alloc = Alloc;
+
+    #[derive(Default, Debug, Clone, Copy)]
+    struct Alloc;
+
+    unsafe impl std::alloc::GlobalAlloc for Alloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let ret = System.alloc(layout);
+            assert_ne!(ret, std::ptr::null_mut());
+            std::ptr::write_bytes(ret, 0xa1, layout.size());
+            ret
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            std::ptr::write_bytes(ptr, 0xde, layout.size());
+            System.dealloc(ptr, layout)
+        }
+    }
+}
 
 pub fn setup_logger() {
     use std::io::Write;

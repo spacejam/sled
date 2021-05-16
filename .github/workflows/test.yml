@@ -32,14 +32,15 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Cache target
-      uses: actions/cache@v1
+      uses: actions/cache@v2
       env:
-        cache-name: cache-target
+        cache-name: cache-default-target-and-lockfile
       with:
-        path: target
-        key: ${{ runner.os }}-${{ env.cache-name }}
-        restore-keys: |
-          ${{ runner.os }}-
+        path: |
+          target
+          Cargo.lock
+          ~/.rustup
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
     - name: linux coredump setup
       if: ${{ runner.os == 'linux' }}
       run: |
@@ -53,23 +54,25 @@ jobs:
     - uses: actions/upload-artifact@v2
       if: ${{ failure() && runner.os == 'linux' }}
       with:
-        name: core-dump-upload
+        name: linux-core-dumps
         path: |
           ./core-dumps/*
+          ./target/release/deps/test_*
   examples:
     name: Example Tests
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
     - name: Cache target
-      uses: actions/cache@v1
+      uses: actions/cache@v2
       env:
-        cache-name: cache-target
+        cache-name: cache-examples-target-and-lockfile
       with:
-        path: target
-        key: ${{ runner.os }}-${{ env.cache-name }}
-        restore-keys: |
-          ${{ runner.os }}-
+        path: |
+          target
+          Cargo.lock
+          ~/.rustup
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
     - name: example tests
       run: |
         rustup update --no-self-update
@@ -88,20 +91,19 @@ jobs:
   burn-in:
     name: Burn In
     env:
-      RUSTFLAGS: "-C target-cpu=native -C link-args=-Wl,-zstack-size=4194304"
       RUST_BACKTRACE: 1
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
     - name: Cache target
-      uses: actions/cache@v1
+      uses: actions/cache@v2
       env:
-        cache-name: cache-target
+        cache-name: cache-stress2-target-and-lockfile
       with:
-        path: target
-        key: ${{ runner.os }}-${{ env.cache-name }}
-        restore-keys: |
-          ${{ runner.os }}-
+        path: |
+          benchmarks/stress2/target
+          benchmarks/stress2/Cargo.lock
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
     - name: burn in
       run: |
         set -eo pipefail
@@ -109,6 +111,7 @@ jobs:
         ulimit -c unlimited
         echo "$PWD/core-dumps/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
         mkdir core-dumps
+        rm -rf default.sled || true
         cargo run --release -- --duration=60
         rm -rf default.sled
     - name: print backtraces with gdb
@@ -127,7 +130,7 @@ jobs:
     - uses: actions/upload-artifact@v2
       if: ${{ failure() }}
       with:
-        name: core-dump-upload
+        name: linux-core-dumps
         path: |
           ./benchmarks/stress2/core-dumps/*
           ./benchmarks/stress2/target/release/stress2
@@ -139,14 +142,15 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Cache rustup
-      uses: actions/cache@v1
+      uses: actions/cache@v2
       env:
-        cache-name: cache-target
+        cache-name: cache-sanitizers-target-and-lockfile
       with:
-        path: ~/.rustup
-        key: ${{ runner.os }}-${{ env.cache-name }}
-        restore-keys: |
-          ${{ runner.os }}-
+        path: |
+          ~/.rustup
+          benchmarks/stress2/target
+          benchmarks/stress2/Cargo.lock
+        key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
     - name: sanitizers
       run: |
         set -eo pipefail

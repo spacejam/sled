@@ -538,33 +538,17 @@ impl Config {
         {
             use fs2::FileExt;
 
-            let try_lock = if cfg!(feature = "testing") {
-                // we block here because during testing
-                // there are many filesystem race condition
-                // that happen, causing locks to be held
-                // for long periods of time, so we should
-                // block to wait on reopening files.
-                let start = std::time::Instant::now();
-                loop {
-                    let ret = file.try_lock_exclusive();
-
-                    if ret.is_ok() {
-                        break ret;
-                    }
-
-                    if start.elapsed() > std::time::Duration::from_secs(10) {
-                        log::error!(
-                            "failed to open file in exclusive mode: {:?}",
-                            ret
-                        );
-                        break ret;
-                    }
-
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-            } else {
-                file.try_lock_exclusive()
-            };
+            let try_lock =
+                if cfg!(any(feature = "testing", feature = "light_testing")) {
+                    // we block here because during testing
+                    // there are many filesystem race condition
+                    // that happen, causing locks to be held
+                    // for long periods of time, so we should
+                    // block to wait on reopening files.
+                    file.lock_exclusive()
+                } else {
+                    file.try_lock_exclusive()
+                };
 
             if let Err(e) = try_lock {
                 return Err(Error::Io(io::Error::new(
@@ -771,6 +755,16 @@ impl Deref for RunningConfig {
 
     fn deref(&self) -> &Config {
         &self.inner
+    }
+}
+
+#[cfg(all(not(miri), any(windows, target_os = "linux", target_os = "macos")))]
+impl Drop for RunningConfig {
+    fn drop(&mut self) {
+        use fs2::FileExt;
+        if Arc::strong_count(&self.file) == 1 {
+            let _ = self.file.unlock();
+        }
     }
 }
 
