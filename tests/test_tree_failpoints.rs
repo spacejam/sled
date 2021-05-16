@@ -1841,16 +1841,10 @@ fn failpoints_bug_38() {
 fn failpoints_bug_39() {
     // postmortem 1:
     use BatchOp::*;
-    for _ in 0..100 {
+    for i in 0..100 {
         assert!(prop_tree_crashes_nicely(
-            vec![
-                Op::Batched(vec![
-                    Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set, Set,
-                    Set, Set, Set, Set, Set, Set, Set, Set,
-                ]),
-                Op::Restart,
-            ],
-            false
+            vec![Op::Batched(vec![Set; i % 50]), Op::Restart],
+            true
         ))
     }
 }
