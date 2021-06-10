@@ -49,7 +49,7 @@ memshred = []
 
 [dependencies]
 libc = "0.2.81"
-zstd = { version = "0.8", optional = true }
+zstd = { version = "0.9", optional = true }
 crc32fast = "1.2.1"
 log = "0.4.11"
 parking_lot = "0.11.1"
