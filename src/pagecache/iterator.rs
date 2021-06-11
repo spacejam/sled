@@ -103,7 +103,7 @@ impl Iterator for LogIter {
                         LogKind::from(header.kind),
                         header.pid,
                         lsn,
-                        DiskPtr::Inline(lid),
+                        DiskPtr::new_inline(lid),
                     ));
                 }
                 Ok(LogRead::BatchManifest(last_lsn_in_batch, inline_len)) => {

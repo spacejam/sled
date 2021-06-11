@@ -504,47 +504,6 @@ impl Serialize for Node {
     }
 }
 
-impl Serialize for DiskPtr {
-    fn serialized_size(&self) -> u64 {
-        match self {
-            DiskPtr::Inline(a) => 1 + a.serialized_size(),
-            DiskPtr::Heap(a, b) => {
-                1 + a.serialized_size() + b.serialized_size()
-            }
-        }
-    }
-
-    fn serialize_into(&self, buf: &mut &mut [u8]) {
-        match self {
-            DiskPtr::Inline(log_offset) => {
-                0_u8.serialize_into(buf);
-                log_offset.serialize_into(buf);
-            }
-            DiskPtr::Heap(log_offset, heap_id) => {
-                1_u8.serialize_into(buf);
-                log_offset.serialize_into(buf);
-                heap_id.serialize_into(buf);
-            }
-        }
-    }
-
-    fn deserialize(buf: &mut &[u8]) -> Result<DiskPtr> {
-        if buf.len() < 2 {
-            return Err(Error::corruption(None));
-        }
-        let discriminant = buf[0];
-        *buf = &buf[1..];
-        Ok(match discriminant {
-            0 => DiskPtr::Inline(u64::deserialize(buf)?),
-            1 => DiskPtr::Heap(
-                Serialize::deserialize(buf)?,
-                HeapId::deserialize(buf)?,
-            ),
-            _ => return Err(Error::corruption(None)),
-        })
-    }
-}
-
 impl Serialize for PageState {
     fn serialized_size(&self) -> u64 {
         match self {

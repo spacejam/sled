@@ -1328,7 +1328,7 @@ impl PageCacheInner {
                     );
 
                     let cache_info = CacheInfo {
-                        pointer: DiskPtr::Heap(None, heap_id),
+                        pointer: DiskPtr::merged_heap_item(heap_id),
                         ..lone_cache_info
                     };
 
