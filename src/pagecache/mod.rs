@@ -308,19 +308,10 @@ impl<'g> Deref for PageView<'g> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CacheInfo {
+struct CacheInfo {
     pub ts: u64,
     pub lsn: Lsn,
     pub pointer: DiskPtr,
-}
-
-#[cfg(test)]
-impl quickcheck::Arbitrary for CacheInfo {
-    fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> CacheInfo {
-        use rand::Rng;
-
-        CacheInfo { ts: g.gen(), lsn: g.gen(), pointer: DiskPtr::arbitrary(g) }
-    }
 }
 
 /// Update<PageLinkment> denotes a state or a change in a sequence of updates
