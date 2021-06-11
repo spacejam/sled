@@ -68,12 +68,14 @@ use crate::*;
 pub(crate) enum SegmentOp {
     Link {
         pid: PageId,
-        cache_info: CacheInfo,
+        disk_ptr: DiskPtr,
+        lsn: Lsn,
     },
     Replace {
         pid: PageId,
-        old_cache_infos: Vec<CacheInfo>,
-        new_cache_info: CacheInfo,
+        old_disk_ptrs: Vec<DiskPtr>,
+        new_disk_ptr: DiskPtr,
+        lsn: Lsn,
     },
 }
 
@@ -728,9 +730,11 @@ impl SegmentAccountant {
     pub(super) fn apply_op(&mut self, op: &SegmentOp) -> Result<()> {
         use SegmentOp::*;
         match op {
-            Link { pid, cache_info } => self.mark_link(*pid, *cache_info),
-            Replace { pid, old_cache_infos, new_cache_info } => {
-                self.mark_replace(*pid, old_cache_infos, *new_cache_info)?
+            Link { pid, disk_ptr, lsn } => {
+                self.mark_link(*pid, *disk_ptr, *lsn)
+            }
+            Replace { pid, old_disk_ptrs, new_disk_ptr, lsn } => {
+                self.mark_replace(*pid, old_disk_ptrs, *new_disk_ptr, *lsn)?
             }
         }
         Ok(())
@@ -743,66 +747,64 @@ impl SegmentAccountant {
     pub(super) fn mark_replace(
         &mut self,
         pid: PageId,
-        old_cache_infos: &[CacheInfo],
-        new_cache_info: CacheInfo,
+        old_disk_ptrs: &[DiskPtr],
+        new_disk_ptr: DiskPtr,
+        lsn: Lsn,
     ) -> Result<()> {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.accountant_mark_replace);
 
-        if !new_cache_info.pointer.heap_pointer_merged_into_snapshot() {
-            self.mark_link(pid, new_cache_info);
+        if !new_disk_ptr.heap_pointer_merged_into_snapshot() {
+            self.mark_link(pid, new_disk_ptr, lsn);
         }
 
-        let lsn = self.config.normalize(new_cache_info.lsn);
+        let lsn = self.config.normalize(lsn);
 
         trace!(
-            "mark_replace pid {} from cache infos {:?} to cache info {:?} with lsn {}",
+            "mark_replace pid {} from old disk ptrs {:?} to new disk ptr {:?} at new lsn {}",
             pid,
-            old_cache_infos,
-            new_cache_info,
+            old_disk_ptrs,
+            new_disk_ptr,
             lsn
         );
 
-        let new_idx =
-            new_cache_info.pointer.lid().map(|lid| self.segment_id(lid));
+        let new_idx = new_disk_ptr.lid().map(|lid| self.segment_id(lid));
 
         // Do we need to schedule any heap cleanups?
         // Not if we just moved the pointer without changing
         // the underlying heap, as is the case with a single heap
         // item with nothing else.
-        let schedule_rm_heap_item = !(old_cache_infos.len() == 1
-            && old_cache_infos[0].pointer.is_heap_item()
-            && new_cache_info.pointer.is_heap_item()
-            && old_cache_infos[0].pointer.heap_id()
-                == new_cache_info.pointer.heap_id());
+        let schedule_rm_heap_item = !(old_disk_ptrs.len() == 1
+            && old_disk_ptrs[0].is_heap_item()
+            && new_disk_ptr.is_heap_item()
+            && old_disk_ptrs[0].heap_id() == new_disk_ptr.heap_id());
 
         // we use this as a 0-allocation state machine to accumulate
         // how much data has been freed from each segment
         let mut replaced_segment = None;
 
-        for old_cache_info in old_cache_infos {
-            let old_ptr = &old_cache_info.pointer;
-            let old_lid = if let Some(old_lid) = old_ptr.lid() {
+        for old_disk_ptr in old_disk_ptrs {
+            let old_lid = if let Some(old_lid) = old_disk_ptr.lid() {
                 old_lid
             } else {
                 // the frag had been migrated to the heap store fully
                 continue;
             };
 
-            if schedule_rm_heap_item && old_ptr.is_heap_item() {
+            if schedule_rm_heap_item && old_disk_ptr.is_heap_item() {
                 trace!(
                     "queueing heap item removal for {} in our own segment",
-                    old_ptr
+                    old_disk_ptr
                 );
                 if let Some(new_idx) = new_idx {
                     self.segments[new_idx].remove_heap_item(
-                        old_ptr.heap_id().unwrap(),
+                        old_disk_ptr.heap_id().unwrap(),
                         &self.config,
                     );
                 } else {
                     // this was migrated off-log and is present and stabilized
                     // in the snapshot.
-                    self.config.heap.free(old_ptr.heap_id().unwrap());
+                    self.config.heap.free(old_disk_ptr.heap_id().unwrap());
                 }
             }
 
@@ -827,12 +829,17 @@ impl SegmentAccountant {
     /// Called from `PageCache` when some state has been added
     /// to a logical page at a particular offset. We ensure the
     /// page is present in the segment's page set.
-    pub(super) fn mark_link(&mut self, pid: PageId, cache_info: CacheInfo) {
+    pub(super) fn mark_link(
+        &mut self,
+        pid: PageId,
+        disk_ptr: DiskPtr,
+        lsn: Lsn,
+    ) {
         #[cfg(feature = "metrics")]
         let _measure = Measure::new(&M.accountant_mark_link);
 
-        trace!("mark_link pid {} at cache info {:?}", pid, cache_info);
-        let lid = if let Some(lid) = cache_info.pointer.lid() {
+        trace!("mark_link pid {} at disk ptr {:?} lsn {}", pid, disk_ptr, lsn);
+        let lid = if let Some(lid) = disk_ptr.lid() {
             lid
         } else {
             // item has been migrated off-log to the heap store
@@ -843,7 +850,7 @@ impl SegmentAccountant {
 
         let segment = &mut self.segments[idx];
 
-        let segment_lsn = cache_info.lsn / self.config.segment_size as Lsn
+        let segment_lsn = lsn / self.config.segment_size as Lsn
             * self.config.segment_size as Lsn;
 
         // a race happened, and our Lsn does not apply anymore

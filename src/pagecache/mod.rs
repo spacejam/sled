@@ -864,7 +864,12 @@ impl PageCache {
 
                     assert_ne!(old.last_lsn(), 0);
 
-                    self.log.iobufs.sa_mark_link(pid, cache_info, guard);
+                    self.log.iobufs.sa_mark_link(
+                        pid,
+                        cache_info.pointer,
+                        cache_info.lsn,
+                        guard,
+                    );
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
@@ -1370,8 +1375,13 @@ impl PageCacheInner {
 
                     self.log.iobufs.sa_mark_replace(
                         pid,
-                        &page_view.cache_infos,
-                        cache_info,
+                        page_view
+                            .cache_infos
+                            .iter()
+                            .map(|ci| ci.pointer)
+                            .collect(),
+                        cache_info.pointer,
+                        cache_info.lsn,
                         guard,
                     )?;
 
@@ -1603,8 +1613,9 @@ impl PageCacheInner {
                     trace!("cas_page succeeded on pid {}", pid);
                     self.log.iobufs.sa_mark_replace(
                         pid,
-                        &old.cache_infos,
-                        cache_info,
+                        old.cache_infos.iter().map(|ci| ci.pointer).collect(),
+                        cache_info.pointer,
+                        cache_info.lsn,
                         guard,
                     )?;
 
