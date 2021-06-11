@@ -86,6 +86,7 @@ impl fmt::Display for DiskPtr {
     }
 }
 
+#[allow(clippy::mut_mut)]
 impl Serialize for DiskPtr {
     fn serialized_size(&self) -> u64 {
         match self.0 {
