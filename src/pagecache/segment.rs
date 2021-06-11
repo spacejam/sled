@@ -758,14 +758,14 @@ impl SegmentAccountant {
             self.mark_link(pid, new_disk_ptr, lsn);
         }
 
-        let lsn = self.config.normalize(lsn);
+        let normalized_lsn = self.config.normalize(lsn);
 
         trace!(
             "mark_replace pid {} from old disk ptrs {:?} to new disk ptr {:?} at new lsn {}",
             pid,
             old_disk_ptrs,
             new_disk_ptr,
-            lsn
+            normalized_lsn
         );
 
         let new_idx = new_disk_ptr.lid().map(|lid| self.segment_id(lid));
@@ -816,8 +816,11 @@ impl SegmentAccountant {
                     // from the segment
                 }
                 _ => {
-                    self.segments[old_idx].remove_pid(pid, lsn);
-                    self.possibly_clean_or_free_segment(old_idx, lsn)?;
+                    self.segments[old_idx].remove_pid(pid, normalized_lsn);
+                    self.possibly_clean_or_free_segment(
+                        old_idx,
+                        normalized_lsn,
+                    )?;
                     replaced_segment = Some(old_idx);
                 }
             }
@@ -850,20 +853,19 @@ impl SegmentAccountant {
 
         let segment = &mut self.segments[idx];
 
-        let segment_lsn = lsn / self.config.segment_size as Lsn
-            * self.config.segment_size as Lsn;
+        let normalized_lsn = self.config.normalize(lsn);
 
         // a race happened, and our Lsn does not apply anymore
         assert_eq!(
             segment.lsn(),
-            segment_lsn,
+            normalized_lsn,
             "segment somehow got reused by the time a link was \
              marked on it. expected lsn: {} actual: {}",
-            segment_lsn,
+            normalized_lsn,
             segment.lsn()
         );
 
-        segment.insert_pid(pid, segment_lsn);
+        segment.insert_pid(pid, normalized_lsn);
     }
 
     fn possibly_clean_or_free_segment(
