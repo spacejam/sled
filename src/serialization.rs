@@ -727,16 +727,6 @@ mod qc {
         }
     }
 
-    impl Arbitrary for DiskPtr {
-        fn arbitrary<G: Gen>(g: &mut G) -> DiskPtr {
-            if g.gen() {
-                DiskPtr::Inline(g.gen())
-            } else {
-                DiskPtr::Heap(g.gen(), HeapId::arbitrary(g))
-            }
-        }
-    }
-
     impl Arbitrary for PageState {
         fn arbitrary<G: Gen>(g: &mut G) -> PageState {
             if g.gen() {

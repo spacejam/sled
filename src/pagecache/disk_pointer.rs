@@ -126,3 +126,16 @@ impl Serialize for DiskPtr {
         }))
     }
 }
+
+#[cfg(test)]
+impl quickcheck::Arbitrary for DiskPtr {
+    fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> DiskPtr {
+        use rand::Rng;
+
+        if g.gen() {
+            DiskPtr(DiskPtrInner::Inline(g.gen()))
+        } else {
+            DiskPtr(DiskPtrInner::Heap(g.gen(), HeapId::arbitrary(g)))
+        }
+    }
+}
