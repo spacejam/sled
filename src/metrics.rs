@@ -145,10 +145,6 @@ pub struct Metrics {
     pub tree_traverse: Histogram,
     pub write_to_log: Histogram,
     pub written_bytes: Histogram,
-    #[cfg(feature = "measure_allocs")]
-    pub allocations: CachePadded<AtomicUsize>,
-    #[cfg(feature = "measure_allocs")]
-    pub allocated_bytes: CachePadded<AtomicUsize>,
 }
 
 impl Metrics {
@@ -436,27 +432,6 @@ impl Metrics {
             sz("seg util start", &self.segment_utilization_startup),
             sz("seg util end", &self.segment_utilization_shutdown),
         ]));
-
-        #[cfg(feature = "measure_allocs")]
-        {
-            ret.push_str(&format!(
-                "{}\n",
-                std::iter::repeat("-").take(134).collect::<String>()
-            ));
-            ret.push_str("allocation statistics:\n");
-            ret.push_str(&format!(
-                "total allocations: {}\n",
-                measure_allocs::ALLOCATIONS
-                    .load(Acquire)
-                    .to_formatted_string(&Locale::en)
-            ));
-            ret.push_str(&format!(
-                "allocated bytes: {}\n",
-                measure_allocs::ALLOCATED_BYTES
-                    .load(Acquire)
-                    .to_formatted_string(&Locale::en)
-            ));
-        }
 
         ret
     }

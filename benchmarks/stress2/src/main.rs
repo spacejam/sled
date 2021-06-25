@@ -14,8 +14,8 @@ use rand::{thread_rng, Rng};
 
 #[cfg(feature = "jemalloc")]
 mod alloc {
-    use std::alloc::Layout;
     use jemallocator::Jemalloc;
+    use std::alloc::Layout;
 
     #[global_allocator]
     static ALLOCATOR: Jemalloc = Jemalloc;
@@ -23,7 +23,7 @@ mod alloc {
 
 #[cfg(feature = "memshred")]
 mod alloc {
-    use std::alloc::{System, Layout};
+    use std::alloc::{Layout, System};
 
     #[global_allocator]
     static ALLOCATOR: Alloc = Alloc;
@@ -42,11 +42,35 @@ mod alloc {
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
             std::ptr::write_bytes(ptr, 0xde, layout.size());
             System.dealloc(ptr, layout)
-
         }
     }
 }
 
+#[cfg(feature = "measure_allocs")]
+mod alloc {
+    use std::alloc::{Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering::Release};
+
+    pub static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+    pub static ALLOCATED_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+    #[global_allocator]
+    static ALLOCATOR: Alloc = Alloc;
+
+    #[derive(Default, Debug, Clone, Copy)]
+    struct Alloc;
+
+    unsafe impl std::alloc::GlobalAlloc for Alloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            ALLOCATIONS.fetch_add(1, Release);
+            ALLOCATED_BYTES.fetch_add(layout.size(), Release);
+            System.alloc(layout)
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            System.dealloc(ptr, layout)
+        }
+    }
+}
 
 #[global_allocator]
 #[cfg(feature = "dh")]
@@ -383,6 +407,17 @@ fn main() {
         ops.to_formatted_string(&Locale::en),
         time,
         ((ops * 1_000) / (time * 1_000)).to_formatted_string(&Locale::en)
+    );
+
+    #[cfg(feature = "measure_allocs")]
+    println!(
+        "allocated {} bytes in {} allocations",
+        alloc::ALLOCATED_BYTES
+            .load(Ordering::Acquire)
+            .to_formatted_string(&Locale::en),
+        alloc::ALLOCATIONS
+            .load(Ordering::Acquire)
+            .to_formatted_string(&Locale::en),
     );
 
     #[cfg(feature = "metrics")]
