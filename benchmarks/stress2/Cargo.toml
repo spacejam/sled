@@ -20,11 +20,11 @@ event_log = ["sled/event_log"]
 compression = ["sled/compression"]
 no_logs = ["sled/no_logs"]
 metrics = ["sled/metrics"]
-measure_allocs = ["sled/measure_allocs"]
 jemalloc = ["jemallocator"]
 logging = ["env_logger", "log", "color-backtrace"]
 dh = ["dhat"]
 memshred = []
+measure_allocs = []
 
 [dependencies]
 rand = "0.7.3"
