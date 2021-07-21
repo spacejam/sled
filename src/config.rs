@@ -696,7 +696,7 @@ impl Config {
         } else {
             #[allow(unsafe_code)]
             unsafe {
-                Err(ge.deref().clone())
+                Err(*ge.deref())
             }
         }
     }

@@ -544,7 +544,8 @@ impl<E> Transactional<E> for [Tree] {
         });
         if !same_db {
             return Err(Error::Unsupported(
-                "cannot use trees from multiple databases in the same transaction".into(),
+                "cannot use trees from multiple \
+                databases in the same transaction",
             ));
         }
 
@@ -572,7 +573,8 @@ impl<E> Transactional<E> for [&Tree] {
         });
         if !same_db {
             return Err(Error::Unsupported(
-                "cannot use trees from multiple databases in the same transaction".into(),
+                "cannot use trees from multiple \
+                databases in the same transaction",
             ));
         }
 
