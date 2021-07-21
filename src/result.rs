@@ -49,7 +49,7 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn corruption(at: Option<DiskPtr>) -> Error {
+    pub(crate) const fn corruption(at: Option<DiskPtr>) -> Error {
         Error::Corruption { at }
     }
 }

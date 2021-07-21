@@ -447,7 +447,7 @@ fn check_contiguity_in_unstable_tail(
     };
 
     // run the iterator to completion
-    while let Some(_) = iter.next() {}
+    for _ in &mut iter {}
 
     // `cur_lsn` is set to the beginning
     // of the next message

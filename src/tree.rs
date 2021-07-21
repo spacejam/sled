@@ -38,7 +38,7 @@ const fn out_of_bounds(numba: usize) -> bool {
 }
 
 #[cold]
-fn bounds_error() -> Result<()> {
+const fn bounds_error() -> Result<()> {
     Err(Error::Unsupported(
         "Keys and values are limited to \
         128gb on 64-bit platforms and

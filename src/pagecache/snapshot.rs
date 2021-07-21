@@ -264,7 +264,7 @@ fn advance_snapshot(
 
     let old_stable_lsn = snapshot.stable_lsn;
 
-    while let Some((log_kind, pid, lsn, ptr)) = iter.next() {
+    for (log_kind, pid, lsn, ptr) in &mut iter {
         trace!(
             "in advance_snapshot looking at item with pid {} lsn {} ptr {}",
             pid,
