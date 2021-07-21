@@ -104,7 +104,7 @@ impl Debug for Histogram {
 impl Histogram {
     /// Record a value.
     #[inline]
-    pub const fn measure(&self, raw_value: u64) {
+    pub fn measure(&self, raw_value: u64) {
         #[cfg(feature = "metrics")]
         {
             let value_float: f64 = raw_value as f64;
@@ -123,7 +123,7 @@ impl Histogram {
 
     /// Retrieve a percentile [0-100]. Returns NAN if no metrics have been
     /// collected yet.
-    pub const fn percentile(&self, p: f64) -> f64 {
+    pub fn percentile(&self, p: f64) -> f64 {
         #[cfg(feature = "metrics")]
         {
             assert!(p <= 100., "percentiles must not exceed 100.0");
