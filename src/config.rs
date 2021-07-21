@@ -68,8 +68,7 @@ impl StorageParameters {
                 return Err(Error::Unsupported(
                     "failed to open database that may \
                      have been created using a sled version \
-                     earlier than 0.29"
-                        .to_string(),
+                     earlier than 0.29",
                 ));
             };
             let mut split = line.split(": ").map(String::from);
@@ -282,7 +281,7 @@ impl Inner {
 macro_rules! supported {
     ($cond:expr, $msg:expr) => {
         if !$cond {
-            return Err(Error::Unsupported($msg.to_owned()));
+            return Err(Error::Unsupported($msg));
         }
     };
 }
@@ -550,15 +549,11 @@ impl Config {
                     file.try_lock_exclusive()
                 };
 
-            if let Err(e) = try_lock {
-                return Err(Error::Io(io::Error::new(
+            if try_lock.is_err() {
+                return Err(Error::Io(
                     ErrorKind::Other,
-                    format!(
-                        "could not acquire lock on {:?}: {:?}",
-                        self.db_path().to_string_lossy(),
-                        e
-                    ),
-                )));
+                    "could not acquire database file lock",
+                ));
             }
         }
 
@@ -568,28 +563,27 @@ impl Config {
     fn verify_config(&self) -> Result<()> {
         match self.read_config() {
             Ok(Some(old)) => {
-                supported!(
-                    self.use_compression == old.use_compression,
-                    format!(
-                        "cannot change compression values across restarts. \
-                         old value of use_compression loaded from disk: {}, \
-                         currently set value: {}.",
-                        old.use_compression, self.use_compression,
-                    )
-                );
+                if self.use_compression {
+                    supported!(
+                        old.use_compression,
+                        "cannot change compression configuration across restarts. \
+                        this database was created without compression enabled."
+                    );
+                } else {
+                    supported!(
+                        !old.use_compression,
+                        "cannot change compression configuration across restarts. \
+                        this database was created with compression enabled."
+                    );
+                }
 
                 supported!(
                     self.segment_size == old.segment_size,
-                    format!(
-                        "cannot change the io buffer size across restarts. \
-                         please change it back to {}",
-                        old.segment_size
-                    )
+                    "cannot change the io buffer size across restarts."
                 );
 
-                supported!(
-                    self.version == old.version,
-                    format!(
+                if self.version != old.version {
+                    error!(
                         "This database was created using \
                          pagecache version {}.{}, but our pagecache \
                          version is {}.{}. Please perform an upgrade \
@@ -599,8 +593,13 @@ impl Config {
                         old.version.1,
                         self.version.0,
                         self.version.1,
-                    )
-                );
+                    );
+                    supported!(
+                        self.version == old.version,
+                        "The stored database must use a compatible sled version.
+                        See error log for more details."
+                    );
+                }
                 Ok(())
             }
             Ok(None) => self.write_config(),

@@ -934,9 +934,9 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
     db.drop_tree(b"1")?;
     db.drop_tree(b"2")?;
 
-    assert_eq!(t1.get(b""), Err(Error::CollectionNotFound(b"1".into())));
+    assert_eq!(t1.get(b""), Err(Error::CollectionNotFound));
 
-    assert_eq!(t2.get(b""), Err(Error::CollectionNotFound(b"2".into())));
+    assert_eq!(t2.get(b""), Err(Error::CollectionNotFound));
 
     let guard = pin();
     guard.flush();

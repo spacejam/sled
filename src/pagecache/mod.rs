@@ -1904,7 +1904,7 @@ impl PageCacheInner {
         if let Some(root) = m.get_root(name) {
             Ok(root)
         } else {
-            Err(Error::CollectionNotFound(name.into()))
+            Err(Error::CollectionNotFound)
         }
     }
 
@@ -2088,10 +2088,10 @@ impl PageCacheInner {
 
         // TODO this feels racy, test it better?
         if let Update::Free = update {
-            Err(Error::ReportableBug(format!(
-                "non-link/replace found in pull of pid {}",
-                pid
-            )))
+            error!("non-link/replace found in pull of pid {}", pid);
+            Err(Error::ReportableBug(
+                "non-link/replace found in pull of page fragments",
+            ))
         } else {
             Ok(update)
         }
