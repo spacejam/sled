@@ -52,7 +52,7 @@
   reference.
 * #1337 Bump MSRV to 1.48.
 * #1349 The "measure_allocs" feature has been removed.
-* `Error` has been modified to be Copy, removing all
+* #1354 `Error` has been modified to be Copy, removing all
   heap-allocated variants.
 
 
