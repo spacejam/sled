@@ -118,8 +118,8 @@ jobs:
         rm -rf default.sled || true
         export RUSTFLAGS="-Z sanitizer=address"
         export ASAN_OPTIONS="detect_odr_violation=0"
-        cargo +nightly build --features=lock_free_delays --target x86_64-unknown-linux-gnu
-        target/x86_64-unknown-linux-gnu/debug/stress2 --duration=60
+        cargo +nightly build --release --target x86_64-unknown-linux-gnu
+        target/x86_64-unknown-linux-gnu/release/stress2 --duration=240
         rm -rf default.sled
     - name: print backtraces with gdb
       if: ${{ failure() }}
