@@ -61,7 +61,7 @@ impl PartialEq for Error {
         use self::Error::*;
 
         match *self {
-            CollectionNotFound => CollectionNotFound == *other,
+            CollectionNotFound => matches!(other, CollectionNotFound),
             Unsupported(ref l) => {
                 if let Unsupported(ref r) = *other {
                     l == r
