@@ -435,7 +435,7 @@ const fn unshift_i64_opt(value: i64) -> Option<i64> {
     if value == 0 {
         return None
     }
-    let subtract = value < 0;
+    let subtract = value > 0;
     Some(value - subtract as i64)
 }
 
