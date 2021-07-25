@@ -264,7 +264,7 @@ fn advance_snapshot(
 
     let old_stable_lsn = snapshot.stable_lsn;
 
-    while let Some((log_kind, pid, lsn, ptr)) = iter.next() {
+    for (log_kind, pid, lsn, ptr) in &mut iter {
         trace!(
             "in advance_snapshot looking at item with pid {} lsn {} ptr {}",
             pid,
@@ -310,19 +310,17 @@ fn advance_snapshot(
     #[cfg(feature = "testing")]
     let mut shred_point = None;
 
-    let snapshot = if db_is_empty {
+    if db_is_empty {
         trace!("db is empty, returning default snapshot");
         if snapshot != Snapshot::default() {
             error!("expected snapshot to be Snapshot::default");
             return Err(Error::corruption(None));
         }
-        snapshot
     } else if iter.cur_lsn.is_none() {
         trace!(
             "no recovery progress happened since the last snapshot \
             was generated, returning the previous one"
         );
-        snapshot
     } else {
         let iterated_lsn = iter.cur_lsn.unwrap();
 
@@ -391,8 +389,6 @@ fn advance_snapshot(
         snapshot.stable_lsn = Some(stable_lsn);
         snapshot.active_segment = active_segment;
         snapshot.filter_inner_heap_ids();
-
-        snapshot
     };
 
     trace!("generated snapshot: {:?}", snapshot);
