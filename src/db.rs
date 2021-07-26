@@ -146,9 +146,7 @@ impl Db {
     pub fn drop_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<bool> {
         let name_ref = name.as_ref();
         if name_ref == DEFAULT_TREE_ID {
-            return Err(Error::Unsupported(
-                "cannot remove the core structures".into(),
-            ));
+            return Err(Error::Unsupported("cannot remove the default tree"));
         }
         trace!("dropping tree {:?}", name_ref,);
 

@@ -433,12 +433,10 @@ fn shift_i64_opt(value_opt: &Option<i64>) -> i64 {
 
 const fn unshift_i64_opt(value: i64) -> Option<i64> {
     if value == 0 {
-        None
-    } else if value < 0 {
-        Some(value)
-    } else {
-        Some(value - 1)
+        return None
     }
+    let subtract = value > 0;
+    Some(value - subtract as i64)
 }
 
 impl Serialize for Snapshot {

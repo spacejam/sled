@@ -196,20 +196,20 @@ impl Metrics {
     pub fn format_profile(&self) -> String {
         let mut ret = String::new();
         ret.push_str(&format!(
-            "sled profile:\n\
-             {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}\n",
-            "op",
-            "min (us)",
-            "med (us)",
-            "90 (us)",
-            "99 (us)",
-            "99.9 (us)",
-            "99.99 (us)",
-            "max (us)",
-            "count",
-            "sum (s)"
+                "sled profile:\n \
+                {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}\n",
+                "op",
+                "min (us)",
+                "med (us)",
+                "90 (us)",
+                "99 (us)",
+                "99.9 (us)",
+                "99.99 (us)",
+                "max (us)",
+                "count",
+                "sum (s)"
         ));
-        ret.push_str(&format!("{}\n", "-".repeat(134),));
+        ret.push_str(&format!("{}\n", "-".repeat(134)));
 
         let p =
             |mut tuples: Vec<(String, _, _, _, _, _, _, _, _, _)>| -> String {
@@ -282,28 +282,28 @@ impl Metrics {
             total_loops, loop_pct
         ));
         ret.push_str(&format!(
-            "tree split success rates: child({}/{}) parent({}/{}) root({}/{})\n",
-            self.tree_child_split_success.load(Acquire)
-                    .to_formatted_string(&Locale::en)
-            ,
-            self.tree_child_split_attempt.load(Acquire)
-                    .to_formatted_string(&Locale::en)
-            ,
-            self.tree_parent_split_success.load(Acquire)
-                    .to_formatted_string(&Locale::en)
-            ,
-            self.tree_parent_split_attempt.load(Acquire)
-                    .to_formatted_string(&Locale::en)
-            ,
-            self.tree_root_split_success.load(Acquire)
-                    .to_formatted_string(&Locale::en)
-            ,
-            self.tree_root_split_attempt.load(Acquire)
-                    .to_formatted_string(&Locale::en)
-            ,
-        ));
+                "tree split success rates: child({}/{}) parent({}/{}) root({}/{})\n",
+                self.tree_child_split_success.load(Acquire)
+                .to_formatted_string(&Locale::en)
+                ,
+                self.tree_child_split_attempt.load(Acquire)
+                .to_formatted_string(&Locale::en)
+                ,
+                self.tree_parent_split_success.load(Acquire)
+                .to_formatted_string(&Locale::en)
+                ,
+                self.tree_parent_split_attempt.load(Acquire)
+                .to_formatted_string(&Locale::en)
+                ,
+                self.tree_root_split_success.load(Acquire)
+                .to_formatted_string(&Locale::en)
+                ,
+                self.tree_root_split_attempt.load(Acquire)
+                .to_formatted_string(&Locale::en)
+                ,
+                ));
 
-        ret.push_str(&format!("{}\n", "-".repeat(134),));
+        ret.push_str(&format!("{}\n", "-".repeat(134)));
         ret.push_str("pagecache:\n");
         ret.push_str(&p(vec![
             lat("get", &self.get_page),
@@ -319,7 +319,7 @@ impl Metrics {
             / (self.get_page.count() + 1);
         ret.push_str(&format!("hit ratio: {}%\n", hit_ratio));
 
-        ret.push_str(&format!("{}\n", "-".repeat(134),));
+        ret.push_str(&format!("{}\n", "-".repeat(134)));
         ret.push_str("serialization and compression:\n");
         ret.push_str(&p(vec![
             lat("serialize", &self.serialize),
@@ -330,7 +330,7 @@ impl Metrics {
             lat("decompress", &self.decompress),
         ]));
 
-        ret.push_str(&format!("{}\n", "-".repeat(134),));
+        ret.push_str(&format!("{}\n", "-".repeat(134)));
         ret.push_str("log:\n");
         ret.push_str(&p(vec![
             lat("make_stable", &self.make_stable),
@@ -389,7 +389,7 @@ impl Metrics {
                 .to_formatted_string(&Locale::en)
         ));
 
-        ret.push_str(&format!("{}\n", "-".repeat(134),));
+        ret.push_str(&format!("{}\n", "-".repeat(134)));
         ret.push_str("segment accountant:\n");
         ret.push_str(&p(vec![
             lat("acquire", &self.accountant_lock),
@@ -400,7 +400,7 @@ impl Metrics {
             lat("link", &self.accountant_mark_link),
         ]));
 
-        ret.push_str(&format!("{}\n", "-".repeat(134),));
+        ret.push_str(&format!("{}\n", "-".repeat(134)));
         ret.push_str("recovery:\n");
         ret.push_str(&p(vec![
             lat("start", &self.tree_start),

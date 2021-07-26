@@ -5,13 +5,7 @@ use std::{
     io,
 };
 
-#[cfg(feature = "testing")]
-use backtrace::Backtrace;
-
-use crate::{
-    pagecache::{DiskPtr, PageView},
-    IVec,
-};
+use crate::pagecache::{DiskPtr, PageView};
 
 /// The top-level result type for dealing with
 /// fallible operations. The errors tend to
@@ -32,27 +26,21 @@ pub(crate) type CasResult<'a, R> =
 
 /// An Error type encapsulating various issues that may come up
 /// in the operation of a `Db`.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Error {
     /// The underlying collection no longer exists.
-    CollectionNotFound(IVec),
+    CollectionNotFound,
     /// The system has been used in an unsupported way.
-    Unsupported(String),
+    Unsupported(&'static str),
     /// An unexpected bug has happened. Please open an issue on github!
-    ReportableBug(String),
+    ReportableBug(&'static str),
     /// A read or write error has happened when interacting with the file
     /// system.
-    Io(io::Error),
+    Io(io::ErrorKind, &'static str),
     /// Corruption has been detected in the storage file.
     Corruption {
         /// The file location that corrupted data was found at.
         at: Option<DiskPtr>,
-        /// A backtrace for where the corruption was encountered.
-        #[cfg(feature = "testing")]
-        bt: Backtrace,
-        /// A backtrace for where the corruption was encountered.
-        #[cfg(not(feature = "testing"))]
-        bt: (),
     },
     // a failpoint has been triggered for testing purposes
     #[doc(hidden)]
@@ -61,30 +49,8 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn corruption(at: Option<DiskPtr>) -> Error {
-        Error::Corruption {
-            at,
-            #[cfg(feature = "testing")]
-            bt: Backtrace::new(),
-            #[cfg(not(feature = "testing"))]
-            bt: (),
-        }
-    }
-}
-
-impl Clone for Error {
-    fn clone(&self) -> Self {
-        use self::Error::*;
-
-        match self {
-            Io(ioe) => Io(io::Error::new(ioe.kind(), format!("{:?}", ioe))),
-            CollectionNotFound(name) => CollectionNotFound(name.clone()),
-            Unsupported(why) => Unsupported(why.clone()),
-            ReportableBug(what) => ReportableBug(what.clone()),
-            Corruption { at, bt } => Corruption { at: *at, bt: bt.clone() },
-            #[cfg(feature = "failpoints")]
-            FailPoint => FailPoint,
-        }
+    pub(crate) const fn corruption(at: Option<DiskPtr>) -> Error {
+        Error::Corruption { at }
     }
 }
 
@@ -95,13 +61,7 @@ impl PartialEq for Error {
         use self::Error::*;
 
         match *self {
-            CollectionNotFound(ref l) => {
-                if let CollectionNotFound(ref r) = *other {
-                    l == r
-                } else {
-                    false
-                }
-            }
+            CollectionNotFound => matches!(other, CollectionNotFound),
             Unsupported(ref l) => {
                 if let Unsupported(ref r) = *other {
                     l == r
@@ -127,7 +87,7 @@ impl PartialEq for Error {
                     false
                 }
             }
-            Io(_) => false,
+            Io(_, _) => false,
         }
     }
 }
@@ -135,7 +95,7 @@ impl PartialEq for Error {
 impl From<io::Error> for Error {
     #[inline]
     fn from(io_error: io::Error) -> Self {
-        Error::Io(io_error)
+        Error::Io(io_error.kind(), "io error")
     }
 }
 
@@ -144,10 +104,10 @@ impl From<Error> for io::Error {
         use self::Error::*;
         use std::io::ErrorKind;
         match error {
-            Io(ioe) => ioe,
-            CollectionNotFound(name) => io::Error::new(
+            Io(kind, reason) => io::Error::new(kind, reason),
+            CollectionNotFound => io::Error::new(
                 ErrorKind::NotFound,
-                format!("collection not found: {:?}", name),
+                "collection not found"
             ),
             Unsupported(why) => io::Error::new(
                 ErrorKind::InvalidInput,
@@ -180,8 +140,8 @@ impl Display for Error {
         use self::Error::*;
 
         match *self {
-            CollectionNotFound(ref name) => {
-                write!(f, "Collection {:?} does not exist", name,)
+            CollectionNotFound => {
+                write!(f, "Collection does not exist")
             }
             Unsupported(ref e) => write!(f, "Unsupported: {}", e),
             ReportableBug(ref e) => write!(
@@ -192,12 +152,12 @@ impl Display for Error {
             ),
             #[cfg(feature = "failpoints")]
             FailPoint => write!(f, "Fail point has been triggered."),
-            Io(ref e) => write!(f, "IO error: {}", e),
-            Corruption { at, ref bt } => write!(
-                f,
-                "Read corrupted data at file offset {:?} backtrace {:?}",
-                at, bt
-            ),
+            Io(ref kind, ref reason) => {
+                write!(f, "IO error: ({:?}, {})", kind, reason)
+            }
+            Corruption { at } => {
+                write!(f, "Read corrupted data at file offset {:?}", at)
+            }
         }
     }
 }

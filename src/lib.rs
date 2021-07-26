@@ -162,6 +162,7 @@
         // clippy::wildcard_enum_match_arm,
     )
 )]
+#![allow(clippy::comparison_chain)]
 
 macro_rules! io_fail {
     ($config:expr, $e:expr) => {

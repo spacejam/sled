@@ -831,7 +831,7 @@ impl PageCache {
             // changing.
             let ts = old.ts() + 1;
 
-            let cache_info = CacheInfo { lsn, pointer, ts };
+            let cache_info = CacheInfo { ts, lsn, pointer };
 
             let mut new_cache_infos =
                 Vec::with_capacity(old.cache_infos.len() + 1);
@@ -1663,8 +1663,7 @@ impl PageCacheInner {
                 "{:?}",
                 Error::ReportableBug(
                     "failed to retrieve META page \
-                 which should always be present"
-                        .into(),
+                     which should always be present"
                 )
             )
         }
@@ -1686,8 +1685,7 @@ impl PageCacheInner {
                 "{:?}",
                 Error::ReportableBug(
                     "failed to retrieve counter page \
-                 which should always be present"
-                        .into(),
+                     which should always be present"
                 )
             )
         }
@@ -1906,7 +1904,7 @@ impl PageCacheInner {
         if let Some(root) = m.get_root(name) {
             Ok(root)
         } else {
-            Err(Error::CollectionNotFound(name.into()))
+            Err(Error::CollectionNotFound)
         }
     }
 
@@ -1950,8 +1948,7 @@ impl PageCacheInner {
                 Err(None) => {
                     return Err(Error::ReportableBug(
                         "replacing the META page has failed because \
-                         the pagecache does not think it currently exists."
-                            .into(),
+                         the pagecache does not think it currently exists.",
                     ));
                 }
             }
@@ -2090,10 +2087,10 @@ impl PageCacheInner {
 
         // TODO this feels racy, test it better?
         if let Update::Free = update {
-            Err(Error::ReportableBug(format!(
-                "non-link/replace found in pull of pid {}",
-                pid
-            )))
+            error!("non-link/replace found in pull of pid {}", pid);
+            Err(Error::ReportableBug(
+                "non-link/replace found in pull of page fragments",
+            ))
         } else {
             Ok(update)
         }
