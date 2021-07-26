@@ -145,10 +145,6 @@ pub struct Metrics {
     pub tree_traverse: Histogram,
     pub write_to_log: Histogram,
     pub written_bytes: Histogram,
-    #[cfg(feature = "measure_allocs")]
-    pub allocations: CachePadded<AtomicUsize>,
-    #[cfg(feature = "measure_allocs")]
-    pub allocated_bytes: CachePadded<AtomicUsize>,
 }
 
 impl Metrics {

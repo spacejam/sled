@@ -2225,27 +2225,25 @@ impl Inner {
         if size == 0 || self.index_key(0).unwrap_slice() > key {
             return Err(0);
         }
-        let mut base = 0_usize;
-        while size > 1 {
-            let half = size / 2;
-            let mid = base + half;
-            // mid is always in [0, size), that means mid is >= 0 and < size.
-            // mid >= 0: by definition
-            // mid < size: mid = size / 2 + size / 4 + size / 8 ...
+        let mut left = 0;
+        let mut right = size;
+        while left < right {
+            let mid = left + size / 2;
+
             let l = self.index_key(mid);
             let cmp = crate::fastcmp(l.unwrap_slice(), key);
-            base = if cmp == Greater { base } else { mid };
-            size -= half;
-        }
-        // base is always in [0, size) because base <= mid.
-        let l = self.index_key(base);
-        let cmp = crate::fastcmp(l.unwrap_slice(), key);
 
-        if cmp == Equal {
-            Ok(base)
-        } else {
-            Err(base + (cmp == Less) as usize)
+            if cmp == Less {
+                left = mid + 1;
+            } else if cmp == Greater {
+                right = mid;
+            } else {
+                return Ok(mid);
+            }
+
+            size = right - left;
         }
+        Err(left)
     }
 
     pub(crate) fn can_merge_child(&self, pid: u64) -> bool {
