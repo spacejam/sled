@@ -98,11 +98,12 @@ jobs:
     - name: Cache target
       uses: actions/cache@v2
       env:
-        cache-name: cache-stress2-target-and-lockfile
+        cache-name: cache-stress2-asan-target-and-lockfile
       with:
         path: |
           benchmarks/stress2/target
           benchmarks/stress2/Cargo.lock
+          ~/.rustup
         key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
     - name: burn in
       run: |
@@ -111,8 +112,14 @@ jobs:
         ulimit -c unlimited
         echo "$PWD/core-dumps/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
         mkdir core-dumps
+        rustup toolchain install nightly
+        rustup toolchain install nightly --component rust-src
+        rustup update
         rm -rf default.sled || true
-        cargo run --release -- --duration=60
+        export RUSTFLAGS="-Z sanitizer=address"
+        export ASAN_OPTIONS="detect_odr_violation=0"
+        cargo +nightly build --release --target x86_64-unknown-linux-gnu
+        target/x86_64-unknown-linux-gnu/release/stress2 --duration=240
         rm -rf default.sled
     - name: print backtraces with gdb
       if: ${{ failure() }}

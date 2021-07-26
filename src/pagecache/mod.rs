@@ -840,7 +840,7 @@ impl PageCache {
             // changing.
             let ts = old.ts() + 1;
 
-            let cache_info = CacheInfo { lsn, pointer, ts };
+            let cache_info = CacheInfo { ts, lsn, pointer };
 
             let mut new_cache_infos =
                 Vec::with_capacity(old.cache_infos.len() + 1);
@@ -944,13 +944,13 @@ impl PageCache {
             'inner: loop {
                 let pg_view = self.inner.get(pid, &guard);
 
-                match &*pg_view.cache_infos {
-                    &[_single_cache_info] => {
+                match *pg_view.cache_infos {
+                    [_single_cache_info] => {
                         let page_state = pg_view.to_page_state();
                         page_states.push(page_state);
                         break 'inner;
                     }
-                    &[_first_of_several, ..] => {
+                    [_first_of_several, ..] => {
                         // If a page has multiple disk locations,
                         // rewrite it to a single one before storing
                         // a single 8-byte pointer to its cold location.
@@ -965,7 +965,7 @@ impl PageCache {
                         }
                         continue 'inner;
                     }
-                    &[] => {
+                    [] => {
                         // there is a benign race with the thread
                         // that is allocating this page. the allocating
                         // thread has not yet written the new page to disk,
@@ -1661,8 +1661,7 @@ impl PageCacheInner {
                 "{:?}",
                 Error::ReportableBug(
                     "failed to retrieve META page \
-                 which should always be present"
-                        .into(),
+                     which should always be present"
                 )
             )
         }
@@ -1684,8 +1683,7 @@ impl PageCacheInner {
                 "{:?}",
                 Error::ReportableBug(
                     "failed to retrieve counter page \
-                 which should always be present"
-                        .into(),
+                     which should always be present"
                 )
             )
         }
@@ -1904,7 +1902,7 @@ impl PageCacheInner {
         if let Some(root) = m.get_root(name) {
             Ok(root)
         } else {
-            Err(Error::CollectionNotFound(name.into()))
+            Err(Error::CollectionNotFound)
         }
     }
 
@@ -1948,8 +1946,7 @@ impl PageCacheInner {
                 Err(None) => {
                     return Err(Error::ReportableBug(
                         "replacing the META page has failed because \
-                         the pagecache does not think it currently exists."
-                            .into(),
+                         the pagecache does not think it currently exists.",
                     ));
                 }
             }
@@ -2088,10 +2085,10 @@ impl PageCacheInner {
 
         // TODO this feels racy, test it better?
         if let Update::Free = update {
-            Err(Error::ReportableBug(format!(
-                "non-link/replace found in pull of pid {}",
-                pid
-            )))
+            error!("non-link/replace found in pull of pid {}", pid);
+            Err(Error::ReportableBug(
+                "non-link/replace found in pull of page fragments",
+            ))
         } else {
             Ok(update)
         }

@@ -23,7 +23,6 @@
 
 ## Breaking Changes
 
-* #1349 The "measure_allocs" feature has been removed.
 * #1135 The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.
 * #1178 the `Event` enum has become a unified struct that allows
@@ -52,6 +51,9 @@
 * #1314 `Subscriber::next_timeout` now requires a mutable self
   reference.
 * #1337 Bump MSRV to 1.48.
+* #1349 The "measure_allocs" feature has been removed.
+* #1354 `Error` has been modified to be Copy, removing all
+  heap-allocated variants.
 
 
 ## Bug Fixes

@@ -54,7 +54,7 @@ where
                     merge_operator: RwLock::new(None),
                 })));
             }
-            Err(Error::CollectionNotFound(_)) => {}
+            Err(Error::CollectionNotFound) => {}
             Err(other) => return Err(other),
         }
 

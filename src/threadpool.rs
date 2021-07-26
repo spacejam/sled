@@ -268,7 +268,7 @@ pub fn truncate(config: crate::RunningConfig, at: u64) -> OneShot<Result<()>> {
                 .map_err(|e| e.into());
 
             if let Err(e) = &ret {
-                config.set_global_error(e.clone());
+                config.set_global_error(*e);
             }
 
             ret
