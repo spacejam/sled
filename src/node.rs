@@ -1423,6 +1423,14 @@ impl Inner {
                         value_storage_size
                     };
 
+            #[cfg(target_pointer_width = "32")]
+            let bytes_per_offset: u8 = match max_indexable_offset {
+                i if i < 256 => 1,
+                i if i < (1 << 16) => 2,
+                i if i < (1 << 24) => 3,
+                _ => unreachable!(),
+            };
+            #[cfg(not(target_pointer_width = "32"))]
             let bytes_per_offset: u8 = match max_indexable_offset {
                 i if i < 256 => 1,
                 i if i < (1 << 16) => 2,
