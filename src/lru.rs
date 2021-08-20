@@ -114,9 +114,9 @@ impl AccessQueue {
 
                 // push the now-full item to the full list for future
                 // consumption
-                let mut ret;
-                let mut full_list_ptr = self.full_list.load(Ordering::Acquire);
-                while {
+                let ret;
+                let full_list_ptr = self.full_list.load(Ordering::Acquire);
+                let res = {
                     // we loop because maybe other threads are pushing stuff too
                     block.next.store(full_list_ptr, Ordering::Release);
                     debug_delay();
@@ -127,8 +127,8 @@ impl AccessQueue {
                         Ordering::Relaxed,
                     );
                     ret.is_err()
-                } {
-                    full_list_ptr = ret.unwrap_err();
+                }; if res {
+                    // full_list_ptr = ret.unwrap_err();
                 }
                 return true;
             }

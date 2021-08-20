@@ -105,7 +105,7 @@ fn run(
         //
         // this looks weird because it's a rust-style do-while
         // where the conditional is the full body
-        while {
+        let res = {
             let made_progress = match pagecache.attempt_gc() {
                 Err(e) => {
                     error!(
@@ -130,7 +130,7 @@ fn run(
             made_progress
                 && shutdown.is_running()
                 && before.elapsed() < flush_every / 2
-        } {}
+        }; if res {}
 
         if let Err(e) = pagecache.config.file.sync_all() {
             error!("failed to fsync from periodic flush thread: {}", e);
