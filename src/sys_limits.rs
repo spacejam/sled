@@ -114,9 +114,5 @@ pub fn get_memory_limit() -> Option<usize> {
     }
 
     let ret = usize::try_from(max).expect("cache limit not representable");
-    if ret == 0 {
-        None
-    } else {
-        Some(ret)
-    }
+    if ret == 0 { None } else { Some(ret) }
 }

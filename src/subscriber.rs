@@ -180,7 +180,7 @@ impl Future for Subscriber {
                     Ok(future_rx) => future_rx,
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
-                        return Poll::Ready(None)
+                        return Poll::Ready(None);
                     }
                 }
             };
@@ -239,10 +239,7 @@ impl Drop for Subscribers {
 }
 
 impl Subscribers {
-    pub(crate) fn register(
-        &self,
-        prefix: &[u8]
-    ) -> Subscriber {
+    pub(crate) fn register(&self, prefix: &[u8]) -> Subscriber {
         self.ever_used.store(true, Relaxed);
         let r_mu = {
             let r_mu = self.watched.read();

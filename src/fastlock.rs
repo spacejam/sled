@@ -60,10 +60,6 @@ impl<T> FastLock<T> {
 
         let success = lock_result.is_ok();
 
-        if success {
-            Some(FastLockGuard { mu: self })
-        } else {
-            None
-        }
+        if success { Some(FastLockGuard { mu: self }) } else { None }
     }
 }

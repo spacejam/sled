@@ -1,7 +1,7 @@
 //! Lock-free intrusive linked list.
 //!
-//! Ideas from Michael.  High Performance Dynamic Lock-Free Hash Tables and List-Based Sets.  SPAA
-//! 2002.  `http://dl.acm.org/citation.cfm?id=564870.564881`
+//! Ideas from Michael.  High Performance Dynamic Lock-Free Hash Tables and
+//! List-Based Sets.  SPAA 2002.  `http://dl.acm.org/citation.cfm?id=564870.564881`
 
 use core::marker::PhantomData;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
@@ -10,8 +10,8 @@ use super::{pin, Atomic, Guard, Shared};
 
 /// An entry in a linked list.
 ///
-/// An Entry is accessed from multiple threads, so it would be beneficial to put it in a different
-/// cache-line than thread-local data in terms of performance.
+/// An Entry is accessed from multiple threads, so it would be beneficial to put
+/// it in a different cache-line than thread-local data in terms of performance.
 #[derive(Debug)]
 pub struct Entry {
     /// The next entry in the linked list.
@@ -19,19 +19,20 @@ pub struct Entry {
     next: Atomic<Entry>,
 }
 
-/// Implementing this trait asserts that the type `T` can be used as an element in the intrusive
-/// linked list defined in this module. `T` has to contain (or otherwise be linked to) an instance
-/// of `Entry`.
+/// Implementing this trait asserts that the type `T` can be used as an element
+/// in the intrusive linked list defined in this module. `T` has to contain (or
+/// otherwise be linked to) an instance of `Entry`.
 ///
 /// # Example
 ///
-/// This trait is implemented on a type separate from `T` (although it can be just `T`), because
-/// one type might be placeable into multiple lists, in which case it would require multiple
-/// implementations of `IsElement`. In such cases, each struct implementing `IsElement<T>`
-/// represents a distinct `Entry` in `T`.
+/// This trait is implemented on a type separate from `T` (although it can be
+/// just `T`), because one type might be placeable into multiple lists, in which
+/// case it would require multiple implementations of `IsElement`. In such
+/// cases, each struct implementing `IsElement<T>` represents a distinct `Entry`
+/// in `T`.
 ///
-/// For example, we can insert the following struct into two lists using `entry1` for one
-/// and `entry2` for the other:
+/// For example, we can insert the following struct into two lists using
+/// `entry1` for one and `entry2` for the other:
 pub trait IsElement<T> {
     /// Returns a reference to this element's `Entry`.
     fn entry_of(_: &T) -> &Entry;
@@ -40,16 +41,16 @@ pub trait IsElement<T> {
     ///
     /// # Safety
     ///
-    /// The caller has to guarantee that the `Entry` is called with was retrieved from an instance
-    /// of the element type (`T`).
+    /// The caller has to guarantee that the `Entry` is called with was
+    /// retrieved from an instance of the element type (`T`).
     unsafe fn element_of(_: &Entry) -> &T;
 
     /// The function that is called when an entry is unlinked from list.
     ///
     /// # Safety
     ///
-    /// The caller has to guarantee that the `Entry` is called with was retrieved from an instance
-    /// of the element type (`T`).
+    /// The caller has to guarantee that the `Entry` is called with was
+    /// retrieved from an instance of the element type (`T`).
     unsafe fn finalize(_: &Entry, _: &Guard);
 }
 
@@ -85,8 +86,9 @@ pub struct Iter<'g, T, C: IsElement<T>> {
 /// An error that occurs during iteration over the list.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IterError {
-    /// A concurrent thread modified the state of the list at the same place that this iterator
-    /// was inspecting. Subsequent iteration will restart from the beginning of the list.
+    /// A concurrent thread modified the state of the list at the same place
+    /// that this iterator was inspecting. Subsequent iteration will
+    /// restart from the beginning of the list.
     Stalled,
 }
 
@@ -98,13 +100,15 @@ impl Default for Entry {
 }
 
 impl Entry {
-    /// Marks this entry as deleted, deferring the actual deallocation to a later iteration.
+    /// Marks this entry as deleted, deferring the actual deallocation to a
+    /// later iteration.
     ///
     /// # Safety
     ///
-    /// The entry should be a member of a linked list, and it should not have been deleted.
-    /// It should be safe to call `C::finalize` on the entry after the `guard` is dropped, where `C`
-    /// is the associated helper for the linked list.
+    /// The entry should be a member of a linked list, and it should not have
+    /// been deleted. It should be safe to call `C::finalize` on the entry
+    /// after the `guard` is dropped, where `C` is the associated helper for
+    /// the linked list.
     pub unsafe fn delete(&self, guard: &Guard) {
         self.next.fetch_or(1, Release, guard);
     }
@@ -142,13 +146,13 @@ impl<T, C: IsElement<T>> List<T, C> {
         let mut next = to.load(Relaxed, guard);
 
         loop {
-            // Set the Entry of the to-be-inserted element to point to the previous successor of
-            // `to`.
+            // Set the Entry of the to-be-inserted element to point to the
+            // previous successor of `to`.
             entry.next.store(next, Relaxed);
             match to.compare_and_set_weak(next, entry_ptr, Release, guard) {
                 Ok(_) => break,
-                // We lost the race or weak CAS failed spuriously. Update the successor and try
-                // again.
+                // We lost the race or weak CAS failed spuriously. Update the
+                // successor and try again.
                 Err(err) => next = err.current,
             }
         }
@@ -158,14 +162,16 @@ impl<T, C: IsElement<T>> List<T, C> {
     ///
     /// # Caveat
     ///
-    /// Every object that is inserted at the moment this function is called and persists at least
-    /// until the end of iteration will be returned. Since this iterator traverses a lock-free
-    /// linked list that may be concurrently modified, some additional caveats apply:
+    /// Every object that is inserted at the moment this function is called and
+    /// persists at least until the end of iteration will be returned. Since
+    /// this iterator traverses a lock-free linked list that may be
+    /// concurrently modified, some additional caveats apply:
     ///
-    /// 1. If a new object is inserted during iteration, it may or may not be returned.
-    /// 2. If an object is deleted during iteration, it may or may not be returned.
-    /// 3. The iteration may be aborted when it lost in a race condition. In this case, the winning
-    ///    thread will continue to iterate over the same list.
+    /// 1. If a new object is inserted during iteration, it may or may not be
+    /// returned. 2. If an object is deleted during iteration, it may or may
+    /// not be returned. 3. The iteration may be aborted when it lost in a
+    /// race condition. In this case, the winning    thread will continue to
+    /// iterate over the same list.
     pub fn iter<'g>(&'g self, guard: &'g Guard) -> Iter<'g, T, C> {
         Iter {
             guard,
@@ -205,19 +211,23 @@ impl<'g, T: 'g, C: IsElement<T>> Iterator for Iter<'g, T, C> {
                 // This entry was removed. Try unlinking it from the list.
                 let succ = succ.with_tag(0);
 
-                // The tag should always be zero, because removing a node after a logically deleted
-                // node leaves the list in an invalid state.
+                // The tag should always be zero, because removing a node after
+                // a logically deleted node leaves the list in
+                // an invalid state.
                 debug_assert!(self.curr.tag() == 0);
 
-                // Try to unlink `curr` from the list, and get the new value of `self.pred`.
+                // Try to unlink `curr` from the list, and get the new value of
+                // `self.pred`.
                 let succ = match self
                     .pred
                     .compare_and_set(self.curr, succ, Acquire, self.guard)
                 {
                     Ok(_) => {
-                        // We succeeded in unlinking `curr`, so we have to schedule
-                        // deallocation. Deferred drop is okay, because `list.delete()` can only be
-                        // called if `T: 'static`.
+                        // We succeeded in unlinking `curr`, so we have to
+                        // schedule deallocation.
+                        // Deferred drop is okay, because `list.delete()` can
+                        // only be called if `T:
+                        // 'static`.
                         unsafe {
                             C::finalize(self.curr.deref(), self.guard);
                         }
@@ -231,8 +241,8 @@ impl<'g, T: 'g, C: IsElement<T>> Iterator for Iter<'g, T, C> {
                     }
                 };
 
-                // If the predecessor node is already marked as deleted, we need to restart from
-                // `head`.
+                // If the predecessor node is already marked as deleted, we need
+                // to restart from `head`.
                 if succ.tag() != 0 {
                     self.pred = self.head;
                     self.curr = self.head.load(Acquire, self.guard);
