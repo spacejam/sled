@@ -489,6 +489,79 @@ pub trait Transactional<E = ()> {
             }
         }
     }
+
+    /// Runs a transaction with a state, possibly retrying the passed-in
+    /// closure if a concurrent conflict is detected that would cause a
+    /// violation of serializability. This is the only trait method that
+    /// you're most likely to use directly.
+    /// ```
+    /// # use sled::{transaction::{TransactionResult, TransactionalTree}, Config};
+    /// # fn main() -> TransactionResult<()> {
+    ///
+    /// # let config = Config::new().temporary(true);
+    /// # let db1 = config.open().unwrap();
+    /// # let db = db1.open_tree(b"a").unwrap();
+    ///
+    /// # db.transaction(|db| {
+    /// #     db.insert(b"k", b"cats")?;
+    /// #     Ok(())
+    /// # })?;
+    ///
+    /// struct State {
+    ///     buf: [u8; 1024],
+    /// }
+    ///
+    /// let mut state = State {
+    ///     buf: [0u8; 1024],
+    /// };
+    /// db.transaction_with_state(&mut state, |state, db| {
+    ///     if let Some(value) = db.get(b"k")? {
+    ///         state.buf[..value.len()].copy_from_slice(&value);
+    ///     }
+    ///
+    ///     Ok(())
+    /// })?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn transaction_with_state<F, A, S>(
+        &self,
+        state: &mut S,
+        f: F,
+    ) -> TransactionResult<A, E>
+    where
+        F: Fn(&mut S, &Self::View) -> ConflictableTransactionResult<A, E>,
+    {
+        loop {
+            let tt = self.make_overlay()?;
+            let view = Self::view_overlay(&tt);
+
+            // NB locks must exist until this function returns.
+            let locks = tt.stage();
+            let ret = f(state, &view);
+            if !tt.validate() {
+                tt.unstage();
+                continue;
+            }
+            match ret {
+                Ok(r) => {
+                    let guard = pin();
+                    tt.commit(&guard)?;
+                    drop(locks);
+                    tt.flush_if_configured()?;
+                    return Ok(r);
+                }
+                Err(ConflictableTransactionError::Abort(e)) => {
+                    return Err(TransactionError::Abort(e));
+                }
+                Err(ConflictableTransactionError::Conflict) => continue,
+                Err(ConflictableTransactionError::Storage(other)) => {
+                    return Err(TransactionError::Storage(other));
+                }
+            }
+        }
+    }
 }
 
 impl<E> Transactional<E> for &Tree {

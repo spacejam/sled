@@ -365,6 +365,53 @@ impl Tree {
         Transactional::transaction(&self, f)
     }
 
+    /// Perform a multi-key serializable transaction with a state.
+    ///
+    /// ```
+    /// # use sled::{transaction::{TransactionResult, TransactionalTree}, Config};
+    /// # fn main() -> TransactionResult<()> {
+    ///
+    /// # let config = Config::new().temporary(true);
+    /// # let db1 = config.open().unwrap();
+    /// # let db = db1.open_tree(b"a").unwrap();
+    ///
+    /// # db.transaction(|db| {
+    /// #     db.insert(b"k", b"cats")?;
+    /// #     Ok(())
+    /// # })?;
+    ///
+    /// struct State {
+    ///     buf: [u8; 1024],
+    /// }
+    ///
+    /// let mut state = State {
+    ///     buf: [0u8; 1024],
+    /// };
+    /// db.transaction_with_state(&mut state, |state, db| {
+    ///     if let Some(value) = db.get(b"k")? {
+    ///         state.buf[..value.len()].copy_from_slice(&value);
+    ///     }
+    ///
+    ///     Ok(())
+    /// })?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn transaction_with_state<F, A, E, S>(
+        &self,
+        state: &mut S,
+        f: F,
+    ) -> transaction::TransactionResult<A, E>
+    where
+        F: Fn(
+            &mut S,
+            &transaction::TransactionalTree,
+        ) -> transaction::ConflictableTransactionResult<A, E>,
+    {
+        Transactional::transaction_with_state(&self, state, f)
+    }
+
     /// Create a new batched update that can be
     /// atomically applied.
     ///
