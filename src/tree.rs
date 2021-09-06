@@ -42,7 +42,7 @@ const fn bounds_error() -> Result<()> {
     Err(Error::Unsupported(
         "Keys and values are limited to \
         128gb on 64-bit platforms and
-        512mb on 32-bit platforms.",
+        512mb on 32-bit platforms."
     ))
 }
 
@@ -936,7 +936,7 @@ impl Tree {
         } else {
             Err(Error::ReportableBug(
                 "threadpool failed to complete \
-                action before shutdown",
+                action before shutdown"
             ))
         }
     }
@@ -1151,7 +1151,7 @@ impl Tree {
             return Err(Error::Unsupported(
                 "must set a merge operator on this Tree \
                  before calling merge by calling \
-                 Tree::set_merge_operator",
+                 Tree::set_merge_operator"
             ));
         }
 

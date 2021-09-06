@@ -5,9 +5,8 @@ use core::ptr;
 
 /// Number of words a piece of `Data` can hold.
 ///
-/// Three words should be enough for the majority of cases. For example, you can
-/// fit inside it the function pointer together with a fat pointer representing
-/// an object that needs to be destroyed.
+/// Three words should be enough for the majority of cases. For example, you can fit inside it the
+/// function pointer together with a fat pointer representing an object that needs to be destroyed.
 const DATA_WORDS: usize = 3;
 
 /// Some space to keep a `FnOnce()` object on the stack.
@@ -15,8 +14,7 @@ type Data = [usize; DATA_WORDS];
 
 /// A `FnOnce()` that is stored inline if small, or otherwise boxed on the heap.
 ///
-/// This is a handy way of keeping an unsized `FnOnce()` within a sized
-/// structure.
+/// This is a handy way of keeping an unsized `FnOnce()` within a sized structure.
 pub(super) struct Deferred {
     call: unsafe fn(*mut u8),
     data: Data,

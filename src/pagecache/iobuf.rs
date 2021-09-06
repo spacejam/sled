@@ -1013,10 +1013,7 @@ pub(in crate::pagecache) fn make_stable_inner(
 
     while stable < lsn {
         if let Err(e) = iobufs.config.global_error() {
-            error!(
-                "bailing out of stabilization code due to detected IO error: {:?}",
-                e
-            );
+            error!("bailing out of stabilization code due to detected IO error: {:?}", e);
             let intervals = iobufs.intervals.lock();
 
             // having held the mutex makes this linearized

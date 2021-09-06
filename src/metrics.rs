@@ -209,7 +209,10 @@ impl Metrics {
              "count",
              "sum (s)"
              ));
-        ret.push_str(&format!("{}\n", "-".repeat(134)));
+        ret.push_str(&format!(
+                "{}\n",
+                "-".repeat(134)
+                ));
 
         let p =
             |mut tuples: Vec<(String, _, _, _, _, _, _, _, _, _)>| -> String {
@@ -217,11 +220,11 @@ impl Metrics {
                 let mut ret = String::new();
                 for v in tuples {
                     ret.push_str(&format!(
-                        "{0: >17} | {1: >10.1} | {2: >10.1} | {3: >10.1} \
+                            "{0: >17} | {1: >10.1} | {2: >10.1} | {3: >10.1} \
                      | {4: >10.1} | {5: >10.1} | {6: >10.1} | {7: >10.1} \
                      | {8: >10.1} | {9: >10.1}\n",
-                        v.0, v.1, v.2, v.3, v.4, v.5, v.6, v.7, v.8, v.9,
-                    ));
+                     v.0, v.1, v.2, v.3, v.4, v.5, v.6, v.7, v.8, v.9,
+                     ));
                 }
                 ret
             };
@@ -238,7 +241,7 @@ impl Metrics {
                 histo.percentile(100.) / 1e3,
                 histo.count(),
                 histo.sum() as f64 / 1e9,
-            )
+                )
         };
 
         let sz = |name: &str, histo: &Histogram| {
@@ -253,20 +256,20 @@ impl Metrics {
                 histo.percentile(100.),
                 histo.count(),
                 histo.sum() as f64,
-            )
+                )
         };
 
         ret.push_str("tree:\n");
 
         ret.push_str(&p(vec![
-            lat("traverse", &self.tree_traverse),
-            lat("get", &self.tree_get),
-            lat("set", &self.tree_set),
-            lat("merge", &self.tree_merge),
-            lat("del", &self.tree_del),
-            lat("cas", &self.tree_cas),
-            lat("scan", &self.tree_scan),
-            lat("rev scan", &self.tree_reverse_scan),
+                        lat("traverse", &self.tree_traverse),
+                        lat("get", &self.tree_get),
+                        lat("set", &self.tree_set),
+                        lat("merge", &self.tree_merge),
+                        lat("del", &self.tree_del),
+                        lat("cas", &self.tree_cas),
+                        lat("scan", &self.tree_scan),
+                        lat("rev scan", &self.tree_reverse_scan),
         ]));
         let total_loops = self.tree_loops.load(Acquire);
         let total_ops = self.tree_get.count()
@@ -278,9 +281,9 @@ impl Metrics {
             + self.tree_reverse_scan.count();
         let loop_pct = total_loops * 100 / (total_ops + 1);
         ret.push_str(&format!(
-            "tree contention loops: {} ({}% retry rate)\n",
-            total_loops, loop_pct
-        ));
+                "tree contention loops: {} ({}% retry rate)\n",
+                total_loops, loop_pct
+                ));
         ret.push_str(&format!(
                 "tree split success rates: child({}/{}) parent({}/{}) root({}/{})\n",
                 self.tree_child_split_success.load(Acquire)
@@ -303,7 +306,10 @@ impl Metrics {
                 ,
                 ));
 
-        ret.push_str(&format!("{}\n", "-".repeat(134)));
+        ret.push_str(&format!(
+                "{}\n",
+                "-".repeat(134)
+        ));
         ret.push_str("pagecache:\n");
         ret.push_str(&p(vec![
             lat("get", &self.get_page),
@@ -319,7 +325,10 @@ impl Metrics {
             / (self.get_page.count() + 1);
         ret.push_str(&format!("hit ratio: {}%\n", hit_ratio));
 
-        ret.push_str(&format!("{}\n", "-".repeat(134)));
+        ret.push_str(&format!(
+            "{}\n",
+            "-".repeat(134)
+        ));
         ret.push_str("serialization and compression:\n");
         ret.push_str(&p(vec![
             lat("serialize", &self.serialize),
@@ -330,7 +339,10 @@ impl Metrics {
             lat("decompress", &self.decompress),
         ]));
 
-        ret.push_str(&format!("{}\n", "-".repeat(134)));
+        ret.push_str(&format!(
+            "{}\n",
+            "-".repeat(134)
+        ));
         ret.push_str("log:\n");
         ret.push_str(&p(vec![
             lat("make_stable", &self.make_stable),
@@ -389,7 +401,10 @@ impl Metrics {
                 .to_formatted_string(&Locale::en)
         ));
 
-        ret.push_str(&format!("{}\n", "-".repeat(134)));
+        ret.push_str(&format!(
+            "{}\n",
+            "-".repeat(134)
+        ));
         ret.push_str("segment accountant:\n");
         ret.push_str(&p(vec![
             lat("acquire", &self.accountant_lock),
@@ -400,7 +415,10 @@ impl Metrics {
             lat("link", &self.accountant_mark_link),
         ]));
 
-        ret.push_str(&format!("{}\n", "-".repeat(134)));
+        ret.push_str(&format!(
+            "{}\n",
+            "-".repeat(134)
+        ));
         ret.push_str("recovery:\n");
         ret.push_str(&p(vec![
             lat("start", &self.tree_start),

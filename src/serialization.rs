@@ -421,7 +421,11 @@ impl Serialize for Option<i64> {
 
 fn shift_i64_opt(value_opt: &Option<i64>) -> i64 {
     if let Some(value) = value_opt {
-        if *value < 0 { *value } else { value + 1 }
+        if *value < 0 {
+            *value
+        } else {
+            value + 1
+        }
     } else {
         0
     }
@@ -429,7 +433,7 @@ fn shift_i64_opt(value_opt: &Option<i64>) -> i64 {
 
 const fn unshift_i64_opt(value: i64) -> Option<i64> {
     if value == 0 {
-        return None;
+        return None
     }
     let subtract = value > 0;
     Some(value - subtract as i64)

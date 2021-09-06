@@ -30,7 +30,11 @@ impl DiskPtr {
     }
 
     pub(crate) const fn heap_id(&self) -> Option<HeapId> {
-        if let DiskPtr::Heap(_, heap_id) = self { Some(*heap_id) } else { None }
+        if let DiskPtr::Heap(_, heap_id) = self {
+            Some(*heap_id)
+        } else {
+            None
+        }
     }
 
     #[doc(hidden)]
