@@ -159,7 +159,7 @@ impl Log {
                 );
 
                 if let Err(e) = &ret {
-                    self.iobufs.set_global_error(e.clone());
+                    self.iobufs.set_global_error(*e);
                 }
 
                 return ret;

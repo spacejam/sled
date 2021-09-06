@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn on_stack() {
         let fired = &Cell::new(false);
-        let a = [0usize; 1];
+        let a = [0_usize; 1];
 
         let d = Deferred::new(move || {
             drop(a);
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn on_heap() {
         let fired = &Cell::new(false);
-        let a = [0usize; 10];
+        let a = [0_usize; 10];
 
         let d = Deferred::new(move || {
             drop(a);

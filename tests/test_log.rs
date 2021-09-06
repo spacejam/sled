@@ -270,12 +270,12 @@ fn log_aborts() {
     let config = Config::new().temporary(true);
     let db = config.open().unwrap();
     let log = &db.context.pagecache.log;
-    write(&log);
-    abort(&log);
-    write(&log);
-    abort(&log);
-    write(&log);
-    abort(&log);
+    write(log);
+    abort(log);
+    write(log);
+    abort(log);
+    write(log);
+    abort(log);
 }
 
 #[test]
@@ -357,9 +357,9 @@ fn multi_segment_log_iteration() -> Result<()> {
     db.flush().unwrap();
 
     // start iterating just past the first segment header
-    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
+    let iter = log.iter_from(SEG_HEADER_LEN as Lsn);
 
-    while let Some((_, pid, _, _)) = iter.next() {
+    for (_, pid, _, _) in iter {
         if pid <= 3 {
             // this page is for the meta page, counter page, or the default
             // tree's leaf or index nodes
