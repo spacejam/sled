@@ -1,3 +1,9 @@
+# 0.34.7
+
+## Bug Fixes
+
+* #1314 Fix a bug in Subscriber's Future impl.
+
 # 0.34.6
 
 ## Improvements
