@@ -332,9 +332,9 @@ fn prop_tree_matches_btreemap_inner(
                         .map(Result::unwrap);
                     let ref_iter = reference
                         .iter()
-                        .filter(|&(ref rk, _rv)| **rk >= k)
+                        .filter(|&(rk, _rv)| *rk >= k)
                         .take(len.abs().try_into().unwrap())
-                        .map(|(ref rk, ref rv)| (rk.0.clone(), **rv));
+                        .map(|(rk, rv)| (rk.0.clone(), *rv));
 
                     for r in ref_iter {
                         let tree_next = tree_iter.next().unwrap();
@@ -358,9 +358,9 @@ fn prop_tree_matches_btreemap_inner(
                     let ref_iter = reference
                         .iter()
                         .rev()
-                        .filter(|&(ref rk, _rv)| **rk >= k)
+                        .filter(|&(rk, _rv)| *rk >= k)
                         .take(len.abs().try_into().unwrap())
-                        .map(|(ref rk, ref rv)| (rk.0.clone(), **rv));
+                        .map(|(rk, rv)| (rk.0.clone(), *rv));
 
                     for r in ref_iter {
                         let tree_next = tree_iter.next().unwrap();

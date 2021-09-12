@@ -26,7 +26,7 @@ const BATCHES_DIR: &str = "crash_batches";
 const ITER_DIR: &str = "crash_iter";
 const TX_DIR: &str = "crash_tx";
 
-const TESTS: [(&'static str, fn()); 4] = [
+const TESTS: [(&str, fn()); 4] = [
     (RECOVERY_DIR, crash_recovery),
     (BATCHES_DIR, crash_batches),
     (ITER_DIR, concurrent_crash_iter),
@@ -47,7 +47,7 @@ fn main() {
     match env::var(TEST_ENV_VAR) {
         Err(VarError::NotPresent) => {
             let filtered: Vec<(&'static str, fn())> =
-                if let Some(filter) = std::env::args().skip(1).next() {
+                if let Some(filter) = std::env::args().nth(1) {
                     TESTS
                         .iter()
                         .filter(|(name, _)| name.contains(&filter))
@@ -69,7 +69,7 @@ fn main() {
             let mut tests = vec![];
             for (test_name, test_fn) in filtered.into_iter() {
                 let test = thread::spawn(move || {
-                    let res = std::panic::catch_unwind(|| test_fn());
+                    let res = std::panic::catch_unwind(test_fn);
                     println!(
                         "test {} ... {}",
                         test_name,

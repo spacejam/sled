@@ -485,10 +485,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     if reference_entry.versions.len() > 1
                         && reference_entry.crash_epoch == crash_counter
                     {
-                        let last = std::mem::replace(
-                            &mut reference_entry.versions,
-                            Vec::new(),
-                        )
+                        let last = std::mem::take(&mut reference_entry.versions)
                         .pop()
                         .unwrap();
                         reference_entry.versions.push(last);

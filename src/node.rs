@@ -2759,15 +2759,15 @@ mod test {
                 };
 
                 let shrink_hi = if let Some(hi) = node.hi() {
-                    let new_hi = if !node.is_empty() {
+                    let new_hi = if node.is_empty() {
+                        Some(&hi[..hi.len() - 1])
+                    } else {
                         let max_k = node.index_key(node.children() - 1);
                         if max_k >= hi[..hi.len() - 1] {
                             None
                         } else {
                             Some(&hi[..hi.len() - 1])
                         }
-                    } else {
-                        Some(&hi[..hi.len() - 1])
                     };
 
                     Some(Inner::new(
