@@ -891,7 +891,7 @@ impl Tree {
     /// # let config = sled::Config::new().temporary(true);
     /// # let db = config.open().unwrap();
     /// # let mut subscriber = db.watch_prefix(vec![]);
-    /// while let Some(event) = (&mut subscriber).await {
+    /// while let Some(event) = subscriber.next_event().await {
     ///     /* use it */
     /// }
     /// # }
