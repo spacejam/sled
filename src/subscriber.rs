@@ -109,7 +109,7 @@ type Senders = Map<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 ///
 /// `Subscription` provides a `next` method which returns an `impl Future<Output=Option<Event>>`.
 ///
-/// `while let Some(event) = subscriber.next().await { /* use it */ }`
+/// `while let Some(event) = subscriber.next_event().await { /* use it */ }`
 pub struct Subscriber {
     id: usize,
     rx: Receiver<OneShot<Option<Event>>>,
@@ -127,7 +127,7 @@ impl Drop for Subscriber {
 impl Subscriber {
     /// Creates a future that resolves to the next value of the
     /// subscriber, or None if the backing `Db` shuts down
-    pub fn next(&mut self) -> impl Future<Output = Option<Event>> + '_ {
+    pub fn next_event(&mut self) -> impl Future<Output = Option<Event>> + '_ {
         Next { subscriber: self }
     }
 
