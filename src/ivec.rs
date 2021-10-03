@@ -263,22 +263,11 @@ impl std::borrow::Borrow<[u8]> for &IVec {
     }
 }
 
-macro_rules! from_array {
-    ($($s:expr),*) => {
-        $(
-            impl From<&[u8; $s]> for IVec {
-                fn from(v: &[u8; $s]) -> Self {
-                    Self::from(&v[..])
-                }
-            }
-        )*
+impl<const LENGHT: usize> From<&[u8; LENGHT]> for IVec {
+    fn from(v: &[u8; LENGHT]) -> Self {
+        Self::from(&v[..])
     }
 }
-
-from_array!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
-);
 
 impl Ord for IVec {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
