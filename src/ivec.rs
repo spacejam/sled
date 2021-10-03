@@ -263,8 +263,8 @@ impl std::borrow::Borrow<[u8]> for &IVec {
     }
 }
 
-impl<const LENGHT: usize> From<&[u8; LENGHT]> for IVec {
-    fn from(v: &[u8; LENGHT]) -> Self {
+impl<const LENGTH: usize> From<&[u8; LENGTH]> for IVec {
+    fn from(v: &[u8; LENGTH]) -> Self {
         Self::from(&v[..])
     }
 }
