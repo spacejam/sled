@@ -38,12 +38,11 @@ const fn out_of_bounds(numba: usize) -> bool {
 }
 
 #[cold]
-fn bounds_error() -> Result<()> {
+const fn bounds_error() -> Result<()> {
     Err(Error::Unsupported(
         "Keys and values are limited to \
         128gb on 64-bit platforms and
         512mb on 32-bit platforms."
-            .to_string(),
     ))
 }
 
@@ -938,7 +937,6 @@ impl Tree {
             Err(Error::ReportableBug(
                 "threadpool failed to complete \
                 action before shutdown"
-                    .to_string(),
             ))
         }
     }
@@ -1154,7 +1152,6 @@ impl Tree {
                 "must set a merge operator on this Tree \
                  before calling merge by calling \
                  Tree::set_merge_operator"
-                    .to_owned(),
             ));
         }
 
@@ -1813,7 +1810,7 @@ impl Tree {
 
             if cursor == u64::max_value() {
                 // this collection has been explicitly removed
-                return Err(Error::CollectionNotFound(self.tree_id.clone()));
+                return Err(Error::CollectionNotFound);
             }
 
             let node_opt = self.view_for_pid(cursor, guard)?;

@@ -1200,7 +1200,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         match iobufs.with_sa(|sa| sa.next(next_lsn)) {
             Ok(ret) => ret,
             Err(e) => {
-                iobufs.set_global_error(e.clone());
+                iobufs.set_global_error(e);
                 return Err(e);
             }
         }

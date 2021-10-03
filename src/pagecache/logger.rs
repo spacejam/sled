@@ -118,7 +118,7 @@ impl Log {
         );
 
         if let Err(e) = &ret {
-            self.iobufs.set_global_error(e.clone());
+            self.iobufs.set_global_error(*e);
         }
 
         ret
@@ -159,7 +159,7 @@ impl Log {
                 );
 
                 if let Err(e) = &ret {
-                    self.iobufs.set_global_error(e.clone());
+                    self.iobufs.set_global_error(*e);
                 }
 
                 return ret;
@@ -169,7 +169,7 @@ impl Log {
         let ret = self.reserve_inner(log_kind, pid, item, None, guard);
 
         if let Err(e) = &ret {
-            self.iobufs.set_global_error(e.clone());
+            self.iobufs.set_global_error(*e);
         }
 
         ret

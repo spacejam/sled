@@ -162,6 +162,7 @@
         // clippy::wildcard_enum_match_arm,
     )
 )]
+#![allow(clippy::comparison_chain)]
 
 macro_rules! io_fail {
     ($config:expr, $e:expr) => {
@@ -242,14 +243,6 @@ mod flusher;
 #[cfg(feature = "event_log")]
 /// The event log helps debug concurrency issues.
 pub mod event_log;
-
-#[cfg(feature = "measure_allocs")]
-mod measure_allocs;
-
-#[cfg(feature = "measure_allocs")]
-#[global_allocator]
-static ALLOCATOR: measure_allocs::TrackingAllocator =
-    measure_allocs::TrackingAllocator;
 
 /// Opens a `Db` with a default configuration at the
 /// specified path. This will create a new storage

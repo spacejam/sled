@@ -99,7 +99,7 @@ pub struct TransactionalTree {
 
 /// An error type that is returned from the closure
 /// passed to the `transaction` method.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnabortableTransactionError {
     /// An internal conflict has occurred and the `transaction` method will
     /// retry the passed-in closure until it succeeds. This should never be
@@ -544,7 +544,8 @@ impl<E> Transactional<E> for [Tree] {
         });
         if !same_db {
             return Err(Error::Unsupported(
-                "cannot use trees from multiple databases in the same transaction".into(),
+                "cannot use trees from multiple \
+                databases in the same transaction",
             ));
         }
 
@@ -572,7 +573,8 @@ impl<E> Transactional<E> for [&Tree] {
         });
         if !same_db {
             return Err(Error::Unsupported(
-                "cannot use trees from multiple databases in the same transaction".into(),
+                "cannot use trees from multiple \
+                databases in the same transaction",
             ));
         }
 
