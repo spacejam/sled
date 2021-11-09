@@ -399,6 +399,19 @@ fn advance_snapshot(
     }
 
     if snapshot.stable_lsn > old_stable_lsn {
+        // NB snapshot maybe corrupted
+        let mut state;
+        while {
+            state = snapshot.pt.pop();
+            state == Some(PageState::Uninitialized) }
+        {}
+
+        if let Some(state) = state {
+            if state != PageState::Uninitialized {
+                snapshot.pt.push(state);
+            }
+        }
+
         write_snapshot(config, &snapshot)?;
     }
 
