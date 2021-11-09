@@ -403,8 +403,11 @@ fn advance_snapshot(
         let mut state;
         while {
             state = snapshot.pt.pop();
-            state == Some(PageState::Uninitialized) }
-        {}
+            state == Some(PageState::Uninitialized)
+        }
+        {
+            warn!("snapshot written to disk should not contains uninitialized state.");
+        }
 
         if let Some(state) = state {
             if state != PageState::Uninitialized {
