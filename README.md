@@ -110,7 +110,7 @@ If you would like to work with structured data without paying expensive deserial
   to use [structured access](examples/structured.rs) as well.
 * sled does not support multiple open instances for the time being. Please
   keep sled open for the duration of your process's lifespan. It's totally
-  safe and often quite convenient to use a global lazy_static sled instance,
+  safe and often quite convenient to use a [global lazy_static](examples/lazy_static.rs) sled instance,
   modulo the normal global variable trade-offs. Every operation is threadsafe,
   and most are implemented under the hood with lock-free algorithms that avoid
   blocking in hot paths.
