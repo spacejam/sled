@@ -100,7 +100,7 @@ impl Serialize for MessageHeader {
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
         self.crc32.serialize_into(buf);
-        self.kind.into().serialize_into(buf);
+        (self.kind as u8).serialize_into(buf);
         self.len.serialize_into(buf);
         self.segment_number.serialize_into(buf);
         self.pid.serialize_into(buf);

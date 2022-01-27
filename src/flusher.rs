@@ -43,9 +43,9 @@ impl Flusher {
         let join_handle = thread::Builder::new()
             .name(name)
             .spawn({
-                let shutdown = shutdown.clone();
-                let sc = sc.clone();
-                move || run(&shutdown, &sc, &pagecache, flush_every_ms)
+                let shutdown2 = shutdown.clone();
+                let sc2 = sc.clone();
+                move || run(&shutdown2, &sc2, &pagecache, flush_every_ms)
             })
             .unwrap();
 
@@ -54,13 +54,13 @@ impl Flusher {
 }
 
 fn run(
-    shutdown: &Arc<Mutex<ShutdownState>>,
+    shutdown_mu: &Arc<Mutex<ShutdownState>>,
     sc: &Arc<Condvar>,
     pagecache: &PageCache,
     flush_every_ms: u64,
 ) {
     let flush_every = Duration::from_millis(flush_every_ms);
-    let mut shutdown = shutdown.lock();
+    let mut shutdown = shutdown_mu.lock();
     let mut wrote_data = false;
     while shutdown.is_running() || wrote_data {
         let before = std::time::Instant::now();

@@ -109,8 +109,8 @@ impl EventLog {
                                 .get(&pid)
                                 .unwrap()
                                 .iter()
-                                .map(|ptr| {
-                                    let mut ptr = *ptr;
+                                .map(|ptr_ref| {
+                                    let mut ptr = *ptr_ref;
                                     ptr.forget_heap_log_coordinates();
                                     ptr
                                 })

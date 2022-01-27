@@ -138,7 +138,6 @@
     clippy::non_ascii_literal,
     clippy::path_buf_push_overwrite,
     clippy::print_stdout,
-    clippy::pub_enum_variant_names,
     clippy::redundant_closure_for_method_calls,
     clippy::shadow_reuse,
     clippy::shadow_same,
@@ -152,7 +151,6 @@
     clippy::unseparated_literal_suffix,
     clippy::used_underscore_binding,
     clippy::wildcard_dependencies,
-    clippy::wrong_pub_self_convention,
 ))]
 #![cfg_attr(
     feature = "testing",
