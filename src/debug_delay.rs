@@ -45,9 +45,9 @@ pub fn debug_delay() {
 
     let global_delays = GLOBAL_DELAYS.fetch_add(1, Relaxed);
     let local_delays = LOCAL_DELAYS.with(|ld| {
-        let mut ld = ld.borrow_mut();
-        let old = *ld;
-        *ld = std::cmp::max(global_delays + 1, *ld + 1);
+        let old = *ld.borrow();
+        let new = (global_delays + 1).max(old + 1);
+        *ld.borrow_mut() = new;
         old
     });
 

@@ -550,10 +550,7 @@ impl<E> Transactional<E> for [Tree] {
         }
 
         Ok(TransactionalTrees {
-            inner: self
-                .iter()
-                .map(|t| TransactionalTree::from_tree(t))
-                .collect(),
+            inner: self.iter().map(TransactionalTree::from_tree).collect(),
         })
     }
 

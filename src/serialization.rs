@@ -433,7 +433,7 @@ fn shift_i64_opt(value_opt: &Option<i64>) -> i64 {
 
 const fn unshift_i64_opt(value: i64) -> Option<i64> {
     if value == 0 {
-        return None
+        return None;
     }
     let subtract = value > 0;
     Some(value - subtract as i64)
@@ -686,7 +686,7 @@ where
         if self.bound == 0 || self.buf.is_empty() {
             return None;
         }
-        let item_res = T::deserialize(&mut self.buf);
+        let item_res = T::deserialize(self.buf);
         self.bound -= 1;
         if item_res.is_err() {
             self.bound = 0;

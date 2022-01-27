@@ -123,7 +123,7 @@ pub enum MessageKind {
 }
 
 impl MessageKind {
-    pub(crate) const fn into(self) -> u8 {
+    pub(in crate::pagecache) const fn into(self) -> u8 {
         self as u8
     }
 }
@@ -225,16 +225,16 @@ fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
 
 use std::convert::{TryFrom, TryInto};
 
-pub(crate) const fn lsn_to_arr(number: Lsn) -> [u8; 8] {
+pub(in crate::pagecache) const fn lsn_to_arr(number: Lsn) -> [u8; 8] {
     number.to_le_bytes()
 }
 
 #[inline]
-pub(crate) fn arr_to_lsn(arr: &[u8]) -> Lsn {
+pub(in crate::pagecache) fn arr_to_lsn(arr: &[u8]) -> Lsn {
     Lsn::from_le_bytes(arr.try_into().unwrap())
 }
 
-pub(crate) const fn u64_to_arr(number: u64) -> [u8; 8] {
+pub(in crate::pagecache) const fn u64_to_arr(number: u64) -> [u8; 8] {
     number.to_le_bytes()
 }
 
@@ -249,7 +249,7 @@ pub(crate) const fn u32_to_arr(number: u32) -> [u8; 4] {
 
 #[allow(clippy::needless_pass_by_value)]
 #[allow(clippy::needless_return)]
-pub(crate) fn decompress(in_buf: Vec<u8>) -> Vec<u8> {
+pub(in crate::pagecache) fn decompress(in_buf: Vec<u8>) -> Vec<u8> {
     #[cfg(feature = "compression")]
     {
         use zstd::stream::decode_all;
@@ -295,8 +295,8 @@ impl<'g> Deref for MetaView<'g> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PageView<'g> {
-    pub(crate) read: Shared<'g, Page>,
-    pub(crate) entry: &'g Atomic<Page>,
+    pub(in crate::pagecache) read: Shared<'g, Page>,
+    pub(in crate::pagecache) entry: &'g Atomic<Page>,
 }
 
 impl<'g> Deref for PageView<'g> {
@@ -327,7 +327,7 @@ impl quickcheck::Arbitrary for CacheInfo {
 /// of which a page consists.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "testing", derive(PartialEq))]
-pub(crate) enum Update {
+pub(in crate::pagecache) enum Update {
     Link(Link),
     Node(Node),
     Free,
@@ -410,7 +410,7 @@ pub struct Page {
 }
 
 impl Page {
-    pub(crate) fn rss(&self) -> Option<u64> {
+    pub(in crate::pagecache) fn rss(&self) -> Option<u64> {
         match &self.update {
             Some(Update::Node(ref node)) => Some(node.rss()),
             _ => None,
@@ -1670,7 +1670,7 @@ impl PageCacheInner {
     }
 
     /// Retrieve the current persisted IDGEN value
-    pub(crate) fn get_idgen<'g>(
+    pub(in crate::pagecache) fn get_idgen<'g>(
         &self,
         guard: &'g Guard,
     ) -> (PageView<'g>, u64) {
