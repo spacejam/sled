@@ -12,19 +12,7 @@ pub struct Context {
     /// When the last high-level reference is dropped, it
     /// should trigger all background threads to clean
     /// up synchronously.
-    #[cfg(all(
-        not(miri),
-        any(
-            windows,
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "netbsd",
-            target_os = "ios",
-        )
-    ))]
+    #[cfg(not(miri))]
     pub(crate) flusher: Arc<Mutex<Option<flusher::Flusher>>>,
     #[doc(hidden)]
     pub pagecache: PageCache,
@@ -47,19 +35,7 @@ impl Context {
         Ok(Self {
             config,
             pagecache,
-            #[cfg(all(
-                not(miri),
-                any(
-                    windows,
-                    target_os = "linux",
-                    target_os = "macos",
-                    target_os = "dragonfly",
-                    target_os = "freebsd",
-                    target_os = "openbsd",
-                    target_os = "netbsd",
-                    target_os = "ios",
-                )
-            ))]
+            #[cfg(not(miri))]
             flusher: Arc::new(parking_lot::Mutex::new(None)),
         })
     }

@@ -23,6 +23,7 @@
 
 ## Breaking Changes
 
+* #1399 Thread support is now required on all platforms.
 * #1135 The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.
 * #1178 the `Event` enum has become a unified struct that allows

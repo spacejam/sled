@@ -4,19 +4,7 @@ use std::sync::Arc;
 
 use crate::{OneShot, Result};
 
-#[cfg(all(
-    not(miri),
-    any(
-        windows,
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
-        target_os = "ios",
-    )
-))]
+#[cfg(not(miri))]
 mod queue {
     use std::{
         cell::RefCell,
@@ -220,19 +208,7 @@ where
     spawn_to(work, &queue::BLOCKING_QUEUE)
 }
 
-#[cfg(any(
-    miri,
-    not(any(
-        windows,
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
-        target_os = "ios",
-    ))
-))]
+#[cfg(miri)]
 mod queue {
     /// This is the polyfill that just executes things synchronously.
     use crate::{OneShot, Result};

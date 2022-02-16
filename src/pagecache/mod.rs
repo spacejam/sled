@@ -1100,19 +1100,7 @@ impl PageCacheInner {
     /// move a page. Returns Ok(false) if there were no pages
     /// to GC. Returns an Err if we encountered an IO problem
     /// while performing this GC.
-    #[cfg(all(
-        not(miri),
-        any(
-            windows,
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "netbsd",
-            target_os = "ios",
-        )
-    ))]
+    #[cfg(not(miri))]
     pub(crate) fn attempt_gc(&self) -> Result<bool> {
         let guard = pin();
         let cc = concurrency_control::read();
