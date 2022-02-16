@@ -205,8 +205,19 @@ impl Tree {
         let last_value = last_value.map(IVec::from);
 
         if value == last_value {
+            // NB: always broadcast event
+            if let Some(Some(res)) = subscriber_reservation.take() {
+                let event = subscriber::Event::single_update(
+                    self.clone(),
+                    key.as_ref().into(),
+                    value,
+                );
+
+                res.complete(&event);
+            }
+
             // short-circuit a no-op set or delete
-            return Ok(Ok(value));
+            return Ok(Ok(last_value));
         }
 
         let frag = if let Some(value) = value.clone() {
