@@ -206,23 +206,6 @@ where
     usize::try_from(from).expect("lost data cast while converting to usize")
 }
 
-// TODO remove this with atomic fetch_max if we increase MSRV to 1.45 or higher
-fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
-    let mut current = atomic_lsn.load(Acquire);
-    loop {
-        if current >= to {
-            return;
-        }
-        let last =
-            atomic_lsn.compare_exchange_weak(current, to, SeqCst, SeqCst);
-        if last.is_ok() {
-            // we succeeded.
-            return;
-        }
-        current = last.unwrap_err();
-    }
-}
-
 use std::convert::{TryFrom, TryInto};
 
 pub(crate) const fn lsn_to_arr(number: Lsn) -> [u8; 8] {
@@ -997,7 +980,7 @@ impl PageCache {
         snapshot::write_snapshot(&self.config, &snapshot)?;
 
         // NB: this must only happen after writing the snapshot to disk
-        bump_atomic_lsn(&self.snapshot_min_lsn, stable_lsn_before);
+        self.snapshot_min_lsn.fetch_max(stable_lsn_before, SeqCst);
 
         // explicitly drop this to make it clear that it needs to
         // be held for the duration of the snapshot operation.
@@ -1100,19 +1083,7 @@ impl PageCacheInner {
     /// move a page. Returns Ok(false) if there were no pages
     /// to GC. Returns an Err if we encountered an IO problem
     /// while performing this GC.
-    #[cfg(all(
-        not(miri),
-        any(
-            windows,
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "netbsd",
-            target_os = "ios",
-        )
-    ))]
+    #[cfg(not(miri))]
     pub(crate) fn attempt_gc(&self) -> Result<bool> {
         let guard = pin();
         let cc = concurrency_control::read();
