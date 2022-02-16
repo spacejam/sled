@@ -1361,8 +1361,8 @@ impl Tree {
         }
     }
 
-    /// Create an iterator over tuples of keys and values,
-    /// where the all the keys starts with the given prefix.
+    /// Create an iterator over tuples of keys and values
+    /// where all keys start with the given prefix.
     ///
     /// # Examples
     ///
