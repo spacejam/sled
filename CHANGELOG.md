@@ -55,13 +55,18 @@
 * #1354 `Error` has been modified to be Copy, removing all
   heap-allocated variants.
 
-
 ## Bug Fixes
 
 * #1202 Fix a space leak where blobs were not
   removed when replaced by another blob.
 * #1229 the powerful ALICE crash consistency tool has been
   used to discover several crash vulnerabilities, now fixed.
+
+# 0.34.7
+
+## Bug Fixes
+
+* #1314 Fix a bug in Subscriber's Future impl.
 
 # 0.34.6
 
