@@ -361,9 +361,9 @@ impl<T: ?Sized + Pointable> Atomic<T> {
                 ord.failure(),
             )
             .map(|_| unsafe { Shared::from_usize(new) })
-            .map_err(|current| unsafe {
+            .map_err(|cur| unsafe {
                 CompareAndSetError {
-                    current: Shared::from_usize(current),
+                    current: Shared::from_usize(cur),
                     new: P::from_usize(new),
                 }
             })
@@ -402,9 +402,9 @@ impl<T: ?Sized + Pointable> Atomic<T> {
                 ord.failure(),
             )
             .map(|_| unsafe { Shared::from_usize(new) })
-            .map_err(|current| unsafe {
+            .map_err(|cur| unsafe {
                 CompareAndSetError {
-                    current: Shared::from_usize(current),
+                    current: Shared::from_usize(cur),
                     new: P::from_usize(new),
                 }
             })

@@ -139,7 +139,7 @@
     clippy::path_buf_push_overwrite,
     clippy::print_stdout,
     clippy::redundant_closure_for_method_calls,
-    clippy::shadow_reuse,
+    // clippy::shadow_reuse,
     clippy::shadow_same,
     clippy::shadow_unrelated,
     clippy::single_match_else,

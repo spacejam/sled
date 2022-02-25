@@ -183,7 +183,7 @@ impl<'a> From<&KeyRef<'a>> for IVec {
 }
 
 impl<'a> KeyRef<'a> {
-    fn unwrap_slice(&self) -> &[u8] {
+    const fn unwrap_slice(&self) -> &[u8] {
         if let KeyRef::Slice(s) = self {
             s
         } else {
@@ -332,7 +332,7 @@ impl Ord for KeyRef<'_> {
 
                 match shared_cmp {
                     Equal => a.len().cmp(&b.len()),
-                    other => other,
+                    other2 => other2,
                 }
             }
             (KeyRef::Computed { .. }, KeyRef::Slice(b)) => {
@@ -1437,7 +1437,7 @@ impl Inner {
         };
 
         let total_node_storage_size = size_of::<Header>()
-            + hi.map(|h| h.len()).unwrap_or(0)
+            + hi.map(<[u8]>::len).unwrap_or(0)
             + lo.len()
             + key_storage_size
             + value_storage_size

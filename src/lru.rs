@@ -307,9 +307,9 @@ impl Lru {
                     let to_evict = shard.accessed(item);
                     // map shard internal offsets to global items ids
                     for pos in to_evict {
-                        let item =
+                        let address =
                             (PageId::from(pos) << SHARD_BITS) + shard_idx;
-                        ret.push(item);
+                        ret.push(address);
                     }
                 }
             }

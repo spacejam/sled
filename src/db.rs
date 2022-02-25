@@ -107,11 +107,14 @@ impl Db {
     /// accessible from the `Db` via the provided identifier.
     pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Tree> {
         let name_ref = name.as_ref();
-        let tenants = self.tenants.read();
-        if let Some(tree) = tenants.get(name_ref) {
-            return Ok(tree.clone());
+
+        {
+            let tenants = self.tenants.read();
+            if let Some(tree) = tenants.get(name_ref) {
+                return Ok(tree.clone());
+            }
+            drop(tenants);
         }
-        drop(tenants);
 
         let guard = pin();
 
