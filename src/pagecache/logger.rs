@@ -1,9 +1,9 @@
 use std::fs::File;
 
 use super::{
-    arr_to_lsn, arr_to_u32, assert_usize, bump_atomic_lsn, decompress, header,
-    iobuf, lsn_to_arr, pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr,
-    Arc, BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
+    arr_to_lsn, arr_to_u32, assert_usize, decompress, header, iobuf,
+    lsn_to_arr, pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr, Arc,
+    BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
     MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
     COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, SEG_HEADER_LEN,
 };
@@ -140,7 +140,7 @@ impl Log {
         #[cfg(feature = "compression")]
         {
             if self.config.use_compression && pid != BATCH_MANIFEST_PID {
-                use zstd::block::compress;
+                use zstd::bulk::compress;
 
                 let buf = item.serialize();
 
@@ -417,10 +417,9 @@ impl Log {
                 reservation_lid,
             );
 
-            bump_atomic_lsn(
-                &self.iobufs.max_reserved_lsn,
-                reservation_lsn + inline_buf_len as Lsn - 1,
-            );
+            self.iobufs
+                .max_reserved_lsn
+                .fetch_max(reservation_lsn + inline_buf_len as Lsn - 1, SeqCst);
 
             let (heap_reservation, heap_id_opt) = if over_heap_threshold {
                 let heap_reservation = self

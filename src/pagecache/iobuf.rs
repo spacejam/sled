@@ -873,7 +873,7 @@ impl IoBufs {
         let max_header_stable_lsn = self.max_header_stable_lsn.clone();
         guard.defer(move || {
             trace!("bumping atomic header lsn to {}", stored_max_stable_lsn);
-            bump_atomic_lsn(&max_header_stable_lsn, stored_max_stable_lsn)
+            max_header_stable_lsn.fetch_max(stored_max_stable_lsn, SeqCst)
         });
         guard.flush();
         drop(guard);

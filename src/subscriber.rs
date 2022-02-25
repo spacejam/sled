@@ -287,7 +287,8 @@ impl Subscribers {
 
                     for (_id, (waker, sender)) in subs.iter() {
                         let (tx, rx) = OneShot::pair();
-                        if sender.send(rx).is_err() {
+                        if let Err(err) = sender.try_send(rx) {
+                            error!("send error: {:?}", err);
                             continue;
                         }
                         subscribers.push((waker.clone(), tx));

@@ -205,8 +205,19 @@ impl Tree {
         let last_value_ivec = last_value.map(IVec::from);
 
         if value == last_value_ivec {
+            // NB: always broadcast event
+            if let Some(Some(res)) = subscriber_reservation.take() {
+                let event = subscriber::Event::single_update(
+                    self.clone(),
+                    key.as_ref().into(),
+                    value,
+                );
+
+                res.complete(&event);
+            }
+
             // short-circuit a no-op set or delete
-            return Ok(Ok(value));
+            return Ok(Ok(last_value));
         }
 
         let frag = if let Some(value_ivec) = value.clone() {
@@ -1362,8 +1373,8 @@ impl Tree {
         }
     }
 
-    /// Create an iterator over tuples of keys and values,
-    /// where the all the keys starts with the given prefix.
+    /// Create an iterator over tuples of keys and values
+    /// where all keys start with the given prefix.
     ///
     /// # Examples
     ///

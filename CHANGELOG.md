@@ -23,6 +23,8 @@
 
 ## Breaking Changes
 
+* #1399 Bump MSRV to 1.51.
+* #1399 Thread support is now required on all platforms.
 * #1135 The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.
 * #1178 the `Event` enum has become a unified struct that allows
@@ -50,11 +52,9 @@
   doesn't make sense for things that must fit in memory anyway.
 * #1314 `Subscriber::next_timeout` now requires a mutable self
   reference.
-* #1337 Bump MSRV to 1.48.
 * #1349 The "measure_allocs" feature has been removed.
 * #1354 `Error` has been modified to be Copy, removing all
   heap-allocated variants.
-
 
 ## Bug Fixes
 
@@ -62,6 +62,12 @@
   removed when replaced by another blob.
 * #1229 the powerful ALICE crash consistency tool has been
   used to discover several crash vulnerabilities, now fixed.
+
+# 0.34.7
+
+## Bug Fixes
+
+* #1314 Fix a bug in Subscriber's Future impl.
 
 # 0.34.6
 

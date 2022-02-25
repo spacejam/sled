@@ -1,5 +1,5 @@
 #[cfg(feature = "zstd")]
-use zstd::block::{compress, decompress};
+use zstd::bulk::{compress, decompress};
 
 use crate::*;
 
