@@ -217,7 +217,7 @@ impl Tree {
             }
 
             // short-circuit a no-op set or delete
-            return Ok(Ok(last_value));
+            return Ok(Ok(last_value_ivec));
         }
 
         let frag = if let Some(value_ivec) = value.clone() {
