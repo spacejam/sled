@@ -97,15 +97,18 @@ impl<T: Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
     pub(crate) fn push(&self, inner: T, guard: &Guard) {
         debug_delay();
-        let node = Owned::new(Node { inner, next: Atomic::null() });
+        let node_owned = Owned::new(Node { inner, next: Atomic::null() });
 
         unsafe {
-            let node = node.into_shared(guard);
+            let node_shared = node_owned.into_shared(guard);
 
             loop {
                 let head = self.head(guard);
-                node.deref().next.store(head, Release);
-                if self.head.compare_and_set(head, node, Release, guard).is_ok()
+                node_shared.deref().next.store(head, Release);
+                if self
+                    .head
+                    .compare_and_set(head, node_shared, Release, guard)
+                    .is_ok()
                 {
                     return;
                 }
@@ -151,7 +154,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
                             guard.defer_destroy(head);
                             return Some(ptr::read(&h.inner));
                         },
-                        Err(h) => head = h.current,
+                        Err(actual) => head = actual.current,
                     }
                 }
                 None => return None,

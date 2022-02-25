@@ -1437,7 +1437,7 @@ impl Inner {
         };
 
         let total_node_storage_size = size_of::<Header>()
-            + hi.map(|hi| hi.len()).unwrap_or(0)
+            + hi.map(|h| h.len()).unwrap_or(0)
             + lo.len()
             + key_storage_size
             + value_storage_size
@@ -1454,7 +1454,7 @@ impl Inner {
         header.fixed_key_length = fixed_key_length;
         header.fixed_value_length = fixed_value_length;
         header.lo_len = lo.len() as u64;
-        header.hi_len = hi.map(|hi| hi.len() as u64).unwrap_or(0);
+        header.hi_len = hi.map(|h| h.len() as u64).unwrap_or(0);
         header.fixed_key_stride = fixed_key_stride;
         header.offset_bytes = offset_bytes;
         header.children = tf!(items.len(), u32);
@@ -1958,7 +1958,7 @@ impl Inner {
             .map(|(k, v)| (IVec::from(k), v))
             .collect();
 
-        let left_items: Vec<_> = left_items
+        let left_items2: Vec<_> = left_items
             .iter()
             .map(|(k, v)| (KeyRef::Slice(&k[additional_left_prefix..]), *v))
             .collect();
@@ -1987,7 +1987,7 @@ impl Inner {
             self.prefix_len + tf!(additional_left_prefix, u8),
             self.is_index,
             self.next,
-            &left_items,
+            &left_items2,
         );
 
         left.rewrite_generations =
@@ -2055,7 +2055,7 @@ impl Inner {
             && other.fixed_value_length() == Some(0)
             && self.fixed_key_length == other.fixed_key_length
             && self.lo().len() == other.lo().len()
-            && self.hi().map(|h| h.len()) == other.hi().map(|h| h.len());
+            && self.hi().map(<[_]>::len) == other.hi().map(<[_]>::len);
 
         if can_seamlessly_absorb {
             let mut ret = self.clone();
@@ -2390,8 +2390,8 @@ impl Inner {
     pub(crate) fn contains_upper_bound(&self, bound: &Bound<IVec>) -> bool {
         if let Some(hi) = self.hi() {
             match bound {
-                Bound::Excluded(bound) if hi >= &*bound => true,
-                Bound::Included(bound) if hi > &*bound => true,
+                Bound::Excluded(b) if hi >= &*b => true,
+                Bound::Included(b) if hi > &*b => true,
                 _ => false,
             }
         } else {
@@ -2406,12 +2406,8 @@ impl Inner {
     ) -> bool {
         let lo = self.lo();
         match bound {
-            Bound::Excluded(bound)
-                if lo < &*bound || (is_forward && *bound == lo) =>
-            {
-                true
-            }
-            Bound::Included(bound) if lo <= &*bound => true,
+            Bound::Excluded(b) if lo < &*b || (is_forward && *b == lo) => true,
+            Bound::Included(b) if lo <= &*b => true,
             Bound::Unbounded if !is_forward => self.hi().is_none(),
             _ => lo.is_empty(),
         }

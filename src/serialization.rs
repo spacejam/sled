@@ -445,11 +445,7 @@ impl Serialize for Snapshot {
             + self.stable_lsn.serialized_size()
             + self.active_segment.serialized_size()
             + (self.pt.len() as u64).serialized_size()
-            + self
-                .pt
-                .iter()
-                .map(|page_state| page_state.serialized_size())
-                .sum::<u64>()
+            + self.pt.iter().map(Serialize::serialized_size).sum::<u64>()
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
@@ -554,10 +550,7 @@ impl Serialize for PageState {
             PageState::Present { base, frags } => {
                 (1 + frags.len() as u64).serialized_size()
                     + base.serialized_size()
-                    + frags
-                        .iter()
-                        .map(|tuple| tuple.serialized_size())
-                        .sum::<u64>()
+                    + frags.iter().map(Serialize::serialized_size).sum::<u64>()
             }
             _ => panic!("tried to serialize {:?}", self),
         }

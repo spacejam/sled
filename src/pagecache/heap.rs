@@ -185,14 +185,14 @@ pub(crate) struct Heap {
 
 impl Heap {
     pub fn start<P: AsRef<Path>>(p: P) -> Result<Heap> {
-        let mut slabs = vec![];
+        let mut slabs_vec = vec![];
 
         for slab_id in 0..32 {
             let slab = Slab::start(&p, slab_id)?;
-            slabs.push(slab);
+            slabs_vec.push(slab);
         }
 
-        let slabs: [Slab; 32] = slabs.try_into().unwrap();
+        let slabs: [Slab; 32] = slabs_vec.try_into().unwrap();
 
         Ok(Heap { slabs })
     }
@@ -332,12 +332,12 @@ impl Slab {
                 return Err(Error::corruption(None));
             }
             let buf = heap_buf[13..].to_vec();
-            let buf = if use_compression {
+            let buf2 = if use_compression {
                 crate::pagecache::decompress(buf)
             } else {
                 buf
             };
-            Ok((MessageKind::from(heap_buf[0]), buf))
+            Ok((MessageKind::from(heap_buf[0]), buf2))
         } else {
             log::debug!(
                 "heap message CRC does not match contents. stored: {} actual: {}",

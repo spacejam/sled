@@ -189,7 +189,7 @@ impl PageTable {
             );
 
             l2_ptr = match ret {
-                Ok(next_child) => next_child,
+                Ok(l2) => l2,
                 Err(returned) => {
                     drop(returned.new);
                     returned.current

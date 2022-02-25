@@ -146,8 +146,8 @@ impl<E> From<UnabortableTransactionError> for ConflictableTransactionError<E> {
             UnabortableTransactionError::Conflict => {
                 ConflictableTransactionError::Conflict
             }
-            UnabortableTransactionError::Storage(error) => {
-                ConflictableTransactionError::Storage(error)
+            UnabortableTransactionError::Storage(error2) => {
+                ConflictableTransactionError::Storage(error2)
             }
         }
     }

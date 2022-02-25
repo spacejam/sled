@@ -339,8 +339,8 @@ fn scan_segment_headers_and_tail(
             // let config = config.clone();
             move |idx| {
                 threadpool::spawn({
-                    let config = config.clone();
-                    move || fetch(idx, min, &config)
+                    let config2 = config.clone();
+                    move || fetch(idx, min, &config2)
                 })
             }
         })
@@ -496,8 +496,6 @@ pub fn raw_segment_iter_from(
         ordering,
         normalized_lsn,
     );
-
-    let ordering = ordering;
 
     let segments = ordering
         .into_iter()

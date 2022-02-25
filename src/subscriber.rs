@@ -133,20 +133,17 @@ impl Subscriber {
         mut timeout: Duration,
     ) -> std::result::Result<Event, std::sync::mpsc::RecvTimeoutError> {
         loop {
-            let start = Instant::now();
+            let before_first_receive = Instant::now();
             let mut future_rx = if let Some(future_rx) = self.existing.take() {
                 future_rx
             } else {
                 self.rx.recv_timeout(timeout)?
             };
-            timeout =
-                if let Some(timeout) = timeout.checked_sub(start.elapsed()) {
-                    timeout
-                } else {
-                    Duration::from_nanos(0)
-                };
+            timeout = timeout
+                .checked_sub(before_first_receive.elapsed())
+                .unwrap_or_default();
 
-            let start = Instant::now();
+            let before_second_receive = Instant::now();
             match future_rx.wait_timeout(timeout) {
                 Ok(Some(event)) => return Ok(event),
                 Ok(None) => (),
@@ -155,12 +152,9 @@ impl Subscriber {
                     return Err(timeout_error);
                 }
             }
-            timeout =
-                if let Some(timeout) = timeout.checked_sub(start.elapsed()) {
-                    timeout
-                } else {
-                    Duration::from_nanos(0)
-                };
+            timeout = timeout
+                .checked_sub(before_second_receive.elapsed())
+                .unwrap_or_default();
         }
     }
 }
@@ -226,11 +220,11 @@ impl Drop for Subscribers {
     fn drop(&mut self) {
         let watched = self.watched.read();
 
-        for senders in watched.values() {
-            let senders = std::mem::take(&mut *senders.write());
-            for (_, (waker, sender)) in senders {
+        for senders_mu in watched.values() {
+            let senders = std::mem::take(&mut *senders_mu.write());
+            for (_, (waker_opt, sender)) in senders {
                 drop(sender);
-                if let Some(waker) = waker {
+                if let Some(waker) = waker_opt {
                     waker.wake();
                 }
             }
@@ -239,10 +233,7 @@ impl Drop for Subscribers {
 }
 
 impl Subscribers {
-    pub(crate) fn register(
-        &self,
-        prefix: &[u8]
-    ) -> Subscriber {
+    pub(crate) fn register(&self, prefix: &[u8]) -> Subscriber {
         self.ever_used.store(true, Relaxed);
         let r_mu = {
             let r_mu = self.watched.read();
@@ -353,9 +344,9 @@ impl ReservedBroadcast {
     pub fn complete(self, event: &Event) {
         let iter = self.subscribers.into_iter();
 
-        for (waker, tx) in iter {
+        for (waker_opt, tx) in iter {
             tx.fill(Some(event.clone()));
-            if let Some(waker) = waker {
+            if let Some(waker) = waker_opt {
                 waker.wake();
             }
         }
