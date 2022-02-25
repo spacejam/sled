@@ -237,6 +237,14 @@ mod shim {
             *lock = prev ^ val;
             prev
         }
+
+        #[allow(dead_code)]
+        pub fn fetch_max(&self, val: i64, _: Ordering) -> i64 {
+            let mut lock = self.value.write();
+            let prev = *lock;
+            *lock = prev.max(val);
+            prev
+        }
     }
 
     impl From<i64> for AtomicI64 {
