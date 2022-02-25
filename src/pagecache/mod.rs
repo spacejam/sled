@@ -123,7 +123,7 @@ pub enum MessageKind {
 }
 
 impl MessageKind {
-    pub(crate) const fn into(self) -> u8 {
+    pub(in crate::pagecache) const fn into(self) -> u8 {
         self as u8
     }
 }
@@ -208,16 +208,16 @@ where
 
 use std::convert::{TryFrom, TryInto};
 
-pub(crate) const fn lsn_to_arr(number: Lsn) -> [u8; 8] {
+pub(in crate::pagecache) const fn lsn_to_arr(number: Lsn) -> [u8; 8] {
     number.to_le_bytes()
 }
 
 #[inline]
-pub(crate) fn arr_to_lsn(arr: &[u8]) -> Lsn {
+pub(in crate::pagecache) fn arr_to_lsn(arr: &[u8]) -> Lsn {
     Lsn::from_le_bytes(arr.try_into().unwrap())
 }
 
-pub(crate) const fn u64_to_arr(number: u64) -> [u8; 8] {
+pub(in crate::pagecache) const fn u64_to_arr(number: u64) -> [u8; 8] {
     number.to_le_bytes()
 }
 
@@ -232,7 +232,7 @@ pub(crate) const fn u32_to_arr(number: u32) -> [u8; 4] {
 
 #[allow(clippy::needless_pass_by_value)]
 #[allow(clippy::needless_return)]
-pub(crate) fn decompress(in_buf: Vec<u8>) -> Vec<u8> {
+pub(in crate::pagecache) fn decompress(in_buf: Vec<u8>) -> Vec<u8> {
     #[cfg(feature = "compression")]
     {
         use zstd::stream::decode_all;
@@ -278,8 +278,8 @@ impl<'g> Deref for MetaView<'g> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PageView<'g> {
-    pub(crate) read: Shared<'g, Page>,
-    pub(crate) entry: &'g Atomic<Page>,
+    pub(in crate::pagecache) read: Shared<'g, Page>,
+    pub(in crate::pagecache) entry: &'g Atomic<Page>,
 }
 
 impl<'g> Deref for PageView<'g> {
@@ -310,7 +310,7 @@ impl quickcheck::Arbitrary for CacheInfo {
 /// of which a page consists.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "testing", derive(PartialEq))]
-pub(crate) enum Update {
+pub(in crate::pagecache) enum Update {
     Link(Link),
     Node(Node),
     Free,
@@ -393,7 +393,7 @@ pub struct Page {
 }
 
 impl Page {
-    pub(crate) fn rss(&self) -> Option<u64> {
+    pub(in crate::pagecache) fn rss(&self) -> Option<u64> {
         match &self.update {
             Some(Update::Node(ref node)) => Some(node.rss()),
             _ => None,
@@ -714,11 +714,11 @@ impl PageCache {
 
         #[cfg(feature = "event_log")]
         {
-            let guard = pin();
+            let guard2 = pin();
 
             pc.config
                 .event_log
-                .meta_after_restart(pc.get_meta(&guard).deref().clone());
+                .meta_after_restart(pc.get_meta(&guard2).deref().clone());
         }
 
         trace!("pagecache started");
@@ -1156,9 +1156,9 @@ impl PageCacheInner {
             self.cas_page(pid, old, Update::Free, false, guard)?;
 
         if new_pointer.is_ok() {
-            let free = self.free.clone();
+            let free_mu = self.free.clone();
             guard.defer(move || {
-                let mut free = free.lock();
+                let mut free = free_mu.lock();
                 assert!(free.insert(pid), "pid {} was double-freed", pid);
             });
         }
@@ -1246,7 +1246,7 @@ impl PageCacheInner {
     fn rewrite_page(
         &self,
         pid: PageId,
-        segment_to_purge: Option<LogOffset>,
+        segment_to_purge_opt: Option<LogOffset>,
         guard: &Guard,
     ) -> Result<()> {
         #[cfg(feature = "metrics")]
@@ -1257,7 +1257,7 @@ impl PageCacheInner {
         loop {
             let page_view = self.inner.get(pid, guard);
 
-            if let Some(segment_to_purge) = segment_to_purge {
+            if let Some(segment_to_purge) = segment_to_purge_opt {
                 let purge_segment_id =
                     segment_to_purge / self.config.segment_size as u64;
 
@@ -1292,7 +1292,7 @@ impl PageCacheInner {
 
                 let heap_id = lone_cache_info.pointer.heap_id().unwrap();
 
-                let (log_reservation, cache_info) = if skip_log {
+                let (log_reservation_opt, cache_info) = if skip_log {
                     trace!(
                         "allowing heap pointer for pid {} with original lsn of {} \
                         to be forgotten from the log, as it is contained in the \
@@ -1349,13 +1349,13 @@ impl PageCacheInner {
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
                     // the segment to inactive, resulting in a race otherwise.
-                    if let Some(log_reservation) = log_reservation {
+                    if let Some(log_reservation) = log_reservation_opt {
                         log_reservation.complete()?;
                     }
 
                     // only call accessed & page_out if called from
                     // something other than page_out itself
-                    if segment_to_purge.is_some() {
+                    if segment_to_purge_opt.is_some() {
                         // possibly evict an item now that our cache has grown
                         if let Some(rss) = unsafe { new_shared.deref().rss() } {
                             self.lru_access(pid, rss, guard)?;
@@ -1366,7 +1366,7 @@ impl PageCacheInner {
 
                     return Ok(());
                 } else {
-                    if let Some(log_reservation) = log_reservation {
+                    if let Some(log_reservation) = log_reservation_opt {
                         log_reservation.abort()?;
                     }
 
@@ -1387,9 +1387,9 @@ impl PageCacheInner {
                     node.increment_rewrite_generations();
                     (node_view.0, Update::Node(node))
                 } else {
-                    let page_view = self.inner.get(pid, guard);
+                    let page_view_retry = self.inner.get(pid, guard);
 
-                    if page_view.is_free() {
+                    if page_view_retry.is_free() {
                         (page_view, Update::Free)
                     } else {
                         debug!(
@@ -1458,8 +1458,8 @@ impl PageCacheInner {
         );
         let heap_files = std::fs::read_dir(heap_dir)?;
 
-        for slab_file in heap_files {
-            let slab_file = if let Ok(bf) = slab_file {
+        for slab_file_res in heap_files {
+            let slab_file = if let Ok(bf) = slab_file_res {
                 bf
             } else {
                 continue;
@@ -1641,7 +1641,7 @@ impl PageCacheInner {
     }
 
     /// Retrieve the current persisted IDGEN value
-    pub(crate) fn get_idgen<'g>(
+    pub(in crate::pagecache) fn get_idgen<'g>(
         &self,
         guard: &'g Guard,
     ) -> (PageView<'g>, u64) {
@@ -1671,7 +1671,7 @@ impl PageCacheInner {
     ) -> Result<Option<NodeView<'g>>> {
         trace!("getting page iterator for pid {}", pid);
         #[cfg(feature = "metrics")]
-        let _measure = Measure::new(&M.get_page);
+        let _measure_get_page = Measure::new(&M.get_page);
 
         if pid <= COUNTER_PID || pid == BATCH_MANIFEST_PID {
             panic!(
@@ -1718,7 +1718,7 @@ impl PageCacheInner {
             }
 
             #[cfg(feature = "metrics")]
-            let _measure = Measure::new(&M.pull);
+            let _measure_pull = Measure::new(&M.pull);
 
             // need to page-in
             let updates_result: Result<Vec<Update>> = page_view
@@ -1744,10 +1744,10 @@ impl PageCacheInner {
         }
 
         updates.truncate(1);
-        let base = updates.pop().unwrap();
+        let base_owned = updates.pop().unwrap();
 
         let page = Owned::new(Page {
-            update: Some(base),
+            update: Some(base_owned),
             cache_infos: page_view.cache_infos.clone(),
         });
 
@@ -1771,10 +1771,10 @@ impl PageCacheInner {
                 self.lru_access(pid, rss, guard)?;
             }
 
-            let mut page_view = page_view;
-            page_view.read = new_shared;
+            let mut page_view2 = page_view;
+            page_view2.read = new_shared;
 
-            Ok(Some(NodeView(page_view)))
+            Ok(Some(NodeView(page_view2)))
         } else {
             trace!("fix-up for pid {} failed", pid);
 
@@ -1882,20 +1882,20 @@ impl PageCacheInner {
     pub(crate) fn cas_root_in_meta<'g>(
         &self,
         name: &[u8],
-        old: Option<PageId>,
-        new: Option<PageId>,
+        old_opt: Option<PageId>,
+        new_opt: Option<PageId>,
         guard: &'g Guard,
     ) -> Result<std::result::Result<(), Option<PageId>>> {
         loop {
             let meta_view = self.get_meta(guard);
 
             let actual = meta_view.get_root(name);
-            if actual != old {
+            if actual != old_opt {
                 return Ok(Err(actual));
             }
 
             let mut new_meta = meta_view.deref().clone();
-            if let Some(new) = new {
+            if let Some(new) = new_opt {
                 new_meta.set_root(name.into(), new);
             } else {
                 new_meta.del_root(name);

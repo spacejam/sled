@@ -158,14 +158,14 @@ impl Tree {
         K: AsRef<[u8]>,
         V: Into<IVec>,
     {
-        let value = value.into();
+        let value_ivec = value.into();
         let mut guard = pin();
         let _cc = concurrency_control::read();
         loop {
             trace!("setting key {:?}", key.as_ref());
             if let Ok(res) = self.insert_inner(
                 key.as_ref(),
-                Some(value.clone()),
+                Some(value_ivec.clone()),
                 false,
                 &mut guard,
             )? {
@@ -202,9 +202,9 @@ impl Tree {
         };
 
         let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
-        let last_value = last_value.map(IVec::from);
+        let last_value_ivec = last_value.map(IVec::from);
 
-        if value == last_value {
+        if value == last_value_ivec {
             // NB: always broadcast event
             if let Some(Some(res)) = subscriber_reservation.take() {
                 let event = subscriber::Event::single_update(
@@ -217,14 +217,14 @@ impl Tree {
             }
 
             // short-circuit a no-op set or delete
-            return Ok(Ok(last_value));
+            return Ok(Ok(last_value_ivec));
         }
 
-        let frag = if let Some(value) = value.clone() {
-            if out_of_bounds(value.len()) {
+        let frag = if let Some(value_ivec) = value.clone() {
+            if out_of_bounds(value_ivec.len()) {
                 bounds_error()?;
             }
-            Link::Set(encoded_key, value)
+            Link::Set(encoded_key, value_ivec)
         } else {
             Link::Del(encoded_key)
         };
@@ -244,7 +244,7 @@ impl Tree {
                 res.complete(&event);
             }
 
-            Ok(Ok(last_value))
+            Ok(Ok(last_value_ivec))
         } else {
             #[cfg(feature = "metrics")]
             M.tree_looped();
@@ -411,10 +411,10 @@ impl Tree {
     pub(crate) fn apply_batch_inner(
         &self,
         batch: Batch,
-        transaction_batch: Option<Event>,
+        transaction_batch_opt: Option<Event>,
         guard: &mut Guard,
     ) -> Result<()> {
-        let peg = if transaction_batch.is_none() {
+        let peg_opt = if transaction_batch_opt.is_none() {
             Some(self.context.pin_log(guard)?)
         } else {
             None
@@ -430,7 +430,7 @@ impl Tree {
                     .insert_inner(
                         k,
                         v_opt.clone(),
-                        transaction_batch.is_some(),
+                        transaction_batch_opt.is_some(),
                         guard,
                     )?
                     .is_ok()
@@ -441,14 +441,14 @@ impl Tree {
         }
 
         if let Some(res) = subscriber_reservation.take() {
-            if let Some(transaction_batch) = transaction_batch {
+            if let Some(transaction_batch) = transaction_batch_opt {
                 res.complete(&transaction_batch);
             } else {
                 res.complete(&Event::single_batch(self.clone(), batch));
             }
         }
 
-        if let Some(peg) = peg {
+        if let Some(peg) = peg_opt {
             // when the peg drops, it ensures all updates
             // written to the log since its creation are
             // recovered atomically
@@ -645,7 +645,7 @@ impl Tree {
         let guard = pin();
         let _cc = concurrency_control::read();
 
-        let new = new.map(Into::into);
+        let new2 = new.map(Into::into);
 
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -664,11 +664,11 @@ impl Tree {
             if !matches {
                 return Ok(Err(CompareAndSwapError {
                     current: current_value.map(IVec::from),
-                    proposed: new,
+                    proposed: new2,
                 }));
             }
 
-            if current_value == new.as_ref().map(AsRef::as_ref) {
+            if current_value == new2.as_ref().map(AsRef::as_ref) {
                 // short-circuit no-op write. this is still correct
                 // because we verified that the input matches, so
                 // doing the work has the same semantic effect as not
@@ -678,8 +678,8 @@ impl Tree {
 
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
-            let frag = if let Some(ref new) = new {
-                Link::Set(encoded_key, new.clone())
+            let frag = if let Some(ref new3) = new2 {
+                Link::Set(encoded_key, new3.clone())
             } else {
                 Link::Del(encoded_key)
             };
@@ -691,7 +691,7 @@ impl Tree {
                     let event = subscriber::Event::single_update(
                         self.clone(),
                         key.as_ref().into(),
-                        new,
+                        new2,
                     );
 
                     res.complete(&event);
@@ -939,6 +939,7 @@ impl Tree {
     /// running on realistic hardware.
     // this clippy check is mis-firing on async code.
     #[allow(clippy::used_underscore_binding)]
+    #[allow(clippy::shadow_same)]
     pub async fn flush_async(&self) -> Result<usize> {
         let pagecache = self.context.pagecache.clone();
         if let Some(result) = threadpool::spawn(move || pagecache.flush()).await
@@ -1176,16 +1177,16 @@ impl Tree {
             let (encoded_key, current_value) =
                 node_view.node_kv_pair(key.as_ref());
             let tmp = current_value.as_ref().map(AsRef::as_ref);
-            let new = merge_operator(key, tmp, value).map(IVec::from);
+            let new_opt = merge_operator(key, tmp, value).map(IVec::from);
 
-            if new.as_ref().map(AsRef::as_ref) == current_value {
+            if new_opt.as_ref().map(AsRef::as_ref) == current_value {
                 // short-circuit no-op write
-                return Ok(Ok(new));
+                return Ok(Ok(new_opt));
             }
 
             let mut subscriber_reservation = self.subscribers.reserve(&key);
 
-            let frag = if let Some(ref new) = new {
+            let frag = if let Some(ref new) = new_opt {
                 Link::Set(encoded_key, new.clone())
             } else {
                 Link::Del(encoded_key)
@@ -1198,13 +1199,13 @@ impl Tree {
                     let event = subscriber::Event::single_update(
                         self.clone(),
                         key.as_ref().into(),
-                        new.clone(),
+                        new_opt.clone(),
                     );
 
                     res.complete(&event);
                 }
 
-                return Ok(Ok(new));
+                return Ok(Ok(new_opt));
             }
             #[cfg(feature = "metrics")]
             M.tree_looped();
@@ -1592,7 +1593,7 @@ impl Tree {
     fn split_node<'g>(
         &self,
         view: &View<'g>,
-        parent_view: &Option<View<'g>>,
+        parent_view_opt: &Option<View<'g>>,
         root_pid: PageId,
         guard: &'g Guard,
     ) -> Result<()> {
@@ -1606,7 +1607,7 @@ impl Tree {
 
         // replace node, pointing next to installed right
         lhs.set_next(Some(NonZeroU64::new(rhs_pid).unwrap()));
-        let replace = self.context.pagecache.replace(
+        let replace_res = self.context.pagecache.replace(
             view.pid,
             view.node_view.0,
             &lhs,
@@ -1614,7 +1615,7 @@ impl Tree {
         )?;
         #[cfg(feature = "metrics")]
         M.tree_child_split_attempt();
-        if replace.is_err() {
+        if replace_res.is_err() {
             // if we failed, don't follow through with the
             // parent split or root hoist.
             let _new_stack = self
@@ -1628,7 +1629,7 @@ impl Tree {
         M.tree_child_split_success();
 
         // either install parent split or hoist root
-        if let Some(parent_view) = parent_view {
+        if let Some(parent_view) = parent_view_opt {
             #[cfg(feature = "metrics")]
             M.tree_parent_split_attempt();
             let split_applied = parent_view.parent_split(&rhs_lo, rhs_pid);
@@ -1643,7 +1644,7 @@ impl Tree {
 
             let parent = split_applied.unwrap();
 
-            let replace = self.context.pagecache.replace(
+            let replace_res2 = self.context.pagecache.replace(
                 parent_view.pid,
                 parent_view.node_view.0,
                 &parent,
@@ -1655,11 +1656,11 @@ impl Tree {
                 rhs_lo,
                 rhs_pid,
                 parent_view.pid,
-                replace.is_ok()
+                replace_res2.is_ok()
             );
 
             #[cfg(feature = "metrics")]
-            if replace.is_ok() {
+            if replace_res2.is_ok() {
                 M.tree_parent_split_success();
             } else {
                 // Parent splits are an optimization
@@ -1784,8 +1785,8 @@ impl Tree {
 
         let mut cursor = self.root.load(Acquire);
         let mut root_pid = cursor;
-        let mut parent_view = None;
-        let mut unsplit_parent = None;
+        let mut parent_view_opt = None;
+        let mut unsplit_parent_opt = None;
         let mut took_leftmost_branch = false;
 
         // only merge or split nodes a few times
@@ -1808,8 +1809,8 @@ impl Tree {
                     smo_budget = smo_budget.saturating_sub(1);
                     cursor = self.root.load(Acquire);
                     root_pid = cursor;
-                    parent_view = None;
-                    unsplit_parent = None;
+                    parent_view_opt = None;
+                    unsplit_parent_opt = None;
                     took_leftmost_branch = false;
 
                     #[cfg(feature = "testing")]
@@ -1865,7 +1866,7 @@ impl Tree {
             }
 
             if smo_budget > 0 && view.should_split() {
-                self.split_node(&view, &parent_view, root_pid, guard)?;
+                self.split_node(&view, &parent_view_opt, root_pid, guard)?;
                 retry!();
             }
 
@@ -1884,10 +1885,10 @@ impl Tree {
                     right_sibling
                 );
                 cursor = right_sibling;
-                if unsplit_parent.is_none() && parent_view.is_some() {
-                    unsplit_parent = parent_view.clone();
-                } else if parent_view.is_none() && view.lo().is_empty() {
-                    assert!(unsplit_parent.is_none());
+                if unsplit_parent_opt.is_none() && parent_view_opt.is_some() {
+                    unsplit_parent_opt = parent_view_opt.clone();
+                } else if parent_view_opt.is_none() && view.lo().is_empty() {
+                    assert!(unsplit_parent_opt.is_none());
                     assert_eq!(view.pid, root_pid);
                     // we have found a partially-split root
                     if self.root_hoist(
@@ -1903,7 +1904,7 @@ impl Tree {
                 }
 
                 continue;
-            } else if let Some(unsplit_parent) = unsplit_parent.take() {
+            } else if let Some(unsplit_parent) = unsplit_parent_opt.take() {
                 // we have found the proper page for
                 // our cooperative parent split
                 trace!(
@@ -1961,10 +1962,10 @@ impl Tree {
             // fairly complex implementation.
             if smo_budget > 0
                 && !took_leftmost_branch
-                && parent_view.is_some()
+                && parent_view_opt.is_some()
                 && view.should_merge()
             {
-                let parent = parent_view.as_mut().unwrap();
+                let parent = parent_view_opt.as_mut().unwrap();
                 assert!(parent.merging_child.is_none());
                 if parent.can_merge_child(cursor) {
                     let frag = Link::ParentMergeIntention(cursor);
@@ -1992,7 +1993,7 @@ impl Tree {
                     view.deref()
                 );
                 took_leftmost_branch = next.0;
-                parent_view = Some(view);
+                parent_view_opt = Some(view);
                 cursor = next.1;
             } else {
                 assert!(!overshot && !undershot);
@@ -2071,11 +2072,11 @@ impl Tree {
 
     fn install_parent_merge<'g>(
         &self,
-        parent_view: &View<'g>,
+        parent_view_ref: &View<'g>,
         child_pid: PageId,
         guard: &'g Guard,
     ) -> Result<bool> {
-        let mut parent_view = Cow::Borrowed(parent_view);
+        let mut parent_view = Cow::Borrowed(parent_view_ref);
         loop {
             let linked = self.context.pagecache.link(
                 parent_view.pid,
@@ -2419,8 +2420,8 @@ impl Tree {
             f.push_str(&format!("\t\t{}: {:?}\n", pid, node));
 
             if node.is_index {
-                for pid in node.iter_index_pids() {
-                    referenced_pids.insert(pid);
+                for child_pid in node.iter_index_pids() {
+                    referenced_pids.insert(child_pid);
                 }
             }
 

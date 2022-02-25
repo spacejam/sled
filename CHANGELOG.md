@@ -23,7 +23,7 @@
 
 ## Breaking Changes
 
-* #1399 Bump MSRV to 1.51.
+* #1400 Bump MSRV to 1.57.
 * #1399 Thread support is now required on all platforms.
 * #1135 The "no_metrics" anti-feature has been replaced with
   the "metrics" positive feature.

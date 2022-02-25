@@ -705,7 +705,6 @@ impl Config {
         let guard = pin();
         let old = self.global_error.swap(Shared::default(), SeqCst, &guard);
         if !old.is_null() {
-            let guard = pin();
             #[allow(unsafe_code)]
             unsafe {
                 guard.defer_destroy(old);
@@ -781,12 +780,12 @@ impl RunningConfig {
     // returns the snapshot file paths for this system
     #[doc(hidden)]
     pub fn get_snapshot_files(&self) -> io::Result<Vec<PathBuf>> {
-        let path = self.get_path().join("snap.");
+        let conf_path = self.get_path().join("snap.");
 
-        let absolute_path: PathBuf = if Path::new(&path).is_absolute() {
-            path
+        let absolute_path: PathBuf = if Path::new(&conf_path).is_absolute() {
+            conf_path
         } else {
-            std::env::current_dir()?.join(path)
+            std::env::current_dir()?.join(conf_path)
         };
 
         let filter = |dir_entry: io::Result<fs::DirEntry>| {

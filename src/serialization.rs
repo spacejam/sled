@@ -100,7 +100,7 @@ impl Serialize for MessageHeader {
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
         self.crc32.serialize_into(buf);
-        self.kind.into().serialize_into(buf);
+        (self.kind as u8).serialize_into(buf);
         self.len.serialize_into(buf);
         self.segment_number.serialize_into(buf);
         self.pid.serialize_into(buf);
@@ -433,7 +433,7 @@ fn shift_i64_opt(value_opt: &Option<i64>) -> i64 {
 
 const fn unshift_i64_opt(value: i64) -> Option<i64> {
     if value == 0 {
-        return None
+        return None;
     }
     let subtract = value > 0;
     Some(value - subtract as i64)
@@ -445,11 +445,7 @@ impl Serialize for Snapshot {
             + self.stable_lsn.serialized_size()
             + self.active_segment.serialized_size()
             + (self.pt.len() as u64).serialized_size()
-            + self
-                .pt
-                .iter()
-                .map(|page_state| page_state.serialized_size())
-                .sum::<u64>()
+            + self.pt.iter().map(Serialize::serialized_size).sum::<u64>()
     }
 
     fn serialize_into(&self, buf: &mut &mut [u8]) {
@@ -554,10 +550,7 @@ impl Serialize for PageState {
             PageState::Present { base, frags } => {
                 (1 + frags.len() as u64).serialized_size()
                     + base.serialized_size()
-                    + frags
-                        .iter()
-                        .map(|tuple| tuple.serialized_size())
-                        .sum::<u64>()
+                    + frags.iter().map(Serialize::serialized_size).sum::<u64>()
             }
             _ => panic!("tried to serialize {:?}", self),
         }
@@ -686,7 +679,7 @@ where
         if self.bound == 0 || self.buf.is_empty() {
             return None;
         }
-        let item_res = T::deserialize(&mut self.buf);
+        let item_res = T::deserialize(self.buf);
         self.bound -= 1;
         if item_res.is_err() {
             self.bound = 0;

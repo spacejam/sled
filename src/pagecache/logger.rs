@@ -421,7 +421,7 @@ impl Log {
                 .max_reserved_lsn
                 .fetch_max(reservation_lsn + inline_buf_len as Lsn - 1, SeqCst);
 
-            let (heap_reservation, heap_id) = if over_heap_threshold {
+            let (heap_reservation, heap_id_opt) = if over_heap_threshold {
                 let heap_reservation = self
                     .config
                     .heap
@@ -442,7 +442,7 @@ impl Log {
             #[cfg(feature = "metrics")]
             M.log_reservation_success();
 
-            let pointer = if let Some(heap_id) = heap_id {
+            let pointer = if let Some(heap_id) = heap_id_opt {
                 DiskPtr::new_heap_item(reservation_lid, heap_id)
             } else if let Some(heap_id) = heap_rewrite {
                 DiskPtr::new_heap_item(reservation_lid, heap_id)
@@ -503,9 +503,9 @@ impl Log {
                  to log from exit_reservation",
                 lsn
             );
-            let iobufs = self.iobufs.clone();
-            let iobuf = iobuf.clone();
-            threadpool::write_to_log(iobuf, iobufs);
+            let iobufs2 = self.iobufs.clone();
+            let iobuf2 = iobuf.clone();
+            threadpool::write_to_log(iobuf2, iobufs2);
 
             Ok(())
         } else {
@@ -861,7 +861,7 @@ pub(crate) fn read_message<R: ReadAt>(
             let heap_id = HeapId::deserialize(&mut &buf[..]).unwrap();
 
             match config.heap.read(heap_id, config.use_compression) {
-                Ok((kind, buf)) => {
+                Ok((kind, buf2)) => {
                     assert_eq!(header.kind, kind);
                     trace!(
                         "read a successful heap message for heap {:?} in segment number {:?}",
@@ -869,7 +869,7 @@ pub(crate) fn read_message<R: ReadAt>(
                         header.segment_number,
                     );
 
-                    Ok(LogRead::Heap(header, buf, heap_id, inline_len))
+                    Ok(LogRead::Heap(header, buf2, heap_id, inline_len))
                 }
                 Err(e) => {
                     debug!("failed to read heap: {:?}", e);
@@ -883,10 +883,10 @@ pub(crate) fn read_message<R: ReadAt>(
         | MessageKind::Free
         | MessageKind::Counter => {
             trace!("read a successful inline message");
-            let buf =
+            let buf2 =
                 if config.use_compression { decompress(buf) } else { buf };
 
-            Ok(LogRead::Inline(header, buf, inline_len))
+            Ok(LogRead::Inline(header, buf2, inline_len))
         }
         MessageKind::BatchManifest => {
             assert_eq!(buf.len(), std::mem::size_of::<Lsn>());

@@ -146,8 +146,8 @@ impl<E> From<UnabortableTransactionError> for ConflictableTransactionError<E> {
             UnabortableTransactionError::Conflict => {
                 ConflictableTransactionError::Conflict
             }
-            UnabortableTransactionError::Storage(error) => {
-                ConflictableTransactionError::Storage(error)
+            UnabortableTransactionError::Storage(error2) => {
+                ConflictableTransactionError::Storage(error2)
             }
         }
     }
@@ -550,10 +550,7 @@ impl<E> Transactional<E> for [Tree] {
         }
 
         Ok(TransactionalTrees {
-            inner: self
-                .iter()
-                .map(|t| TransactionalTree::from_tree(t))
-                .collect(),
+            inner: self.iter().map(TransactionalTree::from_tree).collect(),
         })
     }
 

@@ -561,7 +561,7 @@ impl IoBufs {
         item: &T,
         header: MessageHeader,
         mut out_buf: &mut [u8],
-        heap_reservation: Option<super::heap::Reservation>,
+        heap_reservation_opt: Option<super::heap::Reservation>,
     ) -> Result<()> {
         // we create this double ref to allow scooting
         // the slice forward without doing anything
@@ -573,7 +573,7 @@ impl IoBufs {
             header.serialize_into(out_buf_ref);
         }
 
-        if let Some(heap_reservation) = heap_reservation {
+        if let Some(heap_reservation) = heap_reservation_opt {
             // write blob to file
             io_fail!(self, "blob blob write");
             let mut heap_buf = vec![
@@ -676,7 +676,7 @@ impl IoBufs {
                     / u64::try_from(self.config.segment_size).unwrap(),
             );
 
-            let header = MessageHeader {
+            let cap_header = MessageHeader {
                 kind: MessageKind::Cap,
                 pid: PageId::max_value(),
                 segment_number,
@@ -684,9 +684,9 @@ impl IoBufs {
                 crc32: 0,
             };
 
-            trace!("writing segment cap {:?}", header);
+            trace!("writing segment cap {:?}", cap_header);
 
-            let header_bytes = header.serialize();
+            let header_bytes = cap_header.serialize();
 
             // initialize the remainder of this buffer (only pad_len of this
             // will be part of the Cap message)
@@ -1282,9 +1282,9 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             "asynchronously writing iobuf with lsn {} to log from maybe_seal",
             lsn
         );
-        let iobufs = iobufs.clone();
-        let iobuf = iobuf.clone();
-        let _result = threadpool::write_to_log(iobuf, iobufs);
+        let iobufs2 = iobufs.clone();
+        let iobuf2 = iobuf.clone();
+        let _result = threadpool::write_to_log(iobuf2, iobufs2);
 
         #[cfg(feature = "event_log")]
         _result.wait();

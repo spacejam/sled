@@ -78,12 +78,7 @@ impl<T> OneShot<T> {
             if res.timed_out() {
                 return Err(std::sync::mpsc::RecvTimeoutError::Disconnected);
             }
-            timeout =
-                if let Some(timeout) = timeout.checked_sub(start.elapsed()) {
-                    timeout
-                } else {
-                    Duration::from_nanos(0)
-                };
+            timeout = timeout.checked_sub(start.elapsed()).unwrap_or_default();
         }
         if let Some(item) = inner.item.take() {
             Ok(item)

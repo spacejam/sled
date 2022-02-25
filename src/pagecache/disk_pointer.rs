@@ -53,7 +53,7 @@ impl DiskPtr {
         }
     }
 
-    pub(crate) fn original_lsn(&self) -> Lsn {
+    pub(crate) const fn original_lsn(&self) -> Lsn {
         match self {
             DiskPtr::Heap(_, heap_id) => heap_id.original_lsn,
             DiskPtr::Inline(_) => panic!("called original_lsn on non-Heap"),

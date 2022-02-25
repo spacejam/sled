@@ -67,10 +67,11 @@ impl Default for Histogram {
             // Avoid calling Vec::resize_with with a large length because its
             // internals cause stacked borrows tracking information to add an
             // item for each element of the vector.
-            let mut vals = std::mem::ManuallyDrop::new(vec![0_usize; BUCKETS]);
-            let ptr: *mut usize = vals.as_mut_ptr();
-            let len = vals.len();
-            let capacity = vals.capacity();
+            let mut raw_vals =
+                std::mem::ManuallyDrop::new(vec![0_usize; BUCKETS]);
+            let ptr: *mut usize = raw_vals.as_mut_ptr();
+            let len = raw_vals.len();
+            let capacity = raw_vals.capacity();
 
             let vals: Vec<AtomicUsize> = unsafe {
                 Vec::from_raw_parts(ptr as *mut AtomicUsize, len, capacity)
@@ -142,8 +143,7 @@ impl Histogram {
             let mut sum = 0.;
 
             for (idx, val) in self.vals.iter().enumerate() {
-                let count = val.load(Ordering::Acquire);
-                sum += count as f64;
+                sum += val.load(Ordering::Acquire) as f64;
 
                 if sum >= target {
                     return decompress(idx as u16);

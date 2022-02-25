@@ -331,7 +331,7 @@ impl Segment {
         }
     }
 
-    fn lsn(&self) -> Lsn {
+    const fn lsn(&self) -> Lsn {
         match self {
             Segment::Active(Active { lsn, .. })
             | Segment::Inactive(Inactive { lsn, .. })
@@ -547,10 +547,7 @@ impl SegmentAccountant {
             );
         }
 
-        let add = |pid,
-                   lsn: Lsn,
-                   lid_opt: Option<LogOffset>,
-                   segments: &mut Vec<Segment>| {
+        let mut add = |pid, lsn: Lsn, lid_opt: Option<LogOffset>| {
             let lid = if let Some(lid) = lid_opt {
                 lid
             } else {
@@ -578,13 +575,13 @@ impl SegmentAccountant {
         for (pid, state) in snapshot.pt.iter().enumerate() {
             match state {
                 PageState::Present { base, frags } => {
-                    add(pid as PageId, base.0, base.1.lid(), &mut segments);
+                    add(pid as PageId, base.0, base.1.lid());
                     for (lsn, ptr) in frags {
-                        add(pid as PageId, *lsn, ptr.lid(), &mut segments);
+                        add(pid as PageId, *lsn, ptr.lid());
                     }
                 }
                 PageState::Free(lsn, ptr) => {
-                    add(pid as PageId, *lsn, ptr.lid(), &mut segments);
+                    add(pid as PageId, *lsn, ptr.lid());
                 }
                 _ => panic!("tried to recover pagestate from a {:?}", state),
             }
@@ -763,7 +760,7 @@ impl SegmentAccountant {
             lsn
         );
 
-        let new_idx =
+        let new_idx_opt =
             new_cache_info.pointer.lid().map(|lid| self.segment_id(lid));
 
         // Do we need to schedule any heap cleanups?
@@ -794,7 +791,7 @@ impl SegmentAccountant {
                     "queueing heap item removal for {} in our own segment",
                     old_ptr
                 );
-                if let Some(new_idx) = new_idx {
+                if let Some(new_idx) = new_idx_opt {
                     self.segments[new_idx].remove_heap_item(
                         old_ptr.heap_id().unwrap(),
                         &self.config,
@@ -950,7 +947,7 @@ impl SegmentAccountant {
         let can_deactivate = self
             .ordering
             .range(bounds)
-            .map(|(lsn, _lid)| *lsn)
+            .map(|(segment_lsn, _lid)| *segment_lsn)
             .collect::<Vec<_>>();
 
         // auto-tune collection in cases
@@ -963,9 +960,10 @@ impl SegmentAccountant {
             32.max(can_deactivate.len() / 16)
         };
 
-        for lsn in can_deactivate.into_iter().take(bound) {
-            self.deactivate_segment(lsn)?;
-            self.max_stabilized_lsn = lsn;
+        for segment_lsn in can_deactivate.into_iter().take(bound) {
+            self.deactivate_segment(segment_lsn)?;
+            assert!(self.max_stabilized_lsn < segment_lsn);
+            self.max_stabilized_lsn = segment_lsn;
         }
 
         // if we have a lot of free segments in our whole file,
@@ -1014,8 +1012,8 @@ impl SegmentAccountant {
             Default::default()
         };
 
-        for lsn in freeable_segments {
-            let segment_start = self.ordering[&lsn];
+        for segment_lsn in freeable_segments {
+            let segment_start = self.ordering[&segment_lsn];
             assert_ne!(segment_start, lid);
             self.free_segment(segment_start)?;
         }

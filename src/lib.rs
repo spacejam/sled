@@ -138,9 +138,8 @@
     clippy::non_ascii_literal,
     clippy::path_buf_push_overwrite,
     clippy::print_stdout,
-    clippy::pub_enum_variant_names,
     clippy::redundant_closure_for_method_calls,
-    clippy::shadow_reuse,
+    // clippy::shadow_reuse,
     clippy::shadow_same,
     clippy::shadow_unrelated,
     clippy::single_match_else,
@@ -152,7 +151,6 @@
     clippy::unseparated_literal_suffix,
     clippy::used_underscore_binding,
     clippy::wildcard_dependencies,
-    clippy::wrong_pub_self_convention,
 ))]
 #![cfg_attr(
     feature = "testing",
@@ -501,23 +499,23 @@ mod compile_time_assertions {
 
     #[allow(unreachable_code)]
     fn _assert_public_types_send_sync() {
-        _assert_send::<Subscriber>(unreachable!());
+        _assert_send::<Subscriber>();
 
-        _assert_send_sync::<Iter>(unreachable!());
-        _assert_send_sync::<Tree>(unreachable!());
-        _assert_send_sync::<Db>(unreachable!());
-        _assert_send_sync::<Batch>(unreachable!());
-        _assert_send_sync::<IVec>(unreachable!());
-        _assert_send_sync::<Config>(unreachable!());
-        _assert_send_sync::<CompareAndSwapError>(unreachable!());
-        _assert_send_sync::<Error>(unreachable!());
-        _assert_send_sync::<Event>(unreachable!());
-        _assert_send_sync::<Mode>(unreachable!());
+        _assert_send_sync::<Iter>();
+        _assert_send_sync::<Tree>();
+        _assert_send_sync::<Db>();
+        _assert_send_sync::<Batch>();
+        _assert_send_sync::<IVec>();
+        _assert_send_sync::<Config>();
+        _assert_send_sync::<CompareAndSwapError>();
+        _assert_send_sync::<Error>();
+        _assert_send_sync::<Event>();
+        _assert_send_sync::<Mode>();
     }
 
-    fn _assert_send<S: Send>(_: &S) {}
+    fn _assert_send<S: Send>() {}
 
-    fn _assert_send_sync<S: Send + Sync>(_: &S) {}
+    fn _assert_send_sync<S: Send + Sync>() {}
 }
 
 #[cfg(all(unix, not(miri)))]
