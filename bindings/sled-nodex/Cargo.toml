@@ -8,6 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies.nodex]
 version = "~0.2"
+features = ["v1"]
 
 [dependencies]
 either = "1.6.1"
