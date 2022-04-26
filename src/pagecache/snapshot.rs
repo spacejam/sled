@@ -1,6 +1,9 @@
 #[cfg(feature = "zstd")]
 use zstd::bulk::{compress, decompress};
 
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+
 use crate::*;
 
 use super::{
@@ -583,9 +586,19 @@ pub(in crate::pagecache) fn write_snapshot(
     path_2.push(path_2_suffix);
 
     let parent = path_1.parent().unwrap();
+
+    #[cfg(not(unix))]
     std::fs::create_dir_all(parent)?;
-    let mut f =
-        std::fs::OpenOptions::new().write(true).create(true).open(&path_1)?;
+    #[cfg(unix)]
+    std::fs::DirBuilder::new().recursive(true).mode(0o600).create(parent)?;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true);
+    options.create(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let mut f = options.open(&path_1)?;
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
     io_fail!(config, "snap write");

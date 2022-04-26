@@ -1,5 +1,8 @@
 #![allow(unsafe_code)]
 
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
 use std::{
     convert::{TryFrom, TryInto},
     fmt::{self, Debug},
@@ -277,6 +280,8 @@ impl Slab {
         let free = Arc::new(Stack::default());
 
         let mut options = std::fs::OpenOptions::new();
+        #[cfg(unix)]
+        options.mode(0o600);
         options.create(true);
         options.read(true);
         options.write(true);

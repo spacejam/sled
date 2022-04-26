@@ -1,3 +1,6 @@
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+
 use std::{
     fs,
     fs::File,
@@ -504,7 +507,13 @@ impl Config {
         let heap_dir: PathBuf = self.get_path().join("heap");
 
         if !heap_dir.exists() {
+            #[cfg(not(unix))]
             fs::create_dir_all(heap_dir)?;
+            #[cfg(unix)]
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o600)
+                .create(heap_dir)?;
         }
 
         self.verify_config()?;
@@ -512,6 +521,8 @@ impl Config {
         // open the data file
         let mut options = fs::OpenOptions::new();
 
+        #[cfg(unix)]
+        let _ = options.mode(0o600);
         let _ = options.create(true);
         let _ = options.read(true);
         let _ = options.write(true);
@@ -625,8 +636,13 @@ impl Config {
         let temp_path = self.get_path().join("conf.tmp");
         let final_path = self.config_path();
 
-        let mut f =
-            fs::OpenOptions::new().write(true).create(true).open(&temp_path)?;
+        let mut options = fs::OpenOptions::new();
+        #[cfg(unix)]
+        options.mode(0o600);
+        options.write(true);
+        options.create(true);
+
+        let mut f = options.open(&temp_path)?;
 
         io_fail!(self, "write_config bytes");
         f.write_all(&*bytes)?;
@@ -733,7 +749,12 @@ impl Config {
     pub fn truncate_corrupt(&self, new_len: u64) {
         self.event_log.reset();
         let path = self.db_path();
-        let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        let mut options = std::fs::OpenOptions::new();
+        #[cfg(unix)]
+        options.mode(0o600);
+        options.write(true);
+
+        let f = options.open(path).unwrap();
         f.set_len(new_len).expect("should be able to truncate");
     }
 }
@@ -808,7 +829,13 @@ impl RunningConfig {
         let snap_dir = Path::new(&absolute_path).parent().unwrap();
 
         if !snap_dir.exists() {
+            #[cfg(not(unix))]
             fs::create_dir_all(snap_dir)?;
+            #[cfg(unix)]
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o600)
+                .create(snap_dir)?;
         }
 
         Ok(snap_dir.read_dir()?.filter_map(filter).collect())
