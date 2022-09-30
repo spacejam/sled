@@ -90,7 +90,7 @@ fn fixed_stride_inserts() {
 
     let mut expected = std::collections::HashSet::new();
     for k in 0..4096_u16 {
-        db.insert(&k.to_be_bytes(), &[]).unwrap();
+        db.insert(k.to_be_bytes(), &[]).unwrap();
         expected.insert(k.to_be_bytes().to_vec());
     }
 
@@ -107,7 +107,7 @@ fn fixed_stride_inserts() {
     assert_eq!(count, 4096);
 
     for k in 0..4096_u16 {
-        db.insert(&k.to_be_bytes(), &[1]).unwrap();
+        db.insert(k.to_be_bytes(), &[1]).unwrap();
     }
 
     let count = db.iter().count();
@@ -118,7 +118,7 @@ fn fixed_stride_inserts() {
     assert_eq!(db.len(), 4096);
 
     for k in 0..4096_u16 {
-        db.remove(&k.to_be_bytes()).unwrap();
+        db.remove(k.to_be_bytes()).unwrap();
     }
 
     let count = db.iter().count();
@@ -139,7 +139,7 @@ fn sequential_inserts() {
 
     for len in [1, 16, 32, u16::MAX].iter() {
         for i in 0..*len {
-            db.insert(&i.to_le_bytes(), &[]).unwrap();
+            db.insert(i.to_le_bytes(), &[]).unwrap();
         }
 
         let count = db.iter().count();
@@ -160,7 +160,7 @@ fn reverse_inserts() {
     for len in [1, 16, 32, u16::MAX].iter() {
         for i in 0..*len {
             let i2 = u16::MAX - i;
-            db.insert(&i2.to_le_bytes(), &[]).unwrap();
+            db.insert(i2.to_le_bytes(), &[]).unwrap();
         }
 
         let count = db.iter().count();
@@ -428,7 +428,7 @@ fn concurrent_tree_iter() -> Result<()> {
     ];
 
     for item in &INDELIBLE {
-        t.insert(item.to_vec(), item.to_vec())?;
+        t.insert(item, item.to_vec())?;
     }
 
     let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
@@ -764,7 +764,7 @@ fn tree_subdir() {
 
     let t = config.open().unwrap();
 
-    t.insert(&[1], vec![1]).unwrap();
+    t.insert([1], vec![1]).unwrap();
 
     drop(t);
 
@@ -876,11 +876,11 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
 
     let db = config.open().unwrap();
 
-    let t1 = db.open_tree(b"1".to_vec())?;
-    let mut s1 = t1.watch_prefix(b"".to_vec());
+    let t1 = db.open_tree(b"1")?;
+    let mut s1 = t1.watch_prefix(b"");
 
-    let t2 = db.open_tree(b"2".to_vec())?;
-    let mut s2 = t2.watch_prefix(b"".to_vec());
+    let t2 = db.open_tree(b"2")?;
+    let mut s2 = t2.watch_prefix(b"");
 
     t1.insert(b"t1_a", b"t1_a".to_vec())?;
     t2.insert(b"t2_a", b"t2_a".to_vec())?;
@@ -898,11 +898,11 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
 
     let db = config.open().unwrap();
 
-    let t1 = db.open_tree(b"1".to_vec())?;
-    let mut s1 = t1.watch_prefix(b"".to_vec());
+    let t1 = db.open_tree(b"1")?;
+    let mut s1 = t1.watch_prefix(b"");
 
-    let t2 = db.open_tree(b"2".to_vec())?;
-    let mut s2 = t2.watch_prefix(b"".to_vec());
+    let t2 = db.open_tree(b"2")?;
+    let mut s2 = t2.watch_prefix(b"");
 
     assert!(db.is_empty());
     assert_eq!(t1.len(), 1);
@@ -924,8 +924,8 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
 
     let db = config.open().unwrap();
 
-    let t1 = db.open_tree(b"1".to_vec())?;
-    let t2 = db.open_tree(b"2".to_vec())?;
+    let t1 = db.open_tree(b"1")?;
+    let t2 = db.open_tree(b"2")?;
 
     assert!(db.is_empty());
     assert_eq!(t1.len(), 2);
@@ -948,8 +948,8 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
 
     let db = config.open().unwrap();
 
-    let t1 = db.open_tree(b"1".to_vec())?;
-    let t2 = db.open_tree(b"2".to_vec())?;
+    let t1 = db.open_tree(b"1")?;
+    let t2 = db.open_tree(b"2")?;
 
     assert!(db.is_empty());
     assert_eq!(t1.len(), 0);

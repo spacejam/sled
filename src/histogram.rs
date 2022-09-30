@@ -95,7 +95,7 @@ impl Debug for Histogram {
         for p in &PS {
             let res = self.percentile(*p).round();
             let line = format!("({} -> {}) ", p, res);
-            f.write_str(&*line)?;
+            f.write_str(&line)?;
         }
 
         f.write_str("]")
@@ -255,7 +255,7 @@ fn multithreaded() {
         }));
     }
 
-    for t in threads.into_iter() {
+    for t in threads {
         t.join().unwrap();
     }
 

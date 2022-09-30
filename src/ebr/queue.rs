@@ -2,11 +2,11 @@
 //!
 //! Usable with any number of producers and consumers.
 //!
-//! Michael and Scott.  Simple, Fast, and Practical Non-Blocking and Blocking Concurrent Queue
-//! Algorithms.  PODC 1996.  `http://dl.acm.org/citation.cfm?id=248106`
+//! Michael and Scott.  Simple, Fast, and Practical Non-Blocking and Blocking
+//! Concurrent Queue Algorithms.  PODC 1996.  `http://dl.acm.org/citation.cfm?id=248106`
 //!
-//! Simon Doherty, Lindsay Groves, Victor Luchangco, and Mark Moir. 2004b. Formal Verification of a
-//! Practical Lock-Free Queue Algorithm. `https://doi.org/10.1007/978-3-540-30232-2_7`
+//! Simon Doherty, Lindsay Groves, Victor Luchangco, and Mark Moir. 2004b.
+//! Formal Verification of a Practical Lock-Free Queue Algorithm. `https://doi.org/10.1007/978-3-540-30232-2_7`
 
 use core::mem::MaybeUninit;
 use core::sync::atomic::{
@@ -20,9 +20,10 @@ use super::{pin, unprotected, Atomic, Guard, Owned, Shared};
 
 pub(in crate::ebr) static SIZE_HINT: AtomicUsize = AtomicUsize::new(0);
 
-// The representation here is a singly-linked list, with a sentinel node at the front. In general
-// the `tail` pointer may lag behind the actual tail. Non-sentinel nodes are either all `Data` or
-// all `Blocked` (requests for data from blocked threads).
+// The representation here is a singly-linked list, with a sentinel node at the
+// front. In general the `tail` pointer may lag behind the actual tail.
+// Non-sentinel nodes are either all `Data` or all `Blocked` (requests for data
+// from blocked threads).
 #[derive(Debug)]
 pub(in crate::ebr) struct Queue<T> {
     head: CachePadded<Atomic<Node<T>>>,
@@ -32,16 +33,19 @@ pub(in crate::ebr) struct Queue<T> {
 struct Node<T> {
     /// The slot in which a value of type `T` can be stored.
     ///
-    /// The type of `data` is `MaybeUninit<T>` because a `Node<T>` doesn't always contain a `T`.
-    /// For example, the sentinel node in a queue never contains a value: its slot is always empty.
-    /// Other nodes start their life with a push operation and contain a value until it gets popped
-    /// out. After that such empty nodes get added to the collector for destruction.
+    /// The type of `data` is `MaybeUninit<T>` because a `Node<T>` doesn't
+    /// always contain a `T`. For example, the sentinel node in a queue
+    /// never contains a value: its slot is always empty. Other nodes start
+    /// their life with a push operation and contain a value until it gets
+    /// popped out. After that such empty nodes get added to the collector
+    /// for destruction.
     data: MaybeUninit<T>,
 
     next: Atomic<Node<T>>,
 }
 
-// Any particular `T` should never be accessed concurrently, so no need for `Sync`.
+// Any particular `T` should never be accessed concurrently, so no need for
+// `Sync`.
 unsafe impl<T: Send> Sync for Queue<T> {}
 unsafe impl<T: Send> Send for Queue<T> {}
 
@@ -64,8 +68,9 @@ impl<T> Queue<T> {
         q
     }
 
-    /// Attempts to atomically place `n` into the `next` pointer of `onto`, and returns `true` on
-    /// success. The queue's `tail` pointer may be updated.
+    /// Attempts to atomically place `n` into the `next` pointer of `onto`, and
+    /// returns `true` on success. The queue's `tail` pointer may be
+    /// updated.
     #[inline]
     fn push_internal(
         &self,
@@ -94,7 +99,8 @@ impl<T> Queue<T> {
         }
     }
 
-    /// Adds `t` to the back of the queue, possibly waking up threads blocked on `pop`.
+    /// Adds `t` to the back of the queue, possibly waking up threads blocked on
+    /// `pop`.
     pub(in crate::ebr) fn push(&self, t: T, guard: &Guard) {
         let new = Owned::new(Node {
             data: MaybeUninit::new(t),
@@ -103,10 +109,12 @@ impl<T> Queue<T> {
         let new = Owned::into_shared(new, guard);
 
         loop {
-            // We push onto the tail, so we'll start optimistically by looking there first.
+            // We push onto the tail, so we'll start optimistically by looking
+            // there first.
             let tail = self.tail.load(Acquire, guard);
 
-            // Attempt to push onto the `tail` snapshot; fails if `tail.next` has changed.
+            // Attempt to push onto the `tail` snapshot; fails if `tail.next`
+            // has changed.
             if self.push_internal(tail, new, guard) {
                 break;
             }
@@ -114,7 +122,8 @@ impl<T> Queue<T> {
         SIZE_HINT.fetch_add(1, Relaxed);
     }
 
-    /// Attempts to pop a data node. `Ok(None)` if queue is empty; `Err(())` if lost race to pop.
+    /// Attempts to pop a data node. `Ok(None)` if queue is empty; `Err(())` if
+    /// lost race to pop.
     #[inline]
     fn pop_internal(&self, guard: &Guard) -> Result<Option<T>, ()> {
         let head = self.head.load(Acquire, guard);
@@ -126,14 +135,16 @@ impl<T> Queue<T> {
                     .compare_and_set(head, next, Release, guard)
                     .map(|_| {
                         let tail = self.tail.load(Relaxed, guard);
-                        // Advance the tail so that we don't retire a pointer to a reachable node.
+                        // Advance the tail so that we don't retire a pointer to
+                        // a reachable node.
                         if head == tail {
                             let _ = self
                                 .tail
                                 .compare_and_set(tail, next, Release, guard);
                         }
                         guard.defer_destroy(head);
-                        // TODO: Replace with MaybeUninit::read when api is stable
+                        // TODO: Replace with MaybeUninit::read when api is
+                        // stable
                         Some(n.data.as_ptr().read())
                     })
                     .map_err(|_| ())
@@ -142,8 +153,9 @@ impl<T> Queue<T> {
         }
     }
 
-    /// Attempts to pop a data node, if the data satisfies the given condition. `Ok(None)` if queue
-    /// is empty or the data does not satisfy the condition; `Err(())` if lost race to pop.
+    /// Attempts to pop a data node, if the data satisfies the given condition.
+    /// `Ok(None)` if queue is empty or the data does not satisfy the
+    /// condition; `Err(())` if lost race to pop.
     #[inline]
     fn pop_if_internal<F>(
         &self,
@@ -163,7 +175,8 @@ impl<T> Queue<T> {
                     .compare_and_set(head, next, Release, guard)
                     .map(|_| {
                         let tail = self.tail.load(Relaxed, guard);
-                        // Advance the tail so that we don't retire a pointer to a reachable node.
+                        // Advance the tail so that we don't retire a pointer to
+                        // a reachable node.
                         if head == tail {
                             let _ = self
                                 .tail
@@ -192,10 +205,11 @@ impl<T> Queue<T> {
         }
     }
 
-    /// Attempts to dequeue from the front, if the item satisfies the given condition.
-    ///
-    /// Returns `None` if the queue is observed to be empty, or the head does not satisfy the given
+    /// Attempts to dequeue from the front, if the item satisfies the given
     /// condition.
+    ///
+    /// Returns `None` if the queue is observed to be empty, or the head does
+    /// not satisfy the given condition.
     pub(in crate::ebr) fn try_pop_if<F>(
         &self,
         condition: F,

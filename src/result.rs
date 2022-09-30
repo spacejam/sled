@@ -105,10 +105,9 @@ impl From<Error> for io::Error {
         use std::io::ErrorKind;
         match error {
             Io(kind, reason) => io::Error::new(kind, reason),
-            CollectionNotFound => io::Error::new(
-                ErrorKind::NotFound,
-                "collection not found"
-            ),
+            CollectionNotFound => {
+                io::Error::new(ErrorKind::NotFound, "collection not found")
+            }
             Unsupported(why) => io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("operation not supported: {:?}", why),

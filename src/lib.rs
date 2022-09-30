@@ -155,7 +155,7 @@
 #![cfg_attr(
     feature = "testing",
     warn(
-        clippy::missing_const_for_fn,
+        // clippy::missing_const_for_fn,
         clippy::multiple_crate_versions,
         // clippy::wildcard_enum_match_arm,
     )

@@ -395,7 +395,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 reference_entry.crash_epoch = crash_counter;
 
                 fp_crash!(tree.insert(
-                    &u16::to_be_bytes(set_counter),
+                    u16::to_be_bytes(set_counter),
                     value_factory(set_counter),
                 ));
 
@@ -485,9 +485,10 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     if reference_entry.versions.len() > 1
                         && reference_entry.crash_epoch == crash_counter
                     {
-                        let last = std::mem::take(&mut reference_entry.versions)
-                        .pop()
-                        .unwrap();
+                        let last =
+                            std::mem::take(&mut reference_entry.versions)
+                                .pop()
+                                .unwrap();
                         reference_entry.versions.push(last);
                     }
                 }
@@ -496,7 +497,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 restart!();
             }
             FailPoint(fp, bitset) => {
-                sled::fail::set(&*fp, bitset);
+                sled::fail::set(fp, bitset);
             }
         }
     }

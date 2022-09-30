@@ -10,7 +10,7 @@ use super::{
 
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
-#[derive(PartialEq, Debug, Default)]
+#[derive(PartialEq, Eq, Debug, Default)]
 #[cfg_attr(test, derive(Clone))]
 pub struct Snapshot {
     /// The version of the snapshot format
@@ -23,7 +23,7 @@ pub struct Snapshot {
     pub pt: Vec<PageState>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageState {
     /// Present signifies a page that has some data.
     ///
@@ -136,7 +136,7 @@ impl Snapshot {
             (Some(offset), Some(stable_lsn))
         } else {
             let lsn_idx = stable_lsn / segment_size as Lsn
-                + if stable_lsn % segment_size as Lsn == 0 { 0 } else { 1 };
+                + i64::from(stable_lsn % segment_size as Lsn != 0);
             let next_lsn = lsn_idx * segment_size as Lsn;
             (None, Some(next_lsn))
         }
@@ -458,7 +458,7 @@ fn advance_snapshot(
         io_fail!(config, "segment initial free zero");
         pwrite_all(
             &config.file,
-            &*vec![MessageKind::Corrupted.into(); config.segment_size],
+            &vec![MessageKind::Corrupted.into(); config.segment_size],
             *to_zero,
         )?;
         if !config.temporary {
@@ -537,7 +537,7 @@ fn read_snapshot(config: &RunningConfig) -> Result<Option<Snapshot>> {
         let len_expected: u64 =
             u64::from_le_bytes(len_expected_bytes.as_ref().try_into().unwrap());
 
-        decompress(&*buf, usize::try_from(len_expected).unwrap()).unwrap()
+        decompress(&buf, usize::try_from(len_expected).unwrap()).unwrap()
     } else {
         buf
     };
@@ -559,7 +559,7 @@ pub(in crate::pagecache) fn write_snapshot(
 
     #[cfg(feature = "zstd")]
     let bytes = if config.use_compression {
-        compress(&*raw_bytes, config.compression_factor).unwrap()
+        compress(&raw_bytes, config.compression_factor).unwrap()
     } else {
         raw_bytes
     };
@@ -589,7 +589,7 @@ pub(in crate::pagecache) fn write_snapshot(
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
     io_fail!(config, "snap write");
-    f.write_all(&*bytes)?;
+    f.write_all(&bytes)?;
     io_fail!(config, "snap write len");
     f.write_all(&len_bytes)?;
     io_fail!(config, "snap write crc");
@@ -611,7 +611,7 @@ pub(in crate::pagecache) fn write_snapshot(
     let candidates = config.get_snapshot_files()?;
     for path in candidates {
         let path_str = path.file_name().unwrap().to_str().unwrap();
-        if !path_2.to_string_lossy().ends_with(&*path_str) {
+        if !path_2.to_string_lossy().ends_with(path_str) {
             debug!("removing old snapshot file {:?}", path);
 
             io_fail!(config, "snap write rm old");

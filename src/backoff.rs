@@ -6,12 +6,13 @@ const SPIN_LIMIT: u32 = 6;
 
 /// Performs exponential backoff in spin loops.
 ///
-/// Backing off in spin loops reduces contention and improves overall performance.
+/// Backing off in spin loops reduces contention and improves overall
+/// performance.
 ///
-/// This primitive can execute *YIELD* and *PAUSE* instructions, yield the current thread to the OS
-/// scheduler, and tell when is a good time to block the thread using a different synchronization
-/// mechanism. Each step of the back off procedure takes roughly twice as long as the previous
-/// step.
+/// This primitive can execute *YIELD* and *PAUSE* instructions, yield the
+/// current thread to the OS scheduler, and tell when is a good time to block
+/// the thread using a different synchronization mechanism. Each step of the
+/// back off procedure takes roughly twice as long as the previous step.
 pub struct Backoff {
     step: Cell<u32>,
 }
@@ -24,8 +25,8 @@ impl Backoff {
 
     /// Backs off in a lock-free loop.
     ///
-    /// This method should be used when we need to retry an operation because another thread made
-    /// progress.
+    /// This method should be used when we need to retry an operation because
+    /// another thread made progress.
     ///
     /// The processor may yield using the *YIELD* or *PAUSE* instruction.
     #[inline]

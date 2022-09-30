@@ -2,15 +2,16 @@
 use core::fmt;
 use core::ops::{Deref, DerefMut};
 
-// Starting from Intel's Sandy Bridge, spatial prefetcher is now pulling pairs of 64-byte cache
-// lines at a time, so we have to align to 128 bytes rather than 64.
+// Starting from Intel's Sandy Bridge, spatial prefetcher is now pulling pairs
+// of 64-byte cache lines at a time, so we have to align to 128 bytes rather
+// than 64.
 //
 // Sources:
 // - https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-optimization-manual.pdf
 // - https://github.com/facebook/folly/blob/1b5288e6eea6df074758f877c849b6e73bbb9fbb/folly/lang/Align.h#L107
 //
-// ARM's big.LITTLE architecture has asymmetric cores and "big" cores have 128 byte cache line size
-// Sources:
+// ARM's big.LITTLE architecture has asymmetric cores and "big" cores have 128
+// byte cache line size Sources:
 // - https://www.mono-project.com/news/2016/09/12/arm64-icache/
 //
 #[cfg_attr(
@@ -21,7 +22,7 @@ use core::ops::{Deref, DerefMut};
     not(any(target_arch = "x86_64", target_arch = "aarch64")),
     repr(align(64))
 )]
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Eq)]
 pub struct CachePadded<T> {
     value: T,
 }

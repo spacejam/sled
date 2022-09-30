@@ -111,7 +111,7 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     // it should never return, or go down again after that
     let mut iter = tree.iter();
     let highest = match iter.next() {
-        Some(Ok((_k, v))) => slice_to_u32(&*v),
+        Some(Ok((_k, v))) => slice_to_u32(&v),
         Some(Err(e)) => panic!("{:?}", e),
         None => return (0, 0),
     };
@@ -131,7 +131,7 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
             } else {
                 (highest - 1) % CYCLE as u32
             };
-            let actual = slice_to_u32(&*v);
+            let actual = slice_to_u32(&v);
             assert_eq!(expected, actual);
             lowest = actual;
             break;
@@ -144,12 +144,12 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     for res in tree.range(&*low_beginning..) {
         let (k, v): (sled::IVec, _) = res.unwrap();
         assert_eq!(
-            slice_to_u32(&*v),
+            slice_to_u32(&v),
             lowest,
             "expected key {} to have value {}, instead it had value {} in db: {:?}",
-            slice_to_u32(&*k),
+            slice_to_u32(&k),
             lowest,
-            slice_to_u32(&*v),
+            slice_to_u32(&v),
             tree
         );
     }
@@ -220,7 +220,7 @@ fn run_inner(config: Config) {
 fn verify_batches(tree: &sled::Tree) -> u32 {
     let mut iter = tree.iter();
     let first_value = match iter.next() {
-        Some(Ok((_k, v))) => slice_to_u32(&*v),
+        Some(Ok((_k, v))) => slice_to_u32(&v),
         Some(Err(e)) => panic!("{:?}", e),
         None => return 0,
     };
@@ -234,7 +234,7 @@ fn verify_batches(tree: &sled::Tree) -> u32 {
                 key, tree
             ),
         };
-        let value = slice_to_u32(&*v);
+        let value = slice_to_u32(&v);
         assert_eq!(
             first_value, value,
             "expected key {} to have value {}, instead it had value {} in db: {:?}",
@@ -283,7 +283,7 @@ fn run_crash_recovery() {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(1))
-        .path(RECOVERY_DIR.to_string())
+        .path(RECOVERY_DIR)
         .segment_size(SEGMENT_SIZE);
 
     if let Err(e) = thread::spawn(|| run_inner(config)).join() {
@@ -302,7 +302,7 @@ fn run_crash_batches() {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(1))
-        .path(BATCHES_DIR.to_string())
+        .path(BATCHES_DIR)
         .segment_size(SEGMENT_SIZE);
 
     let db = config.open().unwrap();

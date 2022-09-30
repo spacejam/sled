@@ -11,8 +11,8 @@ use std::alloc;
 
 use super::Guard;
 
-/// Given ordering for the success case in a compare-exchange operation, returns the strongest
-/// appropriate ordering for the failure case.
+/// Given ordering for the success case in a compare-exchange operation, returns
+/// the strongest appropriate ordering for the failure case.
 pub(crate) const fn strongest_failure_ordering(ord: Ordering) -> Ordering {
     use self::Ordering::*;
     match ord {
@@ -44,23 +44,24 @@ impl<'g, T: 'g, P: Pointer<T> + fmt::Debug> fmt::Debug
 
 /// Memory orderings for compare-and-set operations.
 ///
-/// A compare-and-set operation can have different memory orderings depending on whether it
-/// succeeds or fails. This trait generalizes different ways of specifying memory orderings.
+/// A compare-and-set operation can have different memory orderings depending on
+/// whether it succeeds or fails. This trait generalizes different ways of
+/// specifying memory orderings.
 ///
 /// The two ways of specifying orderings for compare-and-set are:
 ///
-/// 1. Just one `Ordering` for the success case. In case of failure, the strongest appropriate
-///    ordering is chosen.
-/// 2. A pair of `Ordering`s. The first one is for the success case, while the second one is
-///    for the failure case.
+/// 1. Just one `Ordering` for the success case. In case of failure, the
+/// strongest appropriate    ordering is chosen.
+/// 2. A pair of `Ordering`s. The first one is for the success case, while the
+/// second one is    for the failure case.
 pub(crate) trait CompareAndSetOrdering: Copy {
     /// The ordering of the operation when it succeeds.
     fn success(self) -> Ordering;
 
     /// The ordering of the operation when it fails.
     ///
-    /// The failure ordering can't be `Release` or `AcqRel` and must be equivalent or weaker than
-    /// the success ordering.
+    /// The failure ordering can't be `Release` or `AcqRel` and must be
+    /// equivalent or weaker than the success ordering.
     fn failure(self) -> Ordering;
 }
 
@@ -88,7 +89,8 @@ impl CompareAndSetOrdering for (Ordering, Ordering) {
     }
 }
 
-/// Returns a bitmask containing the unused least significant bits of an aligned pointer to `T`.
+/// Returns a bitmask containing the unused least significant bits of an aligned
+/// pointer to `T`.
 #[inline]
 fn low_bits<T: ?Sized + Pointable>() -> usize {
     (1 << T::ALIGN.trailing_zeros()) - 1
@@ -100,7 +102,8 @@ fn ensure_aligned<T: ?Sized + Pointable>(raw: usize) {
     assert_eq!(raw & low_bits::<T>(), 0, "unaligned pointer");
 }
 
-/// Given a tagged pointer `data`, returns the same pointer, but tagged with `tag`.
+/// Given a tagged pointer `data`, returns the same pointer, but tagged with
+/// `tag`.
 ///
 /// `tag` is truncated to fit into the unused bits of the pointer to `T`.
 #[inline]
@@ -116,17 +119,19 @@ fn decompose_tag<T: ?Sized + Pointable>(data: usize) -> (usize, usize) {
 
 /// Types that are pointed to by a single word.
 ///
-/// In concurrent programming, it is necessary to represent an object within a word because atomic
-/// operations (e.g., reads, writes, read-modify-writes) support only single words.  This trait
-/// qualifies such types that are pointed to by a single word.
+/// In concurrent programming, it is necessary to represent an object within a
+/// word because atomic operations (e.g., reads, writes, read-modify-writes)
+/// support only single words.  This trait qualifies such types that are pointed
+/// to by a single word.
 ///
-/// The trait generalizes `Box<T>` for a sized type `T`.  In a box, an object of type `T` is
-/// allocated in heap and it is owned by a single-word pointer.  This trait is also implemented for
-/// `[MaybeUninit<T>]` by storing its size along with its elements and pointing to the pair of array
-/// size and elements.
+/// The trait generalizes `Box<T>` for a sized type `T`.  In a box, an object of
+/// type `T` is allocated in heap and it is owned by a single-word pointer.
+/// This trait is also implemented for `[MaybeUninit<T>]` by storing its size
+/// along with its elements and pointing to the pair of array size and elements.
 ///
-/// Pointers to `Pointable` types can be stored in [`Atomic`], [`Owned`], and [`Shared`].  In
-/// particular, Crossbeam supports dynamically sized slices as follows.
+/// Pointers to `Pointable` types can be stored in [`Atomic`], [`Owned`], and
+/// [`Shared`].  In particular, Crossbeam supports dynamically sized slices as
+/// follows.
 pub(crate) trait Pointable {
     /// The alignment of pointer.
     const ALIGN: usize;
@@ -147,7 +152,8 @@ pub(crate) trait Pointable {
     ///
     /// - The given `ptr` should have been initialized with [`Pointable::init`].
     /// - `ptr` should not have yet been dropped by [`Pointable::drop`].
-    /// - `ptr` should not be mutably dereferenced by [`Pointable::deref_mut`] concurrently.
+    /// - `ptr` should not be mutably dereferenced by [`Pointable::deref_mut`]
+    ///   concurrently.
     unsafe fn deref<'a>(ptr: usize) -> &'a Self;
 
     /// Mutably dereferences the given pointer.
@@ -156,8 +162,8 @@ pub(crate) trait Pointable {
     ///
     /// - The given `ptr` should have been initialized with [`Pointable::init`].
     /// - `ptr` should not have yet been dropped by [`Pointable::drop`].
-    /// - `ptr` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
-    ///   concurrently.
+    /// - `ptr` should not be dereferenced by [`Pointable::deref`] or
+    ///   [`Pointable::deref_mut`] concurrently.
     unsafe fn deref_mut<'a>(ptr: usize) -> &'a mut Self;
 
     /// Drops the object pointed to by the given pointer.
@@ -166,8 +172,8 @@ pub(crate) trait Pointable {
     ///
     /// - The given `ptr` should have been initialized with [`Pointable::init`].
     /// - `ptr` should not have yet been dropped by [`Pointable::drop`].
-    /// - `ptr` should not be dereferenced by [`Pointable::deref`] or [`Pointable::deref_mut`]
-    ///   concurrently.
+    /// - `ptr` should not be dereferenced by [`Pointable::deref`] or
+    ///   [`Pointable::deref_mut`] concurrently.
     unsafe fn drop(ptr: usize);
 }
 
@@ -208,14 +214,14 @@ impl<T> Pointable for T {
 /// ------------------------------------
 /// ```
 ///
-/// Its memory layout is different from that of `Box<[T]>` in that size is in the allocation (not
-/// along with pointer as in `Box<[T]>`).
+/// Its memory layout is different from that of `Box<[T]>` in that size is in
+/// the allocation (not along with pointer as in `Box<[T]>`).
 ///
 /// Elements are not present in the type, but they will be in the allocation.
 /// ```
 ///
-// TODO(@jeehoonkang): once we bump the minimum required Rust version to 1.44 or newer, use
-// [`alloc::alloc::Layout::extend`] instead.
+// TODO(@jeehoonkang): once we bump the minimum required Rust version to 1.44 or
+// newer, use [`alloc::alloc::Layout::extend`] instead.
 #[repr(C)]
 struct Array<T> {
     size: usize,
@@ -259,9 +265,10 @@ impl<T> Pointable for [MaybeUninit<T>] {
 
 /// An atomic pointer that can be safely shared between threads.
 ///
-/// The pointer must be properly aligned. Since it is aligned, a tag can be stored into the unused
-/// least significant bits of the address. For example, the tag for a pointer to a sized type `T`
-/// should be less than `(1 << mem::align_of::<T>().trailing_zeros())`.
+/// The pointer must be properly aligned. Since it is aligned, a tag can be
+/// stored into the unused least significant bits of the address. For example,
+/// the tag for a pointer to a sized type `T` should be less than `(1 <<
+/// mem::align_of::<T>().trailing_zeros())`.
 ///
 /// Any method that loads the pointer must be passed a reference to a [`Guard`].
 ///
@@ -275,14 +282,16 @@ unsafe impl<T: ?Sized + Pointable + Send + Sync> Send for Atomic<T> {}
 unsafe impl<T: ?Sized + Pointable + Send + Sync> Sync for Atomic<T> {}
 
 impl<T> Atomic<T> {
-    /// Allocates `value` on the heap and returns a new atomic pointer pointing to it.
+    /// Allocates `value` on the heap and returns a new atomic pointer pointing
+    /// to it.
     pub(crate) fn new(init: T) -> Atomic<T> {
         Self::init(init)
     }
 }
 
 impl<T: ?Sized + Pointable> Atomic<T> {
-    /// Allocates `value` on the heap and returns a new atomic pointer pointing to it.
+    /// Allocates `value` on the heap and returns a new atomic pointer pointing
+    /// to it.
     pub(crate) fn init(init: T::Init) -> Atomic<T> {
         Self::from(Owned::init(init))
     }
@@ -299,8 +308,8 @@ impl<T: ?Sized + Pointable> Atomic<T> {
 
     /// Loads a `Shared` from the atomic pointer.
     ///
-    /// This method takes an [`Ordering`] argument which describes the memory ordering of this
-    /// operation.
+    /// This method takes an [`Ordering`] argument which describes the memory
+    /// ordering of this operation.
     pub(crate) fn load<'g>(
         &self,
         ord: Ordering,
@@ -311,17 +320,17 @@ impl<T: ?Sized + Pointable> Atomic<T> {
 
     /// Stores a `Shared` or `Owned` pointer into the atomic pointer.
     ///
-    /// This method takes an [`Ordering`] argument which describes the memory ordering of this
-    /// operation.
+    /// This method takes an [`Ordering`] argument which describes the memory
+    /// ordering of this operation.
     pub(crate) fn store<P: Pointer<T>>(&self, new: P, ord: Ordering) {
         self.data.store(new.into_usize(), ord);
     }
 
-    /// Stores a `Shared` or `Owned` pointer into the atomic pointer, returning the previous
-    /// `Shared`.
+    /// Stores a `Shared` or `Owned` pointer into the atomic pointer, returning
+    /// the previous `Shared`.
     ///
-    /// This method takes an [`Ordering`] argument which describes the memory ordering of this
-    /// operation.
+    /// This method takes an [`Ordering`] argument which describes the memory
+    /// ordering of this operation.
     pub(crate) fn swap<'g, P: Pointer<T>>(
         &self,
         new: P,
@@ -331,16 +340,17 @@ impl<T: ?Sized + Pointable> Atomic<T> {
         unsafe { Shared::from_usize(self.data.swap(new.into_usize(), ord)) }
     }
 
-    /// Stores the pointer `new` (either `Shared` or `Owned`) into the atomic pointer if the current
-    /// value is the same as `current`. The tag is also taken into account, so two pointers to the
-    /// same object, but with different tags, will not be considered equal.
+    /// Stores the pointer `new` (either `Shared` or `Owned`) into the atomic
+    /// pointer if the current value is the same as `current`. The tag is
+    /// also taken into account, so two pointers to the same object, but
+    /// with different tags, will not be considered equal.
     ///
-    /// The return value is a result indicating whether the new pointer was written. On success the
-    /// pointer that was written is returned. On failure the actual current value and `new` are
-    /// returned.
+    /// The return value is a result indicating whether the new pointer was
+    /// written. On success the pointer that was written is returned. On
+    /// failure the actual current value and `new` are returned.
     ///
-    /// This method takes a [`CompareAndSetOrdering`] argument which describes the memory
-    /// ordering of this operation.
+    /// This method takes a [`CompareAndSetOrdering`] argument which describes
+    /// the memory ordering of this operation.
     pub(crate) fn compare_and_set<'g, O, P>(
         &self,
         current: Shared<'_, T>,
@@ -369,17 +379,20 @@ impl<T: ?Sized + Pointable> Atomic<T> {
             })
     }
 
-    /// Stores the pointer `new` (either `Shared` or `Owned`) into the atomic pointer if the current
-    /// value is the same as `current`. The tag is also taken into account, so two pointers to the
-    /// same object, but with different tags, will not be considered equal.
+    /// Stores the pointer `new` (either `Shared` or `Owned`) into the atomic
+    /// pointer if the current value is the same as `current`. The tag is
+    /// also taken into account, so two pointers to the same object, but
+    /// with different tags, will not be considered equal.
     ///
-    /// Unlike [`compare_and_set`], this method is allowed to spuriously fail even when comparison
-    /// succeeds, which can result in more efficient code on some platforms.  The return value is a
-    /// result indicating whether the new pointer was written. On success the pointer that was
-    /// written is returned. On failure the actual current value and `new` are returned.
+    /// Unlike [`compare_and_set`], this method is allowed to spuriously fail
+    /// even when comparison succeeds, which can result in more efficient
+    /// code on some platforms.  The return value is a result indicating
+    /// whether the new pointer was written. On success the pointer that was
+    /// written is returned. On failure the actual current value and `new` are
+    /// returned.
     ///
-    /// This method takes a [`CompareAndSetOrdering`] argument which describes the memory
-    /// ordering of this operation.
+    /// This method takes a [`CompareAndSetOrdering`] argument which describes
+    /// the memory ordering of this operation.
     ///
     /// [`compare_and_set`]: Atomic::compare_and_set
     pub(crate) fn compare_and_set_weak<'g, O, P>(
@@ -412,11 +425,12 @@ impl<T: ?Sized + Pointable> Atomic<T> {
 
     /// Bitwise "or" with the current tag.
     ///
-    /// Performs a bitwise "or" operation on the current tag and the argument `val`, and sets the
-    /// new tag to the result. Returns the previous pointer.
+    /// Performs a bitwise "or" operation on the current tag and the argument
+    /// `val`, and sets the new tag to the result. Returns the previous
+    /// pointer.
     ///
-    /// This method takes an [`Ordering`] argument which describes the memory ordering of this
-    /// operation.
+    /// This method takes an [`Ordering`] argument which describes the memory
+    /// ordering of this operation.
     pub(crate) fn fetch_or<'g>(
         &self,
         val: usize,
@@ -449,8 +463,8 @@ impl<T: ?Sized + Pointable> fmt::Pointer for Atomic<T> {
 impl<T: ?Sized + Pointable> Clone for Atomic<T> {
     /// Returns a copy of the atomic value.
     ///
-    /// Note that a `Relaxed` load is used here. If you need synchronization, use it with other
-    /// atomics or fences.
+    /// Note that a `Relaxed` load is used here. If you need synchronization,
+    /// use it with other atomics or fences.
     fn clone(&self) -> Self {
         let data = self.data.load(Ordering::Relaxed);
         Atomic::from_usize(data)
@@ -508,8 +522,9 @@ pub(crate) trait Pointer<T: ?Sized + Pointable> {
     ///
     /// # Safety
     ///
-    /// The given `data` should have been created by `Pointer::into_usize()`, and one `data` should
-    /// not be converted back by `Pointer::from_usize()` multiple times.
+    /// The given `data` should have been created by `Pointer::into_usize()`,
+    /// and one `data` should not be converted back by
+    /// `Pointer::from_usize()` multiple times.
     unsafe fn from_usize(data: usize) -> Self;
 }
 
@@ -517,8 +532,8 @@ pub(crate) trait Pointer<T: ?Sized + Pointable> {
 ///
 /// This type is very similar to `Box<T>`.
 ///
-/// The pointer must be properly aligned. Since it is aligned, a tag can be stored into the unused
-/// least significant bits of the address.
+/// The pointer must be properly aligned. Since it is aligned, a tag can be
+/// stored into the unused least significant bits of the address.
 pub(crate) struct Owned<T: ?Sized + Pointable> {
     data: usize,
     _marker: PhantomData<Box<T>>,
@@ -548,8 +563,9 @@ impl<T: ?Sized + Pointable> Pointer<T> for Owned<T> {
 impl<T> Owned<T> {
     /// Returns a new owned pointer pointing to `raw`.
     ///
-    /// This function is unsafe because improper use may lead to memory problems. Argument `raw`
-    /// must be a valid pointer. Also, a double-free may occur if the function is called twice on
+    /// This function is unsafe because improper use may lead to memory
+    /// problems. Argument `raw` must be a valid pointer. Also, a
+    /// double-free may occur if the function is called twice on
     /// the same raw pointer.
     ///
     /// # Panics
@@ -558,22 +574,24 @@ impl<T> Owned<T> {
     ///
     /// # Safety
     ///
-    /// The given `raw` should have been derived from `Owned`, and one `raw` should not be converted
-    /// back by `Owned::from_raw()` multiple times.
+    /// The given `raw` should have been derived from `Owned`, and one `raw`
+    /// should not be converted back by `Owned::from_raw()` multiple times.
     pub(crate) unsafe fn from_raw(raw_ptr: *mut T) -> Owned<T> {
         let raw = raw_ptr as usize;
         ensure_aligned::<T>(raw);
         Self::from_usize(raw)
     }
 
-    /// Allocates `value` on the heap and returns a new owned pointer pointing to it.
+    /// Allocates `value` on the heap and returns a new owned pointer pointing
+    /// to it.
     pub(crate) fn new(init: T) -> Owned<T> {
         Self::init(init)
     }
 }
 
 impl<T: ?Sized + Pointable> Owned<T> {
-    /// Allocates `value` on the heap and returns a new owned pointer pointing to it.
+    /// Allocates `value` on the heap and returns a new owned pointer pointing
+    /// to it.
     pub(crate) fn init(init: T::Init) -> Owned<T> {
         unsafe { Self::from_usize(T::init(init)) }
     }
@@ -590,8 +608,8 @@ impl<T: ?Sized + Pointable> Owned<T> {
         tag
     }
 
-    /// Returns the same pointer, but tagged with `tag`. `tag` is truncated to be fit into the
-    /// unused bits of the pointer to `T`.
+    /// Returns the same pointer, but tagged with `tag`. `tag` is truncated to
+    /// be fit into the unused bits of the pointer to `T`.
     pub(crate) fn with_tag(self, tag: usize) -> Owned<T> {
         let data = self.into_usize();
         unsafe { Self::from_usize(compose_tag::<T>(data, tag)) }
@@ -682,8 +700,8 @@ impl<T: ?Sized + Pointable> AsMut<T> for Owned<T> {
 ///
 /// The pointer is valid for use only during the lifetime `'g`.
 ///
-/// The pointer must be properly aligned. Since it is aligned, a tag can be stored into the unused
-/// least significant bits of the address.
+/// The pointer must be properly aligned. Since it is aligned, a tag can be
+/// stored into the unused least significant bits of the address.
 pub(crate) struct Shared<'g, T: 'g + ?Sized + Pointable> {
     data: usize,
     _marker: PhantomData<(&'g (), *const T)>,
@@ -733,21 +751,24 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
 
     /// Dereferences the pointer.
     ///
-    /// Returns a reference to the pointee that is valid during the lifetime `'g`.
+    /// Returns a reference to the pointee that is valid during the lifetime
+    /// `'g`.
     ///
     /// # Safety
     ///
-    /// Dereferencing a pointer is unsafe because it could be pointing to invalid memory.
+    /// Dereferencing a pointer is unsafe because it could be pointing to
+    /// invalid memory.
     ///
-    /// Another concern is the possibility of data races due to lack of proper synchronization.
-    /// For example, consider the following scenario:
+    /// Another concern is the possibility of data races due to lack of proper
+    /// synchronization. For example, consider the following scenario:
     ///
     /// 1. A thread creates a new object: `a.store(Owned::new(10), Relaxed)`
     /// 2. Another thread reads it: `*a.load(Relaxed, guard).as_ref().unwrap()`
     ///
-    /// The problem is that relaxed orderings don't synchronize initialization of the object with
-    /// the read from the second thread. This is a data race. A possible solution would be to use
-    /// `Release` and `Acquire` orderings.
+    /// The problem is that relaxed orderings don't synchronize initialization
+    /// of the object with the read from the second thread. This is a data
+    /// race. A possible solution would be to use `Release` and `Acquire`
+    /// orderings.
     #[allow(clippy::trivially_copy_pass_by_ref)]
     #[allow(clippy::should_implement_trait)]
     pub(crate) unsafe fn deref(&self) -> &'g T {
@@ -757,29 +778,28 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
 
     /// Converts the pointer to a reference.
     ///
-    /// Returns `None` if the pointer is null, or else a reference to the object wrapped in `Some`.
+    /// Returns `None` if the pointer is null, or else a reference to the object
+    /// wrapped in `Some`.
     ///
     /// # Safety
     ///
-    /// Dereferencing a pointer is unsafe because it could be pointing to invalid memory.
+    /// Dereferencing a pointer is unsafe because it could be pointing to
+    /// invalid memory.
     ///
-    /// Another concern is the possibility of data races due to lack of proper synchronization.
-    /// For example, consider the following scenario:
+    /// Another concern is the possibility of data races due to lack of proper
+    /// synchronization. For example, consider the following scenario:
     ///
     /// 1. A thread creates a new object: `a.store(Owned::new(10), Relaxed)`
     /// 2. Another thread reads it: `*a.load(Relaxed, guard).as_ref().unwrap()`
     ///
-    /// The problem is that relaxed orderings don't synchronize initialization of the object with
-    /// the read from the second thread. This is a data race. A possible solution would be to use
-    /// `Release` and `Acquire` orderings.
+    /// The problem is that relaxed orderings don't synchronize initialization
+    /// of the object with the read from the second thread. This is a data
+    /// race. A possible solution would be to use `Release` and `Acquire`
+    /// orderings.
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub(crate) unsafe fn as_ref(&self) -> Option<&'g T> {
         let (raw, _) = decompose_tag::<T>(self.data);
-        if raw == 0 {
-            None
-        } else {
-            Some(T::deref(raw))
-        }
+        if raw == 0 { None } else { Some(T::deref(raw)) }
     }
 
     /// Takes ownership of the pointee.
@@ -790,8 +810,8 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     ///
     /// # Safety
     ///
-    /// This method may be called only if the pointer is valid and nobody else is holding a
-    /// reference to the same object.
+    /// This method may be called only if the pointer is valid and nobody else
+    /// is holding a reference to the same object.
     pub(crate) unsafe fn into_owned(self) -> Owned<T> {
         debug_assert!(
             !self.is_null(),
@@ -807,8 +827,8 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
         tag
     }
 
-    /// Returns the same pointer, but tagged with `tag`. `tag` is truncated to be fit into the
-    /// unused bits of the pointer to `T`.
+    /// Returns the same pointer, but tagged with `tag`. `tag` is truncated to
+    /// be fit into the unused bits of the pointer to `T`.
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub(crate) fn with_tag(&self, tag: usize) -> Shared<'g, T> {
         unsafe { Self::from_usize(compose_tag::<T>(self.data, tag)) }

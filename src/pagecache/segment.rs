@@ -517,7 +517,7 @@ impl SegmentAccountant {
         let file_len = self.config.file.metadata()?.len();
         let number_of_segments =
             usize::try_from(file_len / segment_size as u64).unwrap()
-                + if file_len % segment_size as u64 == 0 { 0 } else { 1 };
+                + usize::from(file_len % segment_size as u64 != 0);
 
         // generate segments from snapshot lids
         let mut segments = vec![];
@@ -636,7 +636,7 @@ impl SegmentAccountant {
             io_fail!(self.config, "zero garbage segment SA");
             pwrite_all(
                 &self.config.file,
-                &*vec![MessageKind::Corrupted.into(); self.config.segment_size],
+                &vec![MessageKind::Corrupted.into(); self.config.segment_size],
                 segment_base,
             )?;
         }
@@ -1116,11 +1116,7 @@ impl SegmentAccountant {
         self.ordering
             .iter()
             .filter_map(move |(l, r)| {
-                if *l >= normalized_lsn {
-                    Some((*l, *r))
-                } else {
-                    None
-                }
+                if *l >= normalized_lsn { Some((*l, *r)) } else { None }
             })
             .collect()
     }

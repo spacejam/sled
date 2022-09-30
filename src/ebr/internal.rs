@@ -2,38 +2,43 @@
 //!
 //! # Registration
 //!
-//! In order to track all participants in one place, we need some form of participant
-//! registration. When a participant is created, it is registered to a global lock-free
-//! singly-linked list of registries; and when a participant is leaving, it is unregistered from the
-//! list.
+//! In order to track all participants in one place, we need some form of
+//! participant registration. When a participant is created, it is registered to
+//! a global lock-free singly-linked list of registries; and when a participant
+//! is leaving, it is unregistered from the list.
 //!
 //! # Pinning
 //!
-//! Every participant contains an integer that tells whether the participant is pinned and if so,
-//! what was the global epoch at the time it was pinned. Participants also hold a pin counter that
-//! aids in periodic global epoch advancement.
+//! Every participant contains an integer that tells whether the participant is
+//! pinned and if so, what was the global epoch at the time it was pinned.
+//! Participants also hold a pin counter that aids in periodic global epoch
+//! advancement.
 //!
-//! When a participant is pinned, a `Guard` is returned as a witness that the participant is pinned.
-//! Guards are necessary for performing atomic operations, and for freeing/dropping locations.
+//! When a participant is pinned, a `Guard` is returned as a witness that the
+//! participant is pinned. Guards are necessary for performing atomic
+//! operations, and for freeing/dropping locations.
 //!
 //! # Thread-local bag
 //!
-//! Objects that get unlinked from concurrent data structures must be stashed away until the global
-//! epoch sufficiently advances so that they become safe for destruction. Pointers to such objects
-//! are pushed into a thread-local bag, and when it becomes full, the bag is marked with the current
-//! global epoch and pushed into the global queue of bags. We store objects in thread-local storages
-//! for amortizing the synchronization cost of pushing the garbages to a global queue.
+//! Objects that get unlinked from concurrent data structures must be stashed
+//! away until the global epoch sufficiently advances so that they become safe
+//! for destruction. Pointers to such objects are pushed into a thread-local
+//! bag, and when it becomes full, the bag is marked with the current
+//! global epoch and pushed into the global queue of bags. We store objects in
+//! thread-local storages for amortizing the synchronization cost of pushing the
+//! garbages to a global queue.
 //!
 //! # Global queue
 //!
-//! Whenever a bag is pushed into a queue, the objects in some bags in the queue are collected and
-//! destroyed along the way. This design reduces contention on data structures. The global queue
-//! cannot be explicitly accessed: the only way to interact with it is by calling functions
-//! `defer()` that adds an object to the thread-local bag, or `collect()` that manually triggers
+//! Whenever a bag is pushed into a queue, the objects in some bags in the queue
+//! are collected and destroyed along the way. This design reduces contention on
+//! data structures. The global queue cannot be explicitly accessed: the only
+//! way to interact with it is by calling functions `defer()` that adds an
+//! object to the thread-local bag, or `collect()` that manually triggers
 //! garbage collection.
 //!
-//! Ideally each instance of concurrent data structure may have its own queue that gets fully
-//! destroyed as soon as the data structure gets dropped.
+//! Ideally each instance of concurrent data structure may have its own queue
+//! that gets fully destroyed as soon as the data structure gets dropped.
 
 use core::cell::{Cell, UnsafeCell};
 use core::mem::{self, ManuallyDrop};
@@ -65,7 +70,8 @@ pub(super) struct Bag {
     len: usize,
 }
 
-/// `Bag::try_push()` requires that it is safe for another thread to execute the given functions.
+/// `Bag::try_push()` requires that it is safe for another thread to execute the
+/// given functions.
 unsafe impl Send for Bag {}
 
 impl Bag {
@@ -81,8 +87,8 @@ impl Bag {
 
     /// Attempts to insert a deferred function into the bag.
     ///
-    /// Returns `Ok(())` if successful, and `Err(deferred)` for the given `deferred` if the bag is
-    /// full.
+    /// Returns `Ok(())` if successful, and `Err(deferred)` for the given
+    /// `deferred` if the bag is full.
     ///
     /// # Safety
     ///
@@ -202,7 +208,8 @@ impl Drop for Bag {
     }
 }
 
-// can't #[derive(Debug)] because Debug is not implemented for arrays 64 items long
+// can't #[derive(Debug)] because Debug is not implemented for arrays 64 items
+// long
 impl fmt::Debug for Bag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Bag")
@@ -221,14 +228,16 @@ struct SealedBag {
     _bag: Bag,
 }
 
-/// It is safe to share `SealedBag` because `is_expired` only inspects the epoch.
+/// It is safe to share `SealedBag` because `is_expired` only inspects the
+/// epoch.
 unsafe impl Sync for SealedBag {}
 
 impl SealedBag {
     /// Checks if it is safe to drop the bag w.r.t. the given global epoch.
     const fn is_expired(&self, global_epoch: Epoch) -> bool {
-        // A pinned participant can witness at most one epoch advancement. Therefore, any bag that
-        // is within one epoch of the current one cannot be destroyed yet.
+        // A pinned participant can witness at most one epoch advancement.
+        // Therefore, any bag that is within one epoch of the current
+        // one cannot be destroyed yet.
         global_epoch.wrapping_sub(self.epoch) >= 2
     }
 }
@@ -256,7 +265,8 @@ impl Global {
         }
     }
 
-    /// Pushes the bag into the global queue and replaces the bag with a new empty bag.
+    /// Pushes the bag into the global queue and replaces the bag with a new
+    /// empty bag.
     pub(super) fn push_bag(&self, bag: &mut Bag, guard: &Guard) {
         let bag = mem::replace(bag, Bag::new());
 
@@ -266,13 +276,14 @@ impl Global {
         self.queue.push(bag.seal(epoch), guard);
     }
 
-    /// Collects several bags from the global queue and executes deferred functions in them.
+    /// Collects several bags from the global queue and executes deferred
+    /// functions in them.
     ///
     /// Note: This may itself produce garbage and in turn allocate new bags.
     ///
-    /// `pin()` rarely calls `collect()`, so we want the compiler to place that call on a cold
-    /// path. In other words, we want the compiler to optimize branching for the case when
-    /// `collect()` is not called.
+    /// `pin()` rarely calls `collect()`, so we want the compiler to place that
+    /// call on a cold path. In other words, we want the compiler to
+    /// optimize branching for the case when `collect()` is not called.
     #[cold]
     pub(super) fn collect(&self, guard: &Guard) {
         /// Number of bags to destroy.
@@ -288,7 +299,7 @@ impl Global {
 
         for _ in 0..steps {
             match self.queue.try_pop_if(
-                &|sealed_bag: &SealedBag| sealed_bag.is_expired(global_epoch),
+                |sealed_bag: &SealedBag| sealed_bag.is_expired(global_epoch),
                 guard,
             ) {
                 None => break,
@@ -320,8 +331,8 @@ impl Global {
 
     /// Attempts to advance the global epoch.
     ///
-    /// The global epoch can advance only if all currently pinned participants have been pinned in
-    /// the current epoch.
+    /// The global epoch can advance only if all currently pinned participants
+    /// have been pinned in the current epoch.
     ///
     /// Returns the current global epoch.
     ///
@@ -331,22 +342,26 @@ impl Global {
         let global_epoch = self.epoch.load(Ordering::Relaxed);
         atomic::fence(Ordering::SeqCst);
 
-        // TODO(stjepang): `Local`s are stored in a linked list because linked lists are fairly
-        // easy to implement in a lock-free manner. However, traversal can be slow due to cache
-        // misses and data dependencies. We should experiment with other data structures as well.
+        // TODO(stjepang): `Local`s are stored in a linked list because linked
+        // lists are fairly easy to implement in a lock-free manner.
+        // However, traversal can be slow due to cache misses and data
+        // dependencies. We should experiment with other data structures as
+        // well.
         for local in self.locals.iter(guard) {
             match local {
                 Err(IterError::Stalled) => {
-                    // A concurrent thread stalled this iteration. That thread might also try to
-                    // advance the epoch, in which case we leave the job to it. Otherwise, the
+                    // A concurrent thread stalled this iteration. That thread
+                    // might also try to advance the epoch,
+                    // in which case we leave the job to it. Otherwise, the
                     // epoch will not be advanced.
                     return global_epoch;
                 }
                 Ok(local) => {
                     let local_epoch = local.epoch.load(Ordering::Relaxed);
 
-                    // If the participant was pinned in a different epoch, we cannot advance the
-                    // global epoch just yet.
+                    // If the participant was pinned in a different epoch, we
+                    // cannot advance the global epoch just
+                    // yet.
                     if local_epoch.is_pinned()
                         && local_epoch.unpinned() != global_epoch
                     {
@@ -360,9 +375,10 @@ impl Global {
         // All pinned participants were pinned in the current global epoch.
         // Now let's advance the global epoch...
         //
-        // Note that if another thread already advanced it before us, this store will simply
-        // overwrite the global epoch with the same value. This is true because `try_advance` was
-        // called from a thread that was pinned in `global_epoch`, and the global epoch cannot be
+        // Note that if another thread already advanced it before us, this store
+        // will simply overwrite the global epoch with the same value.
+        // This is true because `try_advance` was called from a thread
+        // that was pinned in `global_epoch`, and the global epoch cannot be
         // advanced two steps ahead of it.
         let new_epoch = global_epoch.successor();
         self.epoch.store(new_epoch, Ordering::Release);
@@ -406,14 +422,15 @@ fn local_size() {
 }
 
 impl Local {
-    /// Number of pinnings after which a participant will execute some deferred functions from the
-    /// global queue.
+    /// Number of pinnings after which a participant will execute some deferred
+    /// functions from the global queue.
     const PINNINGS_BETWEEN_COLLECT: usize = 128;
 
     /// Registers a new `Local` in the provided `Global`.
     pub(super) fn register(collector: &Collector) -> LocalHandle {
         unsafe {
-            // Since we dereference no pointers in this block, it is safe to use `unprotected`.
+            // Since we dereference no pointers in this block, it is safe to use
+            // `unprotected`.
 
             let local = Owned::new(Local {
                 entry: Entry::default(),
@@ -441,7 +458,7 @@ impl Local {
     /// Returns a reference to the `Collector` in which this `Local` resides.
     #[inline]
     pub(super) fn collector(&self) -> &Collector {
-        unsafe { &**self.collector.get() }
+        unsafe { &*self.collector.get() }
     }
 
     /// Adds `deferred` to the thread-local bag.
@@ -484,23 +501,28 @@ impl Local {
             let global_epoch = self.global().epoch.load(Ordering::Relaxed);
             let new_epoch = global_epoch.pinned();
 
-            // Now we must store `new_epoch` into `self.epoch` and execute a `SeqCst` fence.
-            // The fence makes sure that any future loads from `Atomic`s will not happen before
+            // Now we must store `new_epoch` into `self.epoch` and execute a
+            // `SeqCst` fence. The fence makes sure that any future
+            // loads from `Atomic`s will not happen before
             // this store.
             if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
-                // HACK(stjepang): On x86 architectures there are two different ways of executing
-                // a `SeqCst` fence.
+                // HACK(stjepang): On x86 architectures there are two different
+                // ways of executing a `SeqCst` fence.
                 //
-                // 1. `atomic::fence(SeqCst)`, which compiles into a `mfence` instruction.
-                // 2. `_.compare_and_swap(_, _, SeqCst)`, which compiles into a `lock cmpxchg`
+                // 1. `atomic::fence(SeqCst)`, which compiles into a `mfence`
+                // instruction. 2. `_.compare_and_swap(_, _,
+                // SeqCst)`, which compiles into a `lock cmpxchg`
                 //    instruction.
                 //
-                // Both instructions have the effect of a full barrier, but benchmarks have shown
-                // that the second one makes pinning faster in this particular case.  It is not
-                // clear that this is permitted by the C++ memory model (SC fences work very
-                // differently from SC accesses), but experimental evidence suggests that this
-                // works fine.  Using inline assembly would be a viable (and correct) alternative,
-                // but alas, that is not possible on stable Rust.
+                // Both instructions have the effect of a full barrier, but
+                // benchmarks have shown that the second one
+                // makes pinning faster in this particular case.  It is not
+                // clear that this is permitted by the C++ memory model (SC
+                // fences work very differently from SC
+                // accesses), but experimental evidence suggests that this
+                // works fine.  Using inline assembly would be a viable (and
+                // correct) alternative, but alas, that is not
+                // possible on stable Rust.
                 let current = Epoch::starting();
                 let previous = self.epoch.compare_and_swap(
                     current,
@@ -511,8 +533,9 @@ impl Local {
                     current, previous,
                     "participant was expected to be unpinned"
                 );
-                // We add a compiler fence to make it less likely for LLVM to do something wrong
-                // here.  Formally, this is not enough to get rid of data races; practically,
+                // We add a compiler fence to make it less likely for LLVM to do
+                // something wrong here.  Formally, this is not
+                // enough to get rid of data races; practically,
                 // it should go a long way.
                 atomic::compiler_fence(Ordering::SeqCst);
             } else {
@@ -524,8 +547,8 @@ impl Local {
             let count = self.pin_count.get();
             self.pin_count.set(count + Wrapping(1));
 
-            // After every `PINNINGS_BETWEEN_COLLECT` try advancing the epoch and collecting
-            // some garbage.
+            // After every `PINNINGS_BETWEEN_COLLECT` try advancing the epoch
+            // and collecting some garbage.
             if count.0 % Self::PINNINGS_BETWEEN_COLLECT == 0 {
                 self.global().collect(&guard);
             }
@@ -570,12 +593,13 @@ impl Local {
         debug_assert_eq!(self.guard_count.get(), 0);
         debug_assert_eq!(self.handle_count.get(), 0);
 
-        // Temporarily increment handle count. This is required so that the following call to `pin`
-        // doesn't call `finalize` again.
+        // Temporarily increment handle count. This is required so that the
+        // following call to `pin` doesn't call `finalize` again.
         self.handle_count.set(1);
         unsafe {
-            // Pin and move the local bag into the global queue. It's important that `push_bag`
-            // doesn't defer destruction on any new garbage.
+            // Pin and move the local bag into the global queue. It's important
+            // that `push_bag` doesn't defer destruction on any new
+            // garbage.
             let guard = &self.pin();
             self.global().push_bag(&mut *self.bag.get(), guard);
         }
@@ -583,16 +607,18 @@ impl Local {
         self.handle_count.set(0);
 
         unsafe {
-            // Take the reference to the `Global` out of this `Local`. Since we're not protected
-            // by a guard at this time, it's crucial that the reference is read before marking the
+            // Take the reference to the `Global` out of this `Local`. Since
+            // we're not protected by a guard at this time, it's
+            // crucial that the reference is read before marking the
             // `Local` as deleted.
             let collector: Collector = ptr::read(&*(*self.collector.get()));
 
             // Mark this node in the linked list as deleted.
             self.entry.delete(unprotected());
 
-            // Finally, drop the reference to the global. Note that this might be the last reference
-            // to the `Global`. If so, the global data will be destroyed and all deferred functions
+            // Finally, drop the reference to the global. Note that this might
+            // be the last reference to the `Global`. If so, the
+            // global data will be destroyed and all deferred functions
             // in its queue will be executed.
             drop(collector);
         }
@@ -604,7 +630,8 @@ fn entry_offset() -> usize {
     use std::mem::MaybeUninit;
     let local: MaybeUninit<Local> = MaybeUninit::uninit();
 
-    // MaybeUninit is repr(transparent so we can treat a pointer as a pointer to the inner value)
+    // MaybeUninit is repr(transparent so we can treat a pointer as a pointer to
+    // the inner value)
     let local_ref: &Local =
         unsafe { &*(&local as *const MaybeUninit<Local> as *const Local) };
     let entry_ref: &Entry = &local_ref.entry;

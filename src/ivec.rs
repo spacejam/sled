@@ -327,9 +327,9 @@ mod qc {
     fn ivec_as_mut_identity() {
         let initial = &[1];
         let mut iv = IVec::from(initial);
-        assert_eq!(&*initial, &*iv);
-        assert_eq!(&*initial, &mut *iv);
-        assert_eq!(&*initial, iv.as_mut());
+        assert_eq!(initial, &*iv);
+        assert_eq!(initial, &mut *iv);
+        assert_eq!(initial, iv.as_mut());
     }
 
     fn prop_identity(ivec: &IVec) -> bool {

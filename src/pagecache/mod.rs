@@ -290,7 +290,7 @@ impl<'g> Deref for PageView<'g> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CacheInfo {
     pub ts: u64,
     pub lsn: Lsn,
@@ -490,7 +490,7 @@ impl Debug for PageCache {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
-        f.write_str(&*format!(
+        f.write_str(&format!(
             "PageCache {{ max: {:?} free: {:?} }}\n",
             *self.next_pid_to_allocate.lock(),
             self.free
@@ -656,10 +656,10 @@ impl PageCache {
             let (meta_id, _) = pc.allocate_inner(meta_update, &guard)?;
 
             assert_eq!(
-                    meta_id, META_PID,
-                    "we expect the meta page to have pid {}, but it had pid {} instead",
-                    META_PID, meta_id,
-                );
+                meta_id, META_PID,
+                "we expect the meta page to have pid {}, but it had pid {} instead",
+                META_PID, meta_id,
+            );
         }
 
         if !pc.inner.contains_pid(COUNTER_PID, &guard) {
@@ -671,10 +671,10 @@ impl PageCache {
             let (counter_id, _) = pc.allocate_inner(counter_update, &guard)?;
 
             assert_eq!(
-                    counter_id, COUNTER_PID,
-                    "we expect the counter to have pid {}, but it had pid {} instead",
-                    COUNTER_PID, counter_id,
-                );
+                counter_id, COUNTER_PID,
+                "we expect the counter to have pid {}, but it had pid {} instead",
+                COUNTER_PID, counter_id,
+            );
         }
 
         let (idgen_key, counter) = pc.get_idgen(&guard);
@@ -700,7 +700,8 @@ impl PageCache {
             let counter_update = Update::Counter(necessary_persists);
             let old = pc.idgen_persists.swap(necessary_persists, Release);
             assert_eq!(old, idgen_persists);
-            // CAS should never fail because the PageCache is still being constructed.
+            // CAS should never fail because the PageCache is still being
+            // constructed.
             pc.cas_page(COUNTER_PID, idgen_key, counter_update, false, &guard)?
                 .unwrap();
         } else {
@@ -1523,7 +1524,7 @@ impl PageCacheInner {
 
         loop {
             let mut page_ptr = new_page.take().unwrap();
-            let log_reservation = match &*page_ptr.update.as_ref().unwrap() {
+            let log_reservation = match page_ptr.update.as_ref().unwrap() {
                 Update::Counter(ref c) => {
                     self.log.reserve(log_kind, pid, c, guard)?
                 }

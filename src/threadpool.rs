@@ -219,7 +219,8 @@ mod queue {
         R: Send + 'static,
     {
         // Polyfill for platforms other than those we explicitly trust to
-        // perform threaded work on. Just execute a task without involving threads.
+        // perform threaded work on. Just execute a task without involving
+        // threads.
         let (promise_filler, promise) = OneShot::pair();
         promise_filler.fill((work)());
         promise

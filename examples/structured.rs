@@ -197,7 +197,7 @@ fn hash_join(db: &sled::Db) -> sled::Result<()> {
             LayoutVerified::new_from_prefix(&*value_bytes).unwrap();
         let (ref mut cat_names, _dog_names) =
             join.entry(home_name.to_vec()).or_insert((vec![], vec![]));
-        cat_names.push(std::str::from_utf8(&*name).unwrap().to_string());
+        cat_names.push(std::str::from_utf8(&name).unwrap().to_string());
     }
 
     for name_value_res in &dogs {
@@ -212,7 +212,7 @@ fn hash_join(db: &sled::Db) -> sled::Result<()> {
             LayoutVerified::new_from_suffix(&*value_bytes).unwrap();
 
         if let Some((_cat_names, ref mut dog_names)) = join.get_mut(home_name) {
-            dog_names.push(std::str::from_utf8(&*name).unwrap().to_string());
+            dog_names.push(std::str::from_utf8(&name).unwrap().to_string());
         }
     }
 

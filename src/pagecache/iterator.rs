@@ -318,13 +318,7 @@ fn scan_segment_headers_and_tail(
     let f = &config.file;
     let file_len = f.metadata()?.len();
     let segments = (file_len / segment_len)
-        + if file_len % segment_len
-            < LogOffset::try_from(SEG_HEADER_LEN).unwrap()
-        {
-            0
-        } else {
-            1
-        };
+        + u64::from(file_len % segment_len >= LogOffset::try_from(SEG_HEADER_LEN).unwrap());
 
     trace!(
         "file len: {} segment len {} segments: {}",

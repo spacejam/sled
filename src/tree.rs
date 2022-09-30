@@ -20,7 +20,7 @@ impl<'g> Deref for View<'g> {
     type Target = Node;
 
     fn deref(&self) -> &Node {
-        &*self.node_view
+        &self.node_view
     }
 }
 
@@ -42,7 +42,7 @@ const fn bounds_error() -> Result<()> {
     Err(Error::Unsupported(
         "Keys and values are limited to \
         128gb on 64-bit platforms and
-        512mb on 32-bit platforms."
+        512mb on 32-bit platforms.",
     ))
 }
 
@@ -198,7 +198,7 @@ impl Tree {
         let mut subscriber_reservation = if is_transactional {
             None
         } else {
-            Some(self.subscribers.reserve(&key))
+            Some(self.subscribers.reserve(key))
         };
 
         let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
@@ -948,7 +948,7 @@ impl Tree {
         } else {
             Err(Error::ReportableBug(
                 "threadpool failed to complete \
-                action before shutdown"
+                action before shutdown",
             ))
         }
     }
@@ -1163,7 +1163,7 @@ impl Tree {
             return Err(Error::Unsupported(
                 "must set a merge operator on this Tree \
                  before calling merge by calling \
-                 Tree::set_merge_operator"
+                 Tree::set_merge_operator",
             ));
         }
 
@@ -1184,7 +1184,7 @@ impl Tree {
                 return Ok(Ok(new_opt));
             }
 
-            let mut subscriber_reservation = self.subscribers.reserve(&key);
+            let mut subscriber_reservation = self.subscribers.reserve(key);
 
             let frag = if let Some(ref new) = new_opt {
                 Link::Set(encoded_key, new.clone())

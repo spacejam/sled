@@ -15,7 +15,7 @@ impl fmt::Debug for Key {
             write!(
                 f,
                 "Key(vec![{}; {}])",
-                self.0.get(0).copied().unwrap_or(0),
+                self.0.first().copied().unwrap_or(0),
                 self.0.len()
             )
         } else {
@@ -59,7 +59,7 @@ impl RngCore for SledGen {
 pub fn fuzz_then_shrink(buf: &[u8]) {
     let use_compression = cfg!(feature = "compression")
         && !cfg!(miri)
-        && buf.get(0).unwrap_or(&0) % 2 == 0;
+        && buf.first().unwrap_or(&0) % 2 == 0;
 
     let ops: Vec<Op> = buf
         .chunks(2)
@@ -262,7 +262,7 @@ fn prop_tree_matches_btreemap_inner(
                 let old_actual = tree.insert(&k.0, vec![0, v]).unwrap();
                 let old_reference = reference.insert(k.clone(), u16::from(v));
                 assert_eq!(
-                    old_actual.map(|v| bytes_to_u16(&*v)),
+                    old_actual.map(|v| bytes_to_u16(&v)),
                     old_reference,
                     "when setting key {:?}, expected old returned value to be {:?}\n{:?}",
                     k,
@@ -276,7 +276,7 @@ fn prop_tree_matches_btreemap_inner(
                 *entry += u16::from(v);
             }
             Get(k) => {
-                let res1 = tree.get(&*k.0).unwrap().map(|v| bytes_to_u16(&*v));
+                let res1 = tree.get(&*k.0).unwrap().map(|v| bytes_to_u16(&v));
                 let res2 = reference.get(&k).cloned();
                 assert_eq!(res1, res2);
             }
