@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
     sync::atomic::{
         AtomicBool,
-        Ordering::{Acquire, Release},
+        Ordering::{AcqRel, Acquire, Release},
     },
 };
 
@@ -56,7 +56,7 @@ impl<T> FastLock<T> {
 
     pub fn try_lock(&self) -> Option<FastLockGuard<'_, T>> {
         let lock_result =
-            self.lock.compare_exchange_weak(false, true, Acquire, Acquire);
+            self.lock.compare_exchange_weak(false, true, AcqRel, Acquire);
 
         let success = lock_result.is_ok();
 

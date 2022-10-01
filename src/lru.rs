@@ -97,11 +97,11 @@ impl AccessQueue {
                 // install new writer
                 let new = Box::into_raw(Box::new(AccessBlock::new(item)));
                 debug_delay();
-                let res = self.writing.compare_exchange_weak(
+                let res = self.writing.compare_exchange(
                     head,
                     new,
-                    Ordering::Release,
-                    Ordering::Relaxed,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
                 );
                 if res.is_err() {
                     // we lost the CAS, free the new item that was
@@ -120,11 +120,11 @@ impl AccessQueue {
                     // we loop because maybe other threads are pushing stuff too
                     block.next.store(full_list_ptr, Ordering::Release);
                     debug_delay();
-                    ret = self.full_list.compare_exchange_weak(
+                    ret = self.full_list.compare_exchange(
                         full_list_ptr,
                         head,
-                        Ordering::Release,
-                        Ordering::Relaxed,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
                     );
                     ret.is_err()
                 } {
