@@ -189,16 +189,9 @@ for a more detailed overview of where we're at and where we see things going!
 
 # priorities
 
-* rework the transaction API to eliminate surprises and limitations
-* reduce space and memory usage
-* the 1.0.0 release date is imminent! just putting the final touches on, while performing intensive testing
-* combine merge operators with subscribers in a way that plays nicely with transactions
-* typed trees for low-friction serialization
-* replication support for both strongly and eventually consistent systems
-* continue to improve testing and make certain bug classes impossible through construction
-* continue to optimize the hell out of everything
-* continue to improve documentation and examples
-* continue to reduce compilation latency
+1. A full rewrite of sled's storage subsystem is happening on a modular basis as part of the [komora project](https://github.com/komora-io), in particular the marble storage engine. This will dramatically lower both the disk space usage (space amplification) and garbage collection overhead (write amplification) of sled.
+2. The memory layout of tree nodes is being completely rewritten to reduce fragmentation and eliminate serialization costs.
+3. The merge operator feature will change into a trigger feature that resembles traditional database triggers, allowing state to be modified as part of the same atomic writebatch that triggered it for retaining serializability with reactive semantics.
 
 # fund feature development
 
