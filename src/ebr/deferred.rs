@@ -10,7 +10,7 @@ use core::ptr;
 const DATA_WORDS: usize = 3;
 
 /// Some space to keep a `FnOnce()` object on the stack.
-type Data = [usize; DATA_WORDS];
+type Data = MaybeUninit<[usize; DATA_WORDS]>;
 
 /// A `FnOnce()` that is stored inline if small, or otherwise boxed on the heap.
 ///
@@ -50,22 +50,22 @@ impl Deferred {
             if size <= mem::size_of::<Data>()
                 && align <= mem::align_of::<Data>()
             {
-                let mut data = MaybeUninit::<Data>::uninit();
+                let mut data = Data::uninit();
                 ptr::write(data.as_mut_ptr() as *mut F, f);
 
                 Deferred {
                     call: call_raw::<F>,
-                    data: data.assume_init(),
+                    data,
                     _marker: PhantomData,
                 }
             } else {
                 let b: Box<F> = Box::new(f);
-                let mut data = MaybeUninit::<Data>::uninit();
+                let mut data = Data::uninit();
                 ptr::write(data.as_mut_ptr() as *mut Box<F>, b);
 
                 Deferred {
                     call: call_raw_box::<F>,
-                    data: data.assume_init(),
+                    data,
                     _marker: PhantomData,
                 }
             }
@@ -78,7 +78,7 @@ impl Deferred {
         let call = self.call;
         #[allow(trivial_casts)]
         unsafe {
-            call(&mut self.data as *mut Data as *mut u8)
+            call(self.data.as_mut_ptr().cast())
         };
     }
 }
