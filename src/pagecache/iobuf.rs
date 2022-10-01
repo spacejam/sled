@@ -303,10 +303,6 @@ pub(crate) struct IoBufs {
     pub segment_accountant: Mutex<SegmentAccountant>,
     pub segment_cleaner: SegmentCleaner,
     deferred_segment_ops: stack::Stack<SegmentOp>,
-    #[cfg(feature = "io_uring")]
-    pub submission_mutex: Mutex<()>,
-    #[cfg(feature = "io_uring")]
-    pub io_uring: rio::Rio,
 }
 
 impl Drop for IoBufs {
@@ -410,10 +406,6 @@ impl IoBufs {
             segment_accountant: Mutex::new(segment_accountant),
             segment_cleaner,
             deferred_segment_ops: stack::Stack::default(),
-            #[cfg(feature = "io_uring")]
-            submission_mutex: Mutex::new(()),
-            #[cfg(feature = "io_uring")]
-            io_uring: rio::new()?,
         })
     }
 
@@ -745,90 +737,38 @@ impl IoBufs {
         let stored_max_stable_lsn = iobuf.stored_max_stable_lsn;
 
         io_fail!(self, "buffer write");
-        #[cfg(feature = "io_uring")]
-        {
-            let mut wrote = 0;
-            while wrote < total_len {
-                let to_write = &data[wrote..];
-                let offset = log_offset + wrote as u64;
+        let f = &self.config.file;
+        pwrite_all(f, data, log_offset)?;
+        if !self.config.temporary {
+            if iobuf.from_tip {
+                f.sync_all()?;
+            } else if cfg!(not(target_os = "linux")) {
+                f.sync_data()?;
+            } else {
+                #[allow(clippy::assertions_on_constants)]
+                {
+                    assert!(cfg!(target_os = "linux"));
+                }
 
-                // we take out this mutex to guarantee
-                // that our `Link` write operation below
-                // is serialized with the following sync.
-                // we don't put the `Rio` instance into
-                // the `Mutex` because we want to drop the
-                // `Mutex` right after beginning the async
-                // submission.
-                let link_mu = self.submission_mutex.lock();
-
-                // using the `Link` ordering, we specify
-                // that `io_uring` should not begin
-                // the following `sync_file_range`
-                // until the previous write is
-                // complete.
-                let wrote_completion = self.io_uring.write_at_ordered(
-                    &*self.config.file,
-                    &to_write,
-                    offset,
-                    rio::Ordering::Link,
-                );
-
-                let sync_completion = if iobuf.from_tip {
-                    self.io_uring.fsync(&*self.config.file)
-                } else {
-                    self.io_uring.sync_file_range(
-                        &*self.config.file,
-                        offset,
-                        to_write.len(),
-                    )
-                };
-
-                sync_completion.wait()?;
-
-                // TODO we want to move this above the previous `wait`
-                // but there seems to be an issue in `rio` that is
-                // triggered when multiple threads are submitting
-                // events while events from other threads are in play.
-                drop(link_mu);
-
-                wrote += wrote_completion.wait()?;
-            }
-        }
-        #[cfg(not(feature = "io_uring"))]
-        {
-            let f = &self.config.file;
-            pwrite_all(f, data, log_offset)?;
-            if !self.config.temporary {
-                if iobuf.from_tip {
-                    f.sync_all()?;
-                } else if cfg!(not(target_os = "linux")) {
-                    f.sync_data()?;
-                } else {
-                    #[allow(clippy::assertions_on_constants)]
-                    {
-                        assert!(cfg!(target_os = "linux"));
-                    }
-
-                    #[cfg(target_os = "linux")]
-                    {
-                        use std::os::unix::io::AsRawFd;
-                        let ret = unsafe {
-                            libc::sync_file_range(
-                                f.as_raw_fd(),
-                                i64::try_from(log_offset).unwrap(),
-                                i64::try_from(total_len).unwrap(),
-                                libc::SYNC_FILE_RANGE_WAIT_BEFORE
-                                    | libc::SYNC_FILE_RANGE_WRITE
-                                    | libc::SYNC_FILE_RANGE_WAIT_AFTER,
-                            )
-                        };
-                        if ret < 0 {
-                            let err = std::io::Error::last_os_error();
-                            if let Some(libc::ENOSYS) = err.raw_os_error() {
-                                f.sync_all()?;
-                            } else {
-                                return Err(err.into());
-                            }
+                #[cfg(target_os = "linux")]
+                {
+                    use std::os::unix::io::AsRawFd;
+                    let ret = unsafe {
+                        libc::sync_file_range(
+                            f.as_raw_fd(),
+                            i64::try_from(log_offset).unwrap(),
+                            i64::try_from(total_len).unwrap(),
+                            libc::SYNC_FILE_RANGE_WAIT_BEFORE
+                                | libc::SYNC_FILE_RANGE_WRITE
+                                | libc::SYNC_FILE_RANGE_WAIT_AFTER,
+                        )
+                    };
+                    if ret < 0 {
+                        let err = std::io::Error::last_os_error();
+                        if let Some(libc::ENOSYS) = err.raw_os_error() {
+                            f.sync_all()?;
+                        } else {
+                            return Err(err.into());
                         }
                     }
                 }
