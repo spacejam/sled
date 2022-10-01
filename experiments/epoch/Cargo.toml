@@ -6,6 +6,3 @@ edition = "2018"
 
 [profile.release]
 debug = true
-
-[dependencies]
-crossbeam-epoch = "0.8.0"

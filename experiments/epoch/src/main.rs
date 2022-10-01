@@ -201,11 +201,6 @@ fn main() {
                 guard.defer(move || {
                     S(t as usize);
                 });
-
-                let guard = crossbeam_epoch::pin();
-                guard.defer(move || {
-                    S(t as usize);
-                });
             }
         });
 
