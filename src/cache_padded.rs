@@ -21,7 +21,7 @@ use core::ops::{Deref, DerefMut};
     not(any(target_arch = "x86_64", target_arch = "aarch64")),
     repr(align(64))
 )]
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Eq)]
 pub struct CachePadded<T> {
     value: T,
 }

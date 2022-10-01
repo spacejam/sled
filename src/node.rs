@@ -413,7 +413,7 @@ impl<'a> Iterator for Iter<'a> {
                     log::trace!("src/node.rs:114");
                     log::trace!("iterator returning {:?}", self.next_a);
                     return self.next_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                        (KeyRef::Slice(k), v.unwrap().as_ref())
                     });
                 }
                 (Some((k_a, v_a_opt)), Some((k_b, _))) => {
@@ -425,7 +425,7 @@ impl<'a> Iterator for Iter<'a> {
                             log::trace!("src/node.rs:133");
                             log::trace!("iterator returning {:?}", self.next_a);
                             return self.next_a.take().map(|(k, v)| {
-                                (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                                (KeyRef::Slice(k), v.unwrap().as_ref())
                             });
                         }
                         (Equal, None) => {
@@ -437,7 +437,7 @@ impl<'a> Iterator for Iter<'a> {
                         (Less, Some(_)) => {
                             log::trace!("iterator returning {:?}", self.next_a);
                             return self.next_a.take().map(|(k, v)| {
-                                (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                                (KeyRef::Slice(k), v.unwrap().as_ref())
                             });
                         }
                         (Less, None) => {
@@ -512,7 +512,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     log::trace!("src/node.rs:483");
                     log::trace!("iterator returning {:?}", self.next_back_a);
                     return self.next_back_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                        (KeyRef::Slice(k), v.unwrap().as_ref())
                     });
                 }
                 (Some((k_a, Some(_))), Some((k_b, _))) if k_b > *k_a => {
@@ -523,7 +523,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 (Some((k_a, Some(_))), Some((k_b, _))) if k_b < *k_a => {
                     log::trace!("iterator returning {:?}", self.next_back_a);
                     return self.next_back_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                        (KeyRef::Slice(k), v.unwrap().as_ref())
                     });
                 }
                 (Some((k_a, Some(_))), Some((k_b, _))) if k_b == *k_a => {
@@ -532,7 +532,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     log::trace!("src/node.rs:520");
                     log::trace!("iterator returning {:?}", self.next_back_a);
                     return self.next_back_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(&*k), v.unwrap().as_ref())
+                        (KeyRef::Slice(k), v.unwrap().as_ref())
                     });
                 }
                 _ => unreachable!(
@@ -713,10 +713,10 @@ impl Node {
                 for (k, v) in &self.overlay {
                     length_and_stride_matches &=
                         v.is_some() && v.as_ref().unwrap().is_empty();
-                    length_and_stride_matches &= KeyRef::Slice(&*k) > prev
-                        && is_linear(&prev, &KeyRef::Slice(&*k), stride);
+                    length_and_stride_matches &= KeyRef::Slice(k) > prev
+                        && is_linear(&prev, &KeyRef::Slice(k), stride);
 
-                    prev = KeyRef::Slice(&*k);
+                    prev = KeyRef::Slice(k);
 
                     if !length_and_stride_matches {
                         break;
@@ -2398,8 +2398,8 @@ impl Inner {
     pub(crate) fn contains_upper_bound(&self, bound: &Bound<IVec>) -> bool {
         if let Some(hi) = self.hi() {
             match bound {
-                Bound::Excluded(b) if hi >= &*b => true,
-                Bound::Included(b) if hi > &*b => true,
+                Bound::Excluded(b) if hi >= b => true,
+                Bound::Included(b) if hi > b => true,
                 _ => false,
             }
         } else {
@@ -2414,8 +2414,8 @@ impl Inner {
     ) -> bool {
         let lo = self.lo();
         match bound {
-            Bound::Excluded(b) if lo < &*b || (is_forward && *b == lo) => true,
-            Bound::Included(b) if lo <= &*b => true,
+            Bound::Excluded(b) if lo < b || (is_forward && *b == lo) => true,
+            Bound::Included(b) if lo <= b => true,
             Bound::Unbounded if !is_forward => self.hi().is_none(),
             _ => lo.is_empty(),
         }
@@ -2630,7 +2630,7 @@ mod test {
 
         let key_ref = KeyRef::Computed { base: &[2, 253], distance: 8 };
         let mut buf = &mut [0, 0][..];
-        key_ref.write_into(&mut buf);
+        key_ref.write_into(buf);
         assert_eq!(buf, &[3, 5]);
     }
 
@@ -2730,7 +2730,7 @@ mod test {
                 .collect();
 
             let mut ret =
-                Inner::new(&lo, hi.map(|h| &*h), 0, false, None, &children_ref);
+                Inner::new(&lo, hi.map(|h| h), 0, false, None, &children_ref);
 
             ret.activity_sketch = g.gen();
 
