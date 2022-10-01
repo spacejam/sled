@@ -40,7 +40,6 @@ metrics = ["num-format"]
 no_logs = ["log/max_level_off"]
 no_inline = []
 pretty_backtrace = ["color-backtrace"]
-io_uring = ["rio"]
 docs = []
 miri_optimizations = []
 mutex = []
@@ -54,7 +53,6 @@ log = "0.4.14"
 parking_lot = "0.12.0"
 color-backtrace = { version = "0.5.1", optional = true }
 num-format = { version = "0.4.0", optional = true }
-rio = { version = "0.9.4", optional = true }
 backtrace = { version = "0.3.60", optional = true }
 im = "15.0.0"
 
