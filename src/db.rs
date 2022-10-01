@@ -143,7 +143,7 @@ impl Db {
 
         let mut tenants = self.tenants.write();
 
-        let tree = if let Some(tree) = tenants.remove(&*name_ref) {
+        let tree = if let Some(tree) = tenants.remove(name_ref) {
             tree
         } else {
             return Ok(false);

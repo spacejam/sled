@@ -99,7 +99,7 @@ pub struct TransactionalTree {
 
 /// An error type that is returned from the closure
 /// passed to the `transaction` method.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnabortableTransactionError {
     /// An internal conflict has occurred and the `transaction` method will
     /// retry the passed-in closure until it succeeds. This should never be
@@ -155,7 +155,7 @@ impl<E> From<UnabortableTransactionError> for ConflictableTransactionError<E> {
 
 /// An error type that is returned from the closure
 /// passed to the `transaction` method.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictableTransactionError<T = Error> {
     /// A user-provided error type that indicates the transaction should abort.
     /// This is passed into the return value of `transaction` as a direct Err
@@ -198,7 +198,7 @@ impl<E: std::error::Error> std::error::Error
 
 /// An error type that is returned from the closure
 /// passed to the `transaction` method.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransactionError<T = Error> {
     /// A user-provided error type that indicates the transaction should abort.
     /// This is passed into the return value of `transaction` as a direct Err
@@ -266,7 +266,7 @@ impl TransactionalTree {
     {
         let old = self.get(key.as_ref())?;
         let mut writes = self.writes.borrow_mut();
-        let _last_write = writes.insert(key, value.into());
+        writes.insert(key, value.into());
         Ok(old)
     }
 
@@ -280,7 +280,7 @@ impl TransactionalTree {
     {
         let old = self.get(key.as_ref());
         let mut writes = self.writes.borrow_mut();
-        let _last_write = writes.remove(key);
+        writes.remove(key);
         old
     }
 

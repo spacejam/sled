@@ -290,7 +290,7 @@ impl<'g> Deref for PageView<'g> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CacheInfo {
     pub ts: u64,
     pub lsn: Lsn,
@@ -1523,7 +1523,7 @@ impl PageCacheInner {
 
         loop {
             let mut page_ptr = new_page.take().unwrap();
-            let log_reservation = match &*page_ptr.update.as_ref().unwrap() {
+            let log_reservation = match page_ptr.update.as_ref().unwrap() {
                 Update::Counter(ref c) => {
                     self.log.reserve(log_kind, pid, c, guard)?
                 }
