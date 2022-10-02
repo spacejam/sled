@@ -230,32 +230,6 @@ pub(crate) const fn u32_to_arr(number: u32) -> [u8; 4] {
     number.to_le_bytes()
 }
 
-#[allow(clippy::needless_pass_by_value)]
-#[allow(clippy::needless_return)]
-pub(in crate::pagecache) fn decompress(in_buf: Vec<u8>) -> Vec<u8> {
-    #[cfg(feature = "compression")]
-    {
-        use zstd::stream::decode_all;
-
-        let scootable_in_buf = &mut &*in_buf;
-        let raw: IVec = IVec::deserialize(scootable_in_buf)
-            .expect("this had to be serialized with an extra length frame");
-        #[cfg(feature = "metrics")]
-        let _measure = Measure::new(&M.decompress);
-        let out_buf = decode_all(&raw[..]).expect(
-            "failed to decompress data. \
-             This is not expected, please open an issue on \
-             https://github.com/spacejam/sled so we can \
-             fix this critical issue ASAP. Thank you :)",
-        );
-
-        return out_buf;
-    }
-
-    #[cfg(not(feature = "compression"))]
-    in_buf
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct NodeView<'g>(pub(crate) PageView<'g>);
 

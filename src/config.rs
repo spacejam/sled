@@ -481,8 +481,8 @@ impl Config {
         );
         if self.use_compression {
             supported!(
-                cfg!(feature = "compression"),
-                "the 'compression' feature must be enabled"
+                !cfg!(feature = "no_zstd"),
+                "the 'no_zstd' feature is set, but Config.use_compression is also set to true"
             );
         }
         supported!(

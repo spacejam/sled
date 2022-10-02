@@ -9,8 +9,7 @@
 //! * forward and reverse iterators
 //! * a monotonic ID generator capable of giving out 75-125+ million unique IDs
 //!   per second, never double allocating even in the presence of crashes
-//! * [zstd](https://github.com/facebook/zstd) compression (use the zstd build
-//!   feature)
+//! * [zstd](https://github.com/facebook/zstd) compression
 //! * cpu-scalable lock-free implementation
 //! * SSD-optimized log-structured storage
 //!

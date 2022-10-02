@@ -57,7 +57,7 @@ impl RngCore for SledGen {
 }
 
 pub fn fuzz_then_shrink(buf: &[u8]) {
-    let use_compression = cfg!(feature = "compression")
+    let use_compression = !cfg!(feature = "no_zstd")
         && !cfg!(miri)
         && buf.get(0).unwrap_or(&0) % 2 == 0;
 

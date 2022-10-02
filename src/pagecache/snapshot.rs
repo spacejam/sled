@@ -1,6 +1,3 @@
-#[cfg(feature = "zstd")]
-use zstd::bulk::{compress, decompress};
-
 use crate::*;
 
 use super::{
@@ -530,22 +527,7 @@ fn read_snapshot(config: &RunningConfig) -> Result<Option<Snapshot>> {
         return Err(Error::corruption(None));
     }
 
-    #[cfg(feature = "zstd")]
-    let bytes = if config.use_compression {
-        use std::convert::TryInto;
-
-        let len_expected: u64 =
-            u64::from_le_bytes(len_expected_bytes.as_ref().try_into().unwrap());
-
-        decompress(&*buf, usize::try_from(len_expected).unwrap()).unwrap()
-    } else {
-        buf
-    };
-
-    #[cfg(not(feature = "zstd"))]
-    let bytes = buf;
-
-    Snapshot::deserialize(&mut bytes.as_slice()).map(Some)
+    Snapshot::deserialize(&mut buf.as_slice()).map(Some)
 }
 
 pub(in crate::pagecache) fn write_snapshot(
@@ -554,21 +536,10 @@ pub(in crate::pagecache) fn write_snapshot(
 ) -> Result<()> {
     trace!("writing snapshot {:?}", snapshot);
 
-    let raw_bytes = snapshot.serialize();
-    let decompressed_len = raw_bytes.len();
-
-    #[cfg(feature = "zstd")]
-    let bytes = if config.use_compression {
-        compress(&*raw_bytes, config.compression_factor).unwrap()
-    } else {
-        raw_bytes
-    };
-
-    #[cfg(not(feature = "zstd"))]
-    let bytes = raw_bytes;
+    let bytes = snapshot.serialize();
 
     let crc32: [u8; 4] = u32_to_arr(crc32(&bytes));
-    let len_bytes: [u8; 8] = u64_to_arr(decompressed_len as u64);
+    let len_bytes: [u8; 8] = u64_to_arr(bytes.len() as u64);
 
     let path_1_suffix =
         format!("snap.{:016X}.generating", snapshot.stable_lsn.unwrap_or(0));

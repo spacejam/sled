@@ -1,11 +1,11 @@
 use std::fs::File;
 
 use super::{
-    arr_to_lsn, arr_to_u32, assert_usize, decompress, header, iobuf,
-    lsn_to_arr, pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr, Arc,
-    BasedBuf, DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn,
-    MessageKind, Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID,
-    COUNTER_PID, MAX_MSG_HEADER_LEN, META_PID, SEG_HEADER_LEN,
+    arr_to_lsn, arr_to_u32, assert_usize, header, iobuf, lsn_to_arr,
+    pread_exact, pread_exact_or_eof, roll_iobuf, u32_to_arr, Arc, BasedBuf,
+    DiskPtr, HeapId, IoBuf, IoBufs, LogKind, LogOffset, Lsn, MessageKind,
+    Reservation, Serialize, Snapshot, BATCH_MANIFEST_PID, COUNTER_PID,
+    MAX_MSG_HEADER_LEN, META_PID, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -70,18 +70,16 @@ impl Log {
             // here because it might not still
             // exist in the inline log.
             let heap_id = ptr.heap_id().unwrap();
-            self.config.heap.read(heap_id, self.config.use_compression).map(
-                |(kind, buf)| {
-                    let header = MessageHeader {
-                        kind,
-                        pid,
-                        segment_number: expected_segment_number,
-                        crc32: 0,
-                        len: 0,
-                    };
-                    LogRead::Heap(header, buf, heap_id, 0)
-                },
-            )
+            self.config.heap.read(heap_id).map(|(kind, buf)| {
+                let header = MessageHeader {
+                    kind,
+                    pid,
+                    segment_number: expected_segment_number,
+                    crc32: 0,
+                    len: 0,
+                };
+                LogRead::Heap(header, buf, heap_id, 0)
+            })
         }
     }
 
@@ -129,7 +127,6 @@ impl Log {
     /// completed or aborted later. Useful for maintaining
     /// linearizability across CAS operations that may need to
     /// persist part of their operation.
-    #[allow(unused)]
     pub fn reserve<T: Serialize + Debug>(
         &self,
         log_kind: LogKind,
@@ -137,35 +134,6 @@ impl Log {
         item: &T,
         guard: &Guard,
     ) -> Result<Reservation<'_>> {
-        #[cfg(feature = "compression")]
-        {
-            if self.config.use_compression && pid != BATCH_MANIFEST_PID {
-                use zstd::bulk::compress;
-
-                let buf = item.serialize();
-
-                #[cfg(feature = "metrics")]
-                let _measure = Measure::new(&M.compress);
-
-                let compressed_buf =
-                    compress(&buf, self.config.compression_factor).unwrap();
-
-                let ret = self.reserve_inner(
-                    log_kind,
-                    pid,
-                    &IVec::from(compressed_buf),
-                    None,
-                    guard,
-                );
-
-                if let Err(e) = &ret {
-                    self.iobufs.set_global_error(*e);
-                }
-
-                return ret;
-            }
-        }
-
         let ret = self.reserve_inner(log_kind, pid, item, None, guard);
 
         if let Err(e) = &ret {
@@ -860,7 +828,7 @@ pub(crate) fn read_message<R: ReadAt>(
             assert_eq!(buf.len(), 16);
             let heap_id = HeapId::deserialize(&mut &buf[..]).unwrap();
 
-            match config.heap.read(heap_id, config.use_compression) {
+            match config.heap.read(heap_id) {
                 Ok((kind, buf2)) => {
                     assert_eq!(header.kind, kind);
                     trace!(
@@ -883,10 +851,7 @@ pub(crate) fn read_message<R: ReadAt>(
         | MessageKind::Free
         | MessageKind::Counter => {
             trace!("read a successful inline message");
-            let buf2 =
-                if config.use_compression { decompress(buf) } else { buf };
-
-            Ok(LogRead::Inline(header, buf2, inline_len))
+            Ok(LogRead::Inline(header, buf, inline_len))
         }
         MessageKind::BatchManifest => {
             assert_eq!(buf.len(), std::mem::size_of::<Lsn>());
