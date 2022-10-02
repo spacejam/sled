@@ -198,7 +198,7 @@ impl Tree {
         let mut subscriber_reservation = if is_transactional {
             None
         } else {
-            Some(self.subscribers.reserve(&key))
+            Some(self.subscribers.reserve(key))
         };
 
         let (encoded_key, last_value) = node_view.node_kv_pair(key.as_ref());
@@ -1184,7 +1184,7 @@ impl Tree {
                 return Ok(Ok(new_opt));
             }
 
-            let mut subscriber_reservation = self.subscribers.reserve(&key);
+            let mut subscriber_reservation = self.subscribers.reserve(key);
 
             let frag = if let Some(ref new) = new_opt {
                 Link::Set(encoded_key, new.clone())
