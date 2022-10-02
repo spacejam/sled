@@ -720,7 +720,7 @@ impl<'g, T> Shared<'g, T> {
 
 impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     /// Returns a new null pointer.
-    pub(crate) fn null() -> Shared<'g, T> {
+    pub(crate) const fn null() -> Shared<'g, T> {
         Shared { data: 0, _marker: PhantomData }
     }
 
