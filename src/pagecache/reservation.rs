@@ -56,8 +56,7 @@ impl<'a> Reservation<'a> {
 
     /// Refills the reservation buffer with new data.
     /// Must supply a buffer of an identical length
-    /// as the one initially provided. Don't use this
-    /// on messages subject to compression etc...
+    /// as the one initially provided.
     ///
     /// # Panics
     ///

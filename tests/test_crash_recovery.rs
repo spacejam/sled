@@ -283,7 +283,7 @@ fn run_crash_recovery() {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(1))
-        .path(RECOVERY_DIR.to_string())
+        .path(RECOVERY_DIR)
         .segment_size(SEGMENT_SIZE);
 
     if let Err(e) = thread::spawn(|| run_inner(config)).join() {
@@ -302,7 +302,7 @@ fn run_crash_batches() {
     let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(1))
-        .path(BATCHES_DIR.to_string())
+        .path(BATCHES_DIR)
         .segment_size(SEGMENT_SIZE);
 
     let db = config.open().unwrap();

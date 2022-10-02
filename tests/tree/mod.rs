@@ -15,7 +15,7 @@ impl fmt::Debug for Key {
             write!(
                 f,
                 "Key(vec![{}; {}])",
-                self.0.get(0).copied().unwrap_or(0),
+                self.0.first().copied().unwrap_or(0),
                 self.0.len()
             )
         } else {
@@ -57,9 +57,9 @@ impl RngCore for SledGen {
 }
 
 pub fn fuzz_then_shrink(buf: &[u8]) {
-    let use_compression = cfg!(feature = "compression")
+    let use_compression = !cfg!(feature = "no_zstd")
         && !cfg!(miri)
-        && buf.get(0).unwrap_or(&0) % 2 == 0;
+        && buf.first().unwrap_or(&0) % 2 == 0;
 
     let ops: Vec<Op> = buf
         .chunks(2)

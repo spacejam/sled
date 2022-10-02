@@ -255,7 +255,7 @@ fn multithreaded() {
         }));
     }
 
-    for t in threads.into_iter() {
+    for t in threads {
         t.join().unwrap();
     }
 

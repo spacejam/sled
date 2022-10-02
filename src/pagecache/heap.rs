@@ -234,18 +234,10 @@ impl Heap {
         }
     }
 
-    pub fn read(
-        &self,
-        heap_id: HeapId,
-        use_compression: bool,
-    ) -> Result<(MessageKind, Vec<u8>)> {
+    pub fn read(&self, heap_id: HeapId) -> Result<(MessageKind, Vec<u8>)> {
         log::trace!("Heap::read({:?})", heap_id);
         let (slab_id, slab_idx, original_lsn) = heap_id.decompose();
-        self.slabs[slab_id as usize].read(
-            slab_idx,
-            original_lsn,
-            use_compression,
-        )
+        self.slabs[slab_id as usize].read(slab_idx, original_lsn)
     }
 
     pub fn free(&self, heap_id: HeapId) {
@@ -300,7 +292,6 @@ impl Slab {
         &self,
         slab_idx: SlabIdx,
         original_lsn: Lsn,
-        use_compression: bool,
     ) -> Result<(MessageKind, Vec<u8>)> {
         let bs = slab_id_to_size(self.slab_id);
         let offset = u64::from(slab_idx) * bs;
@@ -332,12 +323,7 @@ impl Slab {
                 return Err(Error::corruption(None));
             }
             let buf = heap_buf[13..].to_vec();
-            let buf2 = if use_compression {
-                crate::pagecache::decompress(buf)
-            } else {
-                buf
-            };
-            Ok((MessageKind::from(heap_buf[0]), buf2))
+            Ok((MessageKind::from(heap_buf[0]), buf))
         } else {
             log::debug!(
                 "heap message CRC does not match contents. stored: {} actual: {}",

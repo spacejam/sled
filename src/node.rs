@@ -2629,7 +2629,7 @@ mod test {
         }
 
         let key_ref = KeyRef::Computed { base: &[2, 253], distance: 8 };
-        let mut buf = &mut [0, 0][..];
+        let buf = &mut [0, 0][..];
         key_ref.write_into(buf);
         assert_eq!(buf, &[3, 5]);
     }

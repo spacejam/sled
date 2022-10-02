@@ -288,7 +288,7 @@ impl Global {
 
         for _ in 0..steps {
             match self.queue.try_pop_if(
-                &|sealed_bag: &SealedBag| sealed_bag.is_expired(global_epoch),
+                |sealed_bag: &SealedBag| sealed_bag.is_expired(global_epoch),
                 guard,
             ) {
                 None => break,

@@ -428,7 +428,7 @@ fn concurrent_tree_iter() -> Result<()> {
     ];
 
     for item in &INDELIBLE {
-        t.insert(item.to_vec(), item.to_vec())?;
+        t.insert(item, item.to_vec())?;
     }
 
     let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
@@ -876,11 +876,11 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
 
     let db = config.open().unwrap();
 
-    let t1 = db.open_tree(b"1".to_vec())?;
-    let mut s1 = t1.watch_prefix(b"".to_vec());
+    let t1 = db.open_tree(b"1")?;
+    let mut s1 = t1.watch_prefix(b"");
 
-    let t2 = db.open_tree(b"2".to_vec())?;
-    let mut s2 = t2.watch_prefix(b"".to_vec());
+    let t2 = db.open_tree(b"2")?;
+    let mut s2 = t2.watch_prefix(b"");
 
     t1.insert(b"t1_a", b"t1_a".to_vec())?;
     t2.insert(b"t2_a", b"t2_a".to_vec())?;
@@ -898,11 +898,11 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
 
     let db = config.open().unwrap();
 
-    let t1 = db.open_tree(b"1".to_vec())?;
-    let mut s1 = t1.watch_prefix(b"".to_vec());
+    let t1 = db.open_tree(b"1")?;
+    let mut s1 = t1.watch_prefix(b"");
 
-    let t2 = db.open_tree(b"2".to_vec())?;
-    let mut s2 = t2.watch_prefix(b"".to_vec());
+    let t2 = db.open_tree(b"2")?;
+    let mut s2 = t2.watch_prefix(b"");
 
     assert!(db.is_empty());
     assert_eq!(t1.len(), 1);
@@ -924,8 +924,8 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
 
     let db = config.open().unwrap();
 
-    let t1 = db.open_tree(b"1".to_vec())?;
-    let t2 = db.open_tree(b"2".to_vec())?;
+    let t1 = db.open_tree(b"1")?;
+    let t2 = db.open_tree(b"2")?;
 
     assert!(db.is_empty());
     assert_eq!(t1.len(), 2);
@@ -948,8 +948,8 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
 
     let db = config.open().unwrap();
 
-    let t1 = db.open_tree(b"1".to_vec())?;
-    let t2 = db.open_tree(b"2".to_vec())?;
+    let t1 = db.open_tree(b"1")?;
+    let t2 = db.open_tree(b"2")?;
 
     assert!(db.is_empty());
     assert_eq!(t1.len(), 0);

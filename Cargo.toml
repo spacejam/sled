@@ -31,8 +31,7 @@ default = []
 # test-only configurations that cause performance to drop significantly.
 # It will cause your tests to take much more time, and possibly time out etc...
 testing = ["event_log", "lock_free_delays", "light_testing"]
-light_testing = ["compression", "failpoints", "backtrace", "memshred"]
-compression = ["zstd"]
+light_testing = ["failpoints", "backtrace", "memshred"]
 lock_free_delays = []
 failpoints = []
 event_log = []
@@ -41,20 +40,20 @@ no_logs = ["log/max_level_off"]
 no_inline = []
 pretty_backtrace = ["color-backtrace"]
 docs = []
+no_zstd = []
 miri_optimizations = []
 mutex = []
 memshred = []
 
 [dependencies]
 libc = "0.2.96"
-zstd = { version = "0.11.2", optional = true }
 crc32fast = "1.2.1"
 log = "0.4.14"
-parking_lot = "0.12.0"
+parking_lot = "0.12.1"
 color-backtrace = { version = "0.5.1", optional = true }
 num-format = { version = "0.4.0", optional = true }
 backtrace = { version = "0.3.60", optional = true }
-im = "15.0.0"
+im = "15.1.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os="windows"))'.dependencies]
 fs2 = "0.4.3"

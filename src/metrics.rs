@@ -320,14 +320,10 @@ impl Metrics {
         ret.push_str(&format!("hit ratio: {}%\n", hit_ratio));
 
         ret.push_str(&format!("{}\n", "-".repeat(134)));
-        ret.push_str("serialization and compression:\n");
+        ret.push_str("serialization:\n");
         ret.push_str(&p(vec![
             lat("serialize", &self.serialize),
             lat("deserialize", &self.deserialize),
-            #[cfg(feature = "compression")]
-            lat("compress", &self.compress),
-            #[cfg(feature = "compression")]
-            lat("decompress", &self.decompress),
         ]));
 
         ret.push_str(&format!("{}\n", "-".repeat(134)));

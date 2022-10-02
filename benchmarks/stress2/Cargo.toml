@@ -16,7 +16,6 @@ overflow-checks = true
 default = []
 lock_free_delays = ["sled/lock_free_delays"]
 event_log = ["sled/event_log"]
-compression = ["sled/compression"]
 no_logs = ["sled/no_logs"]
 metrics = ["sled/metrics"]
 jemalloc = ["jemallocator"]

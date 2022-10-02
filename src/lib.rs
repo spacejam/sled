@@ -498,7 +498,7 @@ mod compile_time_assertions {
     use crate::*;
 
     #[allow(unreachable_code)]
-    fn _assert_public_types_send_sync() {
+    const fn _assert_public_types_send_sync() {
         _assert_send::<Subscriber>();
 
         _assert_send_sync::<Iter>();
@@ -513,9 +513,9 @@ mod compile_time_assertions {
         _assert_send_sync::<Mode>();
     }
 
-    fn _assert_send<S: Send>() {}
+    const fn _assert_send<S: Send>() {}
 
-    fn _assert_send_sync<S: Send + Sync>() {}
+    const fn _assert_send_sync<S: Send + Sync>() {}
 }
 
 #[cfg(all(unix, not(miri)))]
