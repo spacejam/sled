@@ -496,7 +496,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 restart!();
             }
             FailPoint(fp, bitset) => {
-                sled::fail::set(&*fp, bitset);
+                sled::fail::set(fp, bitset);
             }
         }
     }

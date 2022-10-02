@@ -502,7 +502,7 @@ impl Drop for Log {
 }
 
 /// All log messages are prepended with this header
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct MessageHeader {
     pub crc32: u32,
     pub kind: MessageKind,
@@ -512,7 +512,7 @@ pub struct MessageHeader {
 }
 
 /// A number representing a segment number.
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(transparent)]
 pub struct SegmentNumber(pub u64);
 

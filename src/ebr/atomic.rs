@@ -90,7 +90,7 @@ impl CompareAndSetOrdering for (Ordering, Ordering) {
 
 /// Returns a bitmask containing the unused least significant bits of an aligned pointer to `T`.
 #[inline]
-fn low_bits<T: ?Sized + Pointable>() -> usize {
+const fn low_bits<T: ?Sized + Pointable>() -> usize {
     (1 << T::ALIGN.trailing_zeros()) - 1
 }
 

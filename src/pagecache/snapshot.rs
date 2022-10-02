@@ -20,7 +20,7 @@ pub struct Snapshot {
     pub pt: Vec<PageState>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageState {
     /// Present signifies a page that has some data.
     ///
@@ -582,7 +582,7 @@ pub(in crate::pagecache) fn write_snapshot(
     let candidates = config.get_snapshot_files()?;
     for path in candidates {
         let path_str = path.file_name().unwrap().to_str().unwrap();
-        if !path_2.to_string_lossy().ends_with(&*path_str) {
+        if !path_2.to_string_lossy().ends_with(path_str) {
             debug!("removing old snapshot file {:?}", path);
 
             io_fail!(config, "snap write rm old");
