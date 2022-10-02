@@ -9,7 +9,7 @@
       </tr>
       <tr>
         <td><a href="https://github.com/sponsors/spacejam">buy a coffee for us to convert into databases</a></td>
-        <td><a href="https://github.com/sponsors/spacejam"><img src="https://img.shields.io/opencollective/backers/sled"></a></td>
+        <td><a href="https://github.com/sponsors/spacejam"><img src="https://img.shields.io/github/sponsors/spacejam"></a></td>
       </tr>
       <tr>
         <td><a href="https://docs.rs/sled">documentation</a></td>

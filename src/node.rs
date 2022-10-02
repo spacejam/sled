@@ -412,10 +412,9 @@ impl<'a> Iterator for Iter<'a> {
                 (Some((_, Some(_))), None) => {
                     log::trace!("src/node.rs:114");
                     log::trace!("iterator returning {:?}", self.next_a);
-                    return self
-                        .next_a
-                        .take()
-                        .map(|(k, v)| (KeyRef::Slice(k), v.unwrap().as_ref()));
+                    return self.next_a.take().map(|(k, v)| {
+                        (KeyRef::Slice(k), v.unwrap().as_ref())
+                    });
                 }
                 (Some((k_a, v_a_opt)), Some((k_b, _))) => {
                     let cmp = KeyRef::Slice(k_a).cmp(&k_b);
@@ -512,10 +511,9 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 (Some((_, Some(_))), None) => {
                     log::trace!("src/node.rs:483");
                     log::trace!("iterator returning {:?}", self.next_back_a);
-                    return self
-                        .next_back_a
-                        .take()
-                        .map(|(k, v)| (KeyRef::Slice(k), v.unwrap().as_ref()));
+                    return self.next_back_a.take().map(|(k, v)| {
+                        (KeyRef::Slice(k), v.unwrap().as_ref())
+                    });
                 }
                 (Some((k_a, Some(_))), Some((k_b, _))) if k_b > *k_a => {
                     log::trace!("src/node.rs:508");
@@ -524,20 +522,18 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 }
                 (Some((k_a, Some(_))), Some((k_b, _))) if k_b < *k_a => {
                     log::trace!("iterator returning {:?}", self.next_back_a);
-                    return self
-                        .next_back_a
-                        .take()
-                        .map(|(k, v)| (KeyRef::Slice(k), v.unwrap().as_ref()));
+                    return self.next_back_a.take().map(|(k, v)| {
+                        (KeyRef::Slice(k), v.unwrap().as_ref())
+                    });
                 }
                 (Some((k_a, Some(_))), Some((k_b, _))) if k_b == *k_a => {
                     // prefer overlay, discard node value
                     self.next_back_b.take();
                     log::trace!("src/node.rs:520");
                     log::trace!("iterator returning {:?}", self.next_back_a);
-                    return self
-                        .next_back_a
-                        .take()
-                        .map(|(k, v)| (KeyRef::Slice(k), v.unwrap().as_ref()));
+                    return self.next_back_a.take().map(|(k, v)| {
+                        (KeyRef::Slice(k), v.unwrap().as_ref())
+                    });
                 }
                 _ => unreachable!(
                     "did not expect combination a: {:?} b: {:?}",
