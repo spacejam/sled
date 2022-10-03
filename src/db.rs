@@ -244,7 +244,11 @@ impl Db {
     /// Returns the trees names saved in this Db.
     pub fn tree_names(&self) -> Vec<IVec> {
         let tenants = self.tenants.read();
-        tenants.iter().map(|(name, _)| name.clone()).collect()
+        tenants
+            .iter()
+            .filter(|(name, _)| !DEFAULT_TREE_ID.eq(name.as_ref()))
+            .map(|(name, _)| name.clone())
+            .collect()
     }
 
     /// Returns `true` if the database was
