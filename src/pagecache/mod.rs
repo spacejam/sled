@@ -1649,7 +1649,7 @@ impl PageCacheInner {
 
         if pid <= COUNTER_PID || pid == BATCH_MANIFEST_PID {
             panic!(
-                "tried to do normal pagecache get on priviledged pid {}",
+                "tried to do normal pagecache get on privileged pid {}",
                 pid
             );
         }

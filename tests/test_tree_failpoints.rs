@@ -249,7 +249,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     continue;
                 }
                 // find the last version from a stable batch, if there is one,
-                // throw away all preceeding versions
+                // throw away all preceding versions
                 let committed_find_result = ref_entry.versions.iter().enumerate().rev().find(|(_, ReferenceVersion{ batch, value: _ })| match batch {
                     Some(batch) => *batch <= stable_batch,
                     None => false,

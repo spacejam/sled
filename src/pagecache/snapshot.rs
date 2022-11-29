@@ -297,7 +297,7 @@ fn advance_snapshot(
     //    that point without allocating a new segment
     // 4. the recovered tip is at the beginning of a new segment, but without
     //    any valid messages in it yet. treat as #3 above, but also take care
-    //    in te SA initialization to properly initialize any segment tracking
+    //    in the SA initialization to properly initialize any segment tracking
     //    state despite not having any pages currently residing there.
 
     let no_recovery_progress = iter.cur_lsn.is_none()

@@ -123,7 +123,7 @@ impl Log {
     }
 
     /// Tries to claim a reservation for writing a buffer to a
-    /// particular location in stable storge, which may either be
+    /// particular location in stable storage, which may either be
     /// completed or aborted later. Useful for maintaining
     /// linearizability across CAS operations that may need to
     /// persist part of their operation.

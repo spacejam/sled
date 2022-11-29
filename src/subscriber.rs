@@ -105,7 +105,7 @@ type Senders = Map<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 /// # Ok(())
 /// # }
 /// ```
-/// Aynchronous, non-blocking subscriber:
+/// Asynchronous, non-blocking subscriber:
 ///
 /// `Subscription` implements `Future<Output=Option<Event>>`.
 ///
