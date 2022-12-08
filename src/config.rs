@@ -167,7 +167,7 @@ impl StorageParameters {
 ///
 /// ```
 /// let _config = sled::Config::default()
-///     .path("/path/to/data".to_owned())
+///     .path("/path/to/data")
 ///     .cache_capacity(10_000_000_000)
 ///     .flush_every_ms(Some(1000));
 /// ```
@@ -307,12 +307,14 @@ macro_rules! builder {
 }
 
 impl Config {
-    /// Returns a default `Config`
+    /// Returns a default `Config`.
     pub fn new() -> Config {
         Config::default()
     }
 
     /// Set the path of the database (builder).
+    /// 
+    /// Default `default.sled`.
     pub fn path<P: AsRef<Path>>(mut self, path: P) -> Config {
         let m = Arc::get_mut(&mut self.0).unwrap();
         m.path = path.as_ref().to_path_buf();
@@ -336,7 +338,7 @@ impl Config {
         self
     }
 
-    /// Opens a `Db` based on the provided config.
+    /// Opens a [`Db`] based on the provided config.
     pub fn open(&self) -> Result<Db> {
         // only validate, setup directory, and open file once
         self.validate()?;
@@ -435,33 +437,34 @@ impl Config {
         (
             cache_capacity,
             usize,
-            "maximum size in bytes for the system page cache"
+            "Maximum size in bytes for the system page cache.\n\nDefault 1 GiB."
         ),
         (
             mode,
             Mode,
-            "specify whether the system should run in \"small\" or \"fast\" mode"
+            "Specify whether the system should run in \"small\" or \"fast\" mode.\n\nDefault [`Mode::LowSpace`]."
         ),
-        (use_compression, bool, "whether to use zstd compression"),
+        (use_compression, bool, "Whether to use zstd compression.\n\nDefault `false`."),
         (
             compression_factor,
             i32,
-            "the compression factor to use with zstd compression. Ranges from 1 up to 22. Levels >= 20 are 'ultra'."
+            "Compression factor to use with zstd compression. Ranges from 1 up to 22. Levels >= 20 are 'ultra'. \
+            Only relevant when compression is enabled, see [`Config::use_compression`].\n\nDefault `5`."
         ),
         (
             temporary,
             bool,
-            "deletes the database after drop. if no path is set, uses /dev/shm on linux"
+            "Deletes the database after drop. If no path is set, uses /dev/shm on linux.\n\nDefault `false`."
         ),
         (
             create_new,
             bool,
-            "attempts to exclusively open the database, failing if it already exists"
+            "Attempts to exclusively open the database, failing if it already exists.\n\nDefault `false`."
         ),
         (
             snapshot_after_ops,
             u64,
-            "take a fuzzy snapshot of pagecache metadata after this many ops"
+            "Take a fuzzy snapshot of pagecache metadata after this many ops.\n\nDefault `1_000_000`."
         )
     );
 
