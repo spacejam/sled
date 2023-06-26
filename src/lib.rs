@@ -216,6 +216,9 @@ pub mod transaction;
 mod tree;
 mod varint;
 
+#[cfg(feature = "json")]
+mod json;
+
 /// Functionality for conditionally triggering failpoints under test.
 #[cfg(feature = "failpoints")]
 pub mod fail;

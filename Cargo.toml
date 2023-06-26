@@ -44,6 +44,7 @@ no_zstd = []
 miri_optimizations = []
 mutex = []
 memshred = []
+json = ["serde", "serde_json"]
 
 [dependencies]
 libc = "0.2.96"
@@ -54,6 +55,8 @@ color-backtrace = { version = "0.5.1", optional = true }
 num-format = { version = "0.4.0", optional = true }
 backtrace = { version = "0.3.60", optional = true }
 im = "15.1.0"
+serde = { version = "1.0.164", features = ["derive"], optional = true }
+serde_json = { version = "1.0.99", optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os="windows"))'.dependencies]
 fs2 = "0.4.3"
