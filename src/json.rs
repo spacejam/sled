@@ -2,6 +2,7 @@
 //! # Examples
 //!
 //! ```
+//! use sled;
 //! use serde::{Deserialize, Serialize};
 
 //! #[derive(Serialize, Deserialize, Debug)]
@@ -11,7 +12,7 @@
 //! }
 
 //! let linus_walker = Info { name: "Linus Walker".into(), age: 14 };
-//! let db = crate::open("db").unwrap();
+//! let db = sled::open("db").unwrap();
 //! db.insert_json("linus_walker", &linus_walker).unwrap();
 //! let resul = db.get_structued::<Info>(&"linus_walker".to_string()).unwrap();
 //! println!("{resul:?}");
@@ -33,12 +34,22 @@ impl Db {
     }
 
     /// function implementation to get structured value as output from database
-    pub fn get_structured<T: for<'a> Deserialize<'a>>(
+    pub fn get_structued<T: for<'a> DeDeserialize<'a>>(
         &self,
         key: &dyn AsRef<[u8]>,
-    ) -> std::result::Result<T, serde_json::Error> {
-        let value = self.get(key.as_ref()).unwrap().unwrap();
-        let string_value = String::from_utf8(value.to_vec()).unwrap();
-        serde_json::from_str(&string_value)
+    ) -> Result<Option<T>> {
+        match self.db.get(key.as_ref())? {
+            Some(v) => {
+                let x = String::from_utf8(v.to_vec()).unwrap();
+                match serde_json::from_str::<T>(&x) {
+                    Ok(x_v) => Ok(Some(x_v)),
+                    Err(_) => Err(sled::Error::ReportableBug(
+                        "Error in Json parsing to given data structure!!"
+                            .into(),
+                    )),
+                }
+            }
+            None => Ok(None),
+        }
     }
 }
