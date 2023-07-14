@@ -23,7 +23,7 @@ pub struct IVec([u8; SZ]);
 impl Clone for IVec {
     fn clone(&self) -> IVec {
         if !self.is_inline() {
-            self.deref_header().rc.fetch_add(1, Ordering::Relaxed);
+            self.deref_header().rc.fetch_add(1, Ordering::Acquire);
         }
         IVec(self.0)
     }
