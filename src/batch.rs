@@ -30,15 +30,15 @@ use super::*;
 /// ```
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Batch {
-    pub(crate) writes: Map<IVec, Option<IVec>>,
+    pub(crate) writes: std::collections::BTreeMap<InlineArray, Option<InlineArray>>,
 }
 
 impl Batch {
     /// Set a key to a new value
     pub fn insert<K, V>(&mut self, key: K, value: V)
     where
-        K: Into<IVec>,
-        V: Into<IVec>,
+        K: Into<InlineArray>,
+        V: Into<InlineArray>,
     {
         self.writes.insert(key.into(), Some(value.into()));
     }
@@ -46,14 +46,14 @@ impl Batch {
     /// Remove a key
     pub fn remove<K>(&mut self, key: K)
     where
-        K: Into<IVec>,
+        K: Into<InlineArray>,
     {
         self.writes.insert(key.into(), None);
     }
 
     /// Get a value if it is present in the `Batch`.
     /// `Some(None)` means it's present as a deletion.
-    pub fn get<K: AsRef<[u8]>>(&self, k: K) -> Option<Option<&IVec>> {
+    pub fn get<K: AsRef<[u8]>>(&self, k: K) -> Option<Option<&InlineArray>> {
         let inner = self.writes.get(k.as_ref())?;
         Some(inner.as_ref())
     }
