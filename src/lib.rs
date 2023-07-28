@@ -84,7 +84,7 @@
     html_logo_url = "https://raw.githubusercontent.com/spacejam/sled/main/art/tree_face_anti-transphobia.png"
 )]
 #![cfg_attr(
-    feature = "testing",
+    feature = "for-internal-testing-only",
     deny(
         missing_docs,
         future_incompatible,
@@ -97,7 +97,7 @@
         unused_qualifications,
     )
 )]
-#![cfg_attr(feature = "testing", deny(
+#![cfg_attr(feature = "for-internal-testing-only", deny(
     // over time, consider enabling the commented-out lints below
     clippy::cast_lossless,
     clippy::cast_possible_truncation,
@@ -153,7 +153,7 @@
     clippy::wildcard_dependencies,
 ))]
 #![cfg_attr(
-    feature = "testing",
+    feature = "for-internal-testing-only",
     warn(
         clippy::missing_const_for_fn,
         clippy::multiple_crate_versions,
@@ -177,7 +177,7 @@ macro_rules! io_fail {
 
 macro_rules! testing_assert {
     ($($e:expr),*) => {
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         assert!($($e),*)
     };
 }
@@ -401,28 +401,28 @@ pub(crate) enum Link {
 
 /// A fast map that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
-#[cfg(not(feature = "testing"))]
+#[cfg(not(feature = "for-internal-testing-only"))]
 pub(crate) type FastMap8<K, V> =
     std::collections::HashMap<K, V, std::hash::BuildHasherDefault<fnv::Hasher>>;
 
-#[cfg(feature = "testing")]
+#[cfg(feature = "for-internal-testing-only")]
 pub(crate) type FastMap8<K, V> = BTreeMap<K, V>;
 
 /// A fast set that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
-#[cfg(not(feature = "testing"))]
+#[cfg(not(feature = "for-internal-testing-only"))]
 pub(crate) type FastSet8<V> =
     std::collections::HashSet<V, std::hash::BuildHasherDefault<fnv::Hasher>>;
 
-#[cfg(feature = "testing")]
+#[cfg(feature = "for-internal-testing-only")]
 pub(crate) type FastSet8<V> = std::collections::BTreeSet<V>;
 
-#[cfg(not(feature = "testing"))]
+#[cfg(not(feature = "for-internal-testing-only"))]
 use std::collections::HashMap as Map;
 
 // we avoid HashMap while testing because
 // it makes tests non-deterministic
-#[cfg(feature = "testing")]
+#[cfg(feature = "for-internal-testing-only")]
 use std::collections::{BTreeMap as Map, BTreeSet as Set};
 
 /// A function that may be configured on a particular shared `Tree`

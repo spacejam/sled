@@ -283,7 +283,7 @@ impl Global {
 
         let global_epoch = self.try_advance(guard);
 
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         let mut count = 0;
 
         for _ in 0..steps {
@@ -295,7 +295,7 @@ impl Global {
                 Some(sealed_bag) => {
                     drop(sealed_bag);
 
-                    #[cfg(feature = "testing")]
+                    #[cfg(feature = "for-internal-testing-only")]
                     {
                         count += 1;
                     }
@@ -303,7 +303,7 @@ impl Global {
             }
         }
 
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         {
             if count > 0 && SIZE_HINT.load(Ordering::Relaxed) > 5000 {
                 static O: std::sync::Once = std::sync::Once::new();
@@ -473,7 +473,7 @@ impl Local {
     pub(super) fn pin(&self) -> Guard {
         let guard = Guard {
             local: self,
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "for-internal-testing-only")]
             began: std::time::Instant::now(),
         };
 

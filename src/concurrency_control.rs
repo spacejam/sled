@@ -1,4 +1,4 @@
-#[cfg(feature = "testing")]
+#[cfg(feature = "for-internal-testing-only")]
 use std::cell::RefCell;
 use std::sync::atomic::AtomicBool;
 
@@ -6,7 +6,7 @@ use parking_lot::{RwLockReadGuard, RwLockWriteGuard};
 
 use super::*;
 
-#[cfg(feature = "testing")]
+#[cfg(feature = "for-internal-testing-only")]
 thread_local! {
     pub static COUNT: RefCell<u32> = RefCell::new(0);
 }
@@ -42,7 +42,7 @@ impl<'a> Drop for Protector<'a> {
         if let Protector::None(active) = self {
             active.fetch_sub(1, Release);
         }
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         COUNT.with(|c| {
             let mut c = c.borrow_mut();
             *c -= 1;
@@ -73,7 +73,7 @@ impl ConcurrencyControl {
     }
 
     fn read(&self) -> Protector<'_> {
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         COUNT.with(|c| {
             let mut c = c.borrow_mut();
             *c += 1;
@@ -91,7 +91,7 @@ impl ConcurrencyControl {
     }
 
     fn write(&self) -> Protector<'_> {
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         COUNT.with(|c| {
             let mut c = c.borrow_mut();
             *c += 1;
