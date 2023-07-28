@@ -1,16 +1,3 @@
-// TODO for write batches, find new way of dropping LeafGuard types that avoids
-//      calling mark_access_and_evict while any mutex is held for leaves. must
-//      first drop all locks then do mark access on each.
-// TODO document marble not to use too high pid otherwise recovery will lock
-//      on essentially infinite recovery
-// TODO marble maintenance w/ speculative write followed by CAS in pt
-//      maybe with global writer lock that controls flushers too
-// TODO re-enable paging out
-// TODO write background flusher
-// TODO max key and value sizes w/ corresponding heap
-
-#![allow(unused)]
-
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io;
@@ -19,12 +6,11 @@ use std::num::NonZeroU64;
 use std::ops::Bound;
 use std::ops::RangeBounds;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{mpsc, Arc};
 
 use cache_advisor::CacheAdvisor;
 use concurrent_map::ConcurrentMap;
-use ebr::Ebr;
 use marble::Marble;
 use parking_lot::{
     lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard},
@@ -34,50 +20,36 @@ use stack_map::StackMap;
 
 use crate::*;
 
-pub fn open_default<P: AsRef<Path>>(path: P) -> io::Result<Db> {
-    Config { path: path.as_ref().into(), ..Default::default() }.open()
+/// sled 1.0
+#[derive(Debug, Clone)]
+pub struct Db<
+    const INDEX_FANOUT: usize = 64,
+    const LEAF_FANOUT: usize = 1024,
+    const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128,
+> {
+    global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
+    config: Config,
+    high_level_rc: Arc<()>,
+    index: ConcurrentMap<
+        InlineArray,
+        Node<LEAF_FANOUT>,
+        INDEX_FANOUT,
+        EBR_LOCAL_GC_BUFFER_SIZE,
+    >,
+    node_id_to_low_key_index:
+        ConcurrentMap<u64, InlineArray, INDEX_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
+    store: Marble,
+    cache_advisor: RefCell<CacheAdvisor>,
+    flush_epoch: FlushEpoch,
+    // the value here is for serialized bytes
+    dirty: ConcurrentMap<(NonZeroU64, InlineArray), Option<Arc<Vec<u8>>>>,
+    shutdown_sender: Option<mpsc::Sender<mpsc::Sender<()>>>,
 }
 
-fn initialize<
-    const INDEX_FANOUT: usize,
-    const LEAF_FANOUT: usize,
-    const EBR_LOCAL_GC_BUFFER_SIZE: usize,
->(
-    index_data: &[(u64, InlineArray)],
-    first_id_opt: Option<u64>,
-) -> ConcurrentMap<
-    InlineArray,
-    Node<LEAF_FANOUT>,
-    INDEX_FANOUT,
-    EBR_LOCAL_GC_BUFFER_SIZE,
-> {
-    if index_data.is_empty() {
-        let first_id = first_id_opt.unwrap();
-        let first_leaf = Leaf {
-            hi: None,
-            lo: InlineArray::default(),
-            // this does not need to be marked as dirty until it actually
-            // receives inserted data
-            dirty_flush_epoch: None,
-            prefix_length: 0,
-            data: StackMap::new(),
-            in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
-        };
-        let first_node = Node {
-            id: NodeId(first_id),
-            inner: Arc::new(Some(Box::new(first_leaf)).into()),
-        };
-        return [(InlineArray::default(), first_node)].into_iter().collect();
-    }
+const fn _db_is_send() {
+    const fn is_send<T: Send>() {}
 
-    let ret = ConcurrentMap::default();
-
-    for (id, low_key) in index_data {
-        let node = Node { id: NodeId(*id), inner: Arc::new(None.into()) };
-        ret.insert(low_key.clone(), node);
-    }
-
-    ret
+    is_send::<Db>();
 }
 
 #[derive(Debug, Clone)]
@@ -93,115 +65,13 @@ pub struct Config {
     pub flush_every_ms: Option<usize>,
 }
 
-impl Default for Config {
-    fn default() -> Config {
-        Config {
-            path: "bloodstone.default".into(),
-            flush_every_ms: Some(200),
-            cache_size: 1024 * 1024 * 1024,
-            entry_cache_percent: 20,
-        }
-    }
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct Node<const LEAF_FANOUT: usize> {
+    // used for access in Marble
+    id: NodeId,
+    #[serde(skip)]
+    inner: Arc<RwLock<Option<Box<Leaf<LEAF_FANOUT>>>>>,
 }
-
-impl Config {
-    pub fn open<
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    >(
-        &self,
-    ) -> io::Result<Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>>
-    {
-        let (store, index_data) = marble::recover(&self.path)?;
-
-        let max_id: u64 =
-            index_data.iter().map(|(id, _low_key)| *id).max().unwrap_or(0);
-
-        let first_id_opt = if index_data.is_empty() {
-            Some(store.allocate_object_id())
-        } else {
-            None
-        };
-
-        let index: ConcurrentMap<
-            InlineArray,
-            Node<LEAF_FANOUT>,
-            INDEX_FANOUT,
-            EBR_LOCAL_GC_BUFFER_SIZE,
-        > = initialize(&index_data, first_id_opt);
-
-        let node_id_to_low_key_index: ConcurrentMap<
-            u64,
-            InlineArray,
-            INDEX_FANOUT,
-            EBR_LOCAL_GC_BUFFER_SIZE,
-        > = index.iter().map(|(low_key, node)| (node.id.0, low_key)).collect();
-
-        let ret = Db {
-            global_error: Default::default(),
-            high_level_rc: Arc::new(()),
-            store,
-            cache_advisor: RefCell::new(CacheAdvisor::new(
-                self.cache_size,
-                self.entry_cache_percent,
-            )),
-            index,
-            config: self.clone(),
-            node_id_to_low_key_index,
-            dirty: Default::default(),
-            flush_epoch: Default::default(),
-        };
-
-        if let Some(flush_every_ms) = ret.config.flush_every_ms {
-            let bloodstone = ret.clone();
-        }
-        Ok(ret)
-    }
-}
-
-pub struct Iter<
-    'a,
-    const INDEX_FANOUT: usize,
-    const LEAF_FANOUT: usize,
-    const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-> {
-    inner: &'a Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
-    bounds: (Bound<InlineArray>, Bound<InlineArray>),
-    last: Option<InlineArray>,
-    last_back: Option<InlineArray>,
-}
-
-impl<
-        'a,
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > Iterator
-    for Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
-    type Item = io::Result<(InlineArray, InlineArray)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        todo!()
-    }
-}
-
-impl<
-        'a,
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > DoubleEndedIterator
-    for Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
-    fn next_back(&mut self) -> Option<Self::Item> {
-        todo!()
-    }
-}
-
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-struct NodeId(u64);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Leaf<const LEAF_FANOUT: usize> {
@@ -212,6 +82,38 @@ struct Leaf<const LEAF_FANOUT: usize> {
     #[serde(skip)]
     dirty_flush_epoch: Option<NonZeroU64>,
     in_memory_size: usize,
+}
+
+fn flusher<
+    const INDEX_FANOUT: usize,
+    const LEAF_FANOUT: usize,
+    const EBR_LOCAL_GC_BUFFER_SIZE: usize,
+>(
+    db: Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
+    shutdown_signal: mpsc::Receiver<mpsc::Sender<()>>,
+    flush_every_ms: usize,
+) {
+    let timeout = std::time::Duration::from_millis(flush_every_ms as _);
+    loop {
+        if let Ok(shutdown_sender) = shutdown_signal.recv_timeout(timeout) {
+            drop(db);
+            if let Err(e) = shutdown_sender.send(()) {
+                log::error!(
+                    "Db flusher could not ack shutdown to requestor: {e:?}"
+                );
+            }
+            log::debug!(
+                "flush thread terminating after signalling to requestor"
+            );
+            return;
+        }
+
+        if let Err(e) = db.flush() {
+            log::error!("Db flusher encountered error while flushing: {:?}", e);
+            db.set_error(&e);
+            return;
+        }
+    }
 }
 
 impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
@@ -226,7 +128,7 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
 
         bincode::serialize_into(&mut zstd_enc, self).unwrap();
 
-        zstd_enc.finish();
+        zstd_enc.finish().unwrap();
 
         ret
     }
@@ -306,19 +208,6 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct Node<const LEAF_FANOUT: usize> {
-    // used for access in Marble
-    id: NodeId,
-    #[serde(skip)]
-    inner: Arc<RwLock<Option<Box<Leaf<LEAF_FANOUT>>>>>,
-}
-
-pub struct Flusher {
-    shutdown_trigger: mpsc::Receiver<()>,
-    shutdown_confirm: mpsc::Sender<()>,
-}
-
 #[must_use]
 struct LeafReadGuard<
     'a,
@@ -350,7 +239,12 @@ impl<
         }
         if let Err(e) = self.inner.mark_access_and_evict(self.node_id, size) {
             self.inner.set_error(&e);
-            log::error!("io error while paging out dirty data: {:?}", e);
+            log::error!(
+                "io error while paging out dirty data: {:?} \
+                for guard of leaf with low key {:?}",
+                e,
+                self.low_key
+            );
         }
     }
 }
@@ -403,6 +297,120 @@ impl<
     }
 }
 
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            path: "bloodstone.default".into(),
+            flush_every_ms: Some(200),
+            cache_size: 1024 * 1024 * 1024,
+            entry_cache_percent: 20,
+        }
+    }
+}
+
+impl Config {
+    pub fn open<
+        const INDEX_FANOUT: usize,
+        const LEAF_FANOUT: usize,
+        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
+    >(
+        &self,
+    ) -> io::Result<Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>>
+    {
+        let (store, index_data) = marble::recover(&self.path)?;
+
+        let first_id_opt = if index_data.is_empty() {
+            Some(store.allocate_object_id())
+        } else {
+            None
+        };
+
+        let index: ConcurrentMap<
+            InlineArray,
+            Node<LEAF_FANOUT>,
+            INDEX_FANOUT,
+            EBR_LOCAL_GC_BUFFER_SIZE,
+        > = initialize(&index_data, first_id_opt);
+
+        let node_id_to_low_key_index: ConcurrentMap<
+            u64,
+            InlineArray,
+            INDEX_FANOUT,
+            EBR_LOCAL_GC_BUFFER_SIZE,
+        > = index.iter().map(|(low_key, node)| (node.id.0, low_key)).collect();
+
+        let mut ret = Db {
+            global_error: Default::default(),
+            high_level_rc: Arc::new(()),
+            store,
+            cache_advisor: RefCell::new(CacheAdvisor::new(
+                self.cache_size,
+                self.entry_cache_percent,
+            )),
+            index,
+            config: self.clone(),
+            node_id_to_low_key_index,
+            dirty: Default::default(),
+            flush_epoch: Default::default(),
+            shutdown_sender: None,
+        };
+
+        if let Some(flush_every_ms) = ret.config.flush_every_ms {
+            let bloodstone = ret.clone();
+            let (tx, rx) = mpsc::channel();
+            ret.shutdown_sender = Some(tx);
+            std::thread::spawn(move || flusher(bloodstone, rx, flush_every_ms));
+        }
+        Ok(ret)
+    }
+}
+
+pub fn open_default<P: AsRef<Path>>(path: P) -> io::Result<Db> {
+    Config { path: path.as_ref().into(), ..Default::default() }.open()
+}
+
+fn initialize<
+    const INDEX_FANOUT: usize,
+    const LEAF_FANOUT: usize,
+    const EBR_LOCAL_GC_BUFFER_SIZE: usize,
+>(
+    index_data: &[(u64, InlineArray)],
+    first_id_opt: Option<u64>,
+) -> ConcurrentMap<
+    InlineArray,
+    Node<LEAF_FANOUT>,
+    INDEX_FANOUT,
+    EBR_LOCAL_GC_BUFFER_SIZE,
+> {
+    if index_data.is_empty() {
+        let first_id = first_id_opt.unwrap();
+        let first_leaf = Leaf {
+            hi: None,
+            lo: InlineArray::default(),
+            // this does not need to be marked as dirty until it actually
+            // receives inserted data
+            dirty_flush_epoch: None,
+            prefix_length: 0,
+            data: StackMap::new(),
+            in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
+        };
+        let first_node = Node {
+            id: NodeId(first_id),
+            inner: Arc::new(Some(Box::new(first_leaf)).into()),
+        };
+        return [(InlineArray::default(), first_node)].into_iter().collect();
+    }
+
+    let ret = ConcurrentMap::default();
+
+    for (id, low_key) in index_data {
+        let node = Node { id: NodeId(*id), inner: Arc::new(None.into()) };
+        ret.insert(low_key.clone(), node);
+    }
+
+    ret
+}
+
 fn set_error(
     global_error: &AtomicPtr<(io::ErrorKind, String)>,
     error: &io::Error,
@@ -429,31 +437,6 @@ fn set_error(
     }
 }
 
-/// sled 1.0
-#[derive(Debug, Clone)]
-pub struct Db<
-    const INDEX_FANOUT: usize = 64,
-    const LEAF_FANOUT: usize = 1024,
-    const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128,
-> {
-    global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
-    config: Config,
-    high_level_rc: Arc<()>,
-    index: ConcurrentMap<
-        InlineArray,
-        Node<LEAF_FANOUT>,
-        INDEX_FANOUT,
-        EBR_LOCAL_GC_BUFFER_SIZE,
-    >,
-    node_id_to_low_key_index:
-        ConcurrentMap<u64, InlineArray, INDEX_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
-    store: Marble,
-    cache_advisor: RefCell<CacheAdvisor>,
-    flush_epoch: FlushEpoch,
-    // the value here is for serialized bytes
-    dirty: ConcurrentMap<(NonZeroU64, InlineArray), Option<Arc<Vec<u8>>>>,
-}
-
 impl<
         const INDEX_FANOUT: usize,
         const LEAF_FANOUT: usize,
@@ -461,12 +444,35 @@ impl<
     > Drop for Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
 {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.high_level_rc) != 1 {
-            return;
+        if Arc::strong_count(&self.high_level_rc) == 2 {
+            if let Some(shutdown_sender) = self.shutdown_sender.take() {
+                let (tx, rx) = mpsc::channel();
+                if shutdown_sender.send(tx).is_ok() {
+                    if let Err(e) = rx.recv() {
+                        log::error!(
+                            "failed to shut down flusher thread: {:?}",
+                            e
+                        );
+                    } else {
+                        log::trace!("flush thread successfully terminated");
+                    }
+                }
+            }
         }
-        if let Err(e) = self.flush() {
-            eprintln!("failed to flush Db on Drop: {e:?}");
+
+        if Arc::strong_count(&self.high_level_rc) == 1 {
+            if let Err(e) = self.flush() {
+                eprintln!("failed to flush Db on Drop: {e:?}");
+            }
         }
+    }
+}
+
+fn map_bound<T, U, F: FnOnce(T) -> U>(bound: Bound<T>, f: F) -> Bound<U> {
+    match bound {
+        Bound::Unbounded => Bound::Unbounded,
+        Bound::Included(x) => Bound::Included(f(x)),
+        Bound::Excluded(x) => Bound::Excluded(f(x)),
     }
 }
 
@@ -508,7 +514,7 @@ impl<
 
             if read.is_none() {
                 drop(read);
-                let (low_key, write, node_id) = self.page_in(key)?;
+                let (_low_key, write, _node_id) = self.page_in(key)?;
                 read = ArcRwLockWriteGuard::downgrade(write);
             }
 
@@ -557,7 +563,7 @@ impl<
                     let size = leaf.in_memory_size;
                     drop(write);
                     log::trace!("key overshoot in leaf_for_key_mut_inner");
-                    self.mark_access_and_evict(node.id, size);
+                    self.mark_access_and_evict(node.id, size)?;
 
                     continue;
                 }
@@ -629,7 +635,7 @@ impl<
     ) -> io::Result<()> {
         let mut ca = self.cache_advisor.borrow_mut();
         let to_evict = ca.accessed_reuse_buffer(node_id.0, size);
-        for (node_to_evict, rough_size) in to_evict {
+        for (node_to_evict, _rough_size) in to_evict {
             let low_key =
                 self.node_id_to_low_key_index.get(&node_to_evict).unwrap();
             let node = self.index.get(&low_key).unwrap();
@@ -691,6 +697,17 @@ impl<
         // TODO handle prefix encoding
 
         let ret = leaf.data.insert(key.as_ref().into(), value_ivec.clone());
+
+        let old_size =
+            ret.as_ref().map(|v| key.as_ref().len() + v.len()).unwrap_or(0);
+        let new_size = key.as_ref().len() + value_ivec.len();
+
+        if new_size > old_size {
+            leaf.in_memory_size += new_size - old_size;
+        } else {
+            leaf.in_memory_size =
+                leaf.in_memory_size.saturating_sub(old_size - new_size);
+        }
 
         let split = leaf.split_if_full(new_epoch, &self.store);
         if split.is_some() || Some(value_ivec) != ret {
@@ -795,12 +812,14 @@ impl<
         }
 
         let written_count = write_batch.len();
-        self.store.write_batch(write_batch)?;
-        log::info!(
-            "marking epoch {} as flushed - {} objects written",
-            flush_through_epoch.get(),
-            written_count
-        );
+        if written_count > 0 {
+            self.store.write_batch(write_batch)?;
+            log::trace!(
+                "marking epoch {} as flushed - {} objects written",
+                flush_through_epoch.get(),
+                written_count
+            );
+        }
         forward_flush_notifier.mark_complete();
         self.store.maintenance()?;
         Ok(())
@@ -845,7 +864,7 @@ impl<
         };
 
         let ret = if previous_matches {
-            let previous = if let Some(ref new_value) = proposed {
+            if let Some(ref new_value) = proposed {
                 leaf.data.insert(key.as_ref().into(), new_value.clone())
             } else {
                 leaf.data.remove(key.as_ref())
@@ -952,7 +971,7 @@ impl<
         )> = None;
 
         for (key, _value) in &batch.writes {
-            if let Some((lo, w, id)) = &last {
+            if let Some((_lo, w, _id)) = &last {
                 let leaf = w.as_ref().unwrap();
                 assert!(&leaf.lo <= key);
                 if let Some(hi) = &leaf.hi {
@@ -985,12 +1004,12 @@ impl<
                 if old_flush_epoch != new_epoch {
                     assert_eq!(old_flush_epoch.get() + 1, new_epoch.get());
 
-                    log::info!(
-                    "cooperatively flushing {:?} with dirty epoch {} after checking into epoch {}",
-                    node_id,
-                    old_flush_epoch.get(),
-                    new_epoch.get()
-                );
+                    log::trace!(
+                        "cooperatively flushing {:?} with dirty epoch {} after checking into epoch {}",
+                        node_id,
+                        old_flush_epoch.get(),
+                        new_epoch.get()
+                    );
                     // cooperatively serialize and put into dirty
                     let dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
 
@@ -1011,8 +1030,8 @@ impl<
 
         // Insert and split when full
         for (key, value_opt) in batch.writes {
-            let range = (..=&key);
-            let (lo, (ref mut w, id)) = acquired_locks
+            let range = ..=&key;
+            let (_lo, (ref mut w, _id)) = acquired_locks
                 .range_mut::<InlineArray, _>(range)
                 .next_back()
                 .unwrap();
@@ -1030,7 +1049,7 @@ impl<
                     leaf.split_if_full(new_epoch, &self.store)
                 {
                     let node_id = rhs_node.id;
-                    let mut write = rhs_node.inner.write_arc();
+                    let write = rhs_node.inner.write_arc();
                     assert!(write.is_some());
 
                     splits.push((split_key.clone(), rhs_node));
@@ -1055,10 +1074,101 @@ impl<
     }
 }
 
-fn map_bound<T, U, F: FnOnce(T) -> U>(bound: Bound<T>, f: F) -> Bound<U> {
-    match bound {
-        Bound::Unbounded => Bound::Unbounded,
-        Bound::Included(x) => Bound::Included(f(x)),
-        Bound::Excluded(x) => Bound::Excluded(f(x)),
+#[allow(unused)]
+pub struct Iter<
+    'a,
+    const INDEX_FANOUT: usize,
+    const LEAF_FANOUT: usize,
+    const EBR_LOCAL_GC_BUFFER_SIZE: usize,
+> {
+    inner: &'a Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
+    bounds: (Bound<InlineArray>, Bound<InlineArray>),
+    last: Option<InlineArray>,
+    last_back: Option<InlineArray>,
+}
+
+impl<
+        'a,
+        const INDEX_FANOUT: usize,
+        const LEAF_FANOUT: usize,
+        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
+    > Iterator
+    for Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
+{
+    type Item = io::Result<(InlineArray, InlineArray)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
+    }
+}
+
+impl<
+        'a,
+        const INDEX_FANOUT: usize,
+        const LEAF_FANOUT: usize,
+        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
+    > DoubleEndedIterator
+    for Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        todo!()
+    }
+}
+
+/// A batch of updates that will
+/// be applied atomically to the
+/// Tree.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use sled::{Batch, open};
+///
+/// # let _ = std::fs::remove_dir_all("batch_db_2");
+/// let db = open("batch_db_2")?;
+/// db.insert("key_0", "val_0")?;
+///
+/// let mut batch = Batch::default();
+/// batch.insert("key_a", "val_a");
+/// batch.insert("key_b", "val_b");
+/// batch.insert("key_c", "val_c");
+/// batch.remove("key_0");
+///
+/// db.apply_batch(batch)?;
+/// // key_0 no longer exists, and key_a, key_b, and key_c
+/// // now do exist.
+/// # let _ = std::fs::remove_dir_all("batch_db_2");
+/// # Ok(()) }
+/// ```
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Batch {
+    pub(crate) writes:
+        std::collections::BTreeMap<InlineArray, Option<InlineArray>>,
+}
+
+impl Batch {
+    /// Set a key to a new value
+    pub fn insert<K, V>(&mut self, key: K, value: V)
+    where
+        K: Into<InlineArray>,
+        V: Into<InlineArray>,
+    {
+        self.writes.insert(key.into(), Some(value.into()));
+    }
+
+    /// Remove a key
+    pub fn remove<K>(&mut self, key: K)
+    where
+        K: Into<InlineArray>,
+    {
+        self.writes.insert(key.into(), None);
+    }
+
+    /// Get a value if it is present in the `Batch`.
+    /// `Some(None)` means it's present as a deletion.
+    pub fn get<K: AsRef<[u8]>>(&self, k: K) -> Option<Option<&InlineArray>> {
+        let inner = self.writes.get(k.as_ref())?;
+        Some(inner.as_ref())
     }
 }

@@ -375,6 +375,7 @@ struct GetStats {
     gets_per_second: u64,
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 struct Stats {
     disk_space: u64,

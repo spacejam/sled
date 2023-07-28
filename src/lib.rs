@@ -1,9 +1,17 @@
-mod batch;
-mod bloodstone;
+// TODO for write batches, find new way of dropping LeafGuard types that avoids
+//      calling mark_access_and_evict while any mutex is held for leaves. must
+//      first drop all locks then do mark access on each.
+// TODO document marble not to use too high pid otherwise recovery will lock
+//      on essentially infinite recovery
+// TODO marble maintenance w/ speculative write followed by CAS in pt
+//      maybe with global writer lock that controls flushers too
+// TODO re-enable paging out
+// TODO write background flusher
+// TODO max key and value sizes w/ corresponding heap
+mod db;
 mod flush_epoch;
 
-pub use crate::bloodstone::{open_default, Config, Db};
-pub use batch::Batch;
+pub use crate::db::{open_default, Config, Db};
 pub use marble::InlineArray;
 
 use crate::flush_epoch::{FlushEpoch, FlushEpochGuard};
@@ -45,3 +53,6 @@ impl std::fmt::Display for CompareAndSwapError {
 }
 
 impl std::error::Error for CompareAndSwapError {}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct NodeId(u64);
