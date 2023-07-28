@@ -16,7 +16,7 @@ features = ["arbitrary-derive"]
 arbitrary = { version = "1.0.3", features = ["derive"] }
 tempfile = "3.5.0"
 
-[dependencies.bloodstone]
+[dependencies.sled]
 path = ".."
 features = []
 

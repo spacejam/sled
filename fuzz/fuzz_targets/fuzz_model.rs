@@ -2,11 +2,11 @@
 #[macro_use]
 extern crate libfuzzer_sys;
 extern crate arbitrary;
-extern crate bloodstone;
+extern crate sled;
 
 use arbitrary::Arbitrary;
 
-use bloodstone::InlineArray;
+use sled::InlineArray;
 
 const KEYSPACE: u64 = 128;
 
@@ -47,7 +47,7 @@ fuzz_target!(|ops: Vec<Op>| {
     let tmp_dir = tempfile::TempDir::new().unwrap();
     let tmp_path = tmp_dir.path().to_owned();
 
-    let mut tree = bloodstone::open(&tmp_path).unwrap();
+    let mut tree = sled::open_default(&tmp_path).unwrap();
     let mut model = std::collections::BTreeMap::new();
 
     for (_i, op) in ops.into_iter().enumerate() {
@@ -66,7 +66,7 @@ fuzz_target!(|ops: Vec<Op>| {
             }
             Op::Reboot => {
                 drop(tree);
-                tree = bloodstone::open(&tmp_path).unwrap();
+                tree = sled::open_default(&tmp_path).unwrap();
             }
             Op::Remove { key } => {
                 let k: &[u8] = &key.to_be_bytes();

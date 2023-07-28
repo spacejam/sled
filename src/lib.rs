@@ -2,7 +2,7 @@ mod batch;
 mod bloodstone;
 mod flush_epoch;
 
-pub use crate::bloodstone::{open_default, BloodStone, Config};
+pub use crate::bloodstone::{open_default, Config, Db};
 pub use batch::Batch;
 pub use marble::InlineArray;
 
@@ -16,8 +16,9 @@ use crate::flush_epoch::{FlushEpoch, FlushEpochGuard};
 ///       proposed values.
 ///     - `Err(Error::Unsupported)` if the database is opened in read-only mode.
 ///       otherwise.
-pub type CompareAndSwapResult =
-    std::io::Result<std::result::Result<CompareAndSwapSuccess, CompareAndSwapError>>;
+pub type CompareAndSwapResult = std::io::Result<
+    std::result::Result<CompareAndSwapSuccess, CompareAndSwapError>,
+>;
 
 /// Compare and swap error.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

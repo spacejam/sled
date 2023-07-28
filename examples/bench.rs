@@ -9,7 +9,7 @@ use std::{fs, io};
 
 use num_format::{Locale, ToFormattedString};
 
-use bloodstone::{open_default, BloodStone};
+use sled::{open_default, Db};
 
 const N_WRITES_PER_THREAD: u32 = 4 * 1024 * 1024;
 const MAX_CONCURRENCY: u32 = 8;
@@ -26,11 +26,11 @@ trait Databench: Clone + Send {
     fn flush_generic(&self);
 }
 
-impl Databench for BloodStone {
+impl Databench for Db {
     type READ = marble::InlineArray;
 
     const NAME: &'static str = "sled 1.0.0-alpha.1";
-    const PATH: &'static str = "timing_test.bloodstone";
+    const PATH: &'static str = "timing_test.sled-new";
 
     fn open() -> Self {
         open_default(Self::PATH).unwrap()
@@ -47,14 +47,14 @@ impl Databench for BloodStone {
     }
 }
 
-impl Databench for sled::Db {
-    type READ = sled::IVec;
+impl Databench for old_sled::Db {
+    type READ = old_sled::IVec;
 
     const NAME: &'static str = "sled 0.34.7";
-    const PATH: &'static str = "timing_test.sled";
+    const PATH: &'static str = "timing_test.sled-old";
 
     fn open() -> Self {
-        sled::open(Self::PATH).unwrap()
+        old_sled::open(Self::PATH).unwrap()
     }
     fn insert_generic(&self, key: &[u8], value: &[u8]) {
         self.insert(key, value).unwrap();
@@ -89,15 +89,15 @@ impl Databench for Arc<rocksdb::DB> {
 
 struct Lmdb {
     env: heed::Env,
-    db: heed::Database<heed::types::UnalignedSlice<u8>, heed::types::UnalignedSlice<u8>>,
+    db: heed::Database<
+        heed::types::UnalignedSlice<u8>,
+        heed::types::UnalignedSlice<u8>,
+    >,
 }
 
 impl Clone for Lmdb {
     fn clone(&self) -> Lmdb {
-        Lmdb {
-            env: self.env.clone(),
-            db: self.db.clone(),
-        }
+        Lmdb { env: self.env.clone(), db: self.db.clone() }
     }
 }
 
@@ -138,9 +138,7 @@ struct Sqlite {
 
 impl Clone for Sqlite {
     fn clone(&self) -> Sqlite {
-        Sqlite {
-            connection: rusqlite::Connection::open(Self::PATH).unwrap(),
-        }
+        Sqlite { connection: rusqlite::Connection::open(Self::PATH).unwrap() }
     }
 }
 
@@ -169,7 +167,10 @@ impl Databench for Sqlite {
                 "insert or ignore into bench (key, val) values (?1, ?2)",
                 [
                     format!("{}", u32::from_be_bytes(key.try_into().unwrap())),
-                    format!("{}", u32::from_be_bytes(value.try_into().unwrap())),
+                    format!(
+                        "{}",
+                        u32::from_be_bytes(value.try_into().unwrap())
+                    ),
                 ],
             );
             if res.is_ok() {
@@ -186,9 +187,8 @@ impl Databench for Sqlite {
             .connection
             .prepare("SELECT b.val from bench b WHERE key = ?1")
             .unwrap();
-        let mut rows = stmt
-            .query([u32::from_be_bytes(key.try_into().unwrap())])
-            .unwrap();
+        let mut rows =
+            stmt.query([u32::from_be_bytes(key.try_into().unwrap())]).unwrap();
 
         let value = rows.next().unwrap()?;
         value.get(0).ok()
@@ -260,13 +260,16 @@ fn inserts<D: Databench>(store: &D) -> Vec<InsertStats> {
     let mut ret = vec![];
 
     for concurrency in CONCURRENCY {
-        let insert_elapsed = execute_lockstep_concurrent(factory, f, *concurrency);
+        let insert_elapsed =
+            execute_lockstep_concurrent(factory, f, *concurrency);
 
         let flush_timer = Instant::now();
         store.flush_generic();
 
-        let wps = (N_WRITES_PER_THREAD * *concurrency as u32) as u64 * 1_000_000_u64
-            / u64::try_from(insert_elapsed.as_micros().max(1)).unwrap_or(u64::MAX);
+        let wps = (N_WRITES_PER_THREAD * *concurrency as u32) as u64
+            * 1_000_000_u64
+            / u64::try_from(insert_elapsed.as_micros().max(1))
+                .unwrap_or(u64::MAX);
 
         ret.push(InsertStats {
             thread_count: *concurrency,
@@ -302,16 +305,16 @@ fn gets<D: Databench>(store: &D) -> Vec<GetStats> {
     let mut ret = vec![];
 
     for concurrency in CONCURRENCY {
-        let get_stone_elapsed = execute_lockstep_concurrent(factory, f, *concurrency);
+        let get_stone_elapsed =
+            execute_lockstep_concurrent(factory, f, *concurrency);
 
-        let rps = (N_WRITES_PER_THREAD * MAX_CONCURRENCY * *concurrency as u32) as u64
+        let rps = (N_WRITES_PER_THREAD * MAX_CONCURRENCY * *concurrency as u32)
+            as u64
             * 1_000_000_u64
-            / u64::try_from(get_stone_elapsed.as_micros().max(1)).unwrap_or(u64::MAX);
+            / u64::try_from(get_stone_elapsed.as_micros().max(1))
+                .unwrap_or(u64::MAX);
 
-        ret.push(GetStats {
-            thread_count: *concurrency,
-            gets_per_second: rps,
-        });
+        ret.push(GetStats { thread_count: *concurrency, gets_per_second: rps });
 
         println!(
             "{} gets/s with concurrency of {concurrency}, {:?} total reads {}",
@@ -323,7 +326,11 @@ fn gets<D: Databench>(store: &D) -> Vec<GetStats> {
     ret
 }
 
-fn execute_lockstep_concurrent<State: Send, Factory: FnMut() -> State, F: Sync + Fn(State)>(
+fn execute_lockstep_concurrent<
+    State: Send,
+    Factory: FnMut() -> State,
+    F: Sync + Fn(State),
+>(
     mut factory: Factory,
     f: F,
     concurrency: usize,
@@ -412,11 +419,7 @@ fn bench<D: Databench>() -> Stats {
 
     let before_flush = Instant::now();
     store.flush_generic();
-    println!(
-        "final flush took {:?} for {}",
-        before_flush.elapsed(),
-        D::NAME
-    );
+    println!("final flush took {:?} for {}", before_flush.elapsed(), D::NAME);
 
     let get_stats = gets(&store);
 
@@ -448,11 +451,12 @@ fn du(path: &Path) -> io::Result<u64> {
 fn main() {
     let _ = env_logger::try_init();
 
-    let new_stats = bench::<BloodStone>();
+    let new_stats = bench::<Db>();
 
     println!(
         "raw data size: {}",
-        (MAX_CONCURRENCY * N_WRITES_PER_THREAD * BYTES_PER_ITEM).to_formatted_string(&Locale::en)
+        (MAX_CONCURRENCY * N_WRITES_PER_THREAD * BYTES_PER_ITEM)
+            .to_formatted_string(&Locale::en)
     );
     println!("sled 1.0 space stats:");
     new_stats.print_report();
