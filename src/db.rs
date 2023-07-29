@@ -1190,7 +1190,7 @@ impl<
             NodeId,
         )> = None;
 
-        for (key, _value) in &batch.writes {
+        for key in batch.writes.keys() {
             if let Some((_lo, w, _id)) = &last {
                 let leaf = w.as_ref().unwrap();
                 assert!(&leaf.lo <= key);
@@ -1218,7 +1218,7 @@ impl<
 
         // Flush any leaves that are dirty from a previous flush epoch
         // before performing operations.
-        for (_, (write, node_id)) in &mut acquired_locks {
+        for (write, node_id) in acquired_locks.values_mut() {
             let leaf = write.as_mut().unwrap();
             if let Some(old_flush_epoch) = leaf.dirty_flush_epoch {
                 if old_flush_epoch != new_epoch {
@@ -1771,8 +1771,7 @@ impl<
     /// for the duration of the entire scan.
     pub fn checksum(&self) -> io::Result<u32> {
         let mut hasher = crc32fast::Hasher::new();
-        let mut iter = self.iter();
-        while let Some(kv_res) = iter.next() {
+        for kv_res in self.iter() {
             let (k, v) = kv_res?;
             hasher.update(&k);
             hasher.update(&v);

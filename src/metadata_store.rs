@@ -517,7 +517,7 @@ fn read_log(
     let mut reusable_frame_buffer: Vec<u8> = vec![];
 
     while let Ok(frame) = read_frame(&mut file, &mut reusable_frame_buffer) {
-        for (k, v) in frame.into_iter() {
+        for (k, v) in frame {
             ret.insert(k, v);
         }
     }
