@@ -656,15 +656,18 @@ impl<
         key: K,
     ) -> io::Result<Option<InlineArray>> {
         self.check_error()?;
-        let leaf_guard = self.leaf_for_key(key.as_ref())?;
+
+        let key_ref = key.as_ref();
+
+        let leaf_guard = self.leaf_for_key(key_ref)?;
 
         let leaf = leaf_guard.leaf_read.as_ref().unwrap();
 
         if let Some(ref hi) = leaf.hi {
-            assert!(&**hi > key.as_ref());
+            assert!(&**hi > key_ref);
         }
 
-        Ok(leaf.data.get(key.as_ref()).cloned())
+        Ok(leaf.data.get(key_ref).cloned())
     }
 
     /// Insert a key to a new value, returning the last value if it
@@ -693,19 +696,20 @@ impl<
     {
         self.check_error()?;
 
+        let key_ref = key.as_ref();
+
         let value_ivec = value.into();
-        let mut leaf_guard = self.leaf_for_key_mut(key.as_ref())?;
+        let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
         let new_epoch = leaf_guard.flush_epoch_guard.epoch();
 
         let leaf = &mut leaf_guard.leaf_write.as_mut().unwrap();
 
         // TODO handle prefix encoding
 
-        let ret = leaf.data.insert(key.as_ref().into(), value_ivec.clone());
+        let ret = leaf.data.insert(key_ref.into(), value_ivec.clone());
 
-        let old_size =
-            ret.as_ref().map(|v| key.as_ref().len() + v.len()).unwrap_or(0);
-        let new_size = key.as_ref().len() + value_ivec.len();
+        let old_size = ret.as_ref().map(|v| key_ref.len() + v.len()).unwrap_or(0);
+        let new_size = key_ref.len() + value_ivec.len();
 
         if new_size > old_size {
             leaf.in_memory_size += new_size - old_size;
@@ -750,14 +754,16 @@ impl<
     ) -> io::Result<Option<InlineArray>> {
         self.check_error()?;
 
-        let mut leaf_guard = self.leaf_for_key_mut(key.as_ref())?;
+        let key_ref = key.as_ref();
+
+        let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
         let new_epoch = leaf_guard.flush_epoch_guard.epoch();
 
         let leaf = &mut leaf_guard.leaf_write.as_mut().unwrap();
 
         // TODO handle prefix encoding
 
-        let ret = leaf.data.remove(key.as_ref());
+        let ret = leaf.data.remove(key_ref);
 
         if ret.is_some() {
             leaf.dirty_flush_epoch = Some(new_epoch);
@@ -923,7 +929,9 @@ impl<
     {
         self.check_error()?;
 
-        let mut leaf_guard = self.leaf_for_key_mut(key.as_ref())?;
+        let key_ref = key.as_ref();
+
+        let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
         let new_epoch = leaf_guard.epoch();
 
         let proposed: Option<InlineArray> = new.map(Into::into);
@@ -932,7 +940,7 @@ impl<
 
         // TODO handle prefix encoding
 
-        let current = leaf.data.get(key.as_ref()).cloned();
+        let current = leaf.data.get(key_ref).cloned();
 
         let previous_matches = match (old, &current) {
             (None, None) => true,
@@ -946,9 +954,9 @@ impl<
 
         let ret = if previous_matches {
             if let Some(ref new_value) = proposed {
-                leaf.data.insert(key.as_ref().into(), new_value.clone())
+                leaf.data.insert(key_ref.into(), new_value.clone())
             } else {
-                leaf.data.remove(key.as_ref())
+                leaf.data.remove(key_ref)
             };
 
             Ok(CompareAndSwapSuccess {
