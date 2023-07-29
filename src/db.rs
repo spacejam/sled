@@ -56,7 +56,7 @@ const fn _db_is_send() {
 pub struct Config {
     /// The base directory for storing the database.
     pub path: PathBuf,
-    /// Cache size in bytes. Default is 1gb.
+    /// Cache size in **bytes**. Default is 512mb.
     pub cache_size: usize,
     /// The percentage of the cache that is dedicated to the
     /// scan-resistant entry cache.
@@ -145,6 +145,13 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
         Ok(leaf)
     }
 
+    fn set_in_memory_size(&mut self) {
+        self.in_memory_size = mem::size_of::<Leaf<LEAF_FANOUT>>()
+            + self.hi.as_ref().map(|h| h.len()).unwrap_or(0)
+            + self.lo.len()
+            + self.data.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>();
+    }
+
     fn split_if_full(
         &mut self,
         new_epoch: NonZeroU64,
@@ -189,28 +196,18 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
                 rhs_id
             );
 
-            let rhs = Leaf {
+            let mut rhs = Leaf {
                 dirty_flush_epoch: Some(new_epoch),
                 hi: self.hi.clone(),
                 lo: split_key.clone(),
                 prefix_length: 0,
-                in_memory_size: self.hi.as_ref().map(|h| h.len()).unwrap_or(0)
-                    + split_key.len()
-                    + data
-                        .iter()
-                        .map(|(k, v)| k.len() + v.len())
-                        .sum::<usize>(),
+                in_memory_size: 0,
                 data,
             };
+            rhs.set_in_memory_size();
 
             self.hi = Some(split_key.clone());
-            self.in_memory_size = self.lo.len()
-                + split_key.len()
-                + self
-                    .data
-                    .iter()
-                    .map(|(k, v)| k.len() + v.len())
-                    .sum::<usize>();
+            self.set_in_memory_size();
 
             let rhs_node = Node {
                 id: NodeId(rhs_id),

@@ -114,6 +114,7 @@ fn worker(
                     &inner.storage_directory,
                     log_ids.into_iter().collect(),
                     Some(last_snapshot_lsn),
+                    &inner.directory_lock,
                 );
                 match write_res {
                     Err(e) => {
@@ -176,7 +177,6 @@ struct Inner {
     active_log: Arc<Mutex<LogAndStats>>,
     snapshot_size: Arc<AtomicU64>,
     storage_directory: PathBuf,
-    #[allow(unused)]
     directory_lock: Arc<fs::File>,
     worker_outbox: Sender<WorkerMessage>,
 }
@@ -249,7 +249,8 @@ impl MetadataStore {
         let directory_lock = fallible!(fs::File::open(path));
         fallible!(directory_lock.try_lock_exclusive());
 
-        let recovery = MetadataStore::recover_inner(&storage_directory)?;
+        let recovery =
+            MetadataStore::recover_inner(&storage_directory, &directory_lock)?;
 
         let new_log = LogAndStats {
             log_sequence_number: recovery.id_for_next_log,
@@ -286,17 +287,20 @@ impl MetadataStore {
     /// Returns the recovered mappings, the id for the next log file, the highest allocated object id, and the set of free ids
     fn recover_inner<P: AsRef<Path>>(
         storage_directory: P,
+        directory_lock: &fs::File,
     ) -> io::Result<Recovery> {
         let path = storage_directory.as_ref();
-        log::debug!("opening u64db at {:?}", path);
 
-        // lock the main storage directory
-        let mut file_lock_opts = fs::OpenOptions::new();
-        file_lock_opts.create(false).read(false).write(false);
+        log::debug!("opening MetadataStore at {:?}", path);
 
         let (log_ids, snapshot_id_opt) = enumerate_logs_and_snapshot(&path)?;
 
-        read_snapshot_and_apply_logs(path, log_ids, snapshot_id_opt)
+        read_snapshot_and_apply_logs(
+            path,
+            log_ids,
+            snapshot_id_opt,
+            directory_lock,
+        )
     }
 
     /// Write a batch of metadata. `None` for the second half of the outer tuple represents a
@@ -318,7 +322,9 @@ impl MetadataStore {
             return Err(e);
         }
 
-        if let Err(e) = maybe!(log.file.sync_all()) {
+        if let Err(e) = maybe!(log.file.sync_all())
+            .and_then(|_| self.inner.directory_lock.sync_all())
+        {
             self.set_error(&e);
             return Err(e);
         }
@@ -503,7 +509,7 @@ fn read_log(
     directory_path: &Path,
     lsn: u64,
 ) -> io::Result<FnvHashMap<u64, (u64, InlineArray)>> {
-    log::info!("reading log {lsn}");
+    log::trace!("reading log {lsn}");
     let mut ret = FnvHashMap::default();
 
     let mut file = fallible!(fs::File::open(log_path(directory_path, lsn)));
@@ -516,7 +522,7 @@ fn read_log(
         }
     }
 
-    log::info!("recovered {} items in log {}", ret.len(), lsn);
+    log::trace!("recovered {} items in log {}", ret.len(), lsn);
 
     Ok(ret)
 }
@@ -526,7 +532,7 @@ fn read_snapshot(
     directory_path: &Path,
     lsn: u64,
 ) -> io::Result<(FnvHashMap<u64, (NonZeroU64, InlineArray)>, u64)> {
-    log::info!("reading snapshot {lsn}");
+    log::trace!("reading snapshot {lsn}");
     let mut reusable_frame_buffer: Vec<u8> = vec![];
     let mut file =
         fallible!(fs::File::open(snapshot_path(directory_path, lsn, false)));
@@ -540,7 +546,7 @@ fn read_snapshot(
         })
         .collect();
 
-    log::info!("recovered {} items in snapshot {}", frame.len(), lsn);
+    log::trace!("recovered {} items in snapshot {}", frame.len(), lsn);
 
     Ok((frame, size))
 }
@@ -629,6 +635,7 @@ fn read_snapshot_and_apply_logs(
     path: &Path,
     log_ids: BTreeSet<u64>,
     snapshot_id_opt: Option<u64>,
+    locked_directory: &fs::File,
 ) -> io::Result<Recovery> {
     let (snapshot_tx, snapshot_rx) = bounded(1);
     if let Some(snapshot_id) = snapshot_id_opt {
@@ -690,7 +697,7 @@ fn read_snapshot_and_apply_logs(
     let snapshot_size = new_snapshot_data.len() as u64;
 
     let new_snapshot_tmp_path = snapshot_path(path, max_log_id, true);
-    log::info!("writing snapshot to {new_snapshot_tmp_path:?}");
+    log::trace!("writing snapshot to {new_snapshot_tmp_path:?}");
 
     let mut snapshot_file_opts = fs::OpenOptions::new();
     snapshot_file_opts.create(true).read(false).write(true);
@@ -704,9 +711,9 @@ fn read_snapshot_and_apply_logs(
     fallible!(snapshot_file.sync_all());
 
     let new_snapshot_path = snapshot_path(path, max_log_id, false);
-    log::info!("renaming written snapshot to {new_snapshot_path:?}");
+    log::trace!("renaming written snapshot to {new_snapshot_path:?}");
     fallible!(fs::rename(new_snapshot_tmp_path, new_snapshot_path));
-    fallible!(fs::File::open(path).and_then(|directory| directory.sync_all()));
+    fallible!(locked_directory.sync_all());
 
     for log_id in &log_ids {
         let log_path = log_path(path, *log_id);
