@@ -138,22 +138,10 @@ pub struct Config {
     pub path: PathBuf,
 }
 
-impl Default for Config {
-    fn default() -> Config {
-        Config { path: "default.marble".into() }
-    }
-}
-
 pub fn recover<P: AsRef<Path>>(
     storage_directory: P,
 ) -> io::Result<(Heap, Vec<(u64, InlineArray)>)> {
     Heap::recover(&Config { path: storage_directory.as_ref().into() })
-}
-
-impl Config {
-    pub fn recover(&self) -> io::Result<(Heap, Vec<(u64, InlineArray)>)> {
-        Heap::recover(&self)
-    }
 }
 
 struct SlabAddress {
@@ -732,6 +720,7 @@ impl Heap {
         self.object_id_allocator.allocate()
     }
 
+    #[allow(unused)]
     pub fn free(&self, object_id: u64) -> io::Result<()> {
         let mut guard = self.free_ebr.pin();
         if let Err(e) = self.metadata_store.insert_batch([(object_id, None)]) {

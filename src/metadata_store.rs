@@ -57,7 +57,9 @@ enum WorkerMessage {
     LogReadyToCompact { log_and_stats: LogAndStats },
 }
 
-fn get_compactions(rx: &mut Receiver<WorkerMessage>) -> Result<Vec<u64>, Option<Sender<()>>> {
+fn get_compactions(
+    rx: &mut Receiver<WorkerMessage>,
+) -> Result<Vec<u64>, Option<Sender<()>>> {
     let mut ret = vec![];
 
     match rx.recv() {
@@ -90,9 +92,14 @@ fn get_compactions(rx: &mut Receiver<WorkerMessage>) -> Result<Vec<u64>, Option<
     }
 }
 
-fn worker(mut rx: Receiver<WorkerMessage>, mut last_snapshot_lsn: u64, inner: Inner) {
+fn worker(
+    mut rx: Receiver<WorkerMessage>,
+    mut last_snapshot_lsn: u64,
+    inner: Inner,
+) {
     loop {
-        let err_ptr: *const (io::ErrorKind, String) = inner.global_error.load(Ordering::Acquire);
+        let err_ptr: *const (io::ErrorKind, String) =
+            inner.global_error.load(Ordering::Acquire);
 
         if !err_ptr.is_null() {
             log::error!("compaction thread prematurely terminating after global error set");
@@ -118,7 +125,8 @@ fn worker(mut rx: Receiver<WorkerMessage>, mut last_snapshot_lsn: u64, inner: In
                         inner
                             .snapshot_size
                             .store(recovery.snapshot_size, Ordering::Release);
-                        last_snapshot_lsn = recovery.id_for_next_log.checked_sub(1).unwrap();
+                        last_snapshot_lsn =
+                            recovery.id_for_next_log.checked_sub(1).unwrap();
                     }
                 }
             }
@@ -136,7 +144,10 @@ fn worker(mut rx: Receiver<WorkerMessage>, mut last_snapshot_lsn: u64, inner: In
     }
 }
 
-fn set_error(global_error: &AtomicPtr<(io::ErrorKind, String)>, error: &io::Error) {
+fn set_error(
+    global_error: &AtomicPtr<(io::ErrorKind, String)>,
+    error: &io::Error,
+) {
     let kind = error.kind();
     let reason = error.to_string();
 
@@ -182,18 +193,9 @@ impl Drop for Inner {
 }
 
 impl MetadataStore {
-    pub fn shutdown(mut self) {
-        self.shutdown_inner();
-    }
-
     fn shutdown_inner(&mut self) {
         let (tx, rx) = bounded(1);
-        if self
-            .inner
-            .worker_outbox
-            .send(WorkerMessage::Shutdown(tx))
-            .is_ok()
-        {
+        if self.inner.worker_outbox.send(WorkerMessage::Shutdown(tx)).is_ok() {
             let _ = rx.recv();
         }
 
@@ -252,7 +254,10 @@ impl MetadataStore {
         let new_log = LogAndStats {
             log_sequence_number: recovery.id_for_next_log,
             bytes_written: 0,
-            file: fallible!(fs::File::create(log_path(path, recovery.id_for_next_log))),
+            file: fallible!(fs::File::create(log_path(
+                path,
+                recovery.id_for_next_log
+            ))),
         };
 
         let (tx, rx) = unbounded();
@@ -275,17 +280,13 @@ impl MetadataStore {
             )
         });
 
-        Ok((
-            MetadataStore {
-                inner,
-                is_shut_down: false,
-            },
-            recovery.recovered,
-        ))
+        Ok((MetadataStore { inner, is_shut_down: false }, recovery.recovered))
     }
 
     /// Returns the recovered mappings, the id for the next log file, the highest allocated object id, and the set of free ids
-    fn recover_inner<P: AsRef<Path>>(storage_directory: P) -> io::Result<Recovery> {
+    fn recover_inner<P: AsRef<Path>>(
+        storage_directory: P,
+    ) -> io::Result<Recovery> {
         let path = storage_directory.as_ref();
         log::debug!("opening u64db at {:?}", path);
 
@@ -300,7 +301,9 @@ impl MetadataStore {
 
     /// Write a batch of metadata. `None` for the second half of the outer tuple represents a
     /// deletion.
-    pub fn insert_batch<I: IntoIterator<Item = (u64, Option<(NonZeroU64, InlineArray)>)>>(
+    pub fn insert_batch<
+        I: IntoIterator<Item = (u64, Option<(NonZeroU64, InlineArray)>)>,
+    >(
         &self,
         batch: I,
     ) -> io::Result<()> {
@@ -323,20 +326,18 @@ impl MetadataStore {
         log.bytes_written += batch_bytes.len() as u64;
 
         if log.bytes_written
-            > self
-                .inner
-                .snapshot_size
-                .load(Ordering::Acquire)
-                .max(64 * 1024)
+            > self.inner.snapshot_size.load(Ordering::Acquire).max(64 * 1024)
         {
             let next_offset = log.log_sequence_number + 1;
-            let next_path = log_path(&self.inner.storage_directory, next_offset);
+            let next_path =
+                log_path(&self.inner.storage_directory, next_offset);
 
             // open new log
             let mut next_log_file_opts = fs::OpenOptions::new();
             next_log_file_opts.create(true).read(true).write(true);
 
-            let next_log_file = match maybe!(next_log_file_opts.open(next_path)) {
+            let next_log_file = match maybe!(next_log_file_opts.open(next_path))
+            {
                 Ok(nlf) => nlf,
                 Err(e) => {
                     self.set_error(&e);
@@ -351,7 +352,8 @@ impl MetadataStore {
             };
 
             // replace log
-            let old_log_and_stats = std::mem::replace(&mut *log, next_log_and_stats);
+            let old_log_and_stats =
+                std::mem::replace(&mut *log, next_log_and_stats);
 
             // send to snapshot writer
             self.inner
@@ -366,7 +368,9 @@ impl MetadataStore {
     }
 }
 
-fn serialize_batch<I: IntoIterator<Item = (u64, Option<(NonZeroU64, InlineArray)>)>>(
+fn serialize_batch<
+    I: IntoIterator<Item = (u64, Option<(NonZeroU64, InlineArray)>)>,
+>(
     batch: I,
 ) -> Vec<u8> {
     // we initialize the vector to contain placeholder bytes for the frame length
@@ -387,9 +391,7 @@ fn serialize_batch<I: IntoIterator<Item = (u64, Option<(NonZeroU64, InlineArray)
             batch_encoder.write_all(&v.get().to_le_bytes()).unwrap();
 
             let user_data_len: u64 = user_data.len() as u64;
-            batch_encoder
-                .write_all(&user_data_len.to_le_bytes())
-                .unwrap();
+            batch_encoder.write_all(&user_data_len.to_le_bytes()).unwrap();
             batch_encoder.write_all(&user_data).unwrap();
         } else {
             // v
@@ -497,7 +499,10 @@ fn read_frame(
 
 // returns the deduplicated data in this log, along with an optional offset where a
 // final torn write occurred.
-fn read_log(directory_path: &Path, lsn: u64) -> io::Result<FnvHashMap<u64, (u64, InlineArray)>> {
+fn read_log(
+    directory_path: &Path,
+    lsn: u64,
+) -> io::Result<FnvHashMap<u64, (u64, InlineArray)>> {
     log::info!("reading log {lsn}");
     let mut ret = FnvHashMap::default();
 
@@ -523,13 +528,16 @@ fn read_snapshot(
 ) -> io::Result<(FnvHashMap<u64, (NonZeroU64, InlineArray)>, u64)> {
     log::info!("reading snapshot {lsn}");
     let mut reusable_frame_buffer: Vec<u8> = vec![];
-    let mut file = fallible!(fs::File::open(snapshot_path(directory_path, lsn, false)));
+    let mut file =
+        fallible!(fs::File::open(snapshot_path(directory_path, lsn, false)));
     let size = fallible!(file.metadata()).len();
     let raw_frame = read_frame(&mut file, &mut reusable_frame_buffer)?;
 
     let frame: FnvHashMap<u64, (NonZeroU64, InlineArray)> = raw_frame
         .into_iter()
-        .map(|(k, (v, user_data))| (k, (NonZeroU64::new(v).unwrap(), user_data)))
+        .map(|(k, (v, user_data))| {
+            (k, (NonZeroU64::new(v).unwrap(), user_data))
+        })
         .collect();
 
     log::info!("recovered {} items in snapshot {}", frame.len(), lsn);
@@ -543,13 +551,16 @@ fn log_path(directory_path: &Path, id: u64) -> PathBuf {
 
 fn snapshot_path(directory_path: &Path, id: u64, temporary: bool) -> PathBuf {
     if temporary {
-        directory_path.join(format!("{SNAPSHOT_PREFIX}_{:016x}{TMP_SUFFIX}", id))
+        directory_path
+            .join(format!("{SNAPSHOT_PREFIX}_{:016x}{TMP_SUFFIX}", id))
     } else {
         directory_path.join(format!("{SNAPSHOT_PREFIX}_{:016x}", id))
     }
 }
 
-fn enumerate_logs_and_snapshot(directory_path: &Path) -> io::Result<(BTreeSet<u64>, Option<u64>)> {
+fn enumerate_logs_and_snapshot(
+    directory_path: &Path,
+) -> io::Result<(BTreeSet<u64>, Option<u64>)> {
     let mut logs = BTreeSet::new();
     let mut snapshot: Option<u64> = None;
 
@@ -623,8 +634,8 @@ fn read_snapshot_and_apply_logs(
     if let Some(snapshot_id) = snapshot_id_opt {
         let path: PathBuf = path.into();
         rayon::spawn(move || {
-            let snap_res =
-                read_snapshot(&path, snapshot_id).map(|(snapshot, _snapshot_len)| snapshot);
+            let snap_res = read_snapshot(&path, snapshot_id)
+                .map(|(snapshot, _snapshot_len)| snapshot);
             snapshot_tx.send(snap_res).unwrap();
         });
     } else {
@@ -633,21 +644,23 @@ fn read_snapshot_and_apply_logs(
 
     let mut max_log_id = snapshot_id_opt.unwrap_or(0);
 
-    let log_data_res: io::Result<Vec<(u64, FnvHashMap<u64, (u64, InlineArray)>)>> =
-        (&log_ids) //.iter().collect::<Vec<_>>())
-            .into_par_iter()
-            .map(move |log_id| {
-                if let Some(snapshot_id) = snapshot_id_opt {
-                    assert!(*log_id > snapshot_id);
-                }
+    let log_data_res: io::Result<
+        Vec<(u64, FnvHashMap<u64, (u64, InlineArray)>)>,
+    > = (&log_ids) //.iter().collect::<Vec<_>>())
+        .into_par_iter()
+        .map(move |log_id| {
+            if let Some(snapshot_id) = snapshot_id_opt {
+                assert!(*log_id > snapshot_id);
+            }
 
-                let log_datum = read_log(&path, *log_id)?;
+            let log_datum = read_log(&path, *log_id)?;
 
-                Ok((*log_id, log_datum))
-            })
-            .collect();
+            Ok((*log_id, log_datum))
+        })
+        .collect();
 
-    let mut recovered: FnvHashMap<u64, (NonZeroU64, InlineArray)> = snapshot_rx.recv().unwrap()?;
+    let mut recovered: FnvHashMap<u64, (NonZeroU64, InlineArray)> =
+        snapshot_rx.recv().unwrap()?;
 
     for (log_id, log_datum) in log_data_res? {
         max_log_id = max_log_id.max(log_id);
@@ -682,7 +695,8 @@ fn read_snapshot_and_apply_logs(
     let mut snapshot_file_opts = fs::OpenOptions::new();
     snapshot_file_opts.create(true).read(false).write(true);
 
-    let mut snapshot_file = fallible!(snapshot_file_opts.open(&new_snapshot_tmp_path));
+    let mut snapshot_file =
+        fallible!(snapshot_file_opts.open(&new_snapshot_tmp_path));
 
     fallible!(snapshot_file.write_all(&new_snapshot_data));
     drop(new_snapshot_data);
@@ -704,9 +718,5 @@ fn read_snapshot_and_apply_logs(
         fallible!(fs::remove_file(old_snapshot_path));
     }
 
-    Ok(Recovery {
-        recovered,
-        id_for_next_log: max_log_id + 1,
-        snapshot_size,
-    })
+    Ok(Recovery { recovered, id_for_next_log: max_log_id + 1, snapshot_size })
 }

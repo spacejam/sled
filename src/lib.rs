@@ -1,6 +1,6 @@
-// TODO document marble not to use too high pid otherwise recovery will lock
-//      on essentially infinite recovery
-// TODO marble maintenance w/ speculative write followed by CAS in pt
+// TODO free empty leaves with try_lock on left sibling, set hi key, remove from indexes, store deletion in metadata_store
+// TODO name all spawned maintenance threads and rayon threadpool
+// TODO heap maintenance w/ speculative write followed by CAS in pt
 //      maybe with global writer lock that controls flushers too
 // TODO set explicit max key and value sizes w/ corresponding heap
 mod db;

@@ -455,6 +455,13 @@ impl<
             if let Err(e) = self.flush() {
                 eprintln!("failed to flush Db on Drop: {e:?}");
             }
+
+            // this is probably unnecessary but it will avoid issues
+            // if egregious bugs get introduced that trigger it
+            self.set_error(&io::Error::new(
+                io::ErrorKind::Other,
+                "system has been shut down".to_string(),
+            ));
         }
     }
 }
@@ -930,7 +937,7 @@ impl<
         let start: Bound<InlineArray> =
             map_bound(range.start_bound(), |b| InlineArray::from(b.as_ref()));
         let end: Bound<InlineArray> =
-            map_bound(range.start_bound(), |b| InlineArray::from(b.as_ref()));
+            map_bound(range.end_bound(), |b| InlineArray::from(b.as_ref()));
 
         Iter { inner: self, bounds: (start, end), last: None, last_back: None }
     }
