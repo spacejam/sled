@@ -50,7 +50,7 @@
   1. User code or the background flusher thread calls `Db::flush`.
   1. In parallel (via [rayon](https://docs.rs/rayon)) serialize and compress each dirty leaf with zstd (configurable via `Config.zstd_compression_level`).
   1. Based on the size of the bytes for each object, choose the smallest heap file slot that can hold the full set of bytes. This is an on-disk slab allocator.
-  1. Slab slots are not power-of-two sized, but tend to increase in size by around 20% from one to the next, resulting in far lower fragentation than typical page-oriented heaps with either constant-size or power-of-two sized leaves.
+  1. Slab slots are not power-of-two sized, but tend to increase in size by around 20% from one to the next, resulting in far lower fragmentation than typical page-oriented heaps with either constant-size or power-of-two sized leaves.
   1. Write the object to the allocated slot from the rayon threadpool.
   1. After all writes, fsync the heap files that were written to.
   1. If any writes were written to the end of the heap file, causing it to grow, fsync the directory that stores all heap files.
