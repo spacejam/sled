@@ -702,7 +702,7 @@ impl<
         let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
         let new_epoch = leaf_guard.flush_epoch_guard.epoch();
 
-        let leaf = &mut leaf_guard.leaf_write.as_mut().unwrap();
+        let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
         // TODO handle prefix encoding
 
@@ -759,7 +759,7 @@ impl<
         let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
         let new_epoch = leaf_guard.flush_epoch_guard.epoch();
 
-        let leaf = &mut leaf_guard.leaf_write.as_mut().unwrap();
+        let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
         // TODO handle prefix encoding
 
@@ -936,7 +936,7 @@ impl<
 
         let proposed: Option<InlineArray> = new.map(Into::into);
 
-        let leaf = &mut leaf_guard.leaf_write.as_mut().unwrap();
+        let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
         // TODO handle prefix encoding
 
