@@ -1,18 +1,15 @@
-// TODO for write batches, find new way of dropping LeafGuard types that avoids
-//      calling mark_access_and_evict while any mutex is held for leaves. must
-//      first drop all locks then do mark access on each.
 // TODO document marble not to use too high pid otherwise recovery will lock
 //      on essentially infinite recovery
 // TODO marble maintenance w/ speculative write followed by CAS in pt
 //      maybe with global writer lock that controls flushers too
-// TODO re-enable paging out
-// TODO write background flusher
-// TODO max key and value sizes w/ corresponding heap
+// TODO set explicit max key and value sizes w/ corresponding heap
 mod db;
 mod flush_epoch;
+mod heap;
+mod metadata_store;
 
-pub use crate::db::{open_default, Config, Db};
-pub use marble::InlineArray;
+pub use crate::db::{open_default, Batch, Config, Db};
+pub use inline_array::InlineArray;
 
 use crate::flush_epoch::{FlushEpoch, FlushEpochGuard};
 

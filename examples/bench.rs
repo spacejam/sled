@@ -9,7 +9,7 @@ use std::{fs, io};
 
 use num_format::{Locale, ToFormattedString};
 
-use sled::{open_default, Db};
+use sled::Db;
 
 const N_WRITES_PER_THREAD: u32 = 4 * 1024 * 1024;
 const MAX_CONCURRENCY: u32 = 8;
@@ -27,13 +27,21 @@ trait Databench: Clone + Send {
 }
 
 impl Databench for Db {
-    type READ = marble::InlineArray;
+    type READ = sled::InlineArray;
 
     const NAME: &'static str = "sled 1.0.0-alpha.1";
     const PATH: &'static str = "timing_test.sled-new";
 
     fn open() -> Self {
-        open_default(Self::PATH).unwrap()
+        sled::Config {
+            path: Self::PATH.into(),
+            zstd_compression_level: 3,
+            cache_size: 1024 * 1024 * 1024,
+            entry_cache_percent: 20,
+            flush_every_ms: Some(200),
+        }
+        .open()
+        .unwrap()
     }
 
     fn insert_generic(&self, key: &[u8], value: &[u8]) {
@@ -179,10 +187,6 @@ impl Databench for Sqlite {
         }
     }
     fn get_generic(&self, key: &[u8]) -> Option<Self::READ> {
-        let res = self.connection.execute(
-            "SELECT b.val from bench b WHERE key = ?1",
-            [u32::from_be_bytes(key.try_into().unwrap())],
-        );
         let mut stmt = self
             .connection
             .prepare("SELECT b.val from bench b WHERE key = ?1")

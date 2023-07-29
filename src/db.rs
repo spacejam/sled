@@ -11,7 +11,7 @@ use std::sync::{mpsc, Arc};
 
 use cache_advisor::CacheAdvisor;
 use concurrent_map::ConcurrentMap;
-use marble::Marble;
+use inline_array::InlineArray;
 use parking_lot::{
     lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard},
     RawRwLock, RwLock,
@@ -38,7 +38,7 @@ pub struct Db<
     >,
     node_id_to_low_key_index:
         ConcurrentMap<u64, InlineArray, INDEX_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
-    store: Marble,
+    store: heap::Heap,
     cache_advisor: RefCell<CacheAdvisor>,
     flush_epoch: FlushEpoch,
     // the value here is for serialized bytes
@@ -54,6 +54,7 @@ const fn _db_is_send() {
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// The base directory for storing the database.
     pub path: PathBuf,
     /// Cache size in bytes. Default is 1gb.
     pub cache_size: usize,
@@ -63,11 +64,13 @@ pub struct Config {
     /// Start a background thread that flushes data to disk
     /// every few milliseconds. Defaults to every 200ms.
     pub flush_every_ms: Option<usize>,
+    /// The zstd compression level to use when writing data to disk. Defaults to 3.
+    pub zstd_compression_level: i32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Node<const LEAF_FANOUT: usize> {
-    // used for access in Marble
+    // used for access in heap::Heap
     id: NodeId,
     #[serde(skip)]
     inner: Arc<RwLock<Option<Box<Leaf<LEAF_FANOUT>>>>>,
@@ -117,14 +120,12 @@ fn flusher<
 }
 
 impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
-    fn serialize(&self) -> Vec<u8> {
-        // bincode -> crc_frame -> zstd
+    fn serialize(&self, zstd_compression_level: i32) -> Vec<u8> {
         let mut ret = vec![];
 
-        let mut zstd_enc = zstd::stream::Encoder::new(&mut ret, 3).unwrap();
-
-        // let mut crc_frame_enc = crc_frame::Encoder::new(&mut zstd_enc);
-        // bincode::serialize_into(&mut crc_frame_enc, self).unwrap();
+        let mut zstd_enc =
+            zstd::stream::Encoder::new(&mut ret, zstd_compression_level)
+                .unwrap();
 
         bincode::serialize_into(&mut zstd_enc, self).unwrap();
 
@@ -137,15 +138,17 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
         let zstd_decoded = zstd::stream::decode_all(buf).unwrap();
         let mut leaf: Box<Leaf<LEAF_FANOUT>> =
             bincode::deserialize(&zstd_decoded).unwrap();
+
         // use decompressed buffer length as a cheap proxy for in-memory size for now
         leaf.in_memory_size = zstd_decoded.len();
+
         Ok(leaf)
     }
 
     fn split_if_full(
         &mut self,
         new_epoch: NonZeroU64,
-        allocator: &Marble,
+        allocator: &heap::Heap,
     ) -> Option<(InlineArray, Node<LEAF_FANOUT>)> {
         if self.data.is_full() {
             // split
@@ -162,7 +165,20 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
             };
 
             let data = self.data.split_off(split_offset);
-            let split_key = data.first().unwrap().0.clone();
+
+            let left_max = &self.data.last().as_ref().unwrap().0;
+            let right_min = &data.first().as_ref().unwrap().0;
+
+            // suffix truncation attempts to shrink the split key
+            // so that shorter keys bubble up into the index
+            let splitpoint_length = right_min
+                .iter()
+                .zip(left_max.iter())
+                .take_while(|(a, b)| a == b)
+                .count()
+                + 1;
+
+            let split_key = InlineArray::from(&right_min[..splitpoint_length]);
 
             let rhs_id = allocator.allocate_object_id();
 
@@ -302,8 +318,9 @@ impl Default for Config {
         Config {
             path: "bloodstone.default".into(),
             flush_every_ms: Some(200),
-            cache_size: 1024 * 1024 * 1024,
+            cache_size: 512 * 1024 * 1024,
             entry_cache_percent: 20,
+            zstd_compression_level: 3,
         }
     }
 }
@@ -317,7 +334,7 @@ impl Config {
         &self,
     ) -> io::Result<Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>>
     {
-        let (store, index_data) = marble::recover(&self.path)?;
+        let (store, index_data) = heap::recover(&self.path)?;
 
         let first_id_opt = if index_data.is_empty() {
             Some(store.allocate_object_id())
@@ -411,32 +428,6 @@ fn initialize<
     ret
 }
 
-fn set_error(
-    global_error: &AtomicPtr<(io::ErrorKind, String)>,
-    error: &io::Error,
-) {
-    let kind = error.kind();
-    let reason = error.to_string();
-
-    let boxed = Box::new((kind, reason));
-    let ptr = Box::into_raw(boxed);
-
-    if global_error
-        .compare_exchange(
-            std::ptr::null_mut(),
-            ptr,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        )
-        .is_err()
-    {
-        // global fatal error already installed, drop this one
-        unsafe {
-            drop(Box::from_raw(ptr));
-        }
-    }
-}
-
 impl<
         const INDEX_FANOUT: usize,
         const LEAF_FANOUT: usize,
@@ -495,10 +486,30 @@ impl<
     }
 
     fn set_error(&self, error: &io::Error) {
-        set_error(&self.global_error, error);
+        let kind = error.kind();
+        let reason = error.to_string();
+
+        let boxed = Box::new((kind, reason));
+        let ptr = Box::into_raw(boxed);
+
+        if self
+            .global_error
+            .compare_exchange(
+                std::ptr::null_mut(),
+                ptr,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            // global fatal error already installed, drop this one
+            unsafe {
+                drop(Box::from_raw(ptr));
+            }
+        }
     }
 
-    pub fn storage_stats(&self) -> marble::Stats {
+    pub fn storage_stats(&self) -> heap::Stats {
         self.store.stats()
     }
 
@@ -595,7 +606,7 @@ impl<
                     flush_epoch_guard.epoch().get()
                 );
 
-                log::info!(
+                log::trace!(
                     "cooperatively flushing {:?} with dirty epoch {} after checking into epoch {}",
                     node_id,
                     old_flush_epoch.get(),
@@ -607,7 +618,8 @@ impl<
                 // be extra-explicit about serialized bytes
                 let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
 
-                let serialized = leaf_ref.serialize();
+                let serialized =
+                    leaf_ref.serialize(self.config.zstd_compression_level);
 
                 self.dirty.insert(
                     (dirty_epoch, leaf.lo.clone()),
@@ -646,7 +658,8 @@ impl<
             }
             let leaf: &mut Leaf<LEAF_FANOUT> = write.as_mut().unwrap();
             if let Some(dirty_flush_epoch) = leaf.dirty_flush_epoch {
-                let serialized = leaf.serialize();
+                let serialized =
+                    leaf.serialize(self.config.zstd_compression_level);
 
                 self.dirty.insert(
                     (dirty_flush_epoch, leaf.lo.clone()),
@@ -797,14 +810,14 @@ impl<
                             leaf_ref.dirty_flush_epoch.take().unwrap();
                         assert_eq!(epoch, dirty_epoch);
                         // ugly but basically free
-                        leaf_ref.serialize()
+                        leaf_ref.serialize(self.config.zstd_compression_level)
                     };
 
                 drop(lock);
                 // println!("node id {} is dirty", node.id.0);
                 write_batch.push((
                     node.id.0,
-                    Some((marble::InlineArray::from(&*low_key), leaf_bytes)),
+                    Some((InlineArray::from(&*low_key), leaf_bytes)),
                 ));
             } else {
                 continue;
@@ -1016,7 +1029,8 @@ impl<
                     // be extra-explicit about serialized bytes
                     let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
 
-                    let serialized = leaf_ref.serialize();
+                    let serialized =
+                        leaf_ref.serialize(self.config.zstd_compression_level);
 
                     self.dirty.insert(
                         (dirty_epoch, leaf.lo.clone()),
