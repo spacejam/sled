@@ -615,7 +615,7 @@ impl<
         let to_evict = ca.accessed_reuse_buffer(node_id.0, size);
         for (node_to_evict, _rough_size) in to_evict {
             let low_key =
-                self.node_id_to_low_key_index.get(&node_to_evict).unwrap();
+                self.node_id_to_low_key_index.get(node_to_evict).unwrap();
             let node = self.index.get(&low_key).unwrap();
             let mut write = node.inner.write();
             if write.is_none() {
@@ -1203,14 +1203,14 @@ impl<
                 let leaf = w.as_ref().unwrap();
                 assert!(&leaf.lo <= key);
                 if let Some(hi) = &leaf.hi {
-                    if hi <= &key {
+                    if hi <= key {
                         let (lo, w, id) = last.take().unwrap();
                         acquired_locks.insert(lo, (w, id));
                     }
                 }
             }
             if last.is_none() {
-                last = Some(self.page_in(&key)?);
+                last = Some(self.page_in(key)?);
             }
         }
 

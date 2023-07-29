@@ -238,9 +238,9 @@ impl MetadataStore {
         let path = storage_directory.as_ref();
 
         // initialize directories if not present
-        if let Err(e) = fs::read_dir(&path) {
+        if let Err(e) = fs::read_dir(path) {
             if e.kind() == io::ErrorKind::NotFound {
-                fallible!(fs::create_dir_all(&path));
+                fallible!(fs::create_dir_all(path));
             }
         }
 
@@ -293,7 +293,7 @@ impl MetadataStore {
 
         log::debug!("opening MetadataStore at {:?}", path);
 
-        let (log_ids, snapshot_id_opt) = enumerate_logs_and_snapshot(&path)?;
+        let (log_ids, snapshot_id_opt) = enumerate_logs_and_snapshot(path)?;
 
         read_snapshot_and_apply_logs(
             path,
@@ -660,7 +660,7 @@ fn read_snapshot_and_apply_logs(
                 assert!(*log_id > snapshot_id);
             }
 
-            let log_datum = read_log(&path, *log_id)?;
+            let log_datum = read_log(path, *log_id)?;
 
             Ok((*log_id, log_datum))
         })
