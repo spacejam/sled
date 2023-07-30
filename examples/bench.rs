@@ -36,9 +36,10 @@ impl Databench for Db {
         sled::Config {
             path: Self::PATH.into(),
             zstd_compression_level: 3,
-            cache_size: 1024 * 1024 * 1024,
+            cache_capacity_bytes: 1024 * 1024 * 1024,
             entry_cache_percent: 20,
             flush_every_ms: Some(200),
+            temporary: false,
         }
         .open()
         .unwrap()

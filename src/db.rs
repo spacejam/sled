@@ -3,11 +3,13 @@ use std::collections::BTreeMap;
 use std::io;
 use std::mem::{self, ManuallyDrop};
 use std::num::NonZeroU64;
+use std::ops;
 use std::ops::Bound;
 use std::ops::RangeBounds;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{mpsc, Arc};
+use std::time::{Duration, Instant};
 
 use cache_advisor::CacheAdvisor;
 use concurrent_map::ConcurrentMap;
@@ -44,28 +46,7 @@ pub struct Db<
     // the value here is for serialized bytes
     dirty: ConcurrentMap<(NonZeroU64, InlineArray), Option<Arc<Vec<u8>>>>,
     shutdown_sender: Option<mpsc::Sender<mpsc::Sender<()>>>,
-}
-
-const fn _db_is_send() {
-    const fn is_send<T: Send>() {}
-
-    is_send::<Db>();
-}
-
-#[derive(Debug, Clone)]
-pub struct Config {
-    /// The base directory for storing the database.
-    pub path: PathBuf,
-    /// Cache size in **bytes**. Default is 512mb.
-    pub cache_size: usize,
-    /// The percentage of the cache that is dedicated to the
-    /// scan-resistant entry cache.
-    pub entry_cache_percent: u8,
-    /// Start a background thread that flushes data to disk
-    /// every few milliseconds. Defaults to every 200ms.
-    pub flush_every_ms: Option<usize>,
-    /// The zstd compression level to use when writing data to disk. Defaults to 3.
-    pub zstd_compression_level: i32,
+    was_recovered: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -96,9 +77,14 @@ fn flusher<
     shutdown_signal: mpsc::Receiver<mpsc::Sender<()>>,
     flush_every_ms: usize,
 ) {
-    let timeout = std::time::Duration::from_millis(flush_every_ms as _);
+    let interval = Duration::from_millis(flush_every_ms as _);
+    let mut last_flush_duration = Duration::default();
     loop {
-        if let Ok(shutdown_sender) = shutdown_signal.recv_timeout(timeout) {
+        let recv_timeout = interval
+            .saturating_sub(last_flush_duration)
+            .max(Duration::from_millis(1));
+        if let Ok(shutdown_sender) = shutdown_signal.recv_timeout(recv_timeout)
+        {
             drop(db);
             if let Err(e) = shutdown_sender.send(()) {
                 log::error!(
@@ -111,11 +97,13 @@ fn flusher<
             return;
         }
 
+        let before_flush = Instant::now();
         if let Err(e) = db.flush() {
             log::error!("Db flusher encountered error while flushing: {:?}", e);
             db.set_error(&e);
             return;
         }
+        last_flush_duration = before_flush.elapsed();
     }
 }
 
@@ -310,119 +298,8 @@ impl<
     }
 }
 
-impl Default for Config {
-    fn default() -> Config {
-        Config {
-            path: "bloodstone.default".into(),
-            flush_every_ms: Some(200),
-            cache_size: 512 * 1024 * 1024,
-            entry_cache_percent: 20,
-            zstd_compression_level: 3,
-        }
-    }
-}
-
-impl Config {
-    pub fn open<
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    >(
-        &self,
-    ) -> io::Result<Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>>
-    {
-        let (store, index_data) = heap::recover(&self.path)?;
-
-        let first_id_opt = if index_data.is_empty() {
-            Some(store.allocate_object_id())
-        } else {
-            None
-        };
-
-        let index: ConcurrentMap<
-            InlineArray,
-            Node<LEAF_FANOUT>,
-            INDEX_FANOUT,
-            EBR_LOCAL_GC_BUFFER_SIZE,
-        > = initialize(&index_data, first_id_opt);
-
-        let node_id_to_low_key_index: ConcurrentMap<
-            u64,
-            InlineArray,
-            INDEX_FANOUT,
-            EBR_LOCAL_GC_BUFFER_SIZE,
-        > = index.iter().map(|(low_key, node)| (node.id.0, low_key)).collect();
-
-        let mut ret = Db {
-            global_error: Default::default(),
-            high_level_rc: Arc::new(()),
-            store,
-            cache_advisor: RefCell::new(CacheAdvisor::new(
-                self.cache_size,
-                self.entry_cache_percent,
-            )),
-            index,
-            config: self.clone(),
-            node_id_to_low_key_index,
-            dirty: Default::default(),
-            flush_epoch: Default::default(),
-            shutdown_sender: None,
-        };
-
-        if let Some(flush_every_ms) = ret.config.flush_every_ms {
-            let bloodstone = ret.clone();
-            let (tx, rx) = mpsc::channel();
-            ret.shutdown_sender = Some(tx);
-            std::thread::spawn(move || flusher(bloodstone, rx, flush_every_ms));
-        }
-        Ok(ret)
-    }
-}
-
 pub fn open_default<P: AsRef<Path>>(path: P) -> io::Result<Db> {
     Config { path: path.as_ref().into(), ..Default::default() }.open()
-}
-
-fn initialize<
-    const INDEX_FANOUT: usize,
-    const LEAF_FANOUT: usize,
-    const EBR_LOCAL_GC_BUFFER_SIZE: usize,
->(
-    index_data: &[(u64, InlineArray)],
-    first_id_opt: Option<u64>,
-) -> ConcurrentMap<
-    InlineArray,
-    Node<LEAF_FANOUT>,
-    INDEX_FANOUT,
-    EBR_LOCAL_GC_BUFFER_SIZE,
-> {
-    if index_data.is_empty() {
-        let first_id = first_id_opt.unwrap();
-        let first_leaf = Leaf {
-            hi: None,
-            lo: InlineArray::default(),
-            // this does not need to be marked as dirty until it actually
-            // receives inserted data
-            dirty_flush_epoch: None,
-            prefix_length: 0,
-            data: StackMap::new(),
-            in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
-        };
-        let first_node = Node {
-            id: NodeId(first_id),
-            inner: Arc::new(Some(Box::new(first_leaf)).into()),
-        };
-        return [(InlineArray::default(), first_node)].into_iter().collect();
-    }
-
-    let ret = ConcurrentMap::default();
-
-    for (id, low_key) in index_data {
-        let node = Node { id: NodeId(*id), inner: Arc::new(None.into()) };
-        ret.insert(low_key.clone(), node);
-    }
-
-    ret
 }
 
 impl<
@@ -477,7 +354,8 @@ impl<
         const EBR_LOCAL_GC_BUFFER_SIZE: usize,
     > Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
 {
-    fn check_error(&self) -> io::Result<()> {
+    #[doc(hidden)]
+    pub fn check_error(&self) -> io::Result<()> {
         let err_ptr: *const (io::ErrorKind, String) =
             self.global_error.load(Ordering::Acquire);
 
@@ -517,6 +395,23 @@ impl<
         self.store.stats()
     }
 
+    pub fn size_on_disk(&self) -> io::Result<u64> {
+        use std::fs::read_dir;
+
+        fn recurse(mut dir: std::fs::ReadDir) -> io::Result<u64> {
+            dir.try_fold(0, |acc, file| {
+                let file = file?;
+                let size = match file.metadata()? {
+                    data if data.is_dir() => recurse(read_dir(file.path())?)?,
+                    data => data.len(),
+                };
+                Ok(acc + size)
+            })
+        }
+
+        recurse(read_dir(&self.config.path)?)
+    }
+
     fn leaf_for_key<'a>(
         &'a self,
         key: &[u8],
@@ -551,6 +446,72 @@ impl<
             low_key,
             node_id,
         })
+    }
+
+    /// Returns `true` if the database was
+    /// recovered from a previous process.
+    /// Note that database state is only
+    /// guaranteed to be present up to the
+    /// last call to `flush`! Otherwise state
+    /// is synced to disk periodically if the
+    /// `Config.sync_every_ms` configuration option
+    /// is set to `Some(number_of_ms_between_syncs)`
+    /// or if the IO buffer gets filled to
+    /// capacity before being rotated.
+    pub fn was_recovered(&self) -> bool {
+        self.was_recovered
+    }
+
+    pub fn open_with_config(
+        config: &Config,
+    ) -> io::Result<Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>>
+    {
+        let (store, index_data) = heap::recover(&config.path)?;
+
+        let first_id_opt = if index_data.is_empty() {
+            Some(store.allocate_object_id())
+        } else {
+            None
+        };
+
+        let index: ConcurrentMap<
+            InlineArray,
+            Node<LEAF_FANOUT>,
+            INDEX_FANOUT,
+            EBR_LOCAL_GC_BUFFER_SIZE,
+        > = initialize(&index_data, first_id_opt);
+
+        let node_id_to_low_key_index: ConcurrentMap<
+            u64,
+            InlineArray,
+            INDEX_FANOUT,
+            EBR_LOCAL_GC_BUFFER_SIZE,
+        > = index.iter().map(|(low_key, node)| (node.id.0, low_key)).collect();
+
+        let mut ret = Db {
+            global_error: Default::default(),
+            high_level_rc: Arc::new(()),
+            store,
+            cache_advisor: RefCell::new(CacheAdvisor::new(
+                config.cache_capacity_bytes,
+                config.entry_cache_percent,
+            )),
+            index,
+            config: config.clone(),
+            node_id_to_low_key_index,
+            dirty: Default::default(),
+            flush_epoch: Default::default(),
+            shutdown_sender: None,
+            was_recovered: first_id_opt.is_none(),
+        };
+
+        if let Some(flush_every_ms) = ret.config.flush_every_ms {
+            let bloodstone = ret.clone();
+            let (tx, rx) = mpsc::channel();
+            ret.shutdown_sender = Some(tx);
+            std::thread::spawn(move || flusher(bloodstone, rx, flush_every_ms));
+        }
+        Ok(ret)
     }
 
     fn page_in(
@@ -676,6 +637,19 @@ impl<
         Ok(())
     }
 
+    /// Retrieve a value from the `Tree` if it exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[0], vec![0])?;
+    /// assert_eq!(db.get(&[0]), Ok(Some(sled::InlineArray::from(vec![0]))));
+    /// assert_eq!(db.get(&[1]), Ok(None));
+    /// # Ok(()) }
+    /// ```
     pub fn get<K: AsRef<[u8]>>(
         &self,
         key: K,
@@ -692,6 +666,19 @@ impl<
         Ok(leaf.data.get(key.as_ref()).cloned())
     }
 
+    /// Insert a key to a new value, returning the last value if it
+    /// was set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// assert_eq!(db.insert(&[1, 2, 3], vec![0]), Ok(None));
+    /// assert_eq!(db.insert(&[1, 2, 3], vec![1]), Ok(Some(sled::InlineArray::from(&[0]))));
+    /// # Ok(()) }
+    /// ```
     #[doc(alias = "set")]
     #[doc(alias = "put")]
     pub fn insert<K, V>(
@@ -741,6 +728,19 @@ impl<
         Ok(ret)
     }
 
+    /// Delete a value, returning the old value if it existed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[1], vec![1]);
+    /// assert_eq!(db.remove(&[1]), Ok(Some(sled::InlineArray::from(vec![1]))));
+    /// assert_eq!(db.remove(&[1]), Ok(None));
+    /// # Ok(()) }
+    /// ```
     #[doc(alias = "delete")]
     #[doc(alias = "del")]
     pub fn remove<K: AsRef<[u8]>>(
@@ -766,6 +766,19 @@ impl<
         Ok(ret)
     }
 
+    /// Synchronously flushes all dirty IO buffers and calls
+    /// fsync. If this succeeds, it is guaranteed that all
+    /// previous writes will be recovered if the system
+    /// crashes. Returns the number of bytes flushed during
+    /// this call.
+    ///
+    /// Flushing can take quite a lot of time, and you should
+    /// measure the performance impact of using it on
+    /// realistic sustained workloads running on realistic
+    /// hardware.
+    ///
+    /// This is called automatically on drop of the last open Db
+    /// instance.
     pub fn flush(&self) -> io::Result<()> {
         let mut write_batch = vec![];
 
@@ -842,6 +855,59 @@ impl<
         Ok(())
     }
 
+    /// Compare and swap. Capable of unique creation, conditional modification,
+    /// or deletion. If old is `None`, this will only set the value if it
+    /// doesn't exist yet. If new is `None`, will delete the value if old is
+    /// correct. If both old and new are `Some`, will modify the value if
+    /// old is correct.
+    ///
+    /// It returns `Ok(Ok(CompareAndSwapSuccess { new_value, previous_value }))` if operation finishes successfully.
+    ///
+    /// If it fails it returns:
+    ///     - `Ok(Err(CompareAndSwapError{ current, proposed }))` if no IO
+    ///       error was encountered but the operation
+    ///       failed to specify the correct current value. `CompareAndSwapError` contains
+    ///       current and proposed values.
+    ///     - `Err(io::Error)` if there was a high-level IO problem that prevented
+    ///       the operation from logically progressing. This is usually fatal and
+    ///       will prevent future requests from functioning, and requires the
+    ///       administrator to fix the system issue before restarting.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// // unique creation
+    /// assert_eq!(
+    ///     db.compare_and_swap(&[1], None as Option<&[u8]>, Some(&[10])),
+    ///     Ok(Ok(()))
+    /// );
+    ///
+    /// // conditional modification
+    /// assert_eq!(
+    ///     db.compare_and_swap(&[1], Some(&[10]), Some(&[20])),
+    ///     Ok(Ok(()))
+    /// );
+    ///
+    /// // failed conditional modification -- the current value is returned in
+    /// // the error variant
+    /// let operation = db.compare_and_swap(&[1], Some(&[30]), Some(&[40]));
+    /// assert!(operation.is_ok()); // the operation succeeded
+    /// let modification = operation.unwrap();
+    /// assert!(modification.is_err());
+    /// let actual_value = modification.unwrap_err();
+    /// assert_eq!(actual_value.current.map(|ivec| ivec.to_vec()), Some(vec![20]));
+    ///
+    /// // conditional deletion
+    /// assert_eq!(
+    ///     db.compare_and_swap(&[1], Some(&[20]), None as Option<&[u8]>),
+    ///     Ok(Ok(()))
+    /// );
+    /// assert_eq!(db.get(&[1]), Ok(None));
+    /// # Ok(()) }
+    /// ```
     #[doc(alias = "cas")]
     #[doc(alias = "tas")]
     #[doc(alias = "test_and_swap")]
@@ -908,6 +974,149 @@ impl<
         }
 
         Ok(ret)
+    }
+
+    /// Fetch the value, apply a function to it and return the result.
+    ///
+    /// # Note
+    ///
+    /// This may call the function multiple times if the value has been
+    /// changed from other threads in the meantime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use sled::{Config, Error, InlineArray};
+    /// use std::convert::TryInto;
+    ///
+    /// let config = Config::new().temporary(true);
+    /// let db = config.open()?;
+    ///
+    /// fn u64_to_ivec(number: u64) -> InlineArray {
+    ///     InlineArray::from(number.to_be_bytes().to_vec())
+    /// }
+    ///
+    /// let zero = u64_to_ivec(0);
+    /// let one = u64_to_ivec(1);
+    /// let two = u64_to_ivec(2);
+    /// let three = u64_to_ivec(3);
+    ///
+    /// fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
+    ///     let number = match old {
+    ///         Some(bytes) => {
+    ///             let array: [u8; 8] = bytes.try_into().unwrap();
+    ///             let number = u64::from_be_bytes(array);
+    ///             number + 1
+    ///         }
+    ///         None => 0,
+    ///     };
+    ///
+    ///     Some(number.to_be_bytes().to_vec())
+    /// }
+    ///
+    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(zero)));
+    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(one)));
+    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(two)));
+    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(three)));
+    /// # Ok(()) }
+    /// ```
+    pub fn update_and_fetch<K, V, F>(
+        &self,
+        key: K,
+        mut f: F,
+    ) -> io::Result<Option<InlineArray>>
+    where
+        K: AsRef<[u8]>,
+        F: FnMut(Option<&[u8]>) -> Option<V>,
+        V: Into<InlineArray>,
+    {
+        let key_ref = key.as_ref();
+        let mut current = self.get(key_ref)?;
+
+        loop {
+            let tmp = current.as_ref().map(AsRef::as_ref);
+            let next = f(tmp).map(Into::into);
+            match self.compare_and_swap::<_, _, InlineArray>(
+                key_ref,
+                tmp,
+                next.clone(),
+            )? {
+                Ok(_) => return Ok(next),
+                Err(CompareAndSwapError { current: cur, .. }) => {
+                    current = cur;
+                }
+            }
+        }
+    }
+
+    /// Fetch the value, apply a function to it and return the previous value.
+    ///
+    /// # Note
+    ///
+    /// This may call the function multiple times if the value has been
+    /// changed from other threads in the meantime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use sled::{Config, Error, InlineArray};
+    /// use std::convert::TryInto;
+    ///
+    /// let config = Config::new().temporary(true);
+    /// let db = config.open()?;
+    ///
+    /// fn u64_to_ivec(number: u64) -> InlineArray {
+    ///     InlineArray::from(number.to_be_bytes().to_vec())
+    /// }
+    ///
+    /// let zero = u64_to_ivec(0);
+    /// let one = u64_to_ivec(1);
+    /// let two = u64_to_ivec(2);
+    ///
+    /// fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
+    ///     let number = match old {
+    ///         Some(bytes) => {
+    ///             let array: [u8; 8] = bytes.try_into().unwrap();
+    ///             let number = u64::from_be_bytes(array);
+    ///             number + 1
+    ///         }
+    ///         None => 0,
+    ///     };
+    ///
+    ///     Some(number.to_be_bytes().to_vec())
+    /// }
+    ///
+    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(None));
+    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(Some(zero)));
+    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(Some(one)));
+    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(Some(two)));
+    /// # Ok(()) }
+    /// ```
+    pub fn fetch_and_update<K, V, F>(
+        &self,
+        key: K,
+        mut f: F,
+    ) -> io::Result<Option<InlineArray>>
+    where
+        K: AsRef<[u8]>,
+        F: FnMut(Option<&[u8]>) -> Option<V>,
+        V: Into<InlineArray>,
+    {
+        let key_ref = key.as_ref();
+        let mut current = self.get(key_ref)?;
+
+        loop {
+            let tmp = current.as_ref().map(AsRef::as_ref);
+            let next = f(tmp);
+            match self.compare_and_swap(key_ref, tmp, next)? {
+                Ok(_) => return Ok(current),
+                Err(CompareAndSwapError { current: cur, .. }) => {
+                    current = cur;
+                }
+            }
+        }
     }
 
     #[doc(hidden)]
@@ -1090,6 +1299,363 @@ impl<
 
         Ok(())
     }
+
+    /// Returns `true` if the `Tree` contains a value for
+    /// the specified key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[0], vec![0])?;
+    /// assert!(db.contains_key(&[0])?);
+    /// assert!(!db.contains_key(&[1])?);
+    /// # Ok(()) }
+    /// ```
+    pub fn contains_key<K: AsRef<[u8]>>(&self, key: K) -> io::Result<bool> {
+        self.get(key).map(|v| v.is_some())
+    }
+
+    /// Retrieve the key and value before the provided key,
+    /// if one exists.
+    ///
+    /// # Note
+    /// The order follows the Ord implementation for `Vec<u8>`:
+    ///
+    /// `[] < [0] < [255] < [255, 0] < [255, 255] ...`
+    ///
+    /// To retain the ordering of numerical types use big endian reprensentation
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use sled::InlineArray;
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// for i in 0..10 {
+    ///     db.insert(&[i], vec![i])
+    ///         .expect("should write successfully");
+    /// }
+    ///
+    /// assert_eq!(db.get_lt(&[]), Ok(None));
+    /// assert_eq!(db.get_lt(&[0]), Ok(None));
+    /// assert_eq!(
+    ///     db.get_lt(&[1]),
+    ///     Ok(Some((InlineArray::from(&[0]), InlineArray::from(&[0]))))
+    /// );
+    /// assert_eq!(
+    ///     db.get_lt(&[9]),
+    ///     Ok(Some((InlineArray::from(&[8]), InlineArray::from(&[8]))))
+    /// );
+    /// assert_eq!(
+    ///     db.get_lt(&[10]),
+    ///     Ok(Some((InlineArray::from(&[9]), InlineArray::from(&[9]))))
+    /// );
+    /// assert_eq!(
+    ///     db.get_lt(&[255]),
+    ///     Ok(Some((InlineArray::from(&[9]), InlineArray::from(&[9]))))
+    /// );
+    /// # Ok(()) }
+    /// ```
+    pub fn get_lt<K>(
+        &self,
+        key: K,
+    ) -> io::Result<Option<(InlineArray, InlineArray)>>
+    where
+        K: AsRef<[u8]>,
+    {
+        #[cfg(feature = "metrics")]
+        let _measure = Measure::new(&M.tree_get);
+        self.range(..key).next_back().transpose()
+    }
+
+    /// Retrieve the next key and value from the `Tree` after the
+    /// provided key.
+    ///
+    /// # Note
+    /// The order follows the Ord implementation for `Vec<u8>`:
+    ///
+    /// `[] < [0] < [255] < [255, 0] < [255, 255] ...`
+    ///
+    /// To retain the ordering of numerical types use big endian reprensentation
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use sled::InlineArray;
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// for i in 0..10 {
+    ///     db.insert(&[i], vec![i])?;
+    /// }
+    ///
+    /// assert_eq!(
+    ///     db.get_gt(&[]),
+    ///     Ok(Some((InlineArray::from(&[0]), InlineArray::from(&[0]))))
+    /// );
+    /// assert_eq!(
+    ///     db.get_gt(&[0]),
+    ///     Ok(Some((InlineArray::from(&[1]), InlineArray::from(&[1]))))
+    /// );
+    /// assert_eq!(
+    ///     db.get_gt(&[1]),
+    ///     Ok(Some((InlineArray::from(&[2]), InlineArray::from(&[2]))))
+    /// );
+    /// assert_eq!(
+    ///     db.get_gt(&[8]),
+    ///     Ok(Some((InlineArray::from(&[9]), InlineArray::from(&[9]))))
+    /// );
+    /// assert_eq!(db.get_gt(&[9]), Ok(None));
+    ///
+    /// db.insert(500u16.to_be_bytes(), vec![10]);
+    /// assert_eq!(
+    ///     db.get_gt(&499u16.to_be_bytes()),
+    ///     Ok(Some((InlineArray::from(&500u16.to_be_bytes()), InlineArray::from(&[10]))))
+    /// );
+    /// # Ok(()) }
+    /// ```
+    pub fn get_gt<K>(
+        &self,
+        key: K,
+    ) -> io::Result<Option<(InlineArray, InlineArray)>>
+    where
+        K: AsRef<[u8]>,
+    {
+        #[cfg(feature = "metrics")]
+        let _measure = Measure::new(&M.tree_get);
+        self.range((ops::Bound::Excluded(key), ops::Bound::Unbounded))
+            .next()
+            .transpose()
+    }
+
+    /// Create an iterator over tuples of keys and values
+    /// where all keys start with the given prefix.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// use sled::InlineArray;
+    /// db.insert(&[0, 0, 0], vec![0, 0, 0])?;
+    /// db.insert(&[0, 0, 1], vec![0, 0, 1])?;
+    /// db.insert(&[0, 0, 2], vec![0, 0, 2])?;
+    /// db.insert(&[0, 0, 3], vec![0, 0, 3])?;
+    /// db.insert(&[0, 1, 0], vec![0, 1, 0])?;
+    /// db.insert(&[0, 1, 1], vec![0, 1, 1])?;
+    ///
+    /// let prefix: &[u8] = &[0, 0];
+    /// let mut r = db.scan_prefix(prefix);
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((InlineArray::from(&[0, 0, 0]), InlineArray::from(&[0, 0, 0]))))
+    /// );
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((InlineArray::from(&[0, 0, 1]), InlineArray::from(&[0, 0, 1]))))
+    /// );
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((InlineArray::from(&[0, 0, 2]), InlineArray::from(&[0, 0, 2]))))
+    /// );
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((InlineArray::from(&[0, 0, 3]), InlineArray::from(&[0, 0, 3]))))
+    /// );
+    /// assert_eq!(r.next(), None);
+    /// # Ok(()) }
+    /// ```
+    pub fn scan_prefix<'a, P>(
+        &'a self,
+        prefix: P,
+    ) -> Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
+    where
+        P: AsRef<[u8]>,
+    {
+        let prefix_ref = prefix.as_ref();
+        let mut upper = prefix_ref.to_vec();
+
+        while let Some(last) = upper.pop() {
+            if last < u8::max_value() {
+                upper.push(last + 1);
+                return self.range(prefix_ref..&upper);
+            }
+        }
+
+        self.range(prefix..)
+    }
+
+    /// Returns the first key and value in the `Tree`, or
+    /// `None` if the `Tree` is empty.
+    pub fn first(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
+        self.iter().next().transpose()
+    }
+
+    /// Returns the last key and value in the `Tree`, or
+    /// `None` if the `Tree` is empty.
+    pub fn last(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
+        self.iter().next_back().transpose()
+    }
+
+    /// Atomically removes the maximum item in the `Tree` instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[0], vec![0])?;
+    /// db.insert(&[1], vec![10])?;
+    /// db.insert(&[2], vec![20])?;
+    /// db.insert(&[3], vec![30])?;
+    /// db.insert(&[4], vec![40])?;
+    /// db.insert(&[5], vec![50])?;
+    ///
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[5]);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[4]);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[3]);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[2]);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[1]);
+    /// assert_eq!(&db.pop_max()?.unwrap().0, &[0]);
+    /// assert_eq!(db.pop_max()?, None);
+    /// # Ok(()) }
+    /// ```
+    pub fn pop_max(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
+        loop {
+            if let Some(first_res) = self.iter().next_back() {
+                let first = first_res?;
+                if self
+                    .compare_and_swap::<_, _, &[u8]>(
+                        &first.0,
+                        Some(&first.1),
+                        None,
+                    )?
+                    .is_ok()
+                {
+                    log::trace!("pop_max removed item {:?}", first);
+                    return Ok(Some(first));
+                }
+            // try again
+            } else {
+                log::trace!("pop_max removed nothing from empty tree");
+                return Ok(None);
+            }
+        }
+    }
+
+    /// Atomically removes the minimum item in the `Tree` instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(&[0], vec![0])?;
+    /// db.insert(&[1], vec![10])?;
+    /// db.insert(&[2], vec![20])?;
+    /// db.insert(&[3], vec![30])?;
+    /// db.insert(&[4], vec![40])?;
+    /// db.insert(&[5], vec![50])?;
+    ///
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[0]);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[1]);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[2]);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[3]);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[4]);
+    /// assert_eq!(&db.pop_min()?.unwrap().0, &[5]);
+    /// assert_eq!(db.pop_min()?, None);
+    /// # Ok(()) }
+    /// ```
+    pub fn pop_min(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
+        loop {
+            if let Some(first_res) = self.iter().next() {
+                let first = first_res?;
+                if self
+                    .compare_and_swap::<_, _, &[u8]>(
+                        &first.0,
+                        Some(&first.1),
+                        None,
+                    )?
+                    .is_ok()
+                {
+                    log::trace!("pop_min removed item {:?}", first);
+                    return Ok(Some(first));
+                }
+            // try again
+            } else {
+                log::trace!("pop_min removed nothing from empty tree");
+                return Ok(None);
+            }
+        }
+    }
+
+    /// Returns the number of elements in this tree.
+    ///
+    /// Beware: performs a full O(n) scan under the hood.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db = config.open()?;
+    /// db.insert(b"a", vec![0]);
+    /// db.insert(b"b", vec![1]);
+    /// assert_eq!(db.len(), 2);
+    /// # Ok(()) }
+    /// ```
+    pub fn len(&self) -> usize {
+        self.iter().count()
+    }
+
+    /// Returns `true` if the `Tree` contains no elements.
+    ///
+    /// This is O(1), as we only need to see if an iterator
+    /// returns anything for the first call to `next()`.
+    pub fn is_empty(&self) -> io::Result<bool> {
+        if let Some(res) = self.iter().next() {
+            res?;
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    }
+
+    /// Clears the `Tree`, removing all values.
+    ///
+    /// Note that this is not atomic.
+    ///
+    /// Beware: performs a full O(n) scan under the hood.
+    pub fn clear(&self) -> io::Result<()> {
+        for k in self.iter().keys() {
+            let key = k?;
+            let _old = self.remove(key)?;
+        }
+        Ok(())
+    }
+
+    /// Returns the CRC32 of all keys and values
+    /// in this Tree.
+    ///
+    /// This is O(N) and locks the underlying tree
+    /// for the duration of the entire scan.
+    pub fn checksum(&self) -> io::Result<u32> {
+        let mut hasher = crc32fast::Hasher::new();
+        let mut iter = self.iter();
+        while let Some(kv_res) = iter.next() {
+            let (k, v) = kv_res?;
+            hasher.update(&k);
+            hasher.update(&v);
+        }
+        Ok(hasher.finalize())
+    }
 }
 
 #[allow(unused)]
@@ -1130,6 +1696,26 @@ impl<
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         todo!()
+    }
+}
+
+impl<
+        'a,
+        const INDEX_FANOUT: usize,
+        const LEAF_FANOUT: usize,
+        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
+    > Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
+{
+    pub fn keys(
+        self,
+    ) -> impl 'a + DoubleEndedIterator<Item = io::Result<InlineArray>> {
+        self.into_iter().map(|kv_res| kv_res.map(|(k, _v)| k))
+    }
+
+    pub fn values(
+        self,
+    ) -> impl 'a + DoubleEndedIterator<Item = io::Result<InlineArray>> {
+        self.into_iter().map(|kv_res| kv_res.map(|(_k, v)| v))
     }
 }
 
@@ -1189,4 +1775,46 @@ impl Batch {
         let inner = self.writes.get(k.as_ref())?;
         Some(inner.as_ref())
     }
+}
+
+fn initialize<
+    const INDEX_FANOUT: usize,
+    const LEAF_FANOUT: usize,
+    const EBR_LOCAL_GC_BUFFER_SIZE: usize,
+>(
+    index_data: &[(u64, InlineArray)],
+    first_id_opt: Option<u64>,
+) -> ConcurrentMap<
+    InlineArray,
+    Node<LEAF_FANOUT>,
+    INDEX_FANOUT,
+    EBR_LOCAL_GC_BUFFER_SIZE,
+> {
+    if index_data.is_empty() {
+        let first_id = first_id_opt.unwrap();
+        let first_leaf = Leaf {
+            hi: None,
+            lo: InlineArray::default(),
+            // this does not need to be marked as dirty until it actually
+            // receives inserted data
+            dirty_flush_epoch: None,
+            prefix_length: 0,
+            data: StackMap::new(),
+            in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
+        };
+        let first_node = Node {
+            id: NodeId(first_id),
+            inner: Arc::new(Some(Box::new(first_leaf)).into()),
+        };
+        return [(InlineArray::default(), first_node)].into_iter().collect();
+    }
+
+    let ret = ConcurrentMap::default();
+
+    for (id, low_key) in index_data {
+        let node = Node { id: NodeId(*id), inner: Arc::new(None.into()) };
+        ret.insert(low_key.clone(), node);
+    }
+
+    ret
 }
