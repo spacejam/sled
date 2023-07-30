@@ -250,7 +250,7 @@ fn concurrent_tree_pops() -> std::io::Result<()> {
         let db: Db<64, 1024, 128> = db.clone();
         threads.push(thread::spawn(move || {
             barrier.wait();
-            db.pop_min().unwrap().unwrap();
+            db.pop_first().unwrap().unwrap();
         }));
     }
 

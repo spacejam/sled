@@ -354,6 +354,7 @@ impl<
         const EBR_LOCAL_GC_BUFFER_SIZE: usize,
     > Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
 {
+    // This is only pub for an extra assertion during testing.
     #[doc(hidden)]
     pub fn check_error(&self) -> io::Result<()> {
         let err_ptr: *const (io::ErrorKind, String) =
@@ -506,10 +507,10 @@ impl<
         };
 
         if let Some(flush_every_ms) = ret.config.flush_every_ms {
-            let bloodstone = ret.clone();
+            let db = ret.clone();
             let (tx, rx) = mpsc::channel();
             ret.shutdown_sender = Some(tx);
-            std::thread::spawn(move || flusher(bloodstone, rx, flush_every_ms));
+            std::thread::spawn(move || flusher(db, rx, flush_every_ms));
         }
         Ok(ret)
     }
@@ -644,10 +645,10 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(&[0], vec![0])?;
-    /// assert_eq!(db.get(&[0]), Ok(Some(sled::InlineArray::from(vec![0]))));
-    /// assert_eq!(db.get(&[1]), Ok(None));
+    /// assert_eq!(db.get(&[0]).unwrap(), Some(sled::InlineArray::from(vec![0])));
+    /// assert!(db.get(&[1]).unwrap().is_none());
     /// # Ok(()) }
     /// ```
     pub fn get<K: AsRef<[u8]>>(
@@ -674,9 +675,9 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
-    /// assert_eq!(db.insert(&[1, 2, 3], vec![0]), Ok(None));
-    /// assert_eq!(db.insert(&[1, 2, 3], vec![1]), Ok(Some(sled::InlineArray::from(&[0]))));
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// assert_eq!(db.insert(&[1, 2, 3], vec![0]).unwrap(), None);
+    /// assert_eq!(db.insert(&[1, 2, 3], vec![1]).unwrap(), Some(sled::InlineArray::from(&[0])));
     /// # Ok(()) }
     /// ```
     #[doc(alias = "set")]
@@ -735,10 +736,10 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(&[1], vec![1]);
-    /// assert_eq!(db.remove(&[1]), Ok(Some(sled::InlineArray::from(vec![1]))));
-    /// assert_eq!(db.remove(&[1]), Ok(None));
+    /// assert_eq!(db.remove(&[1]).unwrap(), Some(sled::InlineArray::from(vec![1])));
+    /// assert!(db.remove(&[1]).unwrap().is_none());
     /// # Ok(()) }
     /// ```
     #[doc(alias = "delete")]
@@ -878,17 +879,15 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// // unique creation
-    /// assert_eq!(
-    ///     db.compare_and_swap(&[1], None as Option<&[u8]>, Some(&[10])),
-    ///     Ok(Ok(()))
+    /// assert!(
+    ///     db.compare_and_swap(&[1], None as Option<&[u8]>, Some(&[10])).unwrap().is_ok(),
     /// );
     ///
     /// // conditional modification
-    /// assert_eq!(
-    ///     db.compare_and_swap(&[1], Some(&[10]), Some(&[20])),
-    ///     Ok(Ok(()))
+    /// assert!(
+    ///     db.compare_and_swap(&[1], Some(&[10]), Some(&[20])).unwrap().is_ok(),
     /// );
     ///
     /// // failed conditional modification -- the current value is returned in
@@ -901,11 +900,10 @@ impl<
     /// assert_eq!(actual_value.current.map(|ivec| ivec.to_vec()), Some(vec![20]));
     ///
     /// // conditional deletion
-    /// assert_eq!(
-    ///     db.compare_and_swap(&[1], Some(&[20]), None as Option<&[u8]>),
-    ///     Ok(Ok(()))
+    /// assert!(
+    ///     db.compare_and_swap(&[1], Some(&[20]), None as Option<&[u8]>).unwrap().is_ok(),
     /// );
-    /// assert_eq!(db.get(&[1]), Ok(None));
+    /// assert!(db.get(&[1]).unwrap().is_none());
     /// # Ok(()) }
     /// ```
     #[doc(alias = "cas")]
@@ -987,11 +985,10 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, Error, InlineArray};
-    /// use std::convert::TryInto;
+    /// use sled::{Config, InlineArray};
     ///
     /// let config = Config::new().temporary(true);
-    /// let db = config.open()?;
+    /// let db: sled::Db<64, 1024, 128> = config.open()?;
     ///
     /// fn u64_to_ivec(number: u64) -> InlineArray {
     ///     InlineArray::from(number.to_be_bytes().to_vec())
@@ -1015,10 +1012,10 @@ impl<
     ///     Some(number.to_be_bytes().to_vec())
     /// }
     ///
-    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(zero)));
-    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(one)));
-    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(two)));
-    /// assert_eq!(db.update_and_fetch("counter", increment), Ok(Some(three)));
+    /// assert_eq!(db.update_and_fetch("counter", increment).unwrap(), Some(zero));
+    /// assert_eq!(db.update_and_fetch("counter", increment).unwrap(), Some(one));
+    /// assert_eq!(db.update_and_fetch("counter", increment).unwrap(), Some(two));
+    /// assert_eq!(db.update_and_fetch("counter", increment).unwrap(), Some(three));
     /// # Ok(()) }
     /// ```
     pub fn update_and_fetch<K, V, F>(
@@ -1061,11 +1058,10 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use sled::{Config, Error, InlineArray};
-    /// use std::convert::TryInto;
+    /// use sled::{Config, InlineArray};
     ///
     /// let config = Config::new().temporary(true);
-    /// let db = config.open()?;
+    /// let db: sled::Db<64, 1024, 128> = config.open()?;
     ///
     /// fn u64_to_ivec(number: u64) -> InlineArray {
     ///     InlineArray::from(number.to_be_bytes().to_vec())
@@ -1088,10 +1084,10 @@ impl<
     ///     Some(number.to_be_bytes().to_vec())
     /// }
     ///
-    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(None));
-    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(Some(zero)));
-    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(Some(one)));
-    /// assert_eq!(db.fetch_and_update("counter", increment), Ok(Some(two)));
+    /// assert_eq!(db.fetch_and_update("counter", increment).unwrap(), None);
+    /// assert_eq!(db.fetch_and_update("counter", increment).unwrap(), Some(zero));
+    /// assert_eq!(db.fetch_and_update("counter", increment).unwrap(), Some(one));
+    /// assert_eq!(db.fetch_and_update("counter", increment).unwrap(), Some(two));
     /// # Ok(()) }
     /// ```
     pub fn fetch_and_update<K, V, F>(
@@ -1119,7 +1115,6 @@ impl<
         }
     }
 
-    #[doc(hidden)]
     pub fn iter(
         &self,
     ) -> Iter<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE> {
@@ -1131,7 +1126,6 @@ impl<
         }
     }
 
-    #[doc(hidden)]
     pub fn range<K, R>(
         &self,
         range: R,
@@ -1162,10 +1156,10 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let _ = std::fs::remove_dir_all("batch_doctest");
-    /// # let db = bloodstone::open_default("batch_doctest")?;
+    /// # let db: sled::Db<64, 1024, 128> = sled::open_default("batch_doctest")?;
     /// db.insert("key_0", "val_0")?;
     ///
-    /// let mut batch = bloodstone::Batch::default();
+    /// let mut batch = sled::Batch::default();
     /// batch.insert("key_a", "val_a");
     /// batch.insert("key_b", "val_b");
     /// batch.insert("key_c", "val_c");
@@ -1308,7 +1302,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// assert!(db.contains_key(&[0])?);
     /// assert!(!db.contains_key(&[1])?);
@@ -1334,29 +1328,29 @@ impl<
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::InlineArray;
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// for i in 0..10 {
     ///     db.insert(&[i], vec![i])
     ///         .expect("should write successfully");
     /// }
     ///
-    /// assert_eq!(db.get_lt(&[]), Ok(None));
-    /// assert_eq!(db.get_lt(&[0]), Ok(None));
+    /// assert!(db.get_lt(&[]).unwrap().is_none());
+    /// assert!(db.get_lt(&[0]).unwrap().is_none());
     /// assert_eq!(
-    ///     db.get_lt(&[1]),
-    ///     Ok(Some((InlineArray::from(&[0]), InlineArray::from(&[0]))))
+    ///     db.get_lt(&[1]).unwrap(),
+    ///     Some((InlineArray::from(&[0]), InlineArray::from(&[0])))
     /// );
     /// assert_eq!(
-    ///     db.get_lt(&[9]),
-    ///     Ok(Some((InlineArray::from(&[8]), InlineArray::from(&[8]))))
+    ///     db.get_lt(&[9]).unwrap(),
+    ///     Some((InlineArray::from(&[8]), InlineArray::from(&[8])))
     /// );
     /// assert_eq!(
-    ///     db.get_lt(&[10]),
-    ///     Ok(Some((InlineArray::from(&[9]), InlineArray::from(&[9]))))
+    ///     db.get_lt(&[10]).unwrap(),
+    ///     Some((InlineArray::from(&[9]), InlineArray::from(&[9])))
     /// );
     /// assert_eq!(
-    ///     db.get_lt(&[255]),
-    ///     Ok(Some((InlineArray::from(&[9]), InlineArray::from(&[9]))))
+    ///     db.get_lt(&[255]).unwrap(),
+    ///     Some((InlineArray::from(&[9]), InlineArray::from(&[9])))
     /// );
     /// # Ok(()) }
     /// ```
@@ -1388,33 +1382,33 @@ impl<
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::InlineArray;
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// for i in 0..10 {
     ///     db.insert(&[i], vec![i])?;
     /// }
     ///
     /// assert_eq!(
-    ///     db.get_gt(&[]),
-    ///     Ok(Some((InlineArray::from(&[0]), InlineArray::from(&[0]))))
+    ///     db.get_gt(&[]).unwrap(),
+    ///     Some((InlineArray::from(&[0]), InlineArray::from(&[0])))
     /// );
     /// assert_eq!(
-    ///     db.get_gt(&[0]),
-    ///     Ok(Some((InlineArray::from(&[1]), InlineArray::from(&[1]))))
+    ///     db.get_gt(&[0]).unwrap(),
+    ///     Some((InlineArray::from(&[1]), InlineArray::from(&[1])))
     /// );
     /// assert_eq!(
-    ///     db.get_gt(&[1]),
-    ///     Ok(Some((InlineArray::from(&[2]), InlineArray::from(&[2]))))
+    ///     db.get_gt(&[1]).unwrap(),
+    ///     Some((InlineArray::from(&[2]), InlineArray::from(&[2])))
     /// );
     /// assert_eq!(
-    ///     db.get_gt(&[8]),
-    ///     Ok(Some((InlineArray::from(&[9]), InlineArray::from(&[9]))))
+    ///     db.get_gt(&[8]).unwrap(),
+    ///     Some((InlineArray::from(&[9]), InlineArray::from(&[9])))
     /// );
-    /// assert_eq!(db.get_gt(&[9]), Ok(None));
+    /// assert!(db.get_gt(&[9]).unwrap().is_none());
     ///
     /// db.insert(500u16.to_be_bytes(), vec![10]);
     /// assert_eq!(
-    ///     db.get_gt(&499u16.to_be_bytes()),
-    ///     Ok(Some((InlineArray::from(&500u16.to_be_bytes()), InlineArray::from(&[10]))))
+    ///     db.get_gt(&499u16.to_be_bytes()).unwrap(),
+    ///     Some((InlineArray::from(&500u16.to_be_bytes()), InlineArray::from(&[10])))
     /// );
     /// # Ok(()) }
     /// ```
@@ -1440,7 +1434,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// use sled::InlineArray;
     /// db.insert(&[0, 0, 0], vec![0, 0, 0])?;
     /// db.insert(&[0, 0, 1], vec![0, 0, 1])?;
@@ -1452,22 +1446,22 @@ impl<
     /// let prefix: &[u8] = &[0, 0];
     /// let mut r = db.scan_prefix(prefix);
     /// assert_eq!(
-    ///     r.next(),
-    ///     Some(Ok((InlineArray::from(&[0, 0, 0]), InlineArray::from(&[0, 0, 0]))))
+    ///     r.next().unwrap().unwrap(),
+    ///     (InlineArray::from(&[0, 0, 0]), InlineArray::from(&[0, 0, 0]))
     /// );
     /// assert_eq!(
-    ///     r.next(),
-    ///     Some(Ok((InlineArray::from(&[0, 0, 1]), InlineArray::from(&[0, 0, 1]))))
+    ///     r.next().unwrap().unwrap(),
+    ///     (InlineArray::from(&[0, 0, 1]), InlineArray::from(&[0, 0, 1]))
     /// );
     /// assert_eq!(
-    ///     r.next(),
-    ///     Some(Ok((InlineArray::from(&[0, 0, 2]), InlineArray::from(&[0, 0, 2]))))
+    ///     r.next().unwrap().unwrap(),
+    ///     (InlineArray::from(&[0, 0, 2]), InlineArray::from(&[0, 0, 2]))
     /// );
     /// assert_eq!(
-    ///     r.next(),
-    ///     Some(Ok((InlineArray::from(&[0, 0, 3]), InlineArray::from(&[0, 0, 3]))))
+    ///     r.next().unwrap().unwrap(),
+    ///     (InlineArray::from(&[0, 0, 3]), InlineArray::from(&[0, 0, 3]))
     /// );
-    /// assert_eq!(r.next(), None);
+    /// assert!(r.next().is_none());
     /// # Ok(()) }
     /// ```
     pub fn scan_prefix<'a, P>(
@@ -1509,7 +1503,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// db.insert(&[1], vec![10])?;
     /// db.insert(&[2], vec![20])?;
@@ -1517,16 +1511,16 @@ impl<
     /// db.insert(&[4], vec![40])?;
     /// db.insert(&[5], vec![50])?;
     ///
-    /// assert_eq!(&db.pop_max()?.unwrap().0, &[5]);
-    /// assert_eq!(&db.pop_max()?.unwrap().0, &[4]);
-    /// assert_eq!(&db.pop_max()?.unwrap().0, &[3]);
-    /// assert_eq!(&db.pop_max()?.unwrap().0, &[2]);
-    /// assert_eq!(&db.pop_max()?.unwrap().0, &[1]);
-    /// assert_eq!(&db.pop_max()?.unwrap().0, &[0]);
-    /// assert_eq!(db.pop_max()?, None);
+    /// assert_eq!(&db.pop_last()?.unwrap().0, &[5]);
+    /// assert_eq!(&db.pop_last()?.unwrap().0, &[4]);
+    /// assert_eq!(&db.pop_last()?.unwrap().0, &[3]);
+    /// assert_eq!(&db.pop_last()?.unwrap().0, &[2]);
+    /// assert_eq!(&db.pop_last()?.unwrap().0, &[1]);
+    /// assert_eq!(&db.pop_last()?.unwrap().0, &[0]);
+    /// assert_eq!(db.pop_last()?, None);
     /// # Ok(()) }
     /// ```
-    pub fn pop_max(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
+    pub fn pop_last(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
         loop {
             if let Some(first_res) = self.iter().next_back() {
                 let first = first_res?;
@@ -1538,13 +1532,80 @@ impl<
                     )?
                     .is_ok()
                 {
-                    log::trace!("pop_max removed item {:?}", first);
+                    log::trace!("pop_last removed item {:?}", first);
                     return Ok(Some(first));
                 }
             // try again
             } else {
-                log::trace!("pop_max removed nothing from empty tree");
+                log::trace!("pop_last removed nothing from empty tree");
                 return Ok(None);
+            }
+        }
+    }
+
+    /// Pops the last kv pair in the provided range, or returns `Ok(None)` if nothing
+    /// exists within that range.
+    ///
+    /// # Panics
+    ///
+    /// This will panic if the provided range's end_bound() == Bound::Excluded(K::MIN).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    ///
+    /// let data = vec![
+    ///     (b"key 1", b"value 1"),
+    ///     (b"key 2", b"value 2"),
+    ///     (b"key 3", b"value 3")
+    /// ];
+    ///
+    /// for (k, v) in data {
+    ///     db.insert(k, v).unwrap();
+    /// }
+    ///
+    /// let r1 = db.pop_last_in_range(b"key 1".as_ref()..=b"key 3").unwrap();
+    /// assert_eq!(Some((b"key 3".into(), b"value 3".into())), r1);
+    ///
+    /// let r2 = db.pop_last_in_range(b"key 1".as_ref()..b"key 3").unwrap();
+    /// assert_eq!(Some((b"key 2".into(), b"value 2".into())), r2);
+    ///
+    /// let r3 = db.pop_last_in_range(b"key 4".as_ref()..).unwrap();
+    /// assert!(r3.is_none());
+    ///
+    /// let r4 = db.pop_last_in_range(b"key 2".as_ref()..=b"key 3").unwrap();
+    /// assert!(r4.is_none());
+    ///
+    /// let r5 = db.pop_last_in_range(b"key 0".as_ref()..=b"key 3").unwrap();
+    /// assert_eq!(Some((b"key 1".into(), b"value 1".into())), r5);
+    ///
+    /// let r6 = db.pop_last_in_range(b"key 0".as_ref()..=b"key 3").unwrap();
+    /// assert!(r6.is_none());
+    /// # Ok (()) }
+    /// ```
+    pub fn pop_last_in_range<K, R>(
+        &self,
+        range: R,
+    ) -> io::Result<Option<(InlineArray, InlineArray)>>
+    where
+        K: AsRef<[u8]>,
+        R: Clone + RangeBounds<K>,
+    {
+        loop {
+            let mut r = self.range(range.clone());
+            let (k, v) = if let Some(kv_res) = r.next() {
+                kv_res?
+            } else {
+                return Ok(None);
+            };
+            if self
+                .compare_and_swap(&k, Some(&v), None as Option<InlineArray>)?
+                .is_ok()
+            {
+                return Ok(Some((k, v)));
             }
         }
     }
@@ -1556,7 +1617,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// db.insert(&[1], vec![10])?;
     /// db.insert(&[2], vec![20])?;
@@ -1564,16 +1625,16 @@ impl<
     /// db.insert(&[4], vec![40])?;
     /// db.insert(&[5], vec![50])?;
     ///
-    /// assert_eq!(&db.pop_min()?.unwrap().0, &[0]);
-    /// assert_eq!(&db.pop_min()?.unwrap().0, &[1]);
-    /// assert_eq!(&db.pop_min()?.unwrap().0, &[2]);
-    /// assert_eq!(&db.pop_min()?.unwrap().0, &[3]);
-    /// assert_eq!(&db.pop_min()?.unwrap().0, &[4]);
-    /// assert_eq!(&db.pop_min()?.unwrap().0, &[5]);
-    /// assert_eq!(db.pop_min()?, None);
+    /// assert_eq!(&db.pop_first()?.unwrap().0, &[0]);
+    /// assert_eq!(&db.pop_first()?.unwrap().0, &[1]);
+    /// assert_eq!(&db.pop_first()?.unwrap().0, &[2]);
+    /// assert_eq!(&db.pop_first()?.unwrap().0, &[3]);
+    /// assert_eq!(&db.pop_first()?.unwrap().0, &[4]);
+    /// assert_eq!(&db.pop_first()?.unwrap().0, &[5]);
+    /// assert_eq!(db.pop_first()?, None);
     /// # Ok(()) }
     /// ```
-    pub fn pop_min(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
+    pub fn pop_first(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
         loop {
             if let Some(first_res) = self.iter().next() {
                 let first = first_res?;
@@ -1585,13 +1646,75 @@ impl<
                     )?
                     .is_ok()
                 {
-                    log::trace!("pop_min removed item {:?}", first);
+                    log::trace!("pop_first removed item {:?}", first);
                     return Ok(Some(first));
                 }
             // try again
             } else {
-                log::trace!("pop_min removed nothing from empty tree");
+                log::trace!("pop_first removed nothing from empty tree");
                 return Ok(None);
+            }
+        }
+    }
+
+    /// Pops the first kv pair in the provided range, or returns `Ok(None)` if nothing
+    /// exists within that range.
+    ///
+    /// # Panics
+    ///
+    /// This will panic if the provided range's end_bound() == Bound::Excluded(K::MIN).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = sled::Config::new().temporary(true);
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    ///
+    /// let data = vec![
+    ///     (b"key 1", b"value 1"),
+    ///     (b"key 2", b"value 2"),
+    ///     (b"key 3", b"value 3")
+    /// ];
+    ///
+    /// for (k, v) in data {
+    ///     db.insert(k, v).unwrap();
+    /// }
+    ///
+    /// let r1 = db.pop_first_in_range("key 1".as_ref()..="key 3").unwrap();
+    /// assert_eq!(Some((b"key 1".into(), b"value 1".into())), r1);
+    ///
+    /// let r2 = db.pop_first_in_range("key 1".as_ref().."key 3").unwrap();
+    /// assert_eq!(Some((b"key 2".into(), b"value 2".into())), r2);
+    ///
+    /// let r3_res: std::io::Result<Vec<_>> = db.range(b"key 4".as_ref()..).collect();
+    /// let r3: Vec<_> = r3_res.unwrap();
+    /// assert!(r3.is_empty());
+    ///
+    /// let r4 = db.pop_first_in_range("key 2".as_ref()..="key 3").unwrap();
+    /// assert_eq!(Some((b"key 3".into(), b"value 3".into())), r4);
+    /// # Ok (()) }
+    /// ```
+    pub fn pop_first_in_range<K, R>(
+        &self,
+        range: R,
+    ) -> io::Result<Option<(InlineArray, InlineArray)>>
+    where
+        K: AsRef<[u8]>,
+        R: Clone + RangeBounds<K>,
+    {
+        loop {
+            let mut r = self.range(range.clone());
+            let (k, v) = if let Some(kv_res) = r.next() {
+                kv_res?
+            } else {
+                return Ok(None);
+            };
+            if self
+                .compare_and_swap(&k, Some(&v), None as Option<InlineArray>)?
+                .is_ok()
+            {
+                return Ok(Some((k, v)));
             }
         }
     }
@@ -1605,7 +1728,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::new().temporary(true);
-    /// # let db = config.open()?;
+    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(b"a", vec![0]);
     /// db.insert(b"b", vec![1]);
     /// assert_eq!(db.len(), 2);
@@ -1730,7 +1853,7 @@ impl<
 /// use sled::{Batch, open};
 ///
 /// # let _ = std::fs::remove_dir_all("batch_db_2");
-/// let db = open("batch_db_2")?;
+/// let db: sled::Db<64, 1024, 128> = open("batch_db_2")?;
 /// db.insert("key_0", "val_0")?;
 ///
 /// let mut batch = Batch::default();
