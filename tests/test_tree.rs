@@ -829,7 +829,7 @@ fn tree_big_keys_iterator() {
     fn kv(i: usize) -> Vec<u8> {
         let k = [(i >> 16) as u8, (i >> 8) as u8, i as u8];
 
-        let mut base = vec![0; u8::max_value() as usize];
+        let mut base = vec![0; u8::MAX as usize];
         base.extend_from_slice(&k);
         base
     }

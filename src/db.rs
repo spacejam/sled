@@ -1483,7 +1483,7 @@ impl<
         let mut upper = prefix_ref.to_vec();
 
         while let Some(last) = upper.pop() {
-            if last < u8::max_value() {
+            if last < u8::MAX {
                 upper.push(last + 1);
                 return self.range(prefix_ref..&upper);
             }
