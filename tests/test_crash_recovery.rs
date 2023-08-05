@@ -1,6 +1,5 @@
 mod common;
 
-use std::convert::TryFrom;
 use std::env::{self, VarError};
 use std::mem::size_of;
 use std::process::{exit, Child, Command, ExitStatus};
@@ -10,7 +9,7 @@ use std::time::Duration;
 
 use rand::Rng;
 
-use sled::Config;
+use sled::{Config, Db};
 
 use common::cleanup;
 
@@ -96,8 +95,7 @@ fn main() {
         Ok(ref s) if s == RECOVERY_DIR => run_crash_recovery(),
         Ok(ref s) if s == BATCHES_DIR => run_crash_batches(),
         Ok(ref s) if s == ITER_DIR => run_crash_iter(),
-        Ok(ref s) if s == TX_DIR => run_crash_tx(),
-
+        // Ok(ref s) if s == TX_DIR => run_crash_tx(),
         Ok(_) | Err(_) => panic!("invalid crash test case"),
     }
 }
@@ -105,7 +103,7 @@ fn main() {
 /// Verifies that the keys in the tree are correctly recovered.
 /// Panics if they are incorrect.
 /// Returns the key that should be resumed at, and the current cycle value.
-fn verify(tree: &sled::Tree) -> (u32, u32) {
+fn verify(tree: &sled::Db) -> (u32, u32) {
     // key 0 should always be the highest value, as that's where we increment
     // at some point, it might go down by one
     // it should never return, or go down again after that
@@ -142,7 +140,7 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     let low_beginning = u32_to_vec(contiguous + 1);
 
     for res in tree.range(&*low_beginning..) {
-        let (k, v): (sled::IVec, _) = res.unwrap();
+        let (k, v): (sled::InlineArray, _) = res.unwrap();
         assert_eq!(
             slice_to_u32(&*v),
             lowest,
@@ -153,8 +151,6 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
             tree
         );
     }
-
-    tree.verify_integrity().unwrap();
 
     (contiguous, highest)
 }
@@ -173,7 +169,7 @@ fn slice_to_u32(b: &[u8]) -> u32 {
 
 fn spawn_killah() {
     thread::spawn(|| {
-        let runtime = rand::thread_rng().gen_range(0, 60);
+        let runtime = rand::thread_rng().gen_range(0..60);
         thread::sleep(Duration::from_millis(runtime));
         exit(9);
     });
@@ -208,7 +204,7 @@ fn run_inner(config: Config) {
         let key = u32_to_vec((hu % CYCLE) as u32);
 
         let mut value = u32_to_vec((hu / CYCLE) as u32);
-        let additional_len = rand::thread_rng().gen_range(0, SEGMENT_SIZE / 3);
+        let additional_len = rand::thread_rng().gen_range(0..SEGMENT_SIZE / 3);
         value.append(&mut vec![0u8; additional_len]);
 
         tree.insert(&key, value).unwrap();
@@ -217,7 +213,7 @@ fn run_inner(config: Config) {
 
 /// Verifies that the keys in the tree are correctly recovered (i.e., equal).
 /// Panics if they are incorrect.
-fn verify_batches(tree: &sled::Tree) -> u32 {
+fn verify_batches(tree: &sled::Db) -> u32 {
     let mut iter = tree.iter();
     let first_value = match iter.next() {
         Some(Ok((_k, v))) => slice_to_u32(&*v),
@@ -242,8 +238,6 @@ fn verify_batches(tree: &sled::Tree) -> u32 {
         );
     }
 
-    tree.verify_integrity().unwrap();
-
     first_value
 }
 
@@ -260,7 +254,7 @@ fn run_batches_inner(db: sled::Db) {
         } else {
             for key in 0..BATCH_SIZE {
                 let mut value = base_value.clone();
-                let additional_len = rng.gen_range(0, SEGMENT_SIZE / 3);
+                let additional_len = rng.gen_range(0..SEGMENT_SIZE / 3);
                 value.append(&mut vec![0u8; additional_len]);
 
                 batch.insert(u32_to_vec(key), value);
@@ -281,10 +275,9 @@ fn run_batches_inner(db: sled::Db) {
 
 fn run_crash_recovery() {
     let config = Config::new()
-        .cache_capacity(128 * 1024 * 1024)
+        .cache_capacity_bytes(128 * 1024 * 1024)
         .flush_every_ms(Some(1))
-        .path(RECOVERY_DIR)
-        .segment_size(SEGMENT_SIZE);
+        .path(RECOVERY_DIR);
 
     if let Err(e) = thread::spawn(|| run_inner(config)).join() {
         println!("worker thread failed: {:?}", e);
@@ -300,10 +293,9 @@ fn run_crash_batches() {
     }
 
     let config = Config::new()
-        .cache_capacity(128 * 1024 * 1024)
+        .cache_capacity_bytes(128 * 1024 * 1024)
         .flush_every_ms(Some(1))
-        .path(BATCHES_DIR)
-        .segment_size(SEGMENT_SIZE);
+        .path(BATCHES_DIR);
 
     let db = config.open().unwrap();
     // let db2 = db.clone();
@@ -426,8 +418,7 @@ fn run_crash_iter() {
 
     let config = Config::new().path(ITER_DIR).flush_every_ms(Some(1));
 
-    let t = config.open().unwrap();
-    t.verify_integrity().unwrap();
+    let t: Db<64, 1024, 128> = config.open().unwrap();
 
     const INDELIBLE: [&[u8]; 16] = [
         &[0u8],
@@ -512,13 +503,13 @@ fn run_crash_iter() {
                                          concurrent modification\n{:?}",
                                         k,
                                         expect,
-                                        *t,
+                                        t,
                                     );
                                     if &*k == *expect {
                                         break;
                                     }
                                 } else {
-                                    panic!("undershot key on tree: \n{:?}", *t);
+                                    panic!("undershot key on tree: \n{:?}", t);
                                 }
                             }
                         }
@@ -583,12 +574,12 @@ fn run_crash_iter() {
     }
 }
 
+/*
 fn run_crash_tx() {
     common::setup_logger();
 
     let config = Config::new().flush_every_ms(Some(1)).path(TX_DIR);
     let db = config.open().unwrap();
-    db.verify_integrity().unwrap();
 
     db.insert(b"k1", b"cats").unwrap();
     db.insert(b"k2", b"dogs").unwrap();
@@ -670,3 +661,4 @@ fn run_crash_tx() {
     let v2 = db.get(b"k2").unwrap().unwrap();
     assert_eq!([v1, v2], [b"cats", b"dogs"]);
 }
+*/

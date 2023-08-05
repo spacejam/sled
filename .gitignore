@@ -1,4 +1,5 @@
 default.sled
+timing_test*
 crash_*
 *db
 *conf

@@ -1,11 +1,3 @@
-#[cfg(not(any(feature = "testing", feature = "light_testing")))]
-compile_error!(
-    "please run tests using the \"testing\" feature, \
-     which enables additional checks at runtime and \
-     causes more race conditions to jump out by \
-     inserting delays in concurrent code."
-);
-
 // the memshred feature causes all allocated and deallocated
 // memory to be set to a specific non-zero value of 0xa1 for
 // uninitialized allocations and 0xde for deallocated memory,

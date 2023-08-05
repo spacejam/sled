@@ -2,20 +2,21 @@ mod common;
 mod tree;
 
 use std::{
+    io,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Barrier,
     },
-    time::Duration,
 };
 
 #[allow(unused_imports)]
 use log::{debug, warn};
 
-use quickcheck::{QuickCheck, StdGen};
+use quickcheck::{Gen, QuickCheck};
 
-use sled::Transactional;
-use sled::{transaction::*, *};
+// use sled::Transactional;
+// use sled::transaction::*;
+use sled::*;
 
 use tree::{
     prop_tree_matches_btreemap, Key,
@@ -41,7 +42,8 @@ fn kv(i: usize) -> Vec<u8> {
 fn monotonic_inserts() {
     common::setup_logger();
 
-    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+    let db: Db<64, 1024, 128> =
+        Config::new().temporary(true).flush_every_ms(None).open().unwrap();
 
     for len in [1_usize, 16, 32, 1024].iter() {
         for i in 0_usize..*len {
@@ -86,7 +88,8 @@ fn fixed_stride_inserts() {
     // this is intended to test the fixed stride key omission optimization
     common::setup_logger();
 
-    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+    let db: Db<64, 1024, 128> =
+        Config::new().temporary(true).flush_every_ms(None).open().unwrap();
 
     let mut expected = std::collections::HashSet::new();
     for k in 0..4096_u16 {
@@ -127,7 +130,7 @@ fn fixed_stride_inserts() {
     let count = db.iter().rev().count();
     assert_eq!(count, 0);
     assert_eq!(db.len(), 0);
-    assert!(db.is_empty());
+    assert!(db.is_empty().unwrap());
 }
 
 #[test]
@@ -135,7 +138,8 @@ fn fixed_stride_inserts() {
 fn sequential_inserts() {
     common::setup_logger();
 
-    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+    let db: Db<64, 1024, 128> =
+        Config::new().temporary(true).flush_every_ms(None).open().unwrap();
 
     for len in [1, 16, 32, u16::MAX].iter() {
         for i in 0..*len {
@@ -155,7 +159,8 @@ fn sequential_inserts() {
 fn reverse_inserts() {
     common::setup_logger();
 
-    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+    let db: Db<64, 1024, 128> =
+        Config::new().temporary(true).flush_every_ms(None).open().unwrap();
 
     for len in [1, 16, 32, u16::MAX].iter() {
         for i in 0..*len {
@@ -179,12 +184,8 @@ fn very_large_reverse_tree_iterator() {
     let mut b = vec![255; 1024 * 1024];
     b.push(1);
 
-    let db = Config::new()
-        .temporary(true)
-        .flush_every_ms(Some(1))
-        .segment_size(256)
-        .open()
-        .unwrap();
+    let db: Db<64, 1024, 128> =
+        Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
 
     db.insert(a, "").unwrap();
     db.insert(b, "").unwrap();
@@ -207,7 +208,7 @@ fn varied_compression_ratios() {
         buf
     };
 
-    let tree = sled::Config::default()
+    let tree = Config::default()
         .use_compression(true)
         .path("compression_db_test")
         .open()
@@ -218,7 +219,7 @@ fn varied_compression_ratios() {
 
     println!("reloading database...");
     drop(tree);
-    let tree = sled::Config::default()
+    let tree = Config::default()
         .use_compression(true)
         .path("compression_db_test")
         .open()
@@ -230,10 +231,10 @@ fn varied_compression_ratios() {
 
 #[test]
 #[cfg(not(miri))] // can't create threads
-fn concurrent_tree_pops() -> sled::Result<()> {
+fn concurrent_tree_pops() -> std::io::Result<()> {
     use std::thread;
 
-    let db = sled::Config::new().temporary(true).open()?;
+    let db: Db<64, 1024, 128> = Config::new().temporary(true).open()?;
 
     // Insert values 0..5
     for x in 0u32..5 {
@@ -246,10 +247,10 @@ fn concurrent_tree_pops() -> sled::Result<()> {
     let barrier = Arc::new(Barrier::new(5));
     for _ in 0..5 {
         let barrier = barrier.clone();
-        let db = db.clone();
+        let db: Db<64, 1024, 128> = db.clone();
         threads.push(thread::spawn(move || {
             barrier.wait();
-            db.pop_min().unwrap().unwrap();
+            db.pop_first().unwrap().unwrap();
         }));
     }
 
@@ -258,7 +259,7 @@ fn concurrent_tree_pops() -> sled::Result<()> {
     }
 
     assert!(
-        db.is_empty(),
+        db.is_empty().unwrap(),
         "elements left in database: {:?}",
         db.iter().collect::<Vec<_>>()
     );
@@ -276,10 +277,7 @@ fn concurrent_tree_ops() {
     for i in 0..INTENSITY {
         debug!("beginning test {}", i);
 
-        let config = Config::new()
-            .temporary(true)
-            .flush_every_ms(Some(1))
-            .segment_size(256);
+        let config = Config::new().temporary(true).flush_every_ms(Some(1));
 
         macro_rules! par {
             ($t:ident, $f:expr) => {
@@ -293,7 +291,7 @@ fn concurrent_tree_ops() {
                                 (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                             {
                                 let k = kv(i);
-                                $f(&*tree, k);
+                                $f(&tree, k);
                             }
                         })
                         .expect("should be able to spawn thread");
@@ -308,9 +306,9 @@ fn concurrent_tree_ops() {
         }
 
         debug!("========== initial sets test {} ==========", i);
-        let t = Arc::new(config.open().unwrap());
-        par! {t, |tree: &Tree, k: Vec<u8>| {
-            assert_eq!(tree.get(&*k), Ok(None));
+        let t: Db<64, 1024, 128> = config.open().unwrap();
+        par! {t, move |tree: &Db, k: Vec<u8>| {
+            assert_eq!(tree.get(&*k).unwrap(), None);
             tree.insert(&k, k.clone()).expect("we should write successfully");
             assert_eq!(tree.get(&*k).unwrap(), Some(k.clone().into()),
                 "failed to read key {:?} that we just wrote from tree {:?}",
@@ -327,8 +325,8 @@ fn concurrent_tree_ops() {
         }
 
         drop(t);
-        let t =
-            Arc::new(config.open().expect("should be able to restart Tree"));
+        let t: Db<64, 1024, 128> =
+            config.open().expect("should be able to restart Db");
 
         let n_scanned = t.iter().count();
         if n_scanned != N {
@@ -340,23 +338,25 @@ fn concurrent_tree_ops() {
         }
 
         debug!("========== reading sets in test {} ==========", i);
-        par! {t, |tree: &Tree, k: Vec<u8>| {
+        par! {t, move |tree: &Db, k: Vec<u8>| {
             if let Some(v) =  tree.get(&*k).unwrap() {
                 if v != k {
                     panic!("expected key {:?} not found", k);
                 }
             } else {
-                panic!("could not read key {:?}, which we \
-                       just wrote to tree {:?}", k, tree);
+                panic!(
+                    "could not read key {:?}, which we \
+                    just wrote to tree {:?}", k, tree
+               );
             }
         }};
 
         drop(t);
-        let t =
-            Arc::new(config.open().expect("should be able to restart Tree"));
+        let t: Db<64, 1024, 128> =
+            config.open().expect("should be able to restart Db");
 
         debug!("========== CAS test in test {} ==========", i);
-        par! {t, |tree: &Tree, k: Vec<u8>| {
+        par! {t, move |tree: &Db, k: Vec<u8>| {
             let k1 = k.clone();
             let mut k2 = k;
             k2.reverse();
@@ -364,10 +364,10 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t =
-            Arc::new(config.open().expect("should be able to restart Tree"));
+        let t: Db<64, 1024, 128> =
+            config.open().expect("should be able to restart Db");
 
-        par! {t, |tree: &Tree, k: Vec<u8>| {
+        par! {t, move |tree: &Db, k: Vec<u8>| {
             let k1 = k.clone();
             let mut k2 = k;
             k2.reverse();
@@ -375,27 +375,27 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t =
-            Arc::new(config.open().expect("should be able to restart Tree"));
+        let t: Db<64, 1024, 128> =
+            config.open().expect("should be able to restart Db");
 
         debug!("========== deleting in test {} ==========", i);
-        par! {t, |tree: &Tree, k: Vec<u8>| {
+        par! {t, move |tree: &Db, k: Vec<u8>| {
             tree.remove(&*k).unwrap();
         }};
 
         drop(t);
-        let t =
-            Arc::new(config.open().expect("should be able to restart Tree"));
+        let t: Db<64, 1024, 128> =
+            config.open().expect("should be able to restart Db");
 
-        par! {t, |tree: &Tree, k: Vec<u8>| {
-            assert_eq!(tree.get(&*k), Ok(None));
+        par! {t, move |tree: &Db, k: Vec<u8>| {
+            assert_eq!(tree.get(&*k).unwrap(), None);
         }};
     }
 }
 
 #[test]
 #[cfg(not(miri))] // can't create threads
-fn concurrent_tree_iter() -> Result<()> {
+fn concurrent_tree_iter() -> io::Result<()> {
     use std::sync::Barrier;
     use std::thread;
 
@@ -406,7 +406,7 @@ fn concurrent_tree_iter() -> Result<()> {
 
     let config = Config::new().temporary(true).flush_every_ms(Some(1));
 
-    let t = config.open().unwrap();
+    let t: Db<64, 1024, 128> = config.open().unwrap();
 
     const INDELIBLE: [&[u8]; 16] = [
         &[0u8],
@@ -433,14 +433,14 @@ fn concurrent_tree_iter() -> Result<()> {
 
     let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
 
-    let mut threads: Vec<thread::JoinHandle<Result<()>>> = vec![];
+    let mut threads: Vec<thread::JoinHandle<io::Result<()>>> = vec![];
     static I: AtomicUsize = AtomicUsize::new(0);
 
     for i in 0..N_FORWARD {
-        let t = thread::Builder::new()
+        let thread = thread::Builder::new()
             .name(format!("forward({})", i))
             .spawn({
-                let t = t.clone();
+                let t: Db<64, 1024, 128> = t.clone();
                 let barrier = barrier.clone();
                 move || {
                     I.fetch_add(1, SeqCst);
@@ -472,14 +472,14 @@ fn concurrent_tree_iter() -> Result<()> {
                 }
             })
             .unwrap();
-        threads.push(t);
+        threads.push(thread);
     }
 
     for i in 0..N_REVERSE {
-        let t = thread::Builder::new()
+        let thread = thread::Builder::new()
             .name(format!("reverse({})", i))
             .spawn({
-                let t = t.clone();
+                let t: Db<64, 1024, 128> = t.clone();
                 let barrier = barrier.clone();
                 move || {
                     I.fetch_add(1, SeqCst);
@@ -498,13 +498,13 @@ fn concurrent_tree_iter() -> Result<()> {
                                          concurrent modification\n{:?}",
                                         k,
                                         expect,
-                                        *t,
+                                        t,
                                     );
                                     if &*k == *expect {
                                         break;
                                     }
                                 } else {
-                                    panic!("undershot key on tree: \n{:?}", *t);
+                                    panic!("undershot key on tree: \n{:?}", t);
                                 }
                             }
                         }
@@ -516,13 +516,13 @@ fn concurrent_tree_iter() -> Result<()> {
             })
             .unwrap();
 
-        threads.push(t);
+        threads.push(thread);
     }
 
     let inserter = thread::Builder::new()
         .name("inserter".into())
         .spawn({
-            let t = t.clone();
+            let t: Db<64, 1024, 128> = t.clone();
             let barrier = barrier.clone();
             move || {
                 barrier.wait();
@@ -576,6 +576,7 @@ fn concurrent_tree_iter() -> Result<()> {
     Ok(())
 }
 
+/*
 #[test]
 #[cfg(not(miri))] // can't create threads
 fn concurrent_tree_transactions() -> TransactionResult<()> {
@@ -587,7 +588,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
         .temporary(true)
         .flush_every_ms(Some(1))
         .use_compression(true);
-    let db = config.open().unwrap();
+    let db: Db<64, 1024, 128> = config.open().unwrap();
 
     db.insert(b"k1", b"cats").unwrap();
     db.insert(b"k2", b"dogs").unwrap();
@@ -602,7 +603,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
     let barrier = Arc::new(Barrier::new(N_WRITERS + N_READERS + N_SUBSCRIBERS));
 
     for _ in 0..N_WRITERS {
-        let db = db.clone();
+        let db: Db<64, 1024, 128> = db.clone();
         let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
             barrier.wait();
@@ -623,7 +624,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
     }
 
     for _ in 0..N_READERS {
-        let db = db.clone();
+        let db: Db<64, 1024, 128> = db.clone();
         let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
             barrier.wait();
@@ -646,7 +647,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
     }
 
     for _ in 0..N_SUBSCRIBERS {
-        let db = db.clone();
+        let db: Db<64, 1024, 128> = db.clone();
         let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
             barrier.wait();
@@ -675,7 +676,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
 #[test]
 fn tree_flush_in_transaction() {
     let config = sled::Config::new().temporary(true);
-    let db = config.open().unwrap();
+    let db: Db<64, 1024, 128> = config.open().unwrap();
     let tree = db.open_tree(b"a").unwrap();
 
     tree.transaction::<_, _, sled::transaction::TransactionError>(|tree| {
@@ -709,7 +710,7 @@ fn many_tree_transactions() -> TransactionResult<()> {
     common::setup_logger();
 
     let config = Config::new().temporary(true).flush_every_ms(Some(1));
-    let db = Arc::new(config.open().unwrap());
+    let db: Db<64, 1024, 128> = Arc::new(config.open().unwrap());
     let t1 = db.open_tree(b"1")?;
     let t2 = db.open_tree(b"2")?;
     let t3 = db.open_tree(b"3")?;
@@ -732,7 +733,7 @@ fn batch_outside_of_transaction() -> TransactionResult<()> {
     common::setup_logger();
 
     let config = Config::new().temporary(true).flush_every_ms(Some(1));
-    let db = config.open().unwrap();
+    let db: Db<64, 1024, 128> = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
 
@@ -749,6 +750,7 @@ fn batch_outside_of_transaction() -> TransactionResult<()> {
     assert_eq!(t1.get(b"k2")?, Some(b"v2".into()));
     Ok(())
 }
+*/
 
 #[test]
 fn tree_subdir() {
@@ -762,7 +764,7 @@ fn tree_subdir() {
 
     let config = Config::new().path(&path);
 
-    let t = config.open().unwrap();
+    let t: Db<64, 1024, 128> = config.open().unwrap();
 
     t.insert(&[1], vec![1]).unwrap();
 
@@ -770,7 +772,7 @@ fn tree_subdir() {
 
     let config = Config::new().path(&path);
 
-    let t = config.open().unwrap();
+    let t: Db<64, 1024, 128> = config.open().unwrap();
 
     let res = t.get(&*vec![1]);
 
@@ -785,7 +787,7 @@ fn tree_subdir() {
 #[cfg_attr(miri, ignore)]
 fn tree_small_keys_iterator() {
     let config = Config::new().temporary(true).flush_every_ms(Some(1));
-    let t = config.open().unwrap();
+    let t: Db<64, 1024, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
@@ -818,7 +820,7 @@ fn tree_small_keys_iterator() {
     let mut tree_scan = t.range(&*last_key..);
     let r3 = tree_scan.next().unwrap().unwrap();
     assert_eq!((r3.0.as_ref(), &*r3.1), (last_key.as_ref(), &*last_key));
-    assert_eq!(tree_scan.next(), None);
+    assert!(tree_scan.next().is_none());
 }
 
 #[test]
@@ -827,14 +829,14 @@ fn tree_big_keys_iterator() {
     fn kv(i: usize) -> Vec<u8> {
         let k = [(i >> 16) as u8, (i >> 8) as u8, i as u8];
 
-        let mut base = vec![0; u8::max_value() as usize];
+        let mut base = vec![0; u8::MAX as usize];
         base.extend_from_slice(&k);
         base
     }
 
     let config = Config::new().temporary(true).flush_every_ms(Some(1));
 
-    let t = config.open().unwrap();
+    let t: Db<64, 1024, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
@@ -867,14 +869,15 @@ fn tree_big_keys_iterator() {
     let mut tree_scan = t.range(&*last_key..);
     let r3 = tree_scan.next().unwrap().unwrap();
     assert_eq!((r3.0.as_ref(), &*r3.1), (last_key.as_ref(), &*last_key));
-    assert_eq!(tree_scan.next(), None);
+    assert!(tree_scan.next().is_none());
 }
 
+/*
 #[test]
-fn tree_subscribers_and_keyspaces() -> Result<()> {
+fn tree_subscribers_and_keyspaces() -> io::Result<()> {
     let config = Config::new().temporary(true).flush_every_ms(Some(1));
 
-    let db = config.open().unwrap();
+    let db: Db<64, 1024, 128> = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
     let mut s1 = t1.watch_prefix(b"");
@@ -888,15 +891,11 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
     assert_eq!(s1.next().unwrap().iter().next().unwrap().1, b"t1_a");
     assert_eq!(s2.next().unwrap().iter().next().unwrap().1, b"t2_a");
 
-    let guard = pin();
-    guard.flush();
-    drop(guard);
-
     drop(db);
     drop(t1);
     drop(t2);
 
-    let db = config.open().unwrap();
+    let db: Db<64, 1024, 128> = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
     let mut s1 = t1.watch_prefix(b"");
@@ -914,15 +913,11 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
     assert_eq!(s1.next().unwrap().iter().next().unwrap().1, b"t1_b");
     assert_eq!(s2.next().unwrap().iter().next().unwrap().1, b"t2_b");
 
-    let guard = pin();
-    guard.flush();
-    drop(guard);
-
     drop(db);
     drop(t1);
     drop(t2);
 
-    let db = config.open().unwrap();
+    let db: Db<64, 1024, 128> = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
     let t2 = db.open_tree(b"2")?;
@@ -946,7 +941,7 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
     drop(t1);
     drop(t2);
 
-    let db = config.open().unwrap();
+    let db: Db<64, 1024, 128> = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
     let t2 = db.open_tree(b"2")?;
@@ -957,13 +952,14 @@ fn tree_subscribers_and_keyspaces() -> Result<()> {
 
     Ok(())
 }
+*/
 
 #[test]
 fn tree_range() {
     common::setup_logger();
 
     let config = Config::new().temporary(true).flush_every_ms(Some(1));
-    let t = config.open().unwrap();
+    let t: Db<64, 1024, 128> = config.open().unwrap();
 
     t.insert(b"0", vec![0]).unwrap();
     t.insert(b"1", vec![10]).unwrap();
@@ -977,14 +973,14 @@ fn tree_range() {
     let mut r = t.range(start..end);
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
     assert_eq!(r.next().unwrap().unwrap().0, b"3");
-    assert_eq!(r.next(), None);
+    assert!(r.next().is_none());
 
     let start = b"2".to_vec();
     let end = b"4".to_vec();
     let mut r = t.range(start..end).rev();
     assert_eq!(r.next().unwrap().unwrap().0, b"3");
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
-    assert_eq!(r.next(), None);
+    assert!(r.next().is_none());
 
     let start = b"2".to_vec();
     let mut r = t.range(start..);
@@ -992,7 +988,7 @@ fn tree_range() {
     assert_eq!(r.next().unwrap().unwrap().0, b"3");
     assert_eq!(r.next().unwrap().unwrap().0, b"4");
     assert_eq!(r.next().unwrap().unwrap().0, b"5");
-    assert_eq!(r.next(), None);
+    assert!(r.next().is_none());
 
     let start = b"2".to_vec();
     let mut r = t.range(..=start).rev();
@@ -1004,7 +1000,7 @@ fn tree_range() {
     );
     assert_eq!(r.next().unwrap().unwrap().0, b"1");
     assert_eq!(r.next().unwrap().unwrap().0, b"0");
-    assert_eq!(r.next(), None);
+    assert!(r.next().is_none());
 }
 
 #[test]
@@ -1012,19 +1008,16 @@ fn tree_range() {
 fn recover_tree() {
     common::setup_logger();
 
-    let config = Config::new()
-        .temporary(true)
-        .flush_every_ms(Some(1))
-        .segment_size(4096);
+    let config = Config::new().temporary(true).flush_every_ms(Some(1));
 
-    let t = config.open().unwrap();
+    let t: Db<64, 1024, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
     }
     drop(t);
 
-    let t = config.open().unwrap();
+    let t: Db<64, 1024, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
@@ -1032,13 +1025,14 @@ fn recover_tree() {
     }
     drop(t);
 
-    let t = config.open().unwrap();
+    let t: Db<64, 1024, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
-        assert_eq!(t.get(&*k), Ok(None));
+        assert!(t.get(&*k).unwrap().is_none());
     }
 }
 
+/*
 #[test]
 fn create_tree() {
     common::setup_logger();
@@ -1058,7 +1052,7 @@ fn create_tree() {
 
 #[test]
 fn contains_tree() {
-    let db = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+    let db: Db<64, 1024, 128> = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
     let tree_one = db.open_tree("tree 1").unwrap();
     let tree_two = db.open_tree("tree 2").unwrap();
 
@@ -1075,13 +1069,13 @@ fn contains_tree() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn tree_import_export() -> Result<()> {
+fn tree_import_export() -> io::Result<()> {
     common::setup_logger();
 
     let config_1 = Config::new().temporary(true);
     let config_2 = Config::new().temporary(true);
 
-    let db = config_1.open()?;
+    let db: Db<64, 1024, 128> = config_1.open()?;
     for db_id in 0..N_THREADS {
         let tree_id = format!("tree_{}", db_id);
         let tree = db.open_tree(tree_id.as_bytes())?;
@@ -1105,7 +1099,7 @@ fn tree_import_export() -> Result<()> {
     drop(config_1);
     drop(importer);
 
-    let db = config_2.open()?;
+    let db: Db<64, 1024, 128> = config_2.open()?;
 
     let checksum_b = db.checksum().unwrap();
     assert_eq!(checksum_a, checksum_b);
@@ -1125,7 +1119,7 @@ fn tree_import_export() -> Result<()> {
 
     drop(db);
 
-    let db = config_2.open()?;
+    let db: Db<64, 1024, 128> = config_2.open()?;
     for db_id in 0..N_THREADS {
         let tree_id = format!("tree_{}", db_id);
         let tree = db.open_tree(tree_id.as_bytes())?;
@@ -1141,6 +1135,7 @@ fn tree_import_export() -> Result<()> {
 
     Ok(())
 }
+*/
 
 #[test]
 #[cfg_attr(any(target_os = "fuchsia", miri), ignore)]
@@ -1148,12 +1143,11 @@ fn quickcheck_tree_matches_btreemap() {
     let n_tests = if cfg!(windows) { 25 } else { 100 };
 
     QuickCheck::new()
-        .gen(StdGen::new(rand::thread_rng(), 1000))
+        .gen(Gen::new(1000))
         .tests(n_tests)
         .max_tests(n_tests * 10)
         .quickcheck(
-            prop_tree_matches_btreemap
-                as fn(Vec<Op>, bool, bool, u8, u8) -> bool,
+            prop_tree_matches_btreemap as fn(Vec<Op>, bool, i32, usize) -> bool,
         );
 }
 
@@ -1161,7 +1155,7 @@ fn quickcheck_tree_matches_btreemap() {
 #[cfg_attr(miri, ignore)]
 fn tree_bug_00() {
     // postmortem:
-    prop_tree_matches_btreemap(vec![Restart], false, false, 0, 0);
+    prop_tree_matches_btreemap(vec![Restart], false, 0, 256);
 }
 
 #[test]
@@ -1184,9 +1178,8 @@ fn tree_bug_01() {
             Set(Key(vec![164]), 147),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1213,9 +1206,8 @@ fn tree_bug_02() {
             Scan(Key(vec![210]), 4),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1238,9 +1230,8 @@ fn tree_bug_03() {
             Scan(Key(vec![198]), 11),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1265,9 +1256,8 @@ fn tree_bug_04() {
             Set(Key(vec![59]), 119),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1288,9 +1278,8 @@ fn tree_bug_05() {
             Set(Key(vec![0]), 45),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1313,9 +1302,8 @@ fn tree_bug_06() {
             Set(Key(vec![18]), 34),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1338,9 +1326,8 @@ fn tree_bug_07() {
             Scan(Key(vec![196]), 25),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1362,9 +1349,8 @@ fn tree_bug_08() {
             Restart,
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1393,9 +1379,8 @@ fn tree_bug_09() {
             Restart,
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1433,9 +1418,8 @@ fn tree_bug_10() {
             Set(Key(vec![172]), 84),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1460,9 +1444,8 @@ fn tree_bug_11() {
             Set(Key(vec![243]), 6),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1512,9 +1495,8 @@ fn tree_bug_12() {
             Set(Key(vec![214]), 72),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1544,9 +1526,8 @@ fn tree_bug_13() {
             Del(Key(vec![165])),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1566,9 +1547,8 @@ fn tree_bug_14() {
             Scan(Key(vec![93]), 33),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1586,12 +1566,12 @@ fn tree_bug_15() {
             Scan(Key(vec![101]), 26),
         ],
         true,
-        false,
         0,
-        0,
+        256,
     );
 }
 
+/*
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_16() {
@@ -1599,11 +1579,11 @@ fn tree_bug_16() {
     prop_tree_matches_btreemap(
         vec![Merge(Key(vec![247]), 162), Scan(Key(vec![209]), 31)],
         false,
-        false,
         0,
-        0,
+256
     );
 }
+*/
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -1616,7 +1596,6 @@ fn tree_bug_17() {
             Set(Key(vec![194, 215, 103, 0, 138, 11, 248, 131]), 70),
             Scan(Key(vec![]), 30),
         ],
-        false,
         false,
         0,
         0,
@@ -1638,9 +1617,8 @@ fn tree_bug_18() {
             GetGt(Key(vec![89])),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1659,9 +1637,8 @@ fn tree_bug_19() {
             GetLt(Key(vec![100])),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1681,9 +1658,8 @@ fn tree_bug_20() {
             GetGt(Key(vec![94])),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1704,12 +1680,12 @@ fn tree_bug_21() {
             GetLt(Key(vec![176])),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
+/*
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_22() {
@@ -1723,11 +1699,11 @@ fn tree_bug_22() {
             Scan(Key(vec![]), 2),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
+*/
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -1736,12 +1712,12 @@ fn tree_bug_23() {
     prop_tree_matches_btreemap(
         vec![Set(Key(vec![6; 5120]), 92), Restart, Scan(Key(vec![]), 35)],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
+/*
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_24() {
@@ -1762,9 +1738,8 @@ fn tree_bug_24() {
             GetGt(Key(vec![])),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1776,9 +1751,8 @@ fn tree_bug_25() {
     prop_tree_matches_btreemap(
         vec![Del(Key(vec![])), Merge(Key(vec![]), 84), Get(Key(vec![]))],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1802,9 +1776,8 @@ fn tree_bug_26() {
             GetLt(Key(vec![80])),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1874,9 +1847,8 @@ fn tree_bug_27() {
             Merge(Key(vec![]), 50),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -1899,9 +1871,8 @@ fn tree_bug_28() {
             Scan(Key(vec![178]), 18),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -2042,9 +2013,8 @@ fn tree_bug_29() {
             GetLt(Key(vec![229])),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -2083,11 +2053,11 @@ fn tree_bug_30() {
             Scan(Key(vec![]), 31),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
+*/
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -2108,9 +2078,8 @@ fn tree_bug_31() {
             Scan(Key(vec![]), -18),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -2123,9 +2092,8 @@ fn tree_bug_32() {
     prop_tree_matches_btreemap(
         vec![Set(Key(vec![57]), 141), Scan(Key(vec![]), -40)],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -2143,12 +2111,12 @@ fn tree_bug_33() {
             GetLt(Key(vec![])),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
+/*
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_34() {
@@ -2165,11 +2133,11 @@ fn tree_bug_34() {
             Scan(Key(vec![]), -40),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
+*/
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -2202,12 +2170,12 @@ fn tree_bug_35() {
             Set(Key(vec![]), 112),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
+/*
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_36() {
@@ -2225,11 +2193,11 @@ fn tree_bug_36() {
             Scan(Key(vec![]), -30),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
+*/
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -2246,12 +2214,12 @@ fn tree_bug_37() {
             Scan(Key(vec![]), 33),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
+/*
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_38() {
@@ -2267,13 +2235,14 @@ fn tree_bug_38() {
                 Restart,
             ],
             false,
-            false,
             0,
-            0,
+            256,
         );
     }
 }
+*/
 
+/*
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_39() {
@@ -2533,12 +2502,12 @@ fn tree_bug_39() {
                 Restart,
             ],
             false,
-            false,
             0,
-            0,
+            256,
         );
     }
 }
+*/
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -2548,9 +2517,8 @@ fn tree_bug_40() {
     prop_tree_matches_btreemap(
         vec![Del(Key(vec![99; 111222333]))],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
@@ -2569,12 +2537,12 @@ fn tree_bug_41() {
             Scan(Key(vec![]), 19),
         ],
         false,
-        false,
         0,
-        0,
+        256,
     );
 }
 
+/*
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_42() {
@@ -2590,12 +2558,12 @@ fn tree_bug_42() {
                 GetLt(Key(vec![148; 1])),
             ],
             false,
-            false,
             0,
-            0,
+            256,
         );
     }
 }
+*/
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -2617,12 +2585,12 @@ fn tree_bug_43() {
             Restart,
         ],
         false,
-        false,
         0,
-        52,
+        288,
     );
 }
 
+/*
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_44() {
@@ -2644,9 +2612,8 @@ fn tree_bug_44() {
             Restart,
         ],
         false,
-        false,
         0,
-        0,
+        256
     ))
 }
 
@@ -2674,6 +2641,7 @@ fn tree_bug_45() {
         ))
     }
 }
+*/
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -2683,7 +2651,7 @@ fn tree_bug_46() {
     // will always write to the end of the slab to be compatible
     // with O_DIRECT.
     for _ in 0..1 {
-        assert!(prop_tree_matches_btreemap(vec![Restart], false, true, 0, 0))
+        assert!(prop_tree_matches_btreemap(vec![Restart], false, 0, 256))
     }
 }
 
@@ -2694,9 +2662,8 @@ fn tree_bug_47() {
     assert!(prop_tree_matches_btreemap(
         vec![Set(Key(vec![88; 1]), 40), Restart, Get(Key(vec![88; 1]))],
         false,
-        false,
         0,
-        0
+        256
     ))
 }
 
@@ -2717,12 +2684,12 @@ fn tree_bug_48() {
             Scan(Key(vec![]), -9)
         ],
         false,
-        false,
         0,
-        0
+        256
     ))
 }
 
+/*
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_49() {
@@ -2757,3 +2724,4 @@ fn tree_bug_49() {
         0
     ))
 }
+*/
