@@ -419,7 +419,7 @@ impl<
     ) -> io::Result<
         LeafReadGuard<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
     > {
-        let (low_key, read, node_id) = loop {
+        loop {
             let (low_key, node) = self.index.get_lte(key).unwrap();
             let mut read = node.inner.read_arc();
 
@@ -429,24 +429,27 @@ impl<
                 read = ArcRwLockWriteGuard::downgrade(write);
             }
 
-            let leaf = read.as_ref().unwrap();
+            let leaf_guard = LeafReadGuard {
+                leaf_read: ManuallyDrop::new(read),
+                inner: self,
+                low_key,
+                node_id: node.id,
+            };
+
+            let leaf = leaf_guard.leaf_read.as_ref().unwrap();
 
             assert!(&*leaf.lo <= key);
             if let Some(ref hi) = leaf.hi {
                 if &**hi < key {
                     log::trace!("key overshoot on leaf_for_key");
+                    // cache maintenance occurs in Drop for LeafReadGuard
+                    drop(leaf_guard);
                     continue;
                 }
             }
-            break (low_key, read, node.id);
-        };
 
-        Ok(LeafReadGuard {
-            leaf_read: ManuallyDrop::new(read),
-            inner: self,
-            low_key,
-            node_id,
-        })
+            return Ok(leaf_guard);
+        }
     }
 
     /// Returns `true` if the database was
@@ -708,7 +711,8 @@ impl<
 
         let ret = leaf.data.insert(key_ref.into(), value_ivec.clone());
 
-        let old_size = ret.as_ref().map(|v| key_ref.len() + v.len()).unwrap_or(0);
+        let old_size =
+            ret.as_ref().map(|v| key_ref.len() + v.len()).unwrap_or(0);
         let new_size = key_ref.len() + value_ivec.len();
 
         if new_size > old_size {
@@ -1129,8 +1133,8 @@ impl<
         Iter {
             prefetched: VecDeque::new(),
             prefetched_back: VecDeque::new(),
-            next_fetch: None,
-            next_fetch_back: None,
+            next_fetch: Some(InlineArray::MIN),
+            next_back_fetch: None,
             next_calls: 0,
             next_back_calls: 0,
             inner: self,
@@ -1151,11 +1155,21 @@ impl<
         let end: Bound<InlineArray> =
             map_bound(range.end_bound(), |b| InlineArray::from(b.as_ref()));
 
+        let next_fetch = Some(match &start {
+            Bound::Included(b) | Bound::Excluded(b) => b.clone(),
+            Bound::Unbounded => InlineArray::MIN,
+        });
+
+        let next_back_fetch = Some(match &end {
+            Bound::Included(b) | Bound::Excluded(b) => b.clone(),
+            Bound::Unbounded => InlineArray::MIN,
+        });
+
         Iter {
             prefetched: VecDeque::new(),
             prefetched_back: VecDeque::new(),
-            next_fetch: None,
-            next_fetch_back: None,
+            next_fetch,
+            next_back_fetch,
             next_calls: 0,
             next_back_calls: 0,
             inner: self,
@@ -1223,6 +1237,9 @@ impl<
                 }
             }
             if last.is_none() {
+                // TODO evaluate whether this is correct, as page_in performs
+                // cache maintenance internally if it over/undershoots due to
+                // concurrent modifications.
                 last = Some(self.page_in(key)?);
             }
         }
@@ -1382,8 +1399,6 @@ impl<
     where
         K: AsRef<[u8]>,
     {
-        #[cfg(feature = "metrics")]
-        let _measure = Measure::new(&M.tree_get);
         self.range(..key).next_back().transpose()
     }
 
@@ -1440,8 +1455,6 @@ impl<
     where
         K: AsRef<[u8]>,
     {
-        #[cfg(feature = "metrics")]
-        let _measure = Measure::new(&M.tree_get);
         self.range((ops::Bound::Excluded(key), ops::Bound::Unbounded))
             .next()
             .transpose()
@@ -1813,7 +1826,7 @@ pub struct Iter<
     next_calls: usize,
     next_back_calls: usize,
     next_fetch: Option<InlineArray>,
-    next_fetch_back: Option<InlineArray>,
+    next_back_fetch: Option<InlineArray>,
     prefetched: VecDeque<(InlineArray, InlineArray)>,
     prefetched_back: VecDeque<(InlineArray, InlineArray)>,
 }
@@ -1829,14 +1842,12 @@ impl<
     type Item = io::Result<(InlineArray, InlineArray)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.prefetched.is_empty() {
+        self.next_calls += 1;
+        while self.prefetched.is_empty() {
             let search_key = if let Some(last) = &self.next_fetch {
                 last.clone()
             } else {
-                match &self.bounds.0 {
-                    Bound::Included(b) | Bound::Excluded(b) => b.clone(),
-                    Bound::Unbounded => InlineArray::MIN,
-                }
+                return None;
             };
 
             let node = match self.inner.leaf_for_key(&search_key) {
@@ -1846,12 +1857,9 @@ impl<
 
             let leaf = node.leaf_read.as_ref().unwrap();
             for (k, v) in leaf.data.iter() {
-                if self.bounds.contains(k) {
+                if self.bounds.contains(k) && &search_key <= k {
                     self.prefetched.push_back((k.clone(), v.clone()));
                 }
-            }
-            if self.prefetched.is_empty() {
-                return None;
             }
             self.next_fetch = leaf.hi.clone();
         }
@@ -1869,7 +1877,29 @@ impl<
     for Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
-        todo!()
+        self.next_back_calls += 1;
+        while self.prefetched_back.is_empty() {
+            let search_key = if let Some(last) = &self.next_back_fetch {
+                last.clone()
+            } else {
+                return None;
+            };
+
+            let node = match self.inner.leaf_for_key(&search_key) {
+                Ok(n) => n,
+                Err(e) => return Some(Err(e)),
+            };
+
+            let leaf = node.leaf_read.as_ref().unwrap();
+            for (k, v) in leaf.data.iter() {
+                if self.bounds.contains(k) && &search_key <= k {
+                    self.prefetched_back.push_back((k.clone(), v.clone()));
+                }
+            }
+            self.next_back_fetch = leaf.hi.clone();
+        }
+
+        self.prefetched_back.pop_back().map(Ok)
     }
 }
 

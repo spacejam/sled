@@ -230,6 +230,29 @@ fn varied_compression_ratios() {
 }
 
 #[test]
+fn test_pop_first() -> io::Result<()> {
+    let config = sled::Config::tmp().unwrap();
+    let db: sled::Db<64, 1024, 128> = config.open()?;
+    db.insert(&[0], vec![0])?;
+    db.insert(&[1], vec![10])?;
+    db.insert(&[2], vec![20])?;
+    db.insert(&[3], vec![30])?;
+    db.insert(&[4], vec![40])?;
+    db.insert(&[5], vec![50])?;
+
+    assert_eq!(&db.pop_first()?.unwrap().0, &[0]);
+    assert_eq!(&db.pop_first()?.unwrap().0, &[1]);
+    assert_eq!(&db.pop_first()?.unwrap().0, &[2]);
+    assert_eq!(&db.pop_first()?.unwrap().0, &[3]);
+    assert_eq!(&db.pop_first()?.unwrap().0, &[4]);
+    assert_eq!(&db.pop_first()?.unwrap().0, &[5]);
+    assert_eq!(db.pop_first()?, None);
+    /*
+     */
+    Ok(())
+}
+
+#[test]
 #[cfg(not(miri))] // can't create threads
 fn concurrent_tree_pops() -> std::io::Result<()> {
     use std::thread;
