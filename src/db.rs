@@ -1134,7 +1134,7 @@ impl<
             prefetched: VecDeque::new(),
             prefetched_back: VecDeque::new(),
             next_fetch: Some(InlineArray::MIN),
-            next_back_fetch: None,
+            next_back_last_lo: None,
             next_calls: 0,
             next_back_calls: 0,
             inner: self,
@@ -1160,16 +1160,11 @@ impl<
             Bound::Unbounded => InlineArray::MIN,
         });
 
-        let next_back_fetch = Some(match &end {
-            Bound::Included(b) | Bound::Excluded(b) => b.clone(),
-            Bound::Unbounded => InlineArray::MIN,
-        });
-
         Iter {
             prefetched: VecDeque::new(),
             prefetched_back: VecDeque::new(),
             next_fetch,
-            next_back_fetch,
+            next_back_last_lo: None,
             next_calls: 0,
             next_back_calls: 0,
             inner: self,
@@ -1826,7 +1821,7 @@ pub struct Iter<
     next_calls: usize,
     next_back_calls: usize,
     next_fetch: Option<InlineArray>,
-    next_back_fetch: Option<InlineArray>,
+    next_back_last_lo: Option<InlineArray>,
     prefetched: VecDeque<(InlineArray, InlineArray)>,
     prefetched_back: VecDeque<(InlineArray, InlineArray)>,
 }
@@ -1879,10 +1874,20 @@ impl<
     fn next_back(&mut self) -> Option<Self::Item> {
         self.next_back_calls += 1;
         while self.prefetched_back.is_empty() {
-            let search_key = if let Some(last) = &self.next_back_fetch {
-                last.clone()
+            let search_key: InlineArray = if let Some(last) =
+                &self.next_back_last_lo
+            {
+                if !self.bounds.contains(last) || last == &InlineArray::MIN {
+                    return None;
+                }
+                self.inner
+                    .index
+                    .range::<InlineArray, _>(..last)
+                    .next_back()
+                    .unwrap()
+                    .0
             } else {
-                return None;
+                self.inner.index.last().unwrap().0
             };
 
             let node = match self.inner.leaf_for_key(&search_key) {
@@ -1891,12 +1896,30 @@ impl<
             };
 
             let leaf = node.leaf_read.as_ref().unwrap();
-            for (k, v) in leaf.data.iter() {
-                if self.bounds.contains(k) && &search_key <= k {
-                    self.prefetched_back.push_back((k.clone(), v.clone()));
+
+            if let (Some(leaf_hi), Some(last_lo)) =
+                (&leaf.hi, &self.next_back_last_lo)
+            {
+                if leaf_hi < last_lo {
+                    // concurrent predecessor split, retry
+                    continue;
                 }
             }
-            self.next_back_fetch = leaf.hi.clone();
+
+            for (k, v) in leaf.data.iter() {
+                if self.bounds.contains(k) {
+                    let beneath_last_lo =
+                        if let Some(last_lo) = &self.next_back_last_lo {
+                            k < last_lo
+                        } else {
+                            true
+                        };
+                    if beneath_last_lo {
+                        self.prefetched_back.push_back((k.clone(), v.clone()));
+                    }
+                }
+            }
+            self.next_back_last_lo = Some(leaf.lo.clone());
         }
 
         self.prefetched_back.pop_back().map(Ok)
