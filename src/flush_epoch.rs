@@ -14,11 +14,7 @@ pub(crate) struct Completion {
 
 impl Completion {
     pub fn new(epoch: NonZeroU64) -> Completion {
-        Completion {
-            mu: Default::default(),
-            cv: Default::default(),
-            epoch,
-        }
+        Completion { mu: Default::default(), cv: Default::default(), epoch }
     }
 
     pub fn wait_for_complete(self) -> NonZeroU64 {
@@ -36,6 +32,8 @@ impl Completion {
 
     fn mark_complete_inner(&self) {
         let mut mu = self.mu.lock().unwrap();
+        log::info!("marking epoch {:?} as complete", self.epoch);
+        assert!(!*mu);
         *mu = true;
         drop(mu);
         self.cv.notify_all();
@@ -54,7 +52,7 @@ pub(crate) struct FlushEpochGuard<'a> {
 impl<'a> Drop for FlushEpochGuard<'a> {
     fn drop(&mut self) {
         let rc = self.tracker.rc.fetch_sub(1, Ordering::Release) - 1;
-        if rc & SEAL_MASK == 0 && rc | SEAL_BIT == SEAL_BIT {
+        if rc & SEAL_MASK == 0 && (rc & SEAL_BIT) == SEAL_BIT {
             self.tracker.vacancy_notifier.mark_complete_inner();
         }
     }
@@ -84,11 +82,11 @@ pub(crate) struct FlushEpoch {
 
 impl Default for FlushEpoch {
     fn default() -> FlushEpoch {
-        let last = Completion::new(NonZeroU64::new(u64::MAX).unwrap());
+        let last = Completion::new(NonZeroU64::new(1).unwrap());
         let current_active_ptr = Box::into_raw(Box::new(EpochTracker {
-            epoch: NonZeroU64::new(1).unwrap(),
+            epoch: NonZeroU64::new(2).unwrap(),
             rc: AtomicU64::new(0),
-            vacancy_notifier: Completion::new(NonZeroU64::new(1).unwrap()),
+            vacancy_notifier: Completion::new(NonZeroU64::new(2).unwrap()),
             previous_flush_complete: last.clone(),
         }));
 
@@ -97,7 +95,7 @@ impl Default for FlushEpoch {
         let current_active = Arc::new(AtomicPtr::new(current_active_ptr));
 
         FlushEpoch {
-            counter: Arc::new(AtomicU64::new(1)),
+            counter: Arc::new(AtomicU64::new(2)),
             roll_mu: Arc::new(Mutex::new(())),
             current_active,
             active_ebr: ebr::Ebr::default(),
@@ -114,7 +112,8 @@ impl FlushEpoch {
         let vacancy_mu = self.roll_mu.lock().unwrap();
         let flush_through = self.counter.fetch_add(1, Ordering::Release);
         let new_epoch = NonZeroU64::new(flush_through + 1).unwrap();
-        let forward_flush_notifier = Completion::new(NonZeroU64::new(u64::MAX).unwrap());
+        let forward_flush_notifier =
+            Completion::new(NonZeroU64::new(u64::MAX).unwrap());
         let new_active = Box::into_raw(Box::new(EpochTracker {
             epoch: new_epoch,
             rc: AtomicU64::new(0),
@@ -126,22 +125,23 @@ impl FlushEpoch {
 
         let (last_flush_complete_notifier, vacancy_notifier) = unsafe {
             let old: &EpochTracker = &*old_ptr;
-            let last = old.rc.fetch_or(SEAL_BIT, Ordering::Release);
-            if last & SEAL_MASK == 0 {
-                old.vacancy_notifier.mark_complete_inner();
-            }
-            (
-                old.previous_flush_complete.clone(),
-                old.vacancy_notifier.clone(),
-            )
+            let last = old.rc.fetch_add(SEAL_BIT + 1, Ordering::Release);
+
+            assert_eq!(
+                last & SEAL_BIT,
+                0,
+                "epoch {} double-sealed",
+                flush_through
+            );
+
+            // mark_complete_inner called via drop in a uniform way
+            drop(FlushEpochGuard { tracker: old });
+
+            (old.previous_flush_complete.clone(), old.vacancy_notifier.clone())
         };
         guard.defer_drop(unsafe { Box::from_raw(old_ptr) });
         drop(vacancy_mu);
-        (
-            last_flush_complete_notifier,
-            vacancy_notifier,
-            forward_flush_notifier,
-        )
+        (last_flush_complete_notifier, vacancy_notifier, forward_flush_notifier)
     }
 
     pub fn check_in<'a>(&self) -> FlushEpochGuard<'a> {

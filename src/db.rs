@@ -349,9 +349,6 @@ impl<
                 eprintln!("failed to flush Db on Drop: {e:?}");
             }
 
-            #[cfg(feature = "for-internal-testing-only")]
-            self.event_verifier.verify();
-
             // this is probably unnecessary but it will avoid issues
             // if egregious bugs get introduced that trigger it
             self.set_error(&io::Error::new(
@@ -845,9 +842,10 @@ impl<
 
                 if epoch != flush_through_epoch {
                     log::warn!(
-                        "encountered unexpected flush epoch {} in object {}",
+                        "encountered unexpected flush epoch {} in object {} while flushing epoch {}",
                         epoch,
-                        node.id.0
+                        node.id.0,
+                        flush_through_epoch,
                     );
                     #[cfg(feature = "for-internal-testing-only")]
                     {
@@ -862,6 +860,17 @@ impl<
 
                     continue;
                 }
+
+                #[cfg(feature = "for-internal-testing-only")]
+                {
+                    let mutation_count = lock.as_ref().unwrap().mutation_count;
+                    self.event_verifier.mark_flush(
+                        node.id,
+                        epoch,
+                        mutation_count,
+                    );
+                }
+
                 assert_eq!(
                     epoch,
                     flush_through_epoch,
