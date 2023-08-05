@@ -937,7 +937,7 @@ impl Tree {
     /// should measure the performance impact of
     /// using it on realistic sustained workloads
     /// running on realistic hardware.
-    // this clippy check is mis-firing on async code.
+    // this clippy check is miss-firing on async code.
     #[allow(clippy::used_underscore_binding)]
     #[allow(clippy::shadow_same)]
     pub async fn flush_async(&self) -> Result<usize> {
@@ -979,7 +979,7 @@ impl Tree {
     ///
     /// `[] < [0] < [255] < [255, 0] < [255, 255] ...`
     ///
-    /// To retain the ordering of numerical types use big endian reprensentation
+    /// To retain the ordering of numerical types use big endian representation
     ///
     /// # Examples
     ///
@@ -1030,7 +1030,7 @@ impl Tree {
     ///
     /// `[] < [0] < [255] < [255, 0] < [255, 255] ...`
     ///
-    /// To retain the ordering of numerical types use big endian reprensentation
+    /// To retain the ordering of numerical types use big endian representation
     ///
     /// # Examples
     ///

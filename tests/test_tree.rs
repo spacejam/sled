@@ -1732,7 +1732,7 @@ fn tree_bug_22() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_23() {
-    // postmortem: when rewriting CRC handling code, mis-sized the blob crc
+    // postmortem: when rewriting CRC handling code, miss-sized the blob crc
     prop_tree_matches_btreemap(
         vec![Set(Key(vec![6; 5120]), 92), Restart, Scan(Key(vec![]), 35)],
         false,
@@ -2543,8 +2543,8 @@ fn tree_bug_39() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_bug_40() {
-    // postmortem: deletions of non-existant keys were
-    // being persisted despite being unneccessary.
+    // postmortem: deletions of non-existent keys were
+    // being persisted despite being unnecessary.
     prop_tree_matches_btreemap(
         vec![Del(Key(vec![99; 111222333]))],
         false,

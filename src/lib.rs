@@ -391,7 +391,7 @@ pub(crate) enum Link {
     Set(IVec, IVec),
     /// The kv pair at a particular index is removed
     Del(IVec),
-    /// A child of this Index node is marked as mergable
+    /// A child of this Index node is marked as mergeable
     ParentMergeIntention(PageId),
     /// The merging child has been completely merged into its left sibling
     ParentMergeConfirm,

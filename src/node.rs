@@ -1088,7 +1088,7 @@ impl Node {
         let pid_bytes = self.index_value(idx);
         let pid = u64::from_le_bytes(pid_bytes.try_into().unwrap());
 
-        log::trace!("index_next_node for key {:?} returning pid {} after seaching node {:?}", key, pid, self);
+        log::trace!("index_next_node for key {:?} returning pid {} after searching node {:?}", key, pid, self);
         (is_leftmost, pid)
     }
 
@@ -1749,7 +1749,7 @@ impl Inner {
         // more idiomatic approach of copying the correct number of bytes into
         // a buffer initialized with zeroes. the seemingly "less" unsafe
         // approach of using ptr::copy_nonoverlapping did not improve matters.
-        // using a match statement on offest_bytes and performing simpler
+        // using a match statement on offset_bytes and performing simpler
         // casting for one or two bytes slowed things down due to increasing
         // code size. this approach is branch-free and cut CPU usage of this
         // function from 7-11% down to 0.5-2% in a monotonic insertion workload.
@@ -2994,7 +2994,7 @@ mod test {
     #[test]
     fn node_bug_01() {
         // postmortem: hi and lo keys were not properly being accounted in the
-        // inital allocation
+        // initial allocation
         assert!(prop_indexable(vec![], vec![0], vec![],));
     }
 
