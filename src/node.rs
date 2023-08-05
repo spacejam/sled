@@ -757,7 +757,7 @@ impl Node {
             &items,
         );
 
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         {
             let orig_ivec_pairs: Vec<_> = self
                 .iter()
@@ -813,7 +813,7 @@ impl Node {
             inner: Arc::new(left.receive_merge(&right)),
         };
 
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         {
             let orig_ivec_pairs: Vec<_> = self
                 .iter()
@@ -844,7 +844,7 @@ impl Node {
         let rhs =
             Node { inner: Arc::new(rhs_inner), overlay: Default::default() };
 
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         {
             let orig_ivec_pairs: Vec<_> = self
                 .iter()
@@ -1584,7 +1584,7 @@ impl Inner {
             fixed_key_stride
         );
 
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         {
             for i in 0..items.len() {
                 if fixed_key_length.is_none() || fixed_value_length.is_none() {
@@ -2450,7 +2450,7 @@ impl Inner {
         &self.lo()[..self.prefix_len as usize]
     }
 
-    #[cfg(feature = "testing")]
+    #[cfg(feature = "for-internal-testing-only")]
     fn is_sorted(&self) -> bool {
         if self.fixed_key_stride.is_some() {
             return true;

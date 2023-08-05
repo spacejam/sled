@@ -25,7 +25,7 @@ use internal::Local;
 
 pub struct Guard {
     pub(super) local: *const Local,
-    #[cfg(feature = "testing")]
+    #[cfg(feature = "for-internal-testing-only")]
     pub(super) began: std::time::Instant,
 }
 
@@ -68,7 +68,7 @@ impl Drop for Guard {
             local.unpin();
         }
 
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "for-internal-testing-only")]
         {
             if self.began.elapsed() > std::time::Duration::from_secs(1) {
                 log::warn!("guard lived longer than allowed");

@@ -234,7 +234,7 @@ impl Default for Inner {
             segment_size: 512 * 1024, // 512kb in bytes
             flush_every_ms: Some(500),
             idgen_persist_interval: 1_000_000,
-            snapshot_after_ops: if cfg!(feature = "testing") {
+            snapshot_after_ops: if cfg!(feature = "for-internal-testing-only") {
                 10
             } else {
                 1_000_000
@@ -538,7 +538,7 @@ impl Config {
             use fs2::FileExt;
 
             let try_lock =
-                if cfg!(any(feature = "testing", feature = "light_testing")) {
+                if cfg!(any(feature = "for-internal-testing-only", feature = "light_testing")) {
                     // we block here because during testing
                     // there are many filesystem race condition
                     // that happen, causing locks to be held
