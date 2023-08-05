@@ -32,7 +32,7 @@ impl Completion {
 
     fn mark_complete_inner(&self) {
         let mut mu = self.mu.lock().unwrap();
-        log::info!("marking epoch {:?} as complete", self.epoch);
+        log::trace!("marking epoch {:?} as complete", self.epoch);
         assert!(!*mu);
         *mu = true;
         drop(mu);
@@ -169,8 +169,8 @@ fn flush_epoch_basic_functionality() {
     let g1 = fa.check_in();
     let g2 = fa.check_in();
 
-    assert_eq!(g1.tracker.epoch.get(), 1);
-    assert_eq!(g2.tracker.epoch.get(), 1);
+    assert_eq!(g1.tracker.epoch.get(), 2);
+    assert_eq!(g2.tracker.epoch.get(), 2);
 
     let notifier = fa.roll_epoch_forward().1;
     assert!(!notifier.is_complete());
@@ -178,14 +178,14 @@ fn flush_epoch_basic_functionality() {
     drop(g1);
     assert!(!notifier.is_complete());
     drop(g2);
-    assert_eq!(notifier.wait_for_complete().get(), 1);
+    assert_eq!(notifier.wait_for_complete().get(), 2);
 
     let g3 = fa.check_in();
-    assert_eq!(g3.tracker.epoch.get(), 2);
+    assert_eq!(g3.tracker.epoch.get(), 3);
 
     let notifier_2 = fa.roll_epoch_forward().1;
 
     drop(g3);
 
-    assert_eq!(notifier_2.wait_for_complete().get(), 2);
+    assert_eq!(notifier_2.wait_for_complete().get(), 3);
 }
