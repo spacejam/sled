@@ -431,9 +431,9 @@ impl<
 
             let leaf = read.as_ref().unwrap();
 
-            assert!(&*leaf.lo <= key.as_ref());
+            assert!(&*leaf.lo <= key);
             if let Some(ref hi) = leaf.hi {
-                if &**hi < key.as_ref() {
+                if &**hi < key {
                     log::trace!("key overshoot on leaf_for_key");
                     continue;
                 }
@@ -534,9 +534,9 @@ impl<
             }
             let leaf = write.as_mut().unwrap();
 
-            assert!(&*leaf.lo <= key.as_ref());
+            assert!(&*leaf.lo <= key);
             if let Some(ref hi) = leaf.hi {
-                if &**hi < key.as_ref() {
+                if &**hi < key {
                     let size = leaf.in_memory_size;
                     drop(write);
                     log::trace!("key overshoot in leaf_for_key_mut_inner");
@@ -560,9 +560,9 @@ impl<
         let flush_epoch_guard = self.flush_epoch.check_in();
 
         let leaf = write.as_mut().unwrap();
-        assert!(&*leaf.lo <= key.as_ref());
+        assert!(&*leaf.lo <= key);
         if let Some(ref hi) = leaf.hi {
-            assert!(&**hi > key.as_ref());
+            assert!(&**hi > key);
         }
 
         if let Some(old_flush_epoch) = leaf.dirty_flush_epoch {
@@ -615,7 +615,7 @@ impl<
         let to_evict = ca.accessed_reuse_buffer(node_id.0, size);
         for (node_to_evict, _rough_size) in to_evict {
             let low_key =
-                self.node_id_to_low_key_index.get(&node_to_evict).unwrap();
+                self.node_id_to_low_key_index.get(node_to_evict).unwrap();
             let node = self.index.get(&low_key).unwrap();
             let mut write = node.inner.write();
             if write.is_none() {
@@ -656,15 +656,18 @@ impl<
         key: K,
     ) -> io::Result<Option<InlineArray>> {
         self.check_error()?;
-        let leaf_guard = self.leaf_for_key(key.as_ref())?;
+
+        let key_ref = key.as_ref();
+
+        let leaf_guard = self.leaf_for_key(key_ref)?;
 
         let leaf = leaf_guard.leaf_read.as_ref().unwrap();
 
         if let Some(ref hi) = leaf.hi {
-            assert!(&**hi > key.as_ref());
+            assert!(&**hi > key_ref);
         }
 
-        Ok(leaf.data.get(key.as_ref()).cloned())
+        Ok(leaf.data.get(key_ref).cloned())
     }
 
     /// Insert a key to a new value, returning the last value if it
@@ -693,19 +696,20 @@ impl<
     {
         self.check_error()?;
 
+        let key_ref = key.as_ref();
+
         let value_ivec = value.into();
-        let mut leaf_guard = self.leaf_for_key_mut(key.as_ref())?;
+        let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
         let new_epoch = leaf_guard.flush_epoch_guard.epoch();
 
-        let leaf = &mut leaf_guard.leaf_write.as_mut().unwrap();
+        let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
         // TODO handle prefix encoding
 
-        let ret = leaf.data.insert(key.as_ref().into(), value_ivec.clone());
+        let ret = leaf.data.insert(key_ref.into(), value_ivec.clone());
 
-        let old_size =
-            ret.as_ref().map(|v| key.as_ref().len() + v.len()).unwrap_or(0);
-        let new_size = key.as_ref().len() + value_ivec.len();
+        let old_size = ret.as_ref().map(|v| key_ref.len() + v.len()).unwrap_or(0);
+        let new_size = key_ref.len() + value_ivec.len();
 
         if new_size > old_size {
             leaf.in_memory_size += new_size - old_size;
@@ -750,14 +754,16 @@ impl<
     ) -> io::Result<Option<InlineArray>> {
         self.check_error()?;
 
-        let mut leaf_guard = self.leaf_for_key_mut(key.as_ref())?;
+        let key_ref = key.as_ref();
+
+        let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
         let new_epoch = leaf_guard.flush_epoch_guard.epoch();
 
-        let leaf = &mut leaf_guard.leaf_write.as_mut().unwrap();
+        let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
         // TODO handle prefix encoding
 
-        let ret = leaf.data.remove(key.as_ref());
+        let ret = leaf.data.remove(key_ref);
 
         if ret.is_some() {
             leaf.dirty_flush_epoch = Some(new_epoch);
@@ -923,16 +929,18 @@ impl<
     {
         self.check_error()?;
 
-        let mut leaf_guard = self.leaf_for_key_mut(key.as_ref())?;
+        let key_ref = key.as_ref();
+
+        let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
         let new_epoch = leaf_guard.epoch();
 
         let proposed: Option<InlineArray> = new.map(Into::into);
 
-        let leaf = &mut leaf_guard.leaf_write.as_mut().unwrap();
+        let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
         // TODO handle prefix encoding
 
-        let current = leaf.data.get(key.as_ref()).cloned();
+        let current = leaf.data.get(key_ref).cloned();
 
         let previous_matches = match (old, &current) {
             (None, None) => true,
@@ -946,9 +954,9 @@ impl<
 
         let ret = if previous_matches {
             if let Some(ref new_value) = proposed {
-                leaf.data.insert(key.as_ref().into(), new_value.clone())
+                leaf.data.insert(key_ref.into(), new_value.clone())
             } else {
-                leaf.data.remove(key.as_ref())
+                leaf.data.remove(key_ref)
             };
 
             Ok(CompareAndSwapSuccess {
@@ -1190,19 +1198,19 @@ impl<
             NodeId,
         )> = None;
 
-        for (key, _value) in &batch.writes {
+        for key in batch.writes.keys() {
             if let Some((_lo, w, _id)) = &last {
                 let leaf = w.as_ref().unwrap();
                 assert!(&leaf.lo <= key);
                 if let Some(hi) = &leaf.hi {
-                    if hi <= &key {
+                    if hi <= key {
                         let (lo, w, id) = last.take().unwrap();
                         acquired_locks.insert(lo, (w, id));
                     }
                 }
             }
             if last.is_none() {
-                last = Some(self.page_in(&key)?);
+                last = Some(self.page_in(key)?);
             }
         }
 
@@ -1218,7 +1226,7 @@ impl<
 
         // Flush any leaves that are dirty from a previous flush epoch
         // before performing operations.
-        for (_, (write, node_id)) in &mut acquired_locks {
+        for (write, node_id) in acquired_locks.values_mut() {
             let leaf = write.as_mut().unwrap();
             if let Some(old_flush_epoch) = leaf.dirty_flush_epoch {
                 if old_flush_epoch != new_epoch {
@@ -1475,7 +1483,7 @@ impl<
         let mut upper = prefix_ref.to_vec();
 
         while let Some(last) = upper.pop() {
-            if last < u8::max_value() {
+            if last < u8::MAX {
                 upper.push(last + 1);
                 return self.range(prefix_ref..&upper);
             }
@@ -1771,8 +1779,7 @@ impl<
     /// for the duration of the entire scan.
     pub fn checksum(&self) -> io::Result<u32> {
         let mut hasher = crc32fast::Hasher::new();
-        let mut iter = self.iter();
-        while let Some(kv_res) = iter.next() {
+        for kv_res in self.iter() {
             let (k, v) = kv_res?;
             hasher.update(&k);
             hasher.update(&v);

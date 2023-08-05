@@ -361,7 +361,7 @@ impl Slab {
             crc32fast::hash(&data[..self.slot_size - 4]).to_le_bytes();
         let hash_expected = &data[self.slot_size - 4..];
 
-        if hash_expected != &hash_actual {
+        if hash_expected != hash_actual {
             return Err(annotate!(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "crc mismatch - data corruption detected"
