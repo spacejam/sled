@@ -1,6 +1,4 @@
-use std::alloc::{Layout, System};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Barrier;
 use std::thread::scope;
 use std::time::{Duration, Instant};
@@ -54,6 +52,7 @@ impl Databench for Db {
     }
 }
 
+/*
 impl Databench for old_sled::Db {
     type READ = old_sled::IVec;
 
@@ -73,6 +72,7 @@ impl Databench for old_sled::Db {
         self.flush().unwrap();
     }
 }
+*/
 
 /*
 impl Databench for Arc<rocksdb::DB> {
@@ -96,6 +96,7 @@ impl Databench for Arc<rocksdb::DB> {
 }
 */
 
+/*
 struct Lmdb {
     env: heed::Env,
     db: heed::Database<
@@ -140,7 +141,9 @@ impl Databench for Lmdb {
         // NOOP
     }
 }
+*/
 
+/*
 struct Sqlite {
     connection: rusqlite::Connection,
 }
@@ -202,45 +205,30 @@ impl Databench for Sqlite {
         // NOOP
     }
 }
-
-#[global_allocator]
-static ALLOCATOR: Alloc = Alloc;
-
-static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
-static FREED: AtomicUsize = AtomicUsize::new(0);
-static RESIDENT: AtomicUsize = AtomicUsize::new(0);
+*/
 
 fn allocated() -> usize {
-    ALLOCATED.swap(0, Ordering::Relaxed)
+    #[cfg(feature = "testing-count-allocator")]
+    {
+        return sled::alloc::allocated();
+    }
+    0
 }
 
 fn freed() -> usize {
-    FREED.swap(0, Ordering::Relaxed)
+    #[cfg(feature = "testing-count-allocator")]
+    {
+        return sled::alloc::freed();
+    }
+    0
 }
 
 fn resident() -> usize {
-    RESIDENT.load(Ordering::Relaxed)
-}
-
-#[derive(Default, Debug, Clone, Copy)]
-struct Alloc;
-
-unsafe impl std::alloc::GlobalAlloc for Alloc {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ret = System.alloc(layout);
-        assert_ne!(ret, std::ptr::null_mut());
-        ALLOCATED.fetch_add(layout.size(), Ordering::Relaxed);
-        RESIDENT.fetch_add(layout.size(), Ordering::Relaxed);
-        std::ptr::write_bytes(ret, 0xa1, layout.size());
-        ret
+    #[cfg(feature = "testing-count-allocator")]
+    {
+        return sled::alloc::resident();
     }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        std::ptr::write_bytes(ptr, 0xde, layout.size());
-        FREED.fetch_add(layout.size(), Ordering::Relaxed);
-        RESIDENT.fetch_sub(layout.size(), Ordering::Relaxed);
-        System.dealloc(ptr, layout)
-    }
+    0
 }
 
 fn inserts<D: Databench>(store: &D) -> Vec<InsertStats> {

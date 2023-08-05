@@ -24,7 +24,9 @@ mod config;
 mod db;
 mod flush_epoch;
 mod heap;
+// mod meta_node;
 mod metadata_store;
+// mod varint;
 
 #[cfg(any(
     feature = "testing_shred_allocator",
