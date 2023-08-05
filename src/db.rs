@@ -199,10 +199,11 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
             let rhs_id = allocator.allocate_object_id();
 
             log::trace!(
-                "split leaf {:?} at split key: {:?} into new node {}",
+                "split leaf {:?} at split key: {:?} into new node {} at flush epoch {}",
                 self.lo,
                 split_key,
-                rhs_id
+                rhs_id,
+                new_epoch,
             );
 
             let mut rhs = Leaf {
@@ -611,6 +612,12 @@ impl<
                 let serialized =
                     leaf_ref.serialize(self.config.zstd_compression_level);
 
+                log::trace!(
+                    "D adding node {} to dirty epoch {}",
+                    node_id.0,
+                    dirty_epoch
+                );
+
                 self.dirty.insert(
                     (dirty_epoch, leaf.lo.clone()),
                     Some((leaf.mutation_count, Arc::new(serialized))),
@@ -651,6 +658,11 @@ impl<
                 let serialized =
                     leaf.serialize(self.config.zstd_compression_level);
 
+                log::trace!(
+                    "E adding node {} to dirty epoch {}",
+                    node_id.0,
+                    dirty_flush_epoch
+                );
                 self.dirty.insert(
                     (dirty_flush_epoch, leaf.lo.clone()),
                     Some((leaf.mutation_count, Arc::new(serialized))),
@@ -747,9 +759,19 @@ impl<
         if split.is_some() || Some(value_ivec) != ret {
             leaf.mutation_count += 1;
             leaf.dirty_flush_epoch = Some(new_epoch);
+            log::trace!(
+                "F adding node {} to dirty epoch {}",
+                leaf_guard.node_id.0,
+                new_epoch
+            );
             self.dirty.insert((new_epoch, leaf_guard.low_key.clone()), None);
         }
         if let Some((split_key, rhs_node)) = split {
+            log::trace!(
+                "G adding node {} to dirty epoch {}",
+                rhs_node.id.0,
+                new_epoch
+            );
             self.dirty.insert((new_epoch, split_key.clone()), None);
             self.node_id_to_low_key_index
                 .insert(rhs_node.id.0, split_key.clone());
@@ -795,6 +817,12 @@ impl<
             leaf.mutation_count += 1;
 
             leaf.dirty_flush_epoch = Some(new_epoch);
+
+            log::trace!(
+                "H adding node {} to dirty epoch {}",
+                leaf_guard.node_id.0,
+                new_epoch
+            );
             self.dirty.insert((new_epoch, leaf_guard.low_key.clone()), None);
         }
 
@@ -842,7 +870,7 @@ impl<
 
                 if epoch != flush_through_epoch {
                     log::warn!(
-                        "encountered unexpected flush epoch {} in object {} while flushing epoch {}",
+                        "encountered unexpected flush epoch {} for object {} while flushing epoch {}",
                         epoch,
                         node.id.0,
                         flush_through_epoch,
@@ -913,6 +941,10 @@ impl<
                 written_count
             );
         }
+        log::trace!(
+            "marking the forward flush notifier that epoch {} is flushed",
+            flush_through_epoch.get()
+        );
         forward_flush_notifier.mark_complete();
         self.store.maintenance()?;
         Ok(())
@@ -1028,9 +1060,19 @@ impl<
             leaf.mutation_count += 1;
 
             leaf.dirty_flush_epoch = Some(new_epoch);
+            log::trace!(
+                "A adding node {} to dirty epoch {}",
+                leaf_guard.node_id.0,
+                new_epoch
+            );
             self.dirty.insert((new_epoch, leaf_guard.low_key.clone()), None);
         }
         if let Some((split_key, rhs_node)) = split {
+            log::trace!(
+                "B adding node {} to dirty epoch {}",
+                rhs_node.id.0,
+                new_epoch
+            );
             self.dirty.insert((new_epoch, split_key.clone()), None);
             self.node_id_to_low_key_index
                 .insert(rhs_node.id.0, split_key.clone());
@@ -1326,6 +1368,15 @@ impl<
                     let serialized =
                         leaf_ref.serialize(self.config.zstd_compression_level);
 
+                    log::trace!(
+                        "C adding node {} to dirty epoch {}",
+                        node_id.0,
+                        dirty_epoch
+                    );
+                    assert!(self
+                        .dirty
+                        .contains_key(&(dirty_epoch, leaf.lo.clone())));
+
                     self.dirty.insert(
                         (dirty_epoch, leaf.lo.clone()),
                         Some((leaf_ref.mutation_count, Arc::new(serialized))),
@@ -1373,6 +1424,14 @@ impl<
             self.node_id_to_low_key_index
                 .insert(rhs_node.id.0, split_key.clone());
             self.index.insert(split_key, rhs_node);
+        }
+
+        // Add all written leaves to dirty
+        for (low_key, (write, _node_id)) in &mut acquired_locks {
+            let leaf = write.as_mut().unwrap();
+            leaf.dirty_flush_epoch = Some(new_epoch);
+            leaf.mutation_count += 1;
+            self.dirty.insert((new_epoch, low_key.clone()), None);
         }
 
         // Drop locks

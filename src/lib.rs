@@ -1,3 +1,5 @@
+// TODO ensure that any time something is added to dirty, that there was a live
+//      flush epoch already in-scope
 // TODO re-enable transaction tests in test_tree.rs
 // TODO free empty leaves with try_lock on left sibling, set hi key, remove from indexes, store deletion in metadata_store
 // TODO name all spawned maintenance threads and rayon threadpool

@@ -125,7 +125,7 @@ impl FlushEpoch {
 
         let (last_flush_complete_notifier, vacancy_notifier) = unsafe {
             let old: &EpochTracker = &*old_ptr;
-            let last = old.rc.fetch_add(SEAL_BIT + 1, Ordering::Release);
+            let last = old.rc.fetch_add(SEAL_BIT + 1, Ordering::SeqCst);
 
             assert_eq!(
                 last & SEAL_BIT,
