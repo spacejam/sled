@@ -39,7 +39,6 @@ impl Databench for Db {
             cache_capacity_bytes: 1024 * 1024 * 1024,
             entry_cache_percent: 20,
             flush_every_ms: Some(200),
-            temporary: false,
         }
         .open()
         .unwrap()

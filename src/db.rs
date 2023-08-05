@@ -1625,7 +1625,7 @@ impl<
     {
         loop {
             let mut r = self.range(range.clone());
-            let (k, v) = if let Some(kv_res) = r.next() {
+            let (k, v) = if let Some(kv_res) = r.next_back() {
                 kv_res?
             } else {
                 return Ok(None);
@@ -1851,6 +1851,12 @@ impl<
             };
 
             let leaf = node.leaf_read.as_ref().unwrap();
+
+            if leaf.lo > search_key {
+                // concurrent successor split, retry
+                continue;
+            }
+
             for (k, v) in leaf.data.iter() {
                 if self.bounds.contains(k) && &search_key <= k {
                     self.prefetched.push_back((k.clone(), v.clone()));

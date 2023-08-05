@@ -253,6 +253,41 @@ fn test_pop_first() -> io::Result<()> {
 }
 
 #[test]
+fn test_pop_last_in_range() -> io::Result<()> {
+    let config = sled::Config::tmp().unwrap();
+    let db: sled::Db<64, 1024, 128> = config.open()?;
+
+    let data = vec![
+        (b"key 1", b"value 1"),
+        (b"key 2", b"value 2"),
+        (b"key 3", b"value 3"),
+    ];
+
+    for (k, v) in data {
+        db.insert(k, v).unwrap();
+    }
+
+    let r1 = db.pop_last_in_range(b"key 1".as_ref()..=b"key 3").unwrap();
+    assert_eq!(Some((b"key 3".into(), b"value 3".into())), r1);
+
+    let r2 = db.pop_last_in_range(b"key 1".as_ref()..b"key 3").unwrap();
+    assert_eq!(Some((b"key 2".into(), b"value 2".into())), r2);
+
+    let r3 = db.pop_last_in_range(b"key 4".as_ref()..).unwrap();
+    assert!(r3.is_none());
+
+    let r4 = db.pop_last_in_range(b"key 2".as_ref()..=b"key 3").unwrap();
+    assert!(r4.is_none());
+
+    let r5 = db.pop_last_in_range(b"key 0".as_ref()..=b"key 3").unwrap();
+    assert_eq!(Some((b"key 1".into(), b"value 1".into())), r5);
+
+    let r6 = db.pop_last_in_range(b"key 0".as_ref()..=b"key 3").unwrap();
+    assert!(r6.is_none());
+    Ok(())
+}
+
+#[test]
 #[cfg(not(miri))] // can't create threads
 fn concurrent_tree_pops() -> std::io::Result<()> {
     use std::thread;
