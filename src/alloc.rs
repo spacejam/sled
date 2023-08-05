@@ -35,7 +35,7 @@ mod alloc {
     }
 }
 
-#[cfg(feature = "testing_shred_allocator")]
+#[cfg(feature = "testing_count_allocator")]
 mod alloc {
     use std::alloc::{Layout, System};
 

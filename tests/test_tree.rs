@@ -43,7 +43,7 @@ fn monotonic_inserts() {
     common::setup_logger();
 
     let db: Db<64, 1024, 128> =
-        Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+        Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
 
     for len in [1_usize, 16, 32, 1024].iter() {
         for i in 0_usize..*len {
@@ -89,7 +89,7 @@ fn fixed_stride_inserts() {
     common::setup_logger();
 
     let db: Db<64, 1024, 128> =
-        Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+        Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
 
     let mut expected = std::collections::HashSet::new();
     for k in 0..4096_u16 {
@@ -139,7 +139,7 @@ fn sequential_inserts() {
     common::setup_logger();
 
     let db: Db<64, 1024, 128> =
-        Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+        Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
 
     for len in [1, 16, 32, u16::MAX].iter() {
         for i in 0..*len {
@@ -160,7 +160,7 @@ fn reverse_inserts() {
     common::setup_logger();
 
     let db: Db<64, 1024, 128> =
-        Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+        Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
 
     for len in [1, 16, 32, u16::MAX].iter() {
         for i in 0..*len {
@@ -185,7 +185,7 @@ fn very_large_reverse_tree_iterator() {
     b.push(1);
 
     let db: Db<64, 1024, 128> =
-        Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
+        Config::tmp().unwrap().flush_every_ms(Some(1)).open().unwrap();
 
     db.insert(a, "").unwrap();
     db.insert(b, "").unwrap();
@@ -234,7 +234,7 @@ fn varied_compression_ratios() {
 fn concurrent_tree_pops() -> std::io::Result<()> {
     use std::thread;
 
-    let db: Db<64, 1024, 128> = Config::new().temporary(true).open()?;
+    let db: Db<64, 1024, 128> = Config::tmp().unwrap().open()?;
 
     // Insert values 0..5
     for x in 0u32..5 {
@@ -277,7 +277,7 @@ fn concurrent_tree_ops() {
     for i in 0..INTENSITY {
         debug!("beginning test {}", i);
 
-        let config = Config::new().temporary(true).flush_every_ms(Some(1));
+        let config = Config::tmp().unwrap().flush_every_ms(Some(1));
 
         macro_rules! par {
             ($t:ident, $f:expr) => {
@@ -404,7 +404,7 @@ fn concurrent_tree_iter() -> io::Result<()> {
     const N_FORWARD: usize = INTENSITY;
     const N_REVERSE: usize = INTENSITY;
 
-    let config = Config::new().temporary(true).flush_every_ms(Some(1));
+    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
 
     let t: Db<64, 1024, 128> = config.open().unwrap();
 
@@ -675,7 +675,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
 
 #[test]
 fn tree_flush_in_transaction() {
-    let config = sled::Config::new().temporary(true);
+    let config = sled::Config::tmp().unwrap();
     let db: Db<64, 1024, 128> = config.open().unwrap();
     let tree = db.open_tree(b"a").unwrap();
 
@@ -693,9 +693,9 @@ fn incorrect_multiple_db_transactions() -> TransactionResult<()> {
     common::setup_logger();
 
     let db1 =
-        Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
+        Config::tmp().unwrap().flush_every_ms(Some(1)).open().unwrap();
     let db2 =
-        Config::new().temporary(true).flush_every_ms(Some(1)).open().unwrap();
+        Config::tmp().unwrap().flush_every_ms(Some(1)).open().unwrap();
 
     let result: TransactionResult<()> =
         (&*db1, &*db2).transaction::<_, ()>(|_| Ok(()));
@@ -709,7 +709,7 @@ fn incorrect_multiple_db_transactions() -> TransactionResult<()> {
 fn many_tree_transactions() -> TransactionResult<()> {
     common::setup_logger();
 
-    let config = Config::new().temporary(true).flush_every_ms(Some(1));
+    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
     let db: Db<64, 1024, 128> = Arc::new(config.open().unwrap());
     let t1 = db.open_tree(b"1")?;
     let t2 = db.open_tree(b"2")?;
@@ -732,7 +732,7 @@ fn many_tree_transactions() -> TransactionResult<()> {
 fn batch_outside_of_transaction() -> TransactionResult<()> {
     common::setup_logger();
 
-    let config = Config::new().temporary(true).flush_every_ms(Some(1));
+    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
     let db: Db<64, 1024, 128> = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
@@ -786,7 +786,7 @@ fn tree_subdir() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn tree_small_keys_iterator() {
-    let config = Config::new().temporary(true).flush_every_ms(Some(1));
+    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
     let t: Db<64, 1024, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
@@ -834,7 +834,7 @@ fn tree_big_keys_iterator() {
         base
     }
 
-    let config = Config::new().temporary(true).flush_every_ms(Some(1));
+    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
 
     let t: Db<64, 1024, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
@@ -875,7 +875,7 @@ fn tree_big_keys_iterator() {
 /*
 #[test]
 fn tree_subscribers_and_keyspaces() -> io::Result<()> {
-    let config = Config::new().temporary(true).flush_every_ms(Some(1));
+    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
 
     let db: Db<64, 1024, 128> = config.open().unwrap();
 
@@ -958,7 +958,7 @@ fn tree_subscribers_and_keyspaces() -> io::Result<()> {
 fn tree_range() {
     common::setup_logger();
 
-    let config = Config::new().temporary(true).flush_every_ms(Some(1));
+    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
     let t: Db<64, 1024, 128> = config.open().unwrap();
 
     t.insert(b"0", vec![0]).unwrap();
@@ -1008,7 +1008,7 @@ fn tree_range() {
 fn recover_tree() {
     common::setup_logger();
 
-    let config = Config::new().temporary(true).flush_every_ms(Some(1));
+    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
 
     let t: Db<64, 1024, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
@@ -1052,7 +1052,7 @@ fn create_tree() {
 
 #[test]
 fn contains_tree() {
-    let db: Db<64, 1024, 128> = Config::new().temporary(true).flush_every_ms(None).open().unwrap();
+    let db: Db<64, 1024, 128> = Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
     let tree_one = db.open_tree("tree 1").unwrap();
     let tree_two = db.open_tree("tree 2").unwrap();
 
@@ -1072,8 +1072,8 @@ fn contains_tree() {
 fn tree_import_export() -> io::Result<()> {
     common::setup_logger();
 
-    let config_1 = Config::new().temporary(true);
-    let config_2 = Config::new().temporary(true);
+    let config_1 = Config::tmp().unwrap();
+    let config_2 = Config::tmp().unwrap();
 
     let db: Db<64, 1024, 128> = config_1.open()?;
     for db_id in 0..N_THREADS {

@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use fault_injection::annotate;
+
 use crate::Db;
 
 #[derive(Debug, Clone)]
@@ -16,8 +18,6 @@ pub struct Config {
     pub flush_every_ms: Option<usize>,
     /// The zstd compression level to use when writing data to disk. Defaults to 3.
     pub zstd_compression_level: i32,
-    /// Attempts to delete all storage files when the last open instance of a Db is dropped.
-    pub temporary: bool,
 }
 
 impl Default for Config {
@@ -28,7 +28,6 @@ impl Default for Config {
             cache_capacity_bytes: 512 * 1024 * 1024,
             entry_cache_percent: 20,
             zstd_compression_level: 3,
-            temporary: false,
         }
     }
 }
@@ -37,6 +36,28 @@ impl Config {
     /// Returns a default `Config`
     pub fn new() -> Config {
         Config::default()
+    }
+
+    /// Returns a config with the `path` initialized to a system
+    /// temporary directory that will be deleted when this process
+    /// terminates.
+    pub fn tmp() -> std::io::Result<Config> {
+        thread_local! {
+            static TMP_DIR: std::io::Result<tempdir::TempDir> =
+                tempdir::TempDir::new("sled_tmp");
+        }
+
+        pub fn tmp_path() -> std::io::Result<std::path::PathBuf> {
+            TMP_DIR.with(|t| match t.as_ref() {
+                Ok(tmp) => Ok(tmp.path().into()),
+                Err(e) => {
+                    let e: std::io::Error = annotate!(*e);
+                    Err(e)
+                }
+            })
+        }
+
+        Ok(Config { path: tmp_path()?, ..Config::default() })
     }
 
     /// Set the path of the database (builder).
@@ -49,8 +70,7 @@ impl Config {
         (flush_every_ms, Option<usize>, "Start a background thread that flushes data to disk every few milliseconds. Defaults to every 200ms."),
         (cache_capacity_bytes, usize, "Cache size in **bytes**. Default is 512mb."),
         (entry_cache_percent, u8, "The percentage of the cache that is dedicated to the scan-resistant entry cache."),
-        (zstd_compression_level, i32, "The zstd compression level to use when writing data to disk. Defaults to 3."),
-        (temporary, bool, "Attempts to delete all storage files when the last open instance of a Db is dropped.")
+        (zstd_compression_level, i32, "The zstd compression level to use when writing data to disk. Defaults to 3.")
     );
 
     pub fn open<

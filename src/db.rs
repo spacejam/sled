@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::mem::{self, ManuallyDrop};
 use std::num::NonZeroU64;
@@ -12,7 +12,7 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use cache_advisor::CacheAdvisor;
-use concurrent_map::ConcurrentMap;
+use concurrent_map::{ConcurrentMap, Minimum};
 use inline_array::InlineArray;
 use parking_lot::{
     lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard},
@@ -644,7 +644,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// assert_eq!(db.get(&[0]).unwrap(), Some(sled::InlineArray::from(vec![0])));
@@ -677,7 +677,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// assert_eq!(db.insert(&[1, 2, 3], vec![0]).unwrap(), None);
     /// assert_eq!(db.insert(&[1, 2, 3], vec![1]).unwrap(), Some(sled::InlineArray::from(&[0])));
@@ -739,7 +739,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(&[1], vec![1]);
     /// assert_eq!(db.remove(&[1]).unwrap(), Some(sled::InlineArray::from(vec![1])));
@@ -884,7 +884,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// // unique creation
     /// assert!(
@@ -995,7 +995,7 @@ impl<
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, InlineArray};
     ///
-    /// let config = Config::new().temporary(true);
+    /// let config = Config::tmp().unwrap();
     /// let db: sled::Db<64, 1024, 128> = config.open()?;
     ///
     /// fn u64_to_ivec(number: u64) -> InlineArray {
@@ -1068,7 +1068,7 @@ impl<
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::{Config, InlineArray};
     ///
-    /// let config = Config::new().temporary(true);
+    /// let config = Config::tmp().unwrap();
     /// let db: sled::Db<64, 1024, 128> = config.open()?;
     ///
     /// fn u64_to_ivec(number: u64) -> InlineArray {
@@ -1127,10 +1127,14 @@ impl<
         &self,
     ) -> Iter<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE> {
         Iter {
+            prefetched: VecDeque::new(),
+            prefetched_back: VecDeque::new(),
+            next_fetch: None,
+            next_fetch_back: None,
+            next_calls: 0,
+            next_back_calls: 0,
             inner: self,
             bounds: (Bound::Unbounded, Bound::Unbounded),
-            last: None,
-            last_back: None,
         }
     }
 
@@ -1147,7 +1151,16 @@ impl<
         let end: Bound<InlineArray> =
             map_bound(range.end_bound(), |b| InlineArray::from(b.as_ref()));
 
-        Iter { inner: self, bounds: (start, end), last: None, last_back: None }
+        Iter {
+            prefetched: VecDeque::new(),
+            prefetched_back: VecDeque::new(),
+            next_fetch: None,
+            next_fetch_back: None,
+            next_calls: 0,
+            next_back_calls: 0,
+            inner: self,
+            bounds: (start, end),
+        }
     }
 
     /// Create a new batched update that is applied
@@ -1309,7 +1322,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// assert!(db.contains_key(&[0])?);
@@ -1335,7 +1348,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::InlineArray;
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// for i in 0..10 {
     ///     db.insert(&[i], vec![i])
@@ -1389,7 +1402,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::InlineArray;
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// for i in 0..10 {
     ///     db.insert(&[i], vec![i])?;
@@ -1441,7 +1454,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// use sled::InlineArray;
     /// db.insert(&[0, 0, 0], vec![0, 0, 0])?;
@@ -1510,7 +1523,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// db.insert(&[1], vec![10])?;
@@ -1562,7 +1575,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     ///
     /// let data = vec![
@@ -1624,7 +1637,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// db.insert(&[1], vec![10])?;
@@ -1676,7 +1689,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     ///
     /// let data = vec![
@@ -1735,7 +1748,7 @@ impl<
     ///
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = sled::Config::new().temporary(true);
+    /// # let config = sled::Config::tmp().unwrap();
     /// # let db: sled::Db<64, 1024, 128> = config.open()?;
     /// db.insert(b"a", vec![0]);
     /// db.insert(b"b", vec![1]);
@@ -1797,8 +1810,12 @@ pub struct Iter<
 > {
     inner: &'a Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
     bounds: (Bound<InlineArray>, Bound<InlineArray>),
-    last: Option<InlineArray>,
-    last_back: Option<InlineArray>,
+    next_calls: usize,
+    next_back_calls: usize,
+    next_fetch: Option<InlineArray>,
+    next_fetch_back: Option<InlineArray>,
+    prefetched: VecDeque<(InlineArray, InlineArray)>,
+    prefetched_back: VecDeque<(InlineArray, InlineArray)>,
 }
 
 impl<
@@ -1812,7 +1829,34 @@ impl<
     type Item = io::Result<(InlineArray, InlineArray)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        if self.prefetched.is_empty() {
+            let search_key = if let Some(last) = &self.next_fetch {
+                last.clone()
+            } else {
+                match &self.bounds.0 {
+                    Bound::Included(b) | Bound::Excluded(b) => b.clone(),
+                    Bound::Unbounded => InlineArray::MIN,
+                }
+            };
+
+            let node = match self.inner.leaf_for_key(&search_key) {
+                Ok(n) => n,
+                Err(e) => return Some(Err(e)),
+            };
+
+            let leaf = node.leaf_read.as_ref().unwrap();
+            for (k, v) in leaf.data.iter() {
+                if self.bounds.contains(k) {
+                    self.prefetched.push_back((k.clone(), v.clone()));
+                }
+            }
+            if self.prefetched.is_empty() {
+                return None;
+            }
+            self.next_fetch = leaf.hi.clone();
+        }
+
+        self.prefetched.pop_front().map(Ok)
     }
 }
 

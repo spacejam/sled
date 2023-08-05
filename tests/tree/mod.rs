@@ -182,8 +182,7 @@ fn prop_tree_matches_btreemap_inner(
 
     super::common::setup_logger();
 
-    let config = Config::new()
-        .temporary(true)
+    let config = Config::tmp()?
         .zstd_compression_level(compression)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .cache_capacity_bytes(cache_size);
