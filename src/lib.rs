@@ -95,7 +95,17 @@ impl std::fmt::Display for CompareAndSwapError {
 
 impl std::error::Error for CompareAndSwapError {}
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialOrd,
+    Ord,
+    PartialEq,
+    Eq,
+)]
 struct NodeId(u64);
 
 const fn _assert_public_types_send_sync() {

@@ -1,17 +1,14 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use sled::{Config, Db};
+use sled::{Config, Db as SledDb};
 
 const CONCURRENCY: usize = 32;
 const N_KEYS: usize = 1024;
-const LEAF_FANOUT: usize = 8;
 
-fn batch_writer(
-    db: Db<64, LEAF_FANOUT, 128>,
-    barrier: Arc<Barrier>,
-    thread_number: usize,
-) {
+type Db = SledDb<8, 8, 8>;
+
+fn batch_writer(db: Db, barrier: Arc<Barrier>, thread_number: usize) {
     barrier.wait();
     let mut batch = sled::Batch::default();
     for key_number in 0_u128..N_KEYS as _ {
@@ -24,7 +21,7 @@ fn batch_writer(
 
 #[test]
 fn concurrent_batch_atomicity() {
-    let db: Db<64, LEAF_FANOUT, 128> = Config {
+    let db: Db = Config {
         path: "concurrent_batch_atomicity".into(),
         ..Default::default()
     }

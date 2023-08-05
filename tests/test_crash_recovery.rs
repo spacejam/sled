@@ -97,7 +97,7 @@ fn main() {
         Ok(ref s) if s == RECOVERY_DIR => run_crash_recovery(),
         Ok(ref s) if s == BATCHES_DIR => run_crash_batches(),
         Ok(ref s) if s == ITER_DIR => run_crash_iter(),
-        // Ok(ref s) if s == TX_DIR => run_crash_tx(),
+        Ok(ref s) if s == TX_DIR => {} // TODO run_crash_tx(),
         Ok(_) | Err(_) => panic!("invalid crash test case"),
     }
 }

@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use fault_injection::annotate;
+use fault_injection::fallible;
+use tempdir::TempDir;
 
 use crate::Db;
 
@@ -18,6 +20,10 @@ pub struct Config {
     pub flush_every_ms: Option<usize>,
     /// The zstd compression level to use when writing data to disk. Defaults to 3.
     pub zstd_compression_level: i32,
+    /// This is only set to `Some` for objects created via
+    /// `Config::tmp`, and will remove the storage directory
+    /// when the final Arc drops.
+    pub tempdir_deleter: Option<Arc<TempDir>>,
 }
 
 impl Default for Config {
@@ -28,6 +34,7 @@ impl Default for Config {
             cache_capacity_bytes: 512 * 1024 * 1024,
             entry_cache_percent: 20,
             zstd_compression_level: 3,
+            tempdir_deleter: None,
         }
     }
 }
@@ -39,25 +46,16 @@ impl Config {
     }
 
     /// Returns a config with the `path` initialized to a system
-    /// temporary directory that will be deleted when this process
-    /// terminates.
+    /// temporary directory that will be deleted when this `Config`
+    /// is dropped.
     pub fn tmp() -> std::io::Result<Config> {
-        thread_local! {
-            static TMP_DIR: std::io::Result<tempdir::TempDir> =
-                tempdir::TempDir::new("sled_tmp");
-        }
+        let tempdir = fallible!(tempdir::TempDir::new("sled_tmp"));
 
-        pub fn tmp_path() -> std::io::Result<std::path::PathBuf> {
-            TMP_DIR.with(|t| match t.as_ref() {
-                Ok(tmp) => Ok(tmp.path().into()),
-                Err(e) => {
-                    let e: std::io::Error = annotate!(*e);
-                    Err(e)
-                }
-            })
-        }
-
-        Ok(Config { path: tmp_path()?, ..Config::default() })
+        Ok(Config {
+            path: tempdir.path().into(),
+            tempdir_deleter: Some(Arc::new(tempdir)),
+            ..Config::default()
+        })
     }
 
     /// Set the path of the database (builder).

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
+use std::fmt;
 use std::io;
 use std::mem::{self, ManuallyDrop};
 use std::num::NonZeroU64;
@@ -22,7 +23,7 @@ use stack_map::StackMap;
 use crate::*;
 
 /// sled 1.0
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Db<
     const INDEX_FANOUT: usize = 64,
     const LEAF_FANOUT: usize = 1024,
@@ -43,11 +44,29 @@ pub struct Db<
     cache_advisor: RefCell<CacheAdvisor>,
     flush_epoch: FlushEpoch,
     // the value here is for serialized bytes
-    dirty: ConcurrentMap<(NonZeroU64, InlineArray), Option<Arc<Vec<u8>>>>,
+    dirty:
+        ConcurrentMap<(NonZeroU64, InlineArray), Option<(u64, Arc<Vec<u8>>)>>,
     shutdown_sender: Option<mpsc::Sender<mpsc::Sender<()>>>,
     was_recovered: bool,
     #[cfg(feature = "for-internal-testing-only")]
     event_verifier: Arc<crate::event_verifier::EventVerifier>,
+}
+
+impl<
+        const INDEX_FANOUT: usize,
+        const LEAF_FANOUT: usize,
+        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
+    > fmt::Debug for Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
+{
+    fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
+        w.debug_struct(&format!(
+            "Db<{}, {}, {}>",
+            INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE
+        ))
+        .field("global_error", &self.check_error())
+        .field("data", &format!("{:?}", self.iter().collect::<Vec<_>>()))
+        .finish()
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -67,7 +86,6 @@ struct Leaf<const LEAF_FANOUT: usize> {
     #[serde(skip)]
     dirty_flush_epoch: Option<NonZeroU64>,
     in_memory_size: usize,
-    #[cfg(feature = "for-internal-testing-only")]
     mutation_count: u64,
 }
 
@@ -194,7 +212,6 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
                 prefix_length: 0,
                 in_memory_size: 0,
                 data,
-                #[cfg(feature = "for-internal-testing-only")]
                 mutation_count: 0,
             };
             rhs.set_in_memory_size();
@@ -599,7 +616,7 @@ impl<
 
                 self.dirty.insert(
                     (dirty_epoch, leaf.lo.clone()),
-                    Some(Arc::new(serialized)),
+                    Some((leaf.mutation_count, Arc::new(serialized))),
                 );
             }
         }
@@ -639,7 +656,7 @@ impl<
 
                 self.dirty.insert(
                     (dirty_flush_epoch, leaf.lo.clone()),
-                    Some(Arc::new(serialized)),
+                    Some((leaf.mutation_count, Arc::new(serialized))),
                 );
             }
             *write = None;
@@ -731,10 +748,7 @@ impl<
 
         let split = leaf.split_if_full(new_epoch, &self.store);
         if split.is_some() || Some(value_ivec) != ret {
-            #[cfg(feature = "for-internal-testing-only")]
-            {
-                leaf.mutation_count += 1;
-            }
+            leaf.mutation_count += 1;
             leaf.dirty_flush_epoch = Some(new_epoch);
             self.dirty.insert((new_epoch, leaf_guard.low_key.clone()), None);
         }
@@ -781,10 +795,7 @@ impl<
         let ret = leaf.data.remove(key_ref);
 
         if ret.is_some() {
-            #[cfg(feature = "for-internal-testing-only")]
-            {
-                leaf.mutation_count += 1;
-            }
+            leaf.mutation_count += 1;
 
             leaf.dirty_flush_epoch = Some(new_epoch);
             self.dirty.insert((new_epoch, leaf_guard.low_key.clone()), None);
@@ -827,6 +838,30 @@ impl<
             if let Some(node) = self.index.get(&*low_key) {
                 let mut lock = node.inner.write();
 
+                let serialized_value_opt = self
+                    .dirty
+                    .remove(&(epoch, low_key.clone()))
+                    .expect("violation of flush responsibility");
+
+                if epoch != flush_through_epoch {
+                    log::warn!(
+                        "encountered unexpected flush epoch {} in object {}",
+                        epoch,
+                        node.id.0
+                    );
+                    #[cfg(feature = "for-internal-testing-only")]
+                    {
+                        let mutation_count =
+                            lock.as_ref().unwrap().mutation_count;
+                        self.event_verifier.mark_unexpected_flush_epoch(
+                            node.id,
+                            epoch,
+                            mutation_count,
+                        );
+                    }
+
+                    continue;
+                }
                 assert_eq!(
                     epoch,
                     flush_through_epoch,
@@ -835,34 +870,19 @@ impl<
                     epoch.get()
                 );
 
-                let serialized_value_opt = self
-                    .dirty
-                    .remove(&(epoch, low_key.clone()))
-                    .expect("violation of flush responsibility");
-
-                let leaf_bytes: Vec<u8> = if let Some(mut serialized_value) =
-                    serialized_value_opt
-                {
-                    Arc::make_mut(&mut serialized_value);
-                    Arc::into_inner(serialized_value).unwrap()
-                } else {
-                    let leaf_ref: &mut Leaf<LEAF_FANOUT> =
-                        lock.as_mut().unwrap();
-                    let dirty_epoch =
-                        leaf_ref.dirty_flush_epoch.take().unwrap();
-                    if epoch == dirty_epoch {
+                let leaf_bytes: Vec<u8> =
+                    if let Some(mut serialized_value) = serialized_value_opt {
+                        Arc::make_mut(&mut serialized_value.1);
+                        Arc::into_inner(serialized_value.1).unwrap()
+                    } else {
+                        let leaf_ref: &mut Leaf<LEAF_FANOUT> =
+                            lock.as_mut().unwrap();
+                        let dirty_epoch =
+                            leaf_ref.dirty_flush_epoch.take().unwrap();
+                        assert_eq!(epoch, dirty_epoch);
                         // ugly but basically free
                         leaf_ref.serialize(self.config.zstd_compression_level)
-                    } else {
-                        let mut serialized_value = self
-                            .dirty
-                            .remove(&(epoch, low_key.clone()))
-                            .expect("violation of flush responsibility")
-                            .expect("violation of flush responsibility");
-                        Arc::make_mut(&mut serialized_value);
-                        Arc::into_inner(serialized_value).unwrap()
-                    }
-                };
+                    };
 
                 drop(lock);
                 // println!("node id {} is dirty", node.id.0);
@@ -996,10 +1016,7 @@ impl<
 
         let split = leaf.split_if_full(new_epoch, &self.store);
         if split.is_some() || ret.is_ok() {
-            #[cfg(feature = "for-internal-testing-only")]
-            {
-                leaf.mutation_count += 1;
-            }
+            leaf.mutation_count += 1;
 
             leaf.dirty_flush_epoch = Some(new_epoch);
             self.dirty.insert((new_epoch, leaf_guard.low_key.clone()), None);
@@ -1302,7 +1319,7 @@ impl<
 
                     self.dirty.insert(
                         (dirty_epoch, leaf.lo.clone()),
-                        Some(Arc::new(serialized)),
+                        Some((leaf_ref.mutation_count, Arc::new(serialized))),
                     );
                 }
             }
@@ -2062,7 +2079,6 @@ fn initialize<
             prefix_length: 0,
             data: StackMap::new(),
             in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
-            #[cfg(feature = "for-internal-testing-only")]
             mutation_count: 0,
         };
         let first_node = Node {

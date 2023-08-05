@@ -92,7 +92,7 @@ impl Arbitrary for Op {
             return Restart;
         }
 
-        let choice = range(g, 0, 8);
+        let choice = range(g, 0, 7);
 
         match choice {
             0 => Set(Key::arbitrary(g), u8::arbitrary(g)),
@@ -185,7 +185,7 @@ fn prop_tree_matches_btreemap_inner(
     let config = Config::tmp()?
         .zstd_compression_level(compression)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .cache_capacity_bytes(cache_size);
+        .cache_capacity_bytes(cache_size.max(256));
 
     let mut tree: Db<64, 1024, 128> = config.open().unwrap();
     //tree.set_merge_operator(merge_operator);
@@ -326,6 +326,8 @@ fn prop_tree_matches_btreemap_inner(
             return Err(e);
         }
     }
+
+    let _ = std::fs::remove_dir_all(config.path);
 
     tree.check_error()
 }

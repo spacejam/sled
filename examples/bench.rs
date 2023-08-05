@@ -6,7 +6,7 @@ use std::{fs, io};
 
 use num_format::{Locale, ToFormattedString};
 
-use sled::Db;
+use sled::{Config, Db};
 
 const N_WRITES_PER_THREAD: u32 = 4 * 1024 * 1024;
 const MAX_CONCURRENCY: u32 = 4;
@@ -36,6 +36,7 @@ impl Databench for Db {
             cache_capacity_bytes: 1024 * 1024 * 1024,
             entry_cache_percent: 20,
             flush_every_ms: Some(200),
+            ..Config::default()
         }
         .open()
         .unwrap()
