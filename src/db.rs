@@ -6,7 +6,6 @@ use std::num::NonZeroU64;
 use std::ops;
 use std::ops::Bound;
 use std::ops::RangeBounds;
-use std::path::Path;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -47,6 +46,8 @@ pub struct Db<
     dirty: ConcurrentMap<(NonZeroU64, InlineArray), Option<Arc<Vec<u8>>>>,
     shutdown_sender: Option<mpsc::Sender<mpsc::Sender<()>>>,
     was_recovered: bool,
+    #[cfg(feature = "for-internal-testing-only")]
+    event_verifier: Arc<crate::event_verifier::EventVerifier>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -66,6 +67,8 @@ struct Leaf<const LEAF_FANOUT: usize> {
     #[serde(skip)]
     dirty_flush_epoch: Option<NonZeroU64>,
     in_memory_size: usize,
+    #[cfg(feature = "for-internal-testing-only")]
+    mutation_count: u64,
 }
 
 fn flusher<
@@ -191,6 +194,8 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
                 prefix_length: 0,
                 in_memory_size: 0,
                 data,
+                #[cfg(feature = "for-internal-testing-only")]
+                mutation_count: 0,
             };
             rhs.set_in_memory_size();
 
@@ -287,6 +292,7 @@ impl<
 {
     fn drop(&mut self) {
         let size = self.leaf_write.as_ref().unwrap().in_memory_size;
+
         // we must drop our mutex before calling mark_access_and_evict
         unsafe {
             ManuallyDrop::drop(&mut self.leaf_write);
@@ -296,10 +302,6 @@ impl<
             log::error!("io error while paging out dirty data: {:?}", e);
         }
     }
-}
-
-pub fn open_default<P: AsRef<Path>>(path: P) -> io::Result<Db> {
-    Config { path: path.as_ref().into(), ..Default::default() }.open()
 }
 
 impl<
@@ -329,6 +331,9 @@ impl<
             if let Err(e) = self.flush() {
                 eprintln!("failed to flush Db on Drop: {e:?}");
             }
+
+            #[cfg(feature = "for-internal-testing-only")]
+            self.event_verifier.verify();
 
             // this is probably unnecessary but it will avoid issues
             // if egregious bugs get introduced that trigger it
@@ -507,6 +512,8 @@ impl<
             flush_epoch: Default::default(),
             shutdown_sender: None,
             was_recovered: first_id_opt.is_none(),
+            #[cfg(feature = "for-internal-testing-only")]
+            event_verifier: Arc::default(),
         };
 
         if let Some(flush_every_ms) = ret.config.flush_every_ms {
@@ -724,6 +731,10 @@ impl<
 
         let split = leaf.split_if_full(new_epoch, &self.store);
         if split.is_some() || Some(value_ivec) != ret {
+            #[cfg(feature = "for-internal-testing-only")]
+            {
+                leaf.mutation_count += 1;
+            }
             leaf.dirty_flush_epoch = Some(new_epoch);
             self.dirty.insert((new_epoch, leaf_guard.low_key.clone()), None);
         }
@@ -770,6 +781,11 @@ impl<
         let ret = leaf.data.remove(key_ref);
 
         if ret.is_some() {
+            #[cfg(feature = "for-internal-testing-only")]
+            {
+                leaf.mutation_count += 1;
+            }
+
             leaf.dirty_flush_epoch = Some(new_epoch);
             self.dirty.insert((new_epoch, leaf_guard.low_key.clone()), None);
         }
@@ -824,22 +840,29 @@ impl<
                     .remove(&(epoch, low_key.clone()))
                     .expect("violation of flush responsibility");
 
-                let leaf_bytes: Vec<u8> =
-                    if let Some(serialized_value) = serialized_value_opt {
-                        if Arc::strong_count(&serialized_value) == 1 {
-                            Arc::into_inner(serialized_value).unwrap()
-                        } else {
-                            serialized_value.to_vec()
-                        }
-                    } else {
-                        let leaf_ref: &mut Leaf<LEAF_FANOUT> =
-                            lock.as_mut().unwrap();
-                        let dirty_epoch =
-                            leaf_ref.dirty_flush_epoch.take().unwrap();
-                        assert_eq!(epoch, dirty_epoch);
+                let leaf_bytes: Vec<u8> = if let Some(mut serialized_value) =
+                    serialized_value_opt
+                {
+                    Arc::make_mut(&mut serialized_value);
+                    Arc::into_inner(serialized_value).unwrap()
+                } else {
+                    let leaf_ref: &mut Leaf<LEAF_FANOUT> =
+                        lock.as_mut().unwrap();
+                    let dirty_epoch =
+                        leaf_ref.dirty_flush_epoch.take().unwrap();
+                    if epoch == dirty_epoch {
                         // ugly but basically free
                         leaf_ref.serialize(self.config.zstd_compression_level)
-                    };
+                    } else {
+                        let mut serialized_value = self
+                            .dirty
+                            .remove(&(epoch, low_key.clone()))
+                            .expect("violation of flush responsibility")
+                            .expect("violation of flush responsibility");
+                        Arc::make_mut(&mut serialized_value);
+                        Arc::into_inner(serialized_value).unwrap()
+                    }
+                };
 
                 drop(lock);
                 // println!("node id {} is dirty", node.id.0);
@@ -973,6 +996,11 @@ impl<
 
         let split = leaf.split_if_full(new_epoch, &self.store);
         if split.is_some() || ret.is_ok() {
+            #[cfg(feature = "for-internal-testing-only")]
+            {
+                leaf.mutation_count += 1;
+            }
+
             leaf.dirty_flush_epoch = Some(new_epoch);
             self.dirty.insert((new_epoch, leaf_guard.low_key.clone()), None);
         }
@@ -2034,6 +2062,8 @@ fn initialize<
             prefix_length: 0,
             data: StackMap::new(),
             in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
+            #[cfg(feature = "for-internal-testing-only")]
+            mutation_count: 0,
         };
         let first_node = Node {
             id: NodeId(first_id),

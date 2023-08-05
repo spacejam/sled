@@ -15,9 +15,16 @@ exclude = ["benchmarks", "examples", "bindings", "scripts", "experiments"]
 
 [features]
 # initializes allocated memory to 0xa1, writes 0xde to deallocated memory before freeing it
-testing_shred_allocator = []
+testing-shred-allocator = []
 # use a counting global allocator that provides the sled::alloc::{allocated, freed, resident, reset} functions
-testing_count_allocator = []
+testing-count-allocator = []
+for-internal-testing-only = []
+
+[profile.release]
+debug = true
+opt-level = 3
+overflow-checks = true
+panic = "abort"
 
 [dependencies]
 bincode = "1.3.3"
@@ -44,7 +51,7 @@ tempdir = "0.3.7"
 env_logger = "0.10.0"
 heed = "0.11.0"
 num-format = "0.4.4"
-rocksdb = "0.21.0"
+# rocksdb = "0.21.0"
 rusqlite = "0.29.0"
 old_sled = { version = "0.34", package = "sled" }
 rand = "0.8.5"

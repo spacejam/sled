@@ -32,8 +32,11 @@ mod metadata_store;
 ))]
 pub mod alloc;
 
+#[cfg(feature = "for-internal-testing-only")]
+mod event_verifier;
+
 pub use crate::config::Config;
-pub use crate::db::{open_default, Batch, Db, Iter};
+pub use crate::db::{Batch, Db, Iter};
 pub use inline_array::InlineArray;
 
 /// Opens a `Db` with a default configuration at the
@@ -44,6 +47,10 @@ pub use inline_array::InlineArray;
 /// from a previous instance.
 pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Db> {
     Config::new().path(path).open()
+}
+
+pub fn open_default<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Db> {
+    Config { path: path.as_ref().into(), ..Default::default() }.open()
 }
 
 use crate::flush_epoch::{FlushEpoch, FlushEpochGuard};

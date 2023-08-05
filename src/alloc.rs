@@ -1,6 +1,6 @@
 #[cfg(any(
-    feature = "testing_shred_allocator",
-    feature = "testing_count_allocator"
+    feature = "testing-shred-allocator",
+    feature = "testing-count-allocator"
 ))]
 pub use alloc::*;
 
@@ -10,7 +10,7 @@ pub use alloc::*;
 // in the hope that it will cause memory errors to surface
 // more quickly.
 
-#[cfg(feature = "testing_shred_allocator")]
+#[cfg(feature = "testing-shred-allocator")]
 mod alloc {
     use std::alloc::{Layout, System};
 
@@ -35,7 +35,7 @@ mod alloc {
     }
 }
 
-#[cfg(feature = "testing_count_allocator")]
+#[cfg(feature = "testing-count-allocator")]
 mod alloc {
     use std::alloc::{Layout, System};
 

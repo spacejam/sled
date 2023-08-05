@@ -9,9 +9,11 @@ use std::time::Duration;
 
 use rand::Rng;
 
-use sled::{Config, Db};
+use sled::{Config, Db as SledDb};
 
 use common::cleanup;
+
+type Db = SledDb<8, 8, 8>;
 
 const TEST_ENV_VAR: &str = "SLED_CRASH_TEST";
 const N_TESTS: usize = 100;
@@ -103,7 +105,7 @@ fn main() {
 /// Verifies that the keys in the tree are correctly recovered.
 /// Panics if they are incorrect.
 /// Returns the key that should be resumed at, and the current cycle value.
-fn verify(tree: &sled::Db) -> (u32, u32) {
+fn verify(tree: &Db) -> (u32, u32) {
     // key 0 should always be the highest value, as that's where we increment
     // at some point, it might go down by one
     // it should never return, or go down again after that
@@ -213,7 +215,7 @@ fn run_inner(config: Config) {
 
 /// Verifies that the keys in the tree are correctly recovered (i.e., equal).
 /// Panics if they are incorrect.
-fn verify_batches(tree: &sled::Db) -> u32 {
+fn verify_batches(tree: &Db) -> u32 {
     let mut iter = tree.iter();
     let first_value = match iter.next() {
         Some(Ok((_k, v))) => slice_to_u32(&*v),
@@ -241,8 +243,8 @@ fn verify_batches(tree: &sled::Db) -> u32 {
     first_value
 }
 
-fn run_batches_inner(db: sled::Db) {
-    fn do_batch(i: u32, db: &sled::Db) {
+fn run_batches_inner(db: Db) {
+    fn do_batch(i: u32, db: &Db) {
         let mut rng = rand::thread_rng();
         let base_value = u32_to_vec(i);
 
@@ -418,7 +420,7 @@ fn run_crash_iter() {
 
     let config = Config::new().path(ITER_DIR).flush_every_ms(Some(1));
 
-    let t: Db<64, 1024, 128> = config.open().unwrap();
+    let t: Db = config.open().unwrap();
 
     const INDELIBLE: [&[u8]; 16] = [
         &[0u8],

@@ -1,7 +1,6 @@
 use std::alloc::{Layout, System};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::sync::Barrier;
 use std::thread::scope;
 use std::time::{Duration, Instant};
@@ -29,7 +28,7 @@ trait Databench: Clone + Send {
 impl Databench for Db {
     type READ = sled::InlineArray;
 
-    const NAME: &'static str = "sled 1.0.0-alpha.1";
+    const NAME: &'static str = "sled 1.0.0-alpha";
     const PATH: &'static str = "timing_test.sled-new";
 
     fn open() -> Self {
@@ -75,6 +74,7 @@ impl Databench for old_sled::Db {
     }
 }
 
+/*
 impl Databench for Arc<rocksdb::DB> {
     type READ = Vec<u8>;
 
@@ -94,6 +94,7 @@ impl Databench for Arc<rocksdb::DB> {
         self.flush().unwrap();
     }
 }
+*/
 
 struct Lmdb {
     env: heed::Env,
@@ -467,7 +468,7 @@ fn main() {
     new_stats.print_report();
 
     /*
-    let old_stats = bench::<sled::Db>();
+    let old_stats = bench::<old_sled::Db>();
     dbg!(old_stats);
 
     let new_sled_vs_old_sled_storage_ratio =

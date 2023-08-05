@@ -605,7 +605,12 @@ fn enumerate_logs_and_snapshot(
                             "removing stale snapshot {id} that is superceded by snapshot {id}"
                         );
 
-                        fallible!(fs::remove_file(file_name));
+                        if let Err(e) = fs::remove_file(&file_name) {
+                            log::warn!(
+                                "failed to remove stale snapshot file {:?}: {:?}",
+                                file_name, e
+                            );
+                        }
 
                         snapshot = Some(id);
                     }
