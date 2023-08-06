@@ -512,13 +512,25 @@ impl<
             EBR_LOCAL_GC_BUFFER_SIZE,
         > = index.iter().map(|(low_key, node)| (node.id.0, low_key)).collect();
 
+        if config.cache_capacity_bytes < 256 {
+            log::debug!(
+                "Db configured to have Config.cache_capacity_bytes \
+                of under 256, so we will use the minimum of 256 bytes"
+            );
+        }
+        if config.entry_cache_percent > 80 {
+            log::debug!(
+                "Db configured to have Config.entry_cache_percent\
+                of over 80%, so we will clamp it to the maximum of 80% instead"
+            );
+        }
         let mut ret = Db {
             global_error: Default::default(),
             high_level_rc: Arc::new(()),
             store,
             cache_advisor: RefCell::new(CacheAdvisor::new(
-                config.cache_capacity_bytes,
-                config.entry_cache_percent,
+                config.cache_capacity_bytes.max(256),
+                config.entry_cache_percent.min(80),
             )),
             index,
             config: config.clone(),
@@ -1432,16 +1444,23 @@ impl<
             self.index.insert(split_key, rhs_node);
         }
 
-        // Add all written leaves to dirty
-        for (low_key, (write, _node_id)) in &mut acquired_locks {
+        // Add all written leaves to dirty and prepare to mark cache accesses
+        let mut cache_accesses = Vec::with_capacity(acquired_locks.len());
+        for (low_key, (write, node_id)) in &mut acquired_locks {
             let leaf = write.as_mut().unwrap();
             leaf.dirty_flush_epoch = Some(new_epoch);
             leaf.mutation_count += 1;
+            cache_accesses.push((*node_id, leaf.in_memory_size));
             self.dirty.insert((new_epoch, low_key.clone()), None);
         }
 
         // Drop locks
         drop(acquired_locks);
+
+        // Perform cache maintenance
+        for (node_id, size) in cache_accesses {
+            self.mark_access_and_evict(node_id, size)?;
+        }
 
         Ok(())
     }
@@ -2013,7 +2032,11 @@ impl<
                     .0
             } else {
                 match &self.bounds.1 {
-                    Bound::Included(k) | Bound::Excluded(k) => k.clone(),
+                    Bound::Included(k) => k.clone(),
+                    Bound::Excluded(k) if k == &InlineArray::MIN => {
+                        InlineArray::MIN
+                    }
+                    Bound::Excluded(k) => self.inner.index.get_lt(k).unwrap().0,
                     Bound::Unbounded => self.inner.index.last().unwrap().0,
                 }
             };

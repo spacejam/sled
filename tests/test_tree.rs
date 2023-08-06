@@ -2783,3 +2783,26 @@ fn tree_bug_49() {
     ))
 }
 */
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_50() {
+    // postmortem: node value buffer calculations were failing to
+    // account for potential padding added to avoid buffer overreads
+    // while looking up offsets.
+    assert!(prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![1; 1]), 44),
+            Set(Key(vec![52; 1]), 108),
+            Set(Key(vec![80; 1]), 177),
+            Set(Key(vec![225; 1]), 59),
+            Set(Key(vec![246; 1]), 34),
+            Set(Key(vec![51; 1]), 233),
+            Set(Key(vec![]), 88),
+            GetLt(Key(vec![1; 1]))
+        ],
+        false,
+        0,
+        0
+    ))
+}

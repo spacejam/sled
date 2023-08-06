@@ -3,7 +3,9 @@ use std::{collections::BTreeMap, convert::TryInto, fmt, panic};
 use quickcheck::{Arbitrary, Gen};
 use rand_distr::{Distribution, Gamma};
 
-use sled::*;
+use sled::{Config, Db as SledDb, InlineArray};
+
+type Db = SledDb<5, 7, 11>;
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Key(pub Vec<u8>);
@@ -185,9 +187,9 @@ fn prop_tree_matches_btreemap_inner(
     let config = Config::tmp()?
         .zstd_compression_level(compression)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .cache_capacity_bytes(cache_size.max(256));
+        .cache_capacity_bytes(cache_size);
 
-    let mut tree: Db<64, 1024, 128> = config.open().unwrap();
+    let mut tree: Db = config.open().unwrap();
     //tree.set_merge_operator(merge_operator);
 
     let mut reference: BTreeMap<Key, u16> = BTreeMap::new();
