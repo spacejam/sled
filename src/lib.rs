@@ -53,10 +53,6 @@ pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Db> {
     Config::new().path(path).open()
 }
 
-pub fn open_default<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Db> {
-    Config { path: path.as_ref().into(), ..Default::default() }.open()
-}
-
 use crate::flush_epoch::{FlushEpoch, FlushEpochGuard};
 
 /// Compare and swap result.

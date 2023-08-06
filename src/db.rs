@@ -1288,7 +1288,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let _ = std::fs::remove_dir_all("batch_doctest");
-    /// # let db: sled::Db<64, 1024, 128> = sled::open_default("batch_doctest")?;
+    /// # let db: sled::Db<64, 1024, 128> = sled::open("batch_doctest")?;
     /// db.insert("key_0", "val_0")?;
     ///
     /// let mut batch = sled::Batch::default();
