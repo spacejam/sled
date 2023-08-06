@@ -2111,6 +2111,23 @@ impl<
     }
 }
 
+impl<
+        'a,
+        const INDEX_FANOUT: usize,
+        const LEAF_FANOUT: usize,
+        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
+    > IntoIterator
+    for &'a Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
+{
+    type Item = io::Result<(InlineArray, InlineArray)>;
+    type IntoIter =
+        Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 /// A batch of updates that will
 /// be applied atomically to the
 /// Tree.
