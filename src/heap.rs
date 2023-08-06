@@ -494,6 +494,12 @@ impl fmt::Debug for Heap {
 }
 
 impl Heap {
+    pub fn get_global_error_arc(
+        &self,
+    ) -> Arc<AtomicPtr<(io::ErrorKind, String)>> {
+        self.global_error.clone()
+    }
+
     fn check_error(&self) -> io::Result<()> {
         let err_ptr: *const (io::ErrorKind, String) =
             self.global_error.load(Ordering::Acquire);
@@ -577,10 +583,10 @@ impl Heap {
                     &object_ids,
                 )),
                 pt,
+                global_error: metadata_store.get_global_error_arc(),
                 metadata_store: Arc::new(metadata_store),
                 directory_lock: Arc::new(directory_lock),
                 free_ebr: Ebr::default(),
-                global_error: Default::default(),
             },
             user_data,
         ))

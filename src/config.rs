@@ -1,7 +1,8 @@
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fault_injection::fallible;
+use fault_injection::{annotate, fallible};
 use tempdir::TempDir;
 
 use crate::Db;
@@ -48,7 +49,7 @@ impl Config {
     /// Returns a config with the `path` initialized to a system
     /// temporary directory that will be deleted when this `Config`
     /// is dropped.
-    pub fn tmp() -> std::io::Result<Config> {
+    pub fn tmp() -> io::Result<Config> {
         let tempdir = fallible!(tempdir::TempDir::new("sled_tmp"));
 
         Ok(Config {
@@ -77,8 +78,21 @@ impl Config {
         const EBR_LOCAL_GC_BUFFER_SIZE: usize,
     >(
         &self,
-    ) -> std::io::Result<Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>>
+    ) -> io::Result<Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>>
     {
+        if INDEX_FANOUT < 4 {
+            return Err(annotate!(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Db's INDEX_FANOUT const generic must be 4 or greater."
+            )));
+        }
+
+        if LEAF_FANOUT < 3 {
+            return Err(annotate!(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Db's LEAF_FANOUT const generic must be 3 or greater."
+            )));
+        }
         Db::open_with_config(self)
     }
 }

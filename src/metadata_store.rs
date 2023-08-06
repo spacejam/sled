@@ -24,6 +24,12 @@ const SNAPSHOT_PREFIX: &str = "snapshot";
 
 const ZSTD_LEVEL: i32 = 3;
 
+// NB: intentionally does not implement Clone, and
+// the Inner::drop code relies on this invariant for
+// now so that we don't free the global error until
+// all high-level structs are dropped. This is not
+// hard to change over time though, just a current
+// invariant.
 pub struct MetadataStore {
     inner: Inner,
     is_shut_down: bool,
@@ -183,7 +189,14 @@ struct Inner {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        let error_ptr = self.global_error.load(Ordering::Acquire);
+        // NB: this is the only place where the global error should be
+        // reclaimed in the whole sled codebase, as this Inner is only held
+        // by the background writer and the heap (in an Arc) so when this
+        // drop happens, it's because the whole system is going down, not
+        // because any particular Db instance that may have been cloned
+        // by a thread is dropping.
+        let error_ptr =
+            self.global_error.swap(std::ptr::null_mut(), Ordering::Acquire);
         if !error_ptr.is_null() {
             unsafe {
                 drop(Box::from_raw(error_ptr));
@@ -193,6 +206,12 @@ impl Drop for Inner {
 }
 
 impl MetadataStore {
+    pub fn get_global_error_arc(
+        &self,
+    ) -> Arc<AtomicPtr<(io::ErrorKind, String)>> {
+        self.inner.global_error.clone()
+    }
+
     fn shutdown_inner(&mut self) {
         let (tx, rx) = bounded(1);
         if self.inner.worker_outbox.send(WorkerMessage::Shutdown(tx)).is_ok() {

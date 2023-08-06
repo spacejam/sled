@@ -460,7 +460,7 @@ impl<
 
             assert!(&*leaf.lo <= key);
             if let Some(ref hi) = leaf.hi {
-                if &**hi < key {
+                if &**hi <= key {
                     log::trace!("key overshoot on leaf_for_key");
                     // cache maintenance occurs in Drop for LeafReadGuard
                     drop(leaf_guard);
@@ -525,7 +525,7 @@ impl<
             );
         }
         let mut ret = Db {
-            global_error: Default::default(),
+            global_error: store.get_global_error_arc(),
             high_level_rc: Arc::new(()),
             store,
             cache_advisor: RefCell::new(CacheAdvisor::new(
@@ -2053,8 +2053,10 @@ impl<
                 match (&leaf.hi, &self.next_back_last_lo, &self.bounds.1) {
                     (Some(leaf_hi), Some(last_lo), _) => leaf_hi < last_lo,
                     (Some(_leaf_hi), None, Bound::Unbounded) => true,
-                    (Some(leaf_hi), None, Bound::Included(bound_key))
-                    | (Some(leaf_hi), None, Bound::Excluded(bound_key)) => {
+                    (Some(leaf_hi), None, Bound::Included(bound_key)) => {
+                        leaf_hi <= bound_key
+                    }
+                    (Some(leaf_hi), None, Bound::Excluded(bound_key)) => {
                         leaf_hi < bound_key
                     }
                     (None, _, _) => false,

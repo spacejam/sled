@@ -16,7 +16,9 @@ use quickcheck::{Gen, QuickCheck};
 
 // use sled::Transactional;
 // use sled::transaction::*;
-use sled::*;
+use sled::{Config, Db as SledDb};
+
+type Db = SledDb<4, 3, 1>;
 
 use tree::{
     prop_tree_matches_btreemap, Key,
@@ -42,8 +44,7 @@ fn kv(i: usize) -> Vec<u8> {
 fn monotonic_inserts() {
     common::setup_logger();
 
-    let db: Db<64, 1024, 128> =
-        Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
+    let db: Db = Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
 
     for len in [1_usize, 16, 32, 1024].iter() {
         for i in 0_usize..*len {
@@ -88,8 +89,7 @@ fn fixed_stride_inserts() {
     // this is intended to test the fixed stride key omission optimization
     common::setup_logger();
 
-    let db: Db<64, 1024, 128> =
-        Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
+    let db: Db = Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
 
     let mut expected = std::collections::HashSet::new();
     for k in 0..4096_u16 {
@@ -138,8 +138,7 @@ fn fixed_stride_inserts() {
 fn sequential_inserts() {
     common::setup_logger();
 
-    let db: Db<64, 1024, 128> =
-        Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
+    let db: Db = Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
 
     for len in [1, 16, 32, u16::MAX].iter() {
         for i in 0..*len {
@@ -159,8 +158,7 @@ fn sequential_inserts() {
 fn reverse_inserts() {
     common::setup_logger();
 
-    let db: Db<64, 1024, 128> =
-        Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
+    let db: Db = Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
 
     for len in [1, 16, 32, u16::MAX].iter() {
         for i in 0..*len {
@@ -184,8 +182,7 @@ fn very_large_reverse_tree_iterator() {
     let mut b = vec![255; 1024 * 1024];
     b.push(1);
 
-    let db: Db<64, 1024, 128> =
-        Config::tmp().unwrap().flush_every_ms(Some(1)).open().unwrap();
+    let db: Db = Config::tmp().unwrap().flush_every_ms(Some(1)).open().unwrap();
 
     db.insert(a, "").unwrap();
     db.insert(b, "").unwrap();
@@ -232,7 +229,7 @@ fn varied_compression_ratios() {
 #[test]
 fn test_pop_first() -> io::Result<()> {
     let config = sled::Config::tmp().unwrap();
-    let db: sled::Db<64, 1024, 128> = config.open()?;
+    let db: sled::Db<64, 4, 128> = config.open()?;
     db.insert(&[0], vec![0])?;
     db.insert(&[1], vec![10])?;
     db.insert(&[2], vec![20])?;
@@ -255,7 +252,7 @@ fn test_pop_first() -> io::Result<()> {
 #[test]
 fn test_pop_last_in_range() -> io::Result<()> {
     let config = sled::Config::tmp().unwrap();
-    let db: sled::Db<64, 1024, 128> = config.open()?;
+    let db: sled::Db<64, 4, 128> = config.open()?;
 
     let data = vec![
         (b"key 1", b"value 1"),
@@ -292,7 +289,7 @@ fn test_pop_last_in_range() -> io::Result<()> {
 fn concurrent_tree_pops() -> std::io::Result<()> {
     use std::thread;
 
-    let db: Db<64, 1024, 128> = Config::tmp().unwrap().open()?;
+    let db: Db = Config::tmp().unwrap().open()?;
 
     // Insert values 0..5
     for x in 0u32..5 {
@@ -305,7 +302,7 @@ fn concurrent_tree_pops() -> std::io::Result<()> {
     let barrier = Arc::new(Barrier::new(5));
     for _ in 0..5 {
         let barrier = barrier.clone();
-        let db: Db<64, 1024, 128> = db.clone();
+        let db: Db = db.clone();
         threads.push(thread::spawn(move || {
             barrier.wait();
             db.pop_first().unwrap().unwrap();
@@ -364,7 +361,7 @@ fn concurrent_tree_ops() {
         }
 
         debug!("========== initial sets test {} ==========", i);
-        let t: Db<64, 1024, 128> = config.open().unwrap();
+        let t: Db = config.open().unwrap();
         par! {t, move |tree: &Db, k: Vec<u8>| {
             assert_eq!(tree.get(&*k).unwrap(), None);
             tree.insert(&k, k.clone()).expect("we should write successfully");
@@ -383,8 +380,7 @@ fn concurrent_tree_ops() {
         }
 
         drop(t);
-        let t: Db<64, 1024, 128> =
-            config.open().expect("should be able to restart Db");
+        let t: Db = config.open().expect("should be able to restart Db");
 
         let n_scanned = t.iter().count();
         if n_scanned != N {
@@ -410,8 +406,7 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t: Db<64, 1024, 128> =
-            config.open().expect("should be able to restart Db");
+        let t: Db = config.open().expect("should be able to restart Db");
 
         debug!("========== CAS test in test {} ==========", i);
         par! {t, move |tree: &Db, k: Vec<u8>| {
@@ -422,8 +417,7 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t: Db<64, 1024, 128> =
-            config.open().expect("should be able to restart Db");
+        let t: Db = config.open().expect("should be able to restart Db");
 
         par! {t, move |tree: &Db, k: Vec<u8>| {
             let k1 = k.clone();
@@ -433,8 +427,7 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t: Db<64, 1024, 128> =
-            config.open().expect("should be able to restart Db");
+        let t: Db = config.open().expect("should be able to restart Db");
 
         debug!("========== deleting in test {} ==========", i);
         par! {t, move |tree: &Db, k: Vec<u8>| {
@@ -442,8 +435,7 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t: Db<64, 1024, 128> =
-            config.open().expect("should be able to restart Db");
+        let t: Db = config.open().expect("should be able to restart Db");
 
         par! {t, move |tree: &Db, k: Vec<u8>| {
             assert_eq!(tree.get(&*k).unwrap(), None);
@@ -464,7 +456,7 @@ fn concurrent_tree_iter() -> io::Result<()> {
 
     let config = Config::tmp().unwrap().flush_every_ms(Some(1));
 
-    let t: Db<64, 1024, 128> = config.open().unwrap();
+    let t: Db = config.open().unwrap();
 
     const INDELIBLE: [&[u8]; 16] = [
         &[0u8],
@@ -498,7 +490,7 @@ fn concurrent_tree_iter() -> io::Result<()> {
         let thread = thread::Builder::new()
             .name(format!("forward({})", i))
             .spawn({
-                let t: Db<64, 1024, 128> = t.clone();
+                let t: Db = t.clone();
                 let barrier = barrier.clone();
                 move || {
                     I.fetch_add(1, SeqCst);
@@ -537,7 +529,7 @@ fn concurrent_tree_iter() -> io::Result<()> {
         let thread = thread::Builder::new()
             .name(format!("reverse({})", i))
             .spawn({
-                let t: Db<64, 1024, 128> = t.clone();
+                let t: Db = t.clone();
                 let barrier = barrier.clone();
                 move || {
                     I.fetch_add(1, SeqCst);
@@ -580,7 +572,7 @@ fn concurrent_tree_iter() -> io::Result<()> {
     let inserter = thread::Builder::new()
         .name("inserter".into())
         .spawn({
-            let t: Db<64, 1024, 128> = t.clone();
+            let t: Db = t.clone();
             let barrier = barrier.clone();
             move || {
                 barrier.wait();
@@ -646,7 +638,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
         .temporary(true)
         .flush_every_ms(Some(1))
         .use_compression(true);
-    let db: Db<64, 1024, 128> = config.open().unwrap();
+    let db: Db = config.open().unwrap();
 
     db.insert(b"k1", b"cats").unwrap();
     db.insert(b"k2", b"dogs").unwrap();
@@ -661,7 +653,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
     let barrier = Arc::new(Barrier::new(N_WRITERS + N_READERS + N_SUBSCRIBERS));
 
     for _ in 0..N_WRITERS {
-        let db: Db<64, 1024, 128> = db.clone();
+        let db: Db = db.clone();
         let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
             barrier.wait();
@@ -682,7 +674,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
     }
 
     for _ in 0..N_READERS {
-        let db: Db<64, 1024, 128> = db.clone();
+        let db: Db = db.clone();
         let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
             barrier.wait();
@@ -705,7 +697,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
     }
 
     for _ in 0..N_SUBSCRIBERS {
-        let db: Db<64, 1024, 128> = db.clone();
+        let db: Db = db.clone();
         let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
             barrier.wait();
@@ -734,7 +726,7 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
 #[test]
 fn tree_flush_in_transaction() {
     let config = sled::Config::tmp().unwrap();
-    let db: Db<64, 1024, 128> = config.open().unwrap();
+    let db: Db = config.open().unwrap();
     let tree = db.open_tree(b"a").unwrap();
 
     tree.transaction::<_, _, sled::transaction::TransactionError>(|tree| {
@@ -768,7 +760,7 @@ fn many_tree_transactions() -> TransactionResult<()> {
     common::setup_logger();
 
     let config = Config::tmp().unwrap().flush_every_ms(Some(1));
-    let db: Db<64, 1024, 128> = Arc::new(config.open().unwrap());
+    let db: Db = Arc::new(config.open().unwrap());
     let t1 = db.open_tree(b"1")?;
     let t2 = db.open_tree(b"2")?;
     let t3 = db.open_tree(b"3")?;
@@ -791,7 +783,7 @@ fn batch_outside_of_transaction() -> TransactionResult<()> {
     common::setup_logger();
 
     let config = Config::tmp().unwrap().flush_every_ms(Some(1));
-    let db: Db<64, 1024, 128> = config.open().unwrap();
+    let db: Db = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
 
@@ -822,7 +814,7 @@ fn tree_subdir() {
 
     let config = Config::new().path(&path);
 
-    let t: Db<64, 1024, 128> = config.open().unwrap();
+    let t: Db = config.open().unwrap();
 
     t.insert(&[1], vec![1]).unwrap();
 
@@ -830,7 +822,7 @@ fn tree_subdir() {
 
     let config = Config::new().path(&path);
 
-    let t: Db<64, 1024, 128> = config.open().unwrap();
+    let t: Db = config.open().unwrap();
 
     let res = t.get(&*vec![1]);
 
@@ -845,7 +837,7 @@ fn tree_subdir() {
 #[cfg_attr(miri, ignore)]
 fn tree_small_keys_iterator() {
     let config = Config::tmp().unwrap().flush_every_ms(Some(1));
-    let t: Db<64, 1024, 128> = config.open().unwrap();
+    let t: Db = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
@@ -894,7 +886,7 @@ fn tree_big_keys_iterator() {
 
     let config = Config::tmp().unwrap().flush_every_ms(Some(1));
 
-    let t: Db<64, 1024, 128> = config.open().unwrap();
+    let t: Db = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
@@ -935,7 +927,7 @@ fn tree_big_keys_iterator() {
 fn tree_subscribers_and_keyspaces() -> io::Result<()> {
     let config = Config::tmp().unwrap().flush_every_ms(Some(1));
 
-    let db: Db<64, 1024, 128> = config.open().unwrap();
+    let db: Db = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
     let mut s1 = t1.watch_prefix(b"");
@@ -953,7 +945,7 @@ fn tree_subscribers_and_keyspaces() -> io::Result<()> {
     drop(t1);
     drop(t2);
 
-    let db: Db<64, 1024, 128> = config.open().unwrap();
+    let db: Db = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
     let mut s1 = t1.watch_prefix(b"");
@@ -975,7 +967,7 @@ fn tree_subscribers_and_keyspaces() -> io::Result<()> {
     drop(t1);
     drop(t2);
 
-    let db: Db<64, 1024, 128> = config.open().unwrap();
+    let db: Db = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
     let t2 = db.open_tree(b"2")?;
@@ -999,7 +991,7 @@ fn tree_subscribers_and_keyspaces() -> io::Result<()> {
     drop(t1);
     drop(t2);
 
-    let db: Db<64, 1024, 128> = config.open().unwrap();
+    let db: Db = config.open().unwrap();
 
     let t1 = db.open_tree(b"1")?;
     let t2 = db.open_tree(b"2")?;
@@ -1017,7 +1009,7 @@ fn tree_range() {
     common::setup_logger();
 
     let config = Config::tmp().unwrap().flush_every_ms(Some(1));
-    let t: Db<64, 1024, 128> = config.open().unwrap();
+    let t: sled::Db<5, 7, 11> = config.open().unwrap();
 
     t.insert(b"0", vec![0]).unwrap();
     t.insert(b"1", vec![10]).unwrap();
@@ -1068,14 +1060,14 @@ fn recover_tree() {
 
     let config = Config::tmp().unwrap().flush_every_ms(Some(1));
 
-    let t: Db<64, 1024, 128> = config.open().unwrap();
+    let t: sled::Db<5, 7, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
     }
     drop(t);
 
-    let t: Db<64, 1024, 128> = config.open().unwrap();
+    let t: sled::Db<5, 7, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
@@ -1083,7 +1075,7 @@ fn recover_tree() {
     }
     drop(t);
 
-    let t: Db<64, 1024, 128> = config.open().unwrap();
+    let t: sled::Db<5, 7, 128> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert!(t.get(&*k).unwrap().is_none());
