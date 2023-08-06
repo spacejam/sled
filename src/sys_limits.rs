@@ -47,9 +47,16 @@ fn get_rlimit_as() -> io::Result<libc::rlimit> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn get_available_memory() -> io::Result<usize> {
-    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+    let mut pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
     if pages == -1 {
         return Err(io::Error::last_os_error());
+    }
+
+    //Fixed:32-bit os,max memory limit upper to 4G,to avoid overflow.
+    if usize::BITS==32 {
+        if pages > 1023 * 1024 {
+            pages = 1023 * 1024;
+        }
     }
 
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
