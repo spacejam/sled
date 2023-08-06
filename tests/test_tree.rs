@@ -205,22 +205,16 @@ fn varied_compression_ratios() {
         buf
     };
 
-    let tree = Config::default()
-        .use_compression(true)
-        .path("compression_db_test")
-        .open()
-        .unwrap();
+    let tree: Db =
+        Config::default().path("compression_db_test").open().unwrap();
 
     tree.insert(b"low  entropy", &low_entropy[..]).unwrap();
     tree.insert(b"high entropy", &high_entropy[..]).unwrap();
 
     println!("reloading database...");
     drop(tree);
-    let tree = Config::default()
-        .use_compression(true)
-        .path("compression_db_test")
-        .open()
-        .unwrap();
+    let tree: Db =
+        Config::default().path("compression_db_test").open().unwrap();
     drop(tree);
 
     let _ = std::fs::remove_dir_all("compression_db_test");
@@ -637,7 +631,6 @@ fn concurrent_tree_transactions() -> TransactionResult<()> {
     let config = Config::new()
         .temporary(true)
         .flush_every_ms(Some(1))
-        .use_compression(true);
     let db: Db = config.open().unwrap();
 
     db.insert(b"k1", b"cats").unwrap();
