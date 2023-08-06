@@ -561,7 +561,7 @@ impl<
 
             assert!(&*leaf.lo <= key);
             if let Some(ref hi) = leaf.hi {
-                if &**hi < key {
+                if &**hi <= key {
                     let size = leaf.in_memory_size;
                     drop(write);
                     log::trace!("key overshoot in leaf_for_key_mut_inner");
@@ -587,7 +587,13 @@ impl<
         let leaf = write.as_mut().unwrap();
         assert!(&*leaf.lo <= key);
         if let Some(ref hi) = leaf.hi {
-            assert!(&**hi > key);
+            assert!(
+                &**hi > key,
+                "while retrieving the leaf for key {:?} \
+                we pulled a leaf with hi key of {:?}",
+                key,
+                hi
+            );
         }
 
         if let Some(old_flush_epoch) = leaf.dirty_flush_epoch {
