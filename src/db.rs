@@ -2006,7 +2006,10 @@ impl<
                     .unwrap()
                     .0
             } else {
-                self.inner.index.last().unwrap().0
+                match &self.bounds.1 {
+                    Bound::Included(k) | Bound::Excluded(k) => k.clone(),
+                    Bound::Unbounded => self.inner.index.last().unwrap().0,
+                }
             };
 
             let node = match self.inner.leaf_for_key(&search_key) {
@@ -2016,13 +2019,25 @@ impl<
 
             let leaf = node.leaf_read.as_ref().unwrap();
 
-            if let (Some(leaf_hi), Some(last_lo)) =
-                (&leaf.hi, &self.next_back_last_lo)
-            {
-                if leaf_hi < last_lo {
-                    // concurrent predecessor split, retry
-                    continue;
-                }
+            // determine if we undershot our target due to concurrent modifications
+            let undershot =
+                match (&leaf.hi, &self.next_back_last_lo, &self.bounds.1) {
+                    (Some(leaf_hi), Some(last_lo), _) => leaf_hi < last_lo,
+                    (Some(_leaf_hi), None, Bound::Unbounded) => true,
+                    (Some(leaf_hi), None, Bound::Included(bound_key))
+                    | (Some(leaf_hi), None, Bound::Excluded(bound_key)) => {
+                        leaf_hi < bound_key
+                    }
+                    (None, _, _) => false,
+                };
+
+            if undershot {
+                log::trace!(
+                    "undershoot detected in reverse iterator with \
+                    (leaf_hi, next_back_last_lo, self.bounds.1) being {:?}",
+                    (&leaf.hi, &self.next_back_last_lo, &self.bounds.1)
+                );
+                continue;
             }
 
             for (k, v) in leaf.data.iter() {
