@@ -33,7 +33,9 @@ impl Completion {
     fn mark_complete_inner(&self) {
         let mut mu = self.mu.lock().unwrap();
         log::trace!("marking epoch {:?} as complete", self.epoch);
-        assert!(!*mu);
+        // it's possible for *mu to already be true due to this being
+        // immediately dropped in the check_in method when we see that
+        // the checked-in epoch has already been marked as sealed.
         *mu = true;
         drop(mu);
         self.cv.notify_all();

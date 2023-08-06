@@ -513,7 +513,7 @@ impl Heap {
     pub fn recover(
         config: &Config,
     ) -> io::Result<(Heap, Vec<(u64, InlineArray)>)> {
-        log::info!("recovering Heap at {:?}", config.path);
+        log::trace!("recovering Heap at {:?}", config.path);
         let slabs_dir = config.path.join("slabs");
 
         // initialize directories if not present

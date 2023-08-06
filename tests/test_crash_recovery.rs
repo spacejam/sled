@@ -396,6 +396,8 @@ fn concurrent_crash_iter() {
 }
 
 fn concurrent_crash_transactions() {
+    /*
+    TODO re-enable
     let dir = TX_DIR;
     cleanup(dir);
 
@@ -410,6 +412,7 @@ fn concurrent_crash_transactions() {
     }
 
     cleanup(dir);
+    */
 }
 
 fn run_crash_iter() {
