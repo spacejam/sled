@@ -76,10 +76,28 @@ pub(crate) struct EpochTracker {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FlushEpoch {
-    counter: Arc<AtomicU64>,
-    roll_mu: Arc<Mutex<()>>,
-    current_active: Arc<AtomicPtr<EpochTracker>>,
     active_ebr: ebr::Ebr<Box<EpochTracker>>,
+    inner: Arc<FlushEpochInner>,
+}
+
+#[derive(Debug)]
+pub(crate) struct FlushEpochInner {
+    counter: AtomicU64,
+    roll_mu: Mutex<()>,
+    current_active: AtomicPtr<EpochTracker>,
+}
+
+impl Drop for FlushEpochInner {
+    fn drop(&mut self) {
+        let vacancy_mu = self.roll_mu.lock().unwrap();
+        let old_ptr =
+            self.current_active.swap(std::ptr::null_mut(), Ordering::Release);
+        if !old_ptr.is_null() {
+            //let old: &EpochTracker = &*old_ptr;
+            unsafe { drop(Box::from_raw(old_ptr)) }
+        }
+        drop(vacancy_mu);
+    }
 }
 
 impl Default for FlushEpoch {
@@ -94,12 +112,14 @@ impl Default for FlushEpoch {
 
         last.mark_complete();
 
-        let current_active = Arc::new(AtomicPtr::new(current_active_ptr));
+        let current_active = AtomicPtr::new(current_active_ptr);
 
         FlushEpoch {
-            counter: Arc::new(AtomicU64::new(2)),
-            roll_mu: Arc::new(Mutex::new(())),
-            current_active,
+            inner: Arc::new(FlushEpochInner {
+                counter: AtomicU64::new(2),
+                roll_mu: Mutex::new(()),
+                current_active,
+            }),
             active_ebr: ebr::Ebr::default(),
         }
     }
@@ -111,8 +131,8 @@ impl FlushEpoch {
     /// notify the flush-requesting thread.
     pub fn roll_epoch_forward(&self) -> (Completion, Completion, Completion) {
         let mut guard = self.active_ebr.pin();
-        let vacancy_mu = self.roll_mu.lock().unwrap();
-        let flush_through = self.counter.fetch_add(1, Ordering::Release);
+        let vacancy_mu = self.inner.roll_mu.lock().unwrap();
+        let flush_through = self.inner.counter.fetch_add(1, Ordering::Release);
         let new_epoch = NonZeroU64::new(flush_through + 1).unwrap();
         let forward_flush_notifier =
             Completion::new(NonZeroU64::new(u64::MAX).unwrap());
@@ -122,7 +142,8 @@ impl FlushEpoch {
             vacancy_notifier: Completion::new(new_epoch),
             previous_flush_complete: forward_flush_notifier.clone(),
         }));
-        let old_ptr = self.current_active.swap(new_active, Ordering::Release);
+        let old_ptr =
+            self.inner.current_active.swap(new_active, Ordering::Release);
         assert!(!old_ptr.is_null());
 
         let (last_flush_complete_notifier, vacancy_notifier) = unsafe {
@@ -149,7 +170,7 @@ impl FlushEpoch {
     pub fn check_in<'a>(&self) -> FlushEpochGuard<'a> {
         loop {
             let tracker: &'a EpochTracker =
-                unsafe { &*self.current_active.load(Ordering::Acquire) };
+                unsafe { &*self.inner.current_active.load(Ordering::Acquire) };
             let rc = tracker.rc.fetch_add(1, Ordering::Release);
             let guard = FlushEpochGuard { tracker };
             if rc & SEAL_BIT == SEAL_BIT {
