@@ -1,3 +1,4 @@
+fuzz-*.log
 default.sled
 timing_test*
 crash_*
