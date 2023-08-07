@@ -279,6 +279,34 @@ fn test_pop_last_in_range() -> io::Result<()> {
 }
 
 #[test]
+fn test_interleaved_gets_sets() {
+    common::setup_logger();
+    let db: Db =
+        Config::tmp().unwrap().cache_capacity_bytes(1024).open().unwrap();
+
+    std::thread::scope(|scope| {
+        let db_2 = db.clone();
+        scope.spawn(move || {
+            for v in 0..500_000_u32 {
+                db_2.insert(v.to_be_bytes(), &[42u8; 4096][..])
+                    .expect("failed to insert");
+                if v % 10_000 == 0 {
+                    eprintln!("WRITING: {}", v)
+                }
+            }
+        });
+        scope.spawn(move || {
+            for v in (0..500_000_u32).rev() {
+                db.get(v.to_be_bytes()).expect("Fatal error?");
+                if v % 10_000 == 0 {
+                    eprintln!("READING: {}", v)
+                }
+            }
+        });
+    });
+}
+
+#[test]
 #[cfg(not(miri))] // can't create threads
 fn concurrent_tree_pops() -> std::io::Result<()> {
     use std::thread;

@@ -87,6 +87,8 @@ struct Leaf<const LEAF_FANOUT: usize> {
     dirty_flush_epoch: Option<NonZeroU64>,
     in_memory_size: usize,
     mutation_count: u64,
+    #[serde(skip)]
+    page_out_on_flush: bool,
 }
 
 fn flusher<
@@ -214,6 +216,7 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
                 in_memory_size: 0,
                 data,
                 mutation_count: 0,
+                page_out_on_flush: false,
             };
             rhs.set_in_memory_size();
 
@@ -458,7 +461,12 @@ impl<
 
             let leaf = leaf_guard.leaf_read.as_ref().unwrap();
 
-            assert!(&*leaf.lo <= key);
+            if &*leaf.lo > key {
+                log::trace!("key undershoot in leaf_for_key");
+                drop(leaf_guard);
+
+                continue;
+            }
             if let Some(ref hi) = leaf.hi {
                 if &**hi <= key {
                     log::trace!("key overshoot on leaf_for_key");
@@ -564,19 +572,27 @@ impl<
             let (low_key, node) = self.index.get_lte(key).unwrap();
             let mut write = node.inner.write_arc();
             if write.is_none() {
-                let leaf_bytes = self.store.read(node.id.0)?.unwrap();
+                let leaf_bytes = self.store.read(node.id.0)?;
                 let leaf: Box<Leaf<LEAF_FANOUT>> =
                     Leaf::deserialize(&leaf_bytes).unwrap();
                 *write = Some(leaf);
             }
             let leaf = write.as_mut().unwrap();
 
-            assert!(&*leaf.lo <= key);
+            if &*leaf.lo > key {
+                let size = leaf.in_memory_size;
+                drop(write);
+                log::trace!("key undershoot in page_in");
+                self.mark_access_and_evict(node.id, size)?;
+
+                continue;
+            }
+
             if let Some(ref hi) = leaf.hi {
                 if &**hi <= key {
                     let size = leaf.in_memory_size;
                     drop(write);
-                    log::trace!("key overshoot in leaf_for_key_mut_inner");
+                    log::trace!("key overshoot in page_in");
                     self.mark_access_and_evict(node.id, size)?;
 
                     continue;
@@ -672,21 +688,14 @@ impl<
                 continue;
             }
             let leaf: &mut Leaf<LEAF_FANOUT> = write.as_mut().unwrap();
-            if let Some(dirty_flush_epoch) = leaf.dirty_flush_epoch {
-                let serialized =
-                    leaf.serialize(self.config.zstd_compression_level);
 
-                log::trace!(
-                    "E adding node {} to dirty epoch {}",
-                    node_id.0,
-                    dirty_flush_epoch
-                );
-                self.dirty.insert(
-                    (dirty_flush_epoch, leaf.lo.clone()),
-                    Some((leaf.mutation_count, Arc::new(serialized))),
-                );
+            if leaf.dirty_flush_epoch.is_some() {
+                // We can't page out this leaf until it has been
+                // flushed, because its changes are not yet durable.
+                leaf.page_out_on_flush = true;
+            } else {
+                *write = None;
             }
-            *write = None;
         }
 
         Ok(())
@@ -903,8 +912,7 @@ impl<
                             mutation_count,
                         );
                     }
-
-                    continue;
+                    assert_eq!(epoch, flush_through_epoch);
                 }
 
                 #[cfg(feature = "for-internal-testing-only")]
@@ -936,7 +944,16 @@ impl<
                             leaf_ref.dirty_flush_epoch.take().unwrap();
                         assert_eq!(epoch, dirty_epoch);
                         // ugly but basically free
-                        leaf_ref.serialize(self.config.zstd_compression_level)
+                        let bytes = leaf_ref
+                            .serialize(self.config.zstd_compression_level);
+
+                        if leaf_ref.page_out_on_flush {
+                            // page_out_on_flush is set to false
+                            // on page-in due to serde(skip)
+                            *lock = None;
+                        }
+
+                        bytes
                     };
 
                 drop(lock);
@@ -2211,6 +2228,7 @@ fn initialize<
             data: StackMap::new(),
             in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
             mutation_count: 0,
+            page_out_on_flush: false,
         };
         let first_node = Node {
             id: NodeId(first_id),

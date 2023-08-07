@@ -601,22 +601,29 @@ impl Heap {
         Stats {}
     }
 
-    pub fn read(&self, object_id: u64) -> io::Result<Option<Vec<u8>>> {
+    pub fn read(&self, object_id: u64) -> io::Result<Vec<u8>> {
         self.check_error()?;
 
+        let mut trace_spin = false;
         let mut guard = self.free_ebr.pin();
-        let location_u64 = self.pt.get(object_id).load(Ordering::Acquire);
+        let slab_address = loop {
+            let location_u64 = self.pt.get(object_id).load(Ordering::Acquire);
 
-        let slab_address = if let Some(nzu) = NonZeroU64::new(location_u64) {
-            SlabAddress::from(nzu)
-        } else {
-            return Ok(None);
+            if let Some(nzu) = NonZeroU64::new(location_u64) {
+                break SlabAddress::from(nzu);
+            } else {
+                if !trace_spin {
+                    log::warn!("spinning for paged-out object to be persisted");
+                    trace_spin = true;
+                }
+                std::thread::yield_now();
+            }
         };
 
         let slab = &self.slabs[usize::from(slab_address.slab_id)];
 
         match slab.read(slab_address.slot(), &mut guard) {
-            Ok(bytes) => Ok(Some(bytes)),
+            Ok(bytes) => Ok(bytes),
             Err(e) => {
                 self.set_error(&e);
                 Err(e)
