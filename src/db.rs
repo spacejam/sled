@@ -575,14 +575,6 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         if let Some(old_flush_epoch) = leaf.dirty_flush_epoch {
             if old_flush_epoch != flush_epoch_guard.epoch() {
-                /*
-                 * TODO flush responsibility
-                assert_eq!(
-                    old_flush_epoch.get() + 1,
-                    flush_epoch_guard.epoch().get()
-                );
-                */
-
                 log::trace!(
                     "cooperatively flushing {:?} with dirty epoch {} after checking into epoch {}",
                     node_id,
@@ -590,7 +582,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                     flush_epoch_guard.epoch().get()
                 );
                 // cooperatively serialize and put into dirty
-                let dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
+                let old_dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
 
                 // be extra-explicit about serialized bytes
                 let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
@@ -601,13 +593,24 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 log::trace!(
                     "D adding node {} to dirty epoch {}",
                     node_id.0,
-                    dirty_epoch
+                    old_dirty_epoch
                 );
 
-                self.dirty.insert(
-                    (dirty_epoch, leaf.lo.clone()),
-                    Some((leaf.mutation_count, Arc::new(serialized))),
+                let cas_res = self.dirty.cas(
+                    (old_dirty_epoch, leaf.lo.clone()),
+                    Some(&None),
+                    Some(Some((leaf.mutation_count, Arc::new(serialized)))),
                 );
+
+                if cas_res.is_err() {
+                    log::warn!("failed to install dirty page with cas from Some(None) to Some(Some)");
+                } else {
+                    assert_eq!(
+                        old_flush_epoch.get() + 1,
+                        flush_epoch_guard.epoch().get(),
+                        "flush epochs somehow became unlinked"
+                    );
+                }
             }
         }
 
@@ -715,7 +718,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         let value_ivec = value.into();
         let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
-        let new_epoch = leaf_guard.flush_epoch_guard.epoch();
+        let new_epoch = leaf_guard.epoch();
 
         let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
@@ -757,6 +760,10 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             self.index.insert(split_key, rhs_node);
         }
 
+        // this is for clarity, that leaf_guard is held while
+        // inserting into dirty with its guarded epoch
+        drop(leaf_guard);
+
         Ok(ret)
     }
 
@@ -784,7 +791,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         let key_ref = key.as_ref();
 
         let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
-        let new_epoch = leaf_guard.flush_epoch_guard.epoch();
+        let new_epoch = leaf_guard.epoch();
 
         let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
@@ -804,6 +811,8 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             );
             self.dirty.insert((new_epoch, leaf_guard.low_key.clone()), None);
         }
+
+        drop(leaf_guard);
 
         Ok(ret)
     }
@@ -1344,8 +1353,10 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                         old_flush_epoch.get(),
                         new_epoch.get()
                     );
+
                     // cooperatively serialize and put into dirty
-                    let dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
+                    let old_dirty_epoch =
+                        leaf.dirty_flush_epoch.take().unwrap();
 
                     // be extra-explicit about serialized bytes
                     let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
@@ -1356,20 +1367,27 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                     log::trace!(
                         "C adding node {} to dirty epoch {}",
                         node_id.0,
-                        dirty_epoch
+                        old_dirty_epoch
                     );
 
-                    /*
-                     * TODO
-                    assert!(self
-                        .dirty
-                        .contains_key(&(dirty_epoch, leaf.lo.clone())));
-                    */
-
-                    self.dirty.insert(
-                        (dirty_epoch, leaf.lo.clone()),
-                        Some((leaf_ref.mutation_count, Arc::new(serialized))),
+                    let cas_res = self.dirty.cas(
+                        (old_dirty_epoch, leaf.lo.clone()),
+                        Some(&None),
+                        Some(Some((
+                            leaf_ref.mutation_count,
+                            Arc::new(serialized),
+                        ))),
                     );
+
+                    if cas_res.is_err() {
+                        log::warn!("failed to install dirty page with cas from Some(None) to Some(Some)");
+                    } else {
+                        assert_eq!(
+                            old_flush_epoch.get() + 1,
+                            flush_epoch_guard.epoch().get(),
+                            "flush epochs somehow became unlinked"
+                        );
+                    }
                 }
             }
         }

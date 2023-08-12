@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "1.0.0-alpha.115"
+version = "1.0.0-alpha.116"
 edition = "2021"
 authors = ["Tyler Neely <tylerneely@gmail.com>"]
 documentation = "https://docs.rs/sled/"

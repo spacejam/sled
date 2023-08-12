@@ -1,13 +1,13 @@
-// TODO allow waiting flusher to start collecting dirty pages
-// TODO unset page_out_on_flush when we send serialized bytes for a page to dirty
-// TODO serialize flush batch in parallel
-// TODO add failpoints to writepath
-// TODO ensure that any time something is added to dirty, that there was a live
-//      flush epoch already in-scope
-// TODO re-enable transaction tests in test_tree.rs
-// TODO free empty leaves with try_lock on left sibling, set hi key, remove from indexes, store deletion in metadata_store
 // TODO heap maintenance w/ speculative write followed by CAS in pt
 //      maybe with global writer lock that controls flushers too
+// TODO allow waiting flusher to start collecting dirty pages
+// TODO serialize flush batch in parallel
+// TODO add failpoints to writepath
+// TODO better formalize the need to only insert into dirty if we have a valid
+//      flush epoch guard for the dirty epoch, and only use CAS otherwise
+//      to avoid inserting bytes for already-serialized data
+// TODO re-enable transaction tests in test_tree.rs
+// TODO free empty leaves with try_lock on left sibling, set hi key, remove from indexes, store deletion in metadata_store
 // TODO set explicit max key and value sizes w/ corresponding heap
 
 // NB: this macro must appear before the following mod statements

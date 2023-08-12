@@ -27,11 +27,14 @@ impl Completion {
     }
 
     pub fn mark_complete(self) {
-        self.mark_complete_inner();
+        self.mark_complete_inner(false);
     }
 
-    fn mark_complete_inner(&self) {
+    fn mark_complete_inner(&self, previously_sealed: bool) {
         let mut mu = self.mu.lock().unwrap();
+        if !previously_sealed {
+            assert!(!*mu);
+        }
         log::trace!("marking epoch {:?} as complete", self.epoch);
         // it's possible for *mu to already be true due to this being
         // immediately dropped in the check_in method when we see that
@@ -49,13 +52,16 @@ impl Completion {
 
 pub(crate) struct FlushEpochGuard<'a> {
     tracker: &'a EpochTracker,
+    previously_sealed: bool,
 }
 
 impl<'a> Drop for FlushEpochGuard<'a> {
     fn drop(&mut self) {
         let rc = self.tracker.rc.fetch_sub(1, Ordering::Release) - 1;
         if rc & SEAL_MASK == 0 && (rc & SEAL_BIT) == SEAL_BIT {
-            self.tracker.vacancy_notifier.mark_complete_inner();
+            self.tracker
+                .vacancy_notifier
+                .mark_complete_inner(self.previously_sealed);
         }
     }
 }
@@ -158,7 +164,7 @@ impl FlushEpoch {
             );
 
             // mark_complete_inner called via drop in a uniform way
-            drop(FlushEpochGuard { tracker: old });
+            drop(FlushEpochGuard { tracker: old, previously_sealed: true });
 
             (old.previous_flush_complete.clone(), old.vacancy_notifier.clone())
         };
@@ -172,8 +178,12 @@ impl FlushEpoch {
             let tracker: &'a EpochTracker =
                 unsafe { &*self.inner.current_active.load(Ordering::Acquire) };
             let rc = tracker.rc.fetch_add(1, Ordering::Release);
-            let guard = FlushEpochGuard { tracker };
-            if rc & SEAL_BIT == SEAL_BIT {
+
+            let previously_sealed = rc & SEAL_BIT == SEAL_BIT;
+
+            let guard = FlushEpochGuard { tracker, previously_sealed };
+
+            if previously_sealed {
                 // the epoch is already closed, so we must drop the rc
                 // and possibly notify, which is handled in the guard's
                 // Drop impl.
