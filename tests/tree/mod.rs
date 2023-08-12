@@ -5,7 +5,7 @@ use rand_distr::{Distribution, Gamma};
 
 use sled::{Config, Db as SledDb, InlineArray};
 
-type Db = SledDb<4, 3, 1>;
+type Db = SledDb<3>;
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Key(pub Vec<u8>);

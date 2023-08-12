@@ -108,7 +108,13 @@ fn worker(
             inner.global_error.load(Ordering::Acquire);
 
         if !err_ptr.is_null() {
-            log::error!("compaction thread prematurely terminating after global error set");
+            let deref: &(io::ErrorKind, String) = unsafe { &*err_ptr };
+            let error = io::Error::new(deref.0, deref.1.clone());
+
+            log::error!(
+                "compaction thread terminating after global error set to {:?}",
+                error
+            );
             return;
         }
 
@@ -125,7 +131,7 @@ fn worker(
                 match write_res {
                     Err(e) => {
                         set_error(&inner.global_error, &e);
-                        log::error!("log compactor thread encountered error - setting global fatal error and shutting down compactions");
+                        log::error!("log compactor thread encountered error: {:?} - setting global fatal error and shutting down compactions", e);
                         return;
                     }
                     Ok(recovery) => {
@@ -292,13 +298,26 @@ impl MetadataStore {
         };
 
         let worker_inner = inner.clone();
-        std::thread::spawn(move || {
-            worker(
-                rx,
-                recovery.id_for_next_log.checked_sub(1).unwrap(),
-                worker_inner,
-            )
-        });
+
+        let spawn_res = std::thread::Builder::new()
+            .name("sled_flusher".into())
+            .spawn(move || {
+                worker(
+                    rx,
+                    recovery.id_for_next_log.checked_sub(1).unwrap(),
+                    worker_inner,
+                )
+            });
+
+        if let Err(e) = spawn_res {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "unable to spawn metadata compactor thread for sled database: {:?}",
+                    e
+                ),
+            ));
+        }
 
         Ok((MetadataStore { inner, is_shut_down: false }, recovery.recovered))
     }

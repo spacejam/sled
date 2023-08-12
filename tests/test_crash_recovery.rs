@@ -13,7 +13,7 @@ use sled::{Config, Db as SledDb};
 
 use common::cleanup;
 
-type Db = SledDb<8, 8, 8>;
+type Db = SledDb<8>;
 
 const TEST_ENV_VAR: &str = "SLED_CRASH_TEST";
 const N_TESTS: usize = 100;

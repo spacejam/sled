@@ -7,7 +7,7 @@ mod common;
 fn size_leak() -> io::Result<()> {
     common::setup_logger();
 
-    let tree: sled::Db<64, 1024, 128> =
+    let tree: sled::Db<1024> =
         sled::Config::tmp()?.flush_every_ms(None).open()?;
 
     for _ in 0..10_000 {

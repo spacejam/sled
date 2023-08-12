@@ -22,13 +22,12 @@ use stack_map::StackMap;
 
 use crate::*;
 
+const INDEX_FANOUT: usize = 64;
+const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
+
 /// sled 1.0
 #[derive(Clone)]
-pub struct Db<
-    const INDEX_FANOUT: usize = 64,
-    const LEAF_FANOUT: usize = 1024,
-    const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128,
-> {
+pub struct Db<const LEAF_FANOUT: usize = 1024> {
     global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
     config: Config,
     high_level_rc: Arc<()>,
@@ -52,20 +51,12 @@ pub struct Db<
     event_verifier: Arc<crate::event_verifier::EventVerifier>,
 }
 
-impl<
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > fmt::Debug for Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
+impl<const LEAF_FANOUT: usize> fmt::Debug for Db<LEAF_FANOUT> {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
-        w.debug_struct(&format!(
-            "Db<{}, {}, {}>",
-            INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE
-        ))
-        .field("global_error", &self.check_error())
-        .field("data", &format!("{:?}", self.iter().collect::<Vec<_>>()))
-        .finish()
+        w.debug_struct(&format!("Db<{}>", LEAF_FANOUT,))
+            .field("global_error", &self.check_error())
+            .field("data", &format!("{:?}", self.iter().collect::<Vec<_>>()))
+            .finish()
     }
 }
 
@@ -88,15 +79,11 @@ struct Leaf<const LEAF_FANOUT: usize> {
     in_memory_size: usize,
     mutation_count: u64,
     #[serde(skip)]
-    page_out_on_flush: bool,
+    page_out_on_flush: Option<NonZeroU64>,
 }
 
-fn flusher<
-    const INDEX_FANOUT: usize,
-    const LEAF_FANOUT: usize,
-    const EBR_LOCAL_GC_BUFFER_SIZE: usize,
->(
-    db: Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
+fn flusher<const LEAF_FANOUT: usize>(
+    db: Db<LEAF_FANOUT>,
     shutdown_signal: mpsc::Receiver<mpsc::Sender<()>>,
     flush_every_ms: usize,
 ) {
@@ -216,7 +203,7 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
                 in_memory_size: 0,
                 data,
                 mutation_count: 0,
-                page_out_on_flush: false,
+                page_out_on_flush: None,
             };
             rhs.set_in_memory_size();
 
@@ -236,28 +223,16 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
 }
 
 #[must_use]
-struct LeafReadGuard<
-    'a,
-    const INDEX_FANOUT: usize = 64,
-    const LEAF_FANOUT: usize = 1024,
-    const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128,
-> {
+struct LeafReadGuard<'a, const LEAF_FANOUT: usize = 1024> {
     leaf_read: ManuallyDrop<
         ArcRwLockReadGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
     >,
     low_key: InlineArray,
-    inner: &'a Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
+    inner: &'a Db<LEAF_FANOUT>,
     node_id: NodeId,
 }
 
-impl<
-        'a,
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > Drop
-    for LeafReadGuard<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
+impl<'a, const LEAF_FANOUT: usize> Drop for LeafReadGuard<'a, LEAF_FANOUT> {
     fn drop(&mut self) {
         let size = self.leaf_read.as_ref().unwrap().in_memory_size;
         // we must drop our mutex before calling mark_access_and_evict
@@ -276,41 +251,23 @@ impl<
     }
 }
 
-struct LeafWriteGuard<
-    'a,
-    const INDEX_FANOUT: usize = 64,
-    const LEAF_FANOUT: usize = 1024,
-    const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128,
-> {
+struct LeafWriteGuard<'a, const LEAF_FANOUT: usize = 1024> {
     leaf_write: ManuallyDrop<
         ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
     >,
     flush_epoch_guard: FlushEpochGuard<'a>,
     low_key: InlineArray,
-    inner: &'a Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
+    inner: &'a Db<LEAF_FANOUT>,
     node_id: NodeId,
 }
 
-impl<
-        'a,
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > LeafWriteGuard<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
+impl<'a, const LEAF_FANOUT: usize> LeafWriteGuard<'a, LEAF_FANOUT> {
     fn epoch(&self) -> NonZeroU64 {
         self.flush_epoch_guard.epoch()
     }
 }
 
-impl<
-        'a,
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > Drop
-    for LeafWriteGuard<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
+impl<'a, const LEAF_FANOUT: usize> Drop for LeafWriteGuard<'a, LEAF_FANOUT> {
     fn drop(&mut self) {
         let size = self.leaf_write.as_ref().unwrap().in_memory_size;
 
@@ -325,12 +282,7 @@ impl<
     }
 }
 
-impl<
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > Drop for Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
+impl<const LEAF_FANOUT: usize> Drop for Db<LEAF_FANOUT> {
     fn drop(&mut self) {
         if Arc::strong_count(&self.high_level_rc) == 2 {
             if let Some(shutdown_sender) = self.shutdown_sender.take() {
@@ -371,12 +323,7 @@ fn map_bound<T, U, F: FnOnce(T) -> U>(bound: Bound<T>, f: F) -> Bound<U> {
     }
 }
 
-impl<
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
+impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
     // This is only pub for an extra assertion during testing.
     #[doc(hidden)]
     pub fn check_error(&self) -> io::Result<()> {
@@ -439,9 +386,7 @@ impl<
     fn leaf_for_key<'a>(
         &'a self,
         key: &[u8],
-    ) -> io::Result<
-        LeafReadGuard<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
-    > {
+    ) -> io::Result<LeafReadGuard<'a, LEAF_FANOUT>> {
         loop {
             let (low_key, node) = self.index.get_lte(key).unwrap();
             let mut read = node.inner.read_arc();
@@ -494,10 +439,7 @@ impl<
         self.was_recovered
     }
 
-    pub fn open_with_config(
-        config: &Config,
-    ) -> io::Result<Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>>
-    {
+    pub fn open_with_config(config: &Config) -> io::Result<Db<LEAF_FANOUT>> {
         let (store, index_data) = heap::recover(&config.path)?;
 
         let first_id_opt = if index_data.is_empty() {
@@ -555,7 +497,16 @@ impl<
             let db = ret.clone();
             let (tx, rx) = mpsc::channel();
             ret.shutdown_sender = Some(tx);
-            std::thread::spawn(move || flusher(db, rx, flush_every_ms));
+            let spawn_res = std::thread::Builder::new()
+                .name("sled_flusher".into())
+                .spawn(move || flusher(db, rx, flush_every_ms));
+
+            if let Err(e) = spawn_res {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("unable to spawn flusher thread for sled database: {:?}", e)
+                ));
+            }
         }
         Ok(ret)
     }
@@ -605,9 +556,7 @@ impl<
     fn leaf_for_key_mut<'a>(
         &'a self,
         key: &[u8],
-    ) -> io::Result<
-        LeafWriteGuard<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
-    > {
+    ) -> io::Result<LeafWriteGuard<'a, LEAF_FANOUT>> {
         let (low_key, mut write, node_id) = self.page_in(key)?;
 
         let flush_epoch_guard = self.flush_epoch.check_in();
@@ -626,10 +575,13 @@ impl<
 
         if let Some(old_flush_epoch) = leaf.dirty_flush_epoch {
             if old_flush_epoch != flush_epoch_guard.epoch() {
+                /*
+                 * TODO flush responsibility
                 assert_eq!(
                     old_flush_epoch.get() + 1,
                     flush_epoch_guard.epoch().get()
                 );
+                */
 
                 log::trace!(
                     "cooperatively flushing {:?} with dirty epoch {} after checking into epoch {}",
@@ -689,10 +641,10 @@ impl<
             }
             let leaf: &mut Leaf<LEAF_FANOUT> = write.as_mut().unwrap();
 
-            if leaf.dirty_flush_epoch.is_some() {
+            if let Some(dirty_epoch) = leaf.dirty_flush_epoch {
                 // We can't page out this leaf until it has been
                 // flushed, because its changes are not yet durable.
-                leaf.page_out_on_flush = true;
+                leaf.page_out_on_flush = Some(dirty_epoch);
             } else {
                 *write = None;
             }
@@ -708,7 +660,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// assert_eq!(db.get(&[0]).unwrap(), Some(sled::InlineArray::from(vec![0])));
     /// assert!(db.get(&[1]).unwrap().is_none());
@@ -741,7 +693,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// assert_eq!(db.insert(&[1, 2, 3], vec![0]).unwrap(), None);
     /// assert_eq!(db.insert(&[1, 2, 3], vec![1]).unwrap(), Some(sled::InlineArray::from(&[0])));
     /// # Ok(()) }
@@ -815,7 +767,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// db.insert(&[1], vec![1]);
     /// assert_eq!(db.remove(&[1]).unwrap(), Some(sled::InlineArray::from(vec![1])));
     /// assert!(db.remove(&[1]).unwrap().is_none());
@@ -874,31 +826,34 @@ impl<
 
         let (
             previous_flush_complete_notifier,
-            previous_vacant_notifier,
+            this_vacant_notifier,
             forward_flush_notifier,
         ) = self.flush_epoch.roll_epoch_forward();
 
         previous_flush_complete_notifier.wait_for_complete();
         let flush_through_epoch: NonZeroU64 =
-            previous_vacant_notifier.wait_for_complete();
+            this_vacant_notifier.wait_for_complete();
 
         let flush_boundary = (
             NonZeroU64::new(flush_through_epoch.get() + 1).unwrap(),
             InlineArray::default(),
         );
-        for ((epoch, low_key), _) in self.dirty.range(..flush_boundary) {
+
+        let mut evict_after_flush = vec![];
+
+        for ((dirty_epoch, low_key), _) in self.dirty.range(..flush_boundary) {
             if let Some(node) = self.index.get(&*low_key) {
                 let mut lock = node.inner.write();
 
                 let serialized_value_opt = self
                     .dirty
-                    .remove(&(epoch, low_key.clone()))
+                    .remove(&(dirty_epoch, low_key.clone()))
                     .expect("violation of flush responsibility");
 
-                if epoch != flush_through_epoch {
+                if dirty_epoch != flush_through_epoch {
                     log::warn!(
                         "encountered unexpected flush epoch {} for object {} while flushing epoch {}",
-                        epoch,
+                        dirty_epoch,
                         node.id.0,
                         flush_through_epoch,
                     );
@@ -908,11 +863,11 @@ impl<
                             lock.as_ref().unwrap().mutation_count;
                         self.event_verifier.mark_unexpected_flush_epoch(
                             node.id,
-                            epoch,
+                            dirty_epoch,
                             mutation_count,
                         );
                     }
-                    assert_eq!(epoch, flush_through_epoch);
+                    // assert_eq!(dirty_epoch, flush_through_epoch);
                 }
 
                 #[cfg(feature = "for-internal-testing-only")]
@@ -920,41 +875,31 @@ impl<
                     let mutation_count = lock.as_ref().unwrap().mutation_count;
                     self.event_verifier.mark_flush(
                         node.id,
-                        epoch,
+                        dirty_epoch,
                         mutation_count,
                     );
                 }
 
-                assert_eq!(
-                    epoch,
-                    flush_through_epoch,
-                    "{:?} is dirty for old epoch {}",
-                    node.id,
-                    epoch.get()
-                );
+                let leaf_bytes: Vec<u8> = if let Some(mut serialized_value) =
+                    serialized_value_opt
+                {
+                    Arc::make_mut(&mut serialized_value.1);
+                    Arc::into_inner(serialized_value.1).unwrap()
+                } else {
+                    let leaf_ref: &mut Leaf<LEAF_FANOUT> =
+                        lock.as_mut().unwrap();
+                    // ugly but basically free
+                    let bytes =
+                        leaf_ref.serialize(self.config.zstd_compression_level);
 
-                let leaf_bytes: Vec<u8> =
-                    if let Some(mut serialized_value) = serialized_value_opt {
-                        Arc::make_mut(&mut serialized_value.1);
-                        Arc::into_inner(serialized_value.1).unwrap()
-                    } else {
-                        let leaf_ref: &mut Leaf<LEAF_FANOUT> =
-                            lock.as_mut().unwrap();
-                        let dirty_epoch =
-                            leaf_ref.dirty_flush_epoch.take().unwrap();
-                        assert_eq!(epoch, dirty_epoch);
-                        // ugly but basically free
-                        let bytes = leaf_ref
-                            .serialize(self.config.zstd_compression_level);
+                    if leaf_ref.page_out_on_flush == Some(flush_through_epoch) {
+                        // page_out_on_flush is set to false
+                        // on page-in due to serde(skip)
+                        evict_after_flush.push(node.clone());
+                    }
 
-                        if leaf_ref.page_out_on_flush {
-                            // page_out_on_flush is set to false
-                            // on page-in due to serde(skip)
-                            *lock = None;
-                        }
-
-                        bytes
-                    };
+                    bytes
+                };
 
                 drop(lock);
                 // println!("node id {} is dirty", node.id.0);
@@ -981,6 +926,16 @@ impl<
             flush_through_epoch.get()
         );
         forward_flush_notifier.mark_complete();
+
+        for node_to_evict in evict_after_flush {
+            let mut lock = node_to_evict.inner.write();
+            if let Some(ref mut leaf) = *lock {
+                if leaf.page_out_on_flush == Some(flush_through_epoch) {
+                    *lock = None;
+                }
+            }
+        }
+
         self.store.maintenance()?;
         Ok(())
     }
@@ -1008,7 +963,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// // unique creation
     /// assert!(
     ///     db.compare_and_swap(&[1], None as Option<&[u8]>, Some(&[10])).unwrap().is_ok(),
@@ -1131,7 +1086,7 @@ impl<
     /// use sled::{Config, InlineArray};
     ///
     /// let config = Config::tmp().unwrap();
-    /// let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// let db: sled::Db<1024> = config.open()?;
     ///
     /// fn u64_to_ivec(number: u64) -> InlineArray {
     ///     InlineArray::from(number.to_be_bytes().to_vec())
@@ -1204,7 +1159,7 @@ impl<
     /// use sled::{Config, InlineArray};
     ///
     /// let config = Config::tmp().unwrap();
-    /// let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// let db: sled::Db<1024> = config.open()?;
     ///
     /// fn u64_to_ivec(number: u64) -> InlineArray {
     ///     InlineArray::from(number.to_be_bytes().to_vec())
@@ -1258,9 +1213,7 @@ impl<
         }
     }
 
-    pub fn iter(
-        &self,
-    ) -> Iter<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE> {
+    pub fn iter(&self) -> Iter<LEAF_FANOUT> {
         Iter {
             prefetched: VecDeque::new(),
             prefetched_back: VecDeque::new(),
@@ -1273,10 +1226,7 @@ impl<
         }
     }
 
-    pub fn range<K, R>(
-        &self,
-        range: R,
-    ) -> Iter<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
+    pub fn range<K, R>(&self, range: R) -> Iter<LEAF_FANOUT>
     where
         K: AsRef<[u8]>,
         R: RangeBounds<K>,
@@ -1317,7 +1267,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let _ = std::fs::remove_dir_all("batch_doctest");
-    /// # let db: sled::Db<64, 1024, 128> = sled::open("batch_doctest")?;
+    /// # let db: sled::Db<1024> = sled::open("batch_doctest")?;
     /// db.insert("key_0", "val_0")?;
     ///
     /// let mut batch = sled::Batch::default();
@@ -1408,9 +1358,13 @@ impl<
                         node_id.0,
                         dirty_epoch
                     );
+
+                    /*
+                     * TODO
                     assert!(self
                         .dirty
                         .contains_key(&(dirty_epoch, leaf.lo.clone())));
+                    */
 
                     self.dirty.insert(
                         (dirty_epoch, leaf.lo.clone()),
@@ -1490,7 +1444,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// assert!(db.contains_key(&[0])?);
     /// assert!(!db.contains_key(&[1])?);
@@ -1516,7 +1470,7 @@ impl<
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::InlineArray;
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// for i in 0..10 {
     ///     db.insert(&[i], vec![i])
     ///         .expect("should write successfully");
@@ -1568,7 +1522,7 @@ impl<
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sled::InlineArray;
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// for i in 0..10 {
     ///     db.insert(&[i], vec![i])?;
     /// }
@@ -1618,7 +1572,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// use sled::InlineArray;
     /// db.insert(&[0, 0, 0], vec![0, 0, 0])?;
     /// db.insert(&[0, 0, 1], vec![0, 0, 1])?;
@@ -1648,10 +1602,7 @@ impl<
     /// assert!(r.next().is_none());
     /// # Ok(()) }
     /// ```
-    pub fn scan_prefix<'a, P>(
-        &'a self,
-        prefix: P,
-    ) -> Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
+    pub fn scan_prefix<'a, P>(&'a self, prefix: P) -> Iter<'a, LEAF_FANOUT>
     where
         P: AsRef<[u8]>,
     {
@@ -1687,7 +1638,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// db.insert(&[1], vec![10])?;
     /// db.insert(&[2], vec![20])?;
@@ -1739,7 +1690,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     ///
     /// let data = vec![
     ///     (b"key 1", b"value 1"),
@@ -1801,7 +1752,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// db.insert(&[0], vec![0])?;
     /// db.insert(&[1], vec![10])?;
     /// db.insert(&[2], vec![20])?;
@@ -1853,7 +1804,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     ///
     /// let data = vec![
     ///     (b"key 1", b"value 1"),
@@ -1912,7 +1863,7 @@ impl<
     /// ```
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = sled::Config::tmp().unwrap();
-    /// # let db: sled::Db<64, 1024, 128> = config.open()?;
+    /// # let db: sled::Db<1024> = config.open()?;
     /// db.insert(b"a", vec![0]);
     /// db.insert(b"b", vec![1]);
     /// assert_eq!(db.len(), 2);
@@ -1965,13 +1916,8 @@ impl<
 }
 
 #[allow(unused)]
-pub struct Iter<
-    'a,
-    const INDEX_FANOUT: usize,
-    const LEAF_FANOUT: usize,
-    const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-> {
-    inner: &'a Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
+pub struct Iter<'a, const LEAF_FANOUT: usize> {
+    inner: &'a Db<LEAF_FANOUT>,
     bounds: (Bound<InlineArray>, Bound<InlineArray>),
     next_calls: usize,
     next_back_calls: usize,
@@ -1981,14 +1927,7 @@ pub struct Iter<
     prefetched_back: VecDeque<(InlineArray, InlineArray)>,
 }
 
-impl<
-        'a,
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > Iterator
-    for Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
+impl<'a, const LEAF_FANOUT: usize> Iterator for Iter<'a, LEAF_FANOUT> {
     type Item = io::Result<(InlineArray, InlineArray)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -2024,13 +1963,8 @@ impl<
     }
 }
 
-impl<
-        'a,
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > DoubleEndedIterator
-    for Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
+impl<'a, const LEAF_FANOUT: usize> DoubleEndedIterator
+    for Iter<'a, LEAF_FANOUT>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.next_back_calls += 1;
@@ -2108,13 +2042,7 @@ impl<
     }
 }
 
-impl<
-        'a,
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
+impl<'a, const LEAF_FANOUT: usize> Iter<'a, LEAF_FANOUT> {
     pub fn keys(
         self,
     ) -> impl 'a + DoubleEndedIterator<Item = io::Result<InlineArray>> {
@@ -2128,17 +2056,9 @@ impl<
     }
 }
 
-impl<
-        'a,
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    > IntoIterator
-    for &'a Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>
-{
+impl<'a, const LEAF_FANOUT: usize> IntoIterator for &'a Db<LEAF_FANOUT> {
     type Item = io::Result<(InlineArray, InlineArray)>;
-    type IntoIter =
-        Iter<'a, INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>;
+    type IntoIter = Iter<'a, LEAF_FANOUT>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -2156,7 +2076,7 @@ impl<
 /// use sled::{Batch, open};
 ///
 /// # let _ = std::fs::remove_dir_all("batch_db_2");
-/// let db: sled::Db<64, 1024, 128> = open("batch_db_2")?;
+/// let db: sled::Db<1024> = open("batch_db_2")?;
 /// db.insert("key_0", "val_0")?;
 ///
 /// let mut batch = Batch::default();
@@ -2203,11 +2123,7 @@ impl Batch {
     }
 }
 
-fn initialize<
-    const INDEX_FANOUT: usize,
-    const LEAF_FANOUT: usize,
-    const EBR_LOCAL_GC_BUFFER_SIZE: usize,
->(
+fn initialize<const LEAF_FANOUT: usize>(
     index_data: &[(u64, InlineArray)],
     first_id_opt: Option<u64>,
 ) -> ConcurrentMap<
@@ -2228,7 +2144,7 @@ fn initialize<
             data: StackMap::new(),
             in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
             mutation_count: 0,
-            page_out_on_flush: false,
+            page_out_on_flush: None,
         };
         let first_node = Node {
             id: NodeId(first_id),

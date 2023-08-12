@@ -6,7 +6,7 @@ use sled::{Config, Db as SledDb};
 const CONCURRENCY: usize = 32;
 const N_KEYS: usize = 1024;
 
-type Db = SledDb<8, 8, 8>;
+type Db = SledDb<8>;
 
 fn batch_writer(db: Db, barrier: Arc<Barrier>, thread_number: usize) {
     barrier.wait();

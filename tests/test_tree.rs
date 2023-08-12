@@ -18,7 +18,7 @@ use quickcheck::{Gen, QuickCheck};
 // use sled::transaction::*;
 use sled::{Config, Db as SledDb};
 
-type Db = SledDb<4, 3, 1>;
+type Db = SledDb<3>;
 
 use tree::{
     prop_tree_matches_btreemap, Key,
@@ -223,7 +223,7 @@ fn varied_compression_ratios() {
 #[test]
 fn test_pop_first() -> io::Result<()> {
     let config = sled::Config::tmp().unwrap();
-    let db: sled::Db<64, 4, 128> = config.open()?;
+    let db: sled::Db<4> = config.open()?;
     db.insert(&[0], vec![0])?;
     db.insert(&[1], vec![10])?;
     db.insert(&[2], vec![20])?;
@@ -246,7 +246,7 @@ fn test_pop_first() -> io::Result<()> {
 #[test]
 fn test_pop_last_in_range() -> io::Result<()> {
     let config = sled::Config::tmp().unwrap();
-    let db: sled::Db<64, 4, 128> = config.open()?;
+    let db: sled::Db<4> = config.open()?;
 
     let data = vec![
         (b"key 1", b"value 1"),
@@ -1030,7 +1030,7 @@ fn tree_range() {
     common::setup_logger();
 
     let config = Config::tmp().unwrap().flush_every_ms(Some(1));
-    let t: sled::Db<5, 7, 11> = config.open().unwrap();
+    let t: sled::Db<7> = config.open().unwrap();
 
     t.insert(b"0", vec![0]).unwrap();
     t.insert(b"1", vec![10]).unwrap();
@@ -1081,14 +1081,14 @@ fn recover_tree() {
 
     let config = Config::tmp().unwrap().flush_every_ms(Some(1));
 
-    let t: sled::Db<5, 7, 128> = config.open().unwrap();
+    let t: sled::Db<7> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
     }
     drop(t);
 
-    let t: sled::Db<5, 7, 128> = config.open().unwrap();
+    let t: sled::Db<7> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
@@ -1096,7 +1096,7 @@ fn recover_tree() {
     }
     drop(t);
 
-    let t: sled::Db<5, 7, 128> = config.open().unwrap();
+    let t: sled::Db<7> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert!(t.get(&*k).unwrap().is_none());

@@ -72,21 +72,9 @@ impl Config {
         (zstd_compression_level, i32, "The zstd compression level to use when writing data to disk. Defaults to 3.")
     );
 
-    pub fn open<
-        const INDEX_FANOUT: usize,
-        const LEAF_FANOUT: usize,
-        const EBR_LOCAL_GC_BUFFER_SIZE: usize,
-    >(
+    pub fn open<const LEAF_FANOUT: usize>(
         &self,
-    ) -> io::Result<Db<INDEX_FANOUT, LEAF_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>>
-    {
-        if INDEX_FANOUT < 4 {
-            return Err(annotate!(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Db's INDEX_FANOUT const generic must be 4 or greater."
-            )));
-        }
-
+    ) -> io::Result<Db<LEAF_FANOUT>> {
         if LEAF_FANOUT < 3 {
             return Err(annotate!(io::Error::new(
                 io::ErrorKind::Unsupported,
