@@ -17,6 +17,8 @@ use rayon::prelude::*;
 use zstd::stream::read::Decoder as ZstdDecoder;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
+use crate::NodeId;
+
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
 const TMP_SUFFIX: &str = ".tmp";
 const LOG_PREFIX: &str = "log";
@@ -30,7 +32,7 @@ const ZSTD_LEVEL: i32 = 3;
 // all high-level structs are dropped. This is not
 // hard to change over time though, just a current
 // invariant.
-pub struct MetadataStore {
+pub(crate) struct MetadataStore {
     inner: Inner,
     is_shut_down: bool,
 }
@@ -47,7 +49,7 @@ impl Drop for MetadataStore {
 }
 
 struct Recovery {
-    recovered: Vec<(u64, NonZeroU64, InlineArray)>,
+    recovered: Vec<(NodeId, NonZeroU64, InlineArray)>,
     id_for_next_log: u64,
     snapshot_size: u64,
 }
@@ -110,6 +112,7 @@ fn worker(
         if !err_ptr.is_null() {
             let deref: &(io::ErrorKind, String) = unsafe { &*err_ptr };
             let error = io::Error::new(deref.0, deref.1.clone());
+            drop(inner);
 
             log::error!(
                 "compaction thread terminating after global error set to {:?}",
@@ -255,8 +258,8 @@ impl MetadataStore {
     ) -> io::Result<(
         // Metadata writer
         MetadataStore,
-        // Metadata - key, value, user data
-        Vec<(u64, NonZeroU64, InlineArray)>,
+        // Metadata - node id, value, user data
+        Vec<(NodeId, NonZeroU64, InlineArray)>,
     )> {
         use fs2::FileExt;
 
@@ -344,7 +347,7 @@ impl MetadataStore {
     /// Write a batch of metadata. `None` for the second half of the outer tuple represents a
     /// deletion.
     pub fn insert_batch<
-        I: IntoIterator<Item = (u64, Option<(NonZeroU64, InlineArray)>)>,
+        I: IntoIterator<Item = (NodeId, Option<(NonZeroU64, InlineArray)>)>,
     >(
         &self,
         batch: I,
@@ -413,7 +416,7 @@ impl MetadataStore {
 }
 
 fn serialize_batch<
-    I: IntoIterator<Item = (u64, Option<(NonZeroU64, InlineArray)>)>,
+    I: IntoIterator<Item = (NodeId, Option<(NonZeroU64, InlineArray)>)>,
 >(
     batch: I,
 ) -> Vec<u8> {
@@ -430,7 +433,7 @@ fn serialize_batch<
     let mut batch_encoder = ZstdEncoder::new(batch_bytes, ZSTD_LEVEL).unwrap();
 
     for (k, v_opt) in batch {
-        batch_encoder.write_all(&k.to_le_bytes()).unwrap();
+        batch_encoder.write_all(&k.0.to_le_bytes()).unwrap();
         if let Some((v, user_data)) = v_opt {
             batch_encoder.write_all(&v.get().to_le_bytes()).unwrap();
 
@@ -460,7 +463,7 @@ fn serialize_batch<
 fn read_frame(
     file: &mut fs::File,
     reusable_frame_buffer: &mut Vec<u8>,
-) -> io::Result<Vec<(u64, (u64, InlineArray))>> {
+) -> io::Result<Vec<(NodeId, (u64, InlineArray))>> {
     let mut frame_size_buf: [u8; 8] = [0; 8];
     // TODO only break if UnexpectedEof, otherwise propagate
     fallible!(file.read_exact(&mut frame_size_buf));
@@ -535,7 +538,7 @@ fn read_frame(
 
         let user_data = InlineArray::from(&*user_data_buf);
 
-        ret.push((k, (v, user_data)));
+        ret.push((NodeId(k), (v, user_data)));
     }
 
     Ok(ret)
@@ -546,7 +549,7 @@ fn read_frame(
 fn read_log(
     directory_path: &Path,
     lsn: u64,
-) -> io::Result<FnvHashMap<u64, (u64, InlineArray)>> {
+) -> io::Result<FnvHashMap<NodeId, (u64, InlineArray)>> {
     log::trace!("reading log {lsn}");
     let mut ret = FnvHashMap::default();
 
@@ -569,7 +572,7 @@ fn read_log(
 fn read_snapshot(
     directory_path: &Path,
     lsn: u64,
-) -> io::Result<(FnvHashMap<u64, (NonZeroU64, InlineArray)>, u64)> {
+) -> io::Result<(FnvHashMap<NodeId, (NonZeroU64, InlineArray)>, u64)> {
     log::trace!("reading snapshot {lsn}");
     let mut reusable_frame_buffer: Vec<u8> = vec![];
     let mut file =
@@ -577,7 +580,7 @@ fn read_snapshot(
     let size = fallible!(file.metadata()).len();
     let raw_frame = read_frame(&mut file, &mut reusable_frame_buffer)?;
 
-    let frame: FnvHashMap<u64, (NonZeroU64, InlineArray)> = raw_frame
+    let frame: FnvHashMap<NodeId, (NonZeroU64, InlineArray)> = raw_frame
         .into_iter()
         .map(|(k, (v, user_data))| {
             (k, (NonZeroU64::new(v).unwrap(), user_data))
@@ -695,7 +698,7 @@ fn read_snapshot_and_apply_logs(
     let mut max_log_id = snapshot_id_opt.unwrap_or(0);
 
     let log_data_res: io::Result<
-        Vec<(u64, FnvHashMap<u64, (u64, InlineArray)>)>,
+        Vec<(u64, FnvHashMap<NodeId, (u64, InlineArray)>)>,
     > = (&log_ids) //.iter().collect::<Vec<_>>())
         .into_par_iter()
         .map(move |log_id| {
@@ -709,13 +712,16 @@ fn read_snapshot_and_apply_logs(
         })
         .collect();
 
-    let mut recovered: FnvHashMap<u64, (NonZeroU64, InlineArray)> =
+    let mut recovered: FnvHashMap<NodeId, (NonZeroU64, InlineArray)> =
         snapshot_rx.recv().unwrap()?;
+
+    println!("recovered snapshot contains {recovered:?}");
 
     for (log_id, log_datum) in log_data_res? {
         max_log_id = max_log_id.max(log_id);
 
         for (k, (v, user_data)) in log_datum {
+            println!("recovery of log contained location {v:?} for object id {k:?} user_data {user_data:?}");
             if v == 0 {
                 recovered.remove(&k);
             } else {
@@ -724,7 +730,7 @@ fn read_snapshot_and_apply_logs(
         }
     }
 
-    let mut recovered: Vec<(u64, NonZeroU64, InlineArray)> = recovered
+    let mut recovered: Vec<(NodeId, NonZeroU64, InlineArray)> = recovered
         .into_iter()
         .map(|(k, (v, user_data))| (k, v, user_data))
         .collect();

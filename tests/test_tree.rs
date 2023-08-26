@@ -1096,10 +1096,16 @@ fn recover_tree() {
     }
     drop(t);
 
+    println!("---------------- recovering a (hopefully) empty db ----------------------");
+
     let t: sled::Db<7> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
-        assert!(t.get(&*k).unwrap().is_none());
+        assert!(
+            t.get(&*k).unwrap().is_none(),
+            "expected key {:?} to have been deleted",
+            i
+        );
     }
 }
 

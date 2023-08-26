@@ -1,3 +1,6 @@
+// TODO change dirty to work with NodeId or Node, to account for
+//      split/merge/split within flush epochs
+// TODO implement tree node merges when batches remove items
 // TODO heap maintenance w/ speculative write followed by CAS in pt
 //      maybe with global writer lock that controls flushers too
 // TODO allow waiting flusher to start collecting dirty pages
@@ -9,6 +12,7 @@
 // TODO re-enable transaction tests in test_tree.rs
 // TODO free empty leaves with try_lock on left sibling, set hi key, remove from indexes, store deletion in metadata_store
 // TODO set explicit max key and value sizes w/ corresponding heap
+// TODO skim inlining output of RUSTFLAGS="-Cremark=all -Cdebuginfo=1"
 
 // NB: this macro must appear before the following mod statements
 // for it to be usable within them. One of the few places where
@@ -56,7 +60,7 @@ pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Db> {
     Config::new().path(path).open()
 }
 
-use crate::flush_epoch::{FlushEpoch, FlushEpochGuard};
+use crate::flush_epoch::{FlushEpoch, FlushEpochGuard, FlushEpochTracker};
 
 /// Compare and swap result.
 ///
@@ -106,8 +110,13 @@ impl std::error::Error for CompareAndSwapError {}
     Ord,
     PartialEq,
     Eq,
+    Hash,
 )]
 struct NodeId(u64);
+
+impl concurrent_map::Minimum for NodeId {
+    const MIN: NodeId = NodeId(u64::MIN);
+}
 
 const fn _assert_public_types_send_sync() {
     use std::fmt::Debug;

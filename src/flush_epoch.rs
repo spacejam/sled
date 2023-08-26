@@ -5,19 +5,43 @@ use std::sync::{Arc, Condvar, Mutex};
 const SEAL_BIT: u64 = 1 << 63;
 const SEAL_MASK: u64 = u64::MAX - SEAL_BIT;
 
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialOrd,
+    Ord,
+    PartialEq,
+    Eq,
+    Hash,
+)]
+pub(crate) struct FlushEpoch(NonZeroU64);
+
+impl FlushEpoch {
+    pub fn increment(&self) -> FlushEpoch {
+        FlushEpoch(NonZeroU64::new(self.0.get() + 1).unwrap())
+    }
+}
+
+impl concurrent_map::Minimum for FlushEpoch {
+    const MIN: FlushEpoch = FlushEpoch(NonZeroU64::MIN);
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Completion {
     mu: Arc<Mutex<bool>>,
     cv: Arc<Condvar>,
-    epoch: NonZeroU64,
+    epoch: FlushEpoch,
 }
 
 impl Completion {
-    pub fn new(epoch: NonZeroU64) -> Completion {
+    pub fn new(epoch: FlushEpoch) -> Completion {
         Completion { mu: Default::default(), cv: Default::default(), epoch }
     }
 
-    pub fn wait_for_complete(self) -> NonZeroU64 {
+    pub fn wait_for_complete(self) -> FlushEpoch {
         let mut mu = self.mu.lock().unwrap();
         while !*mu {
             mu = self.cv.wait(mu).unwrap();
@@ -67,21 +91,21 @@ impl<'a> Drop for FlushEpochGuard<'a> {
 }
 
 impl<'a> FlushEpochGuard<'a> {
-    pub fn epoch(&self) -> NonZeroU64 {
+    pub fn epoch(&self) -> FlushEpoch {
         self.tracker.epoch
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct EpochTracker {
-    epoch: NonZeroU64,
+    epoch: FlushEpoch,
     rc: AtomicU64,
     vacancy_notifier: Completion,
     previous_flush_complete: Completion,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct FlushEpoch {
+pub(crate) struct FlushEpochTracker {
     active_ebr: ebr::Ebr<Box<EpochTracker>>,
     inner: Arc<FlushEpochInner>,
 }
@@ -106,13 +130,15 @@ impl Drop for FlushEpochInner {
     }
 }
 
-impl Default for FlushEpoch {
-    fn default() -> FlushEpoch {
-        let last = Completion::new(NonZeroU64::new(1).unwrap());
+impl Default for FlushEpochTracker {
+    fn default() -> FlushEpochTracker {
+        let last = Completion::new(FlushEpoch(NonZeroU64::new(1).unwrap()));
         let current_active_ptr = Box::into_raw(Box::new(EpochTracker {
-            epoch: NonZeroU64::new(2).unwrap(),
+            epoch: FlushEpoch(NonZeroU64::new(2).unwrap()),
             rc: AtomicU64::new(0),
-            vacancy_notifier: Completion::new(NonZeroU64::new(2).unwrap()),
+            vacancy_notifier: Completion::new(FlushEpoch(
+                NonZeroU64::new(2).unwrap(),
+            )),
             previous_flush_complete: last.clone(),
         }));
 
@@ -120,7 +146,7 @@ impl Default for FlushEpoch {
 
         let current_active = AtomicPtr::new(current_active_ptr);
 
-        FlushEpoch {
+        FlushEpochTracker {
             inner: Arc::new(FlushEpochInner {
                 counter: AtomicU64::new(2),
                 roll_mu: Mutex::new(()),
@@ -131,7 +157,7 @@ impl Default for FlushEpoch {
     }
 }
 
-impl FlushEpoch {
+impl FlushEpochTracker {
     /// Returns the epoch notifier for the previous epoch.
     /// Intended to be passed to a flusher that can eventually
     /// notify the flush-requesting thread.
@@ -139,9 +165,9 @@ impl FlushEpoch {
         let mut guard = self.active_ebr.pin();
         let vacancy_mu = self.inner.roll_mu.lock().unwrap();
         let flush_through = self.inner.counter.fetch_add(1, Ordering::Release);
-        let new_epoch = NonZeroU64::new(flush_through + 1).unwrap();
+        let new_epoch = FlushEpoch(NonZeroU64::new(flush_through + 1).unwrap());
         let forward_flush_notifier =
-            Completion::new(NonZeroU64::new(u64::MAX).unwrap());
+            Completion::new(FlushEpoch(NonZeroU64::new(u64::MAX).unwrap()));
         let new_active = Box::into_raw(Box::new(EpochTracker {
             epoch: new_epoch,
             rc: AtomicU64::new(0),
@@ -197,13 +223,13 @@ impl FlushEpoch {
 
 #[test]
 fn flush_epoch_basic_functionality() {
-    let fa = FlushEpoch::default();
+    let fa = FlushEpochTracker::default();
 
     let g1 = fa.check_in();
     let g2 = fa.check_in();
 
-    assert_eq!(g1.tracker.epoch.get(), 2);
-    assert_eq!(g2.tracker.epoch.get(), 2);
+    assert_eq!(g1.tracker.epoch.0.get(), 2);
+    assert_eq!(g2.tracker.epoch.0.get(), 2);
 
     let notifier = fa.roll_epoch_forward().1;
     assert!(!notifier.is_complete());
@@ -211,14 +237,14 @@ fn flush_epoch_basic_functionality() {
     drop(g1);
     assert!(!notifier.is_complete());
     drop(g2);
-    assert_eq!(notifier.wait_for_complete().get(), 2);
+    assert_eq!(notifier.wait_for_complete().0.get(), 2);
 
     let g3 = fa.check_in();
-    assert_eq!(g3.tracker.epoch.get(), 3);
+    assert_eq!(g3.tracker.epoch.0.get(), 3);
 
     let notifier_2 = fa.roll_epoch_forward().1;
 
     drop(g3);
 
-    assert_eq!(notifier_2.wait_for_complete().get(), 3);
+    assert_eq!(notifier_2.wait_for_complete().0.get(), 3);
 }
