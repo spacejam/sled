@@ -715,13 +715,13 @@ fn read_snapshot_and_apply_logs(
     let mut recovered: FnvHashMap<NodeId, (NonZeroU64, InlineArray)> =
         snapshot_rx.recv().unwrap()?;
 
-    println!("recovered snapshot contains {recovered:?}");
+    log::trace!("recovered snapshot contains {recovered:?}");
 
     for (log_id, log_datum) in log_data_res? {
         max_log_id = max_log_id.max(log_id);
 
         for (k, (v, user_data)) in log_datum {
-            println!("recovery of log contained location {v:?} for object id {k:?} user_data {user_data:?}");
+            log::trace!("recovery of log contained location {v:?} for object id {k:?} user_data {user_data:?}");
             if v == 0 {
                 recovered.remove(&k);
             } else {

@@ -1,16 +1,13 @@
-// TODO change dirty to work with NodeId or Node, to account for
-//      split/merge/split within flush epochs
+// TODO put aborts behind feature flags for hard crashes
 // TODO implement tree node merges when batches remove items
 // TODO heap maintenance w/ speculative write followed by CAS in pt
 //      maybe with global writer lock that controls flushers too
-// TODO allow waiting flusher to start collecting dirty pages
+// TODO allow waiting flusher to start collecting dirty pages as soon
+//      as it is evacuated - just wait until last flush is done before
+//      we persist the batch
 // TODO serialize flush batch in parallel
 // TODO add failpoints to writepath
-// TODO better formalize the need to only insert into dirty if we have a valid
-//      flush epoch guard for the dirty epoch, and only use CAS otherwise
-//      to avoid inserting bytes for already-serialized data
 // TODO re-enable transaction tests in test_tree.rs
-// TODO free empty leaves with try_lock on left sibling, set hi key, remove from indexes, store deletion in metadata_store
 // TODO set explicit max key and value sizes w/ corresponding heap
 // TODO skim inlining output of RUSTFLAGS="-Cremark=all -Cdebuginfo=1"
 

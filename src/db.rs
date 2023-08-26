@@ -121,7 +121,7 @@ struct Leaf<const LEAF_FANOUT: usize> {
     #[serde(skip)]
     page_out_on_flush: Option<FlushEpoch>,
     #[serde(skip)]
-    deleted: bool,
+    deleted: Option<FlushEpoch>,
 }
 
 fn flusher<const LEAF_FANOUT: usize>(
@@ -150,11 +150,31 @@ fn flusher<const LEAF_FANOUT: usize>(
         }
 
         let before_flush = Instant::now();
-        if let Err(e) = db.flush() {
-            log::error!("Db flusher encountered error while flushing: {:?}", e);
-            db.set_error(&e);
-            return;
-        }
+
+        // TODO make Ebr UnwindSafe
+        // let flush_result = std::panic::catch_unwind(|| db.flush());
+        let flush_result = db.flush();
+
+        match flush_result {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!(
+                    "Db flusher encountered error while flushing: {:?}",
+                    e
+                );
+                db.set_error(&e);
+
+                std::process::abort();
+
+                //return;
+            } /*
+              Err(panicked) => {
+                  eprintln!("flusher thread panicked while flushing sled database: {:?}", panicked);
+                  std::process::abort();
+              }
+              */
+        };
+
         last_flush_duration = before_flush.elapsed();
     }
 }
@@ -246,7 +266,7 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
                 data,
                 mutation_count: 0,
                 page_out_on_flush: None,
-                deleted: false,
+                deleted: None,
             };
             rhs.set_in_memory_size();
 
@@ -469,7 +489,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
             let leaf = leaf_guard.leaf_read.as_ref().unwrap();
 
-            if leaf.deleted {
+            if leaf.deleted.is_some() {
                 log::trace!("retry due to deleted node in leaf_for_key");
                 drop(leaf_guard);
                 continue;
@@ -598,7 +618,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             }
             let leaf = write.as_mut().unwrap();
 
-            if leaf.deleted {
+            if leaf.deleted.is_some() {
                 log::trace!("retry due to deleted node in page_in");
                 drop(write);
                 continue;
@@ -687,20 +707,24 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         let predecessor = predecessor_guard.leaf_write.as_mut().unwrap();
 
         assert!(leaf.data.is_empty());
-        assert!(!predecessor.deleted);
+        assert!(predecessor.deleted.is_none());
         assert_eq!(predecessor.hi.as_ref(), Some(&leaf.lo));
 
         if leaf_guard.node.id.0 == 0 {
             assert!(leaf_guard.low_key.is_empty());
         }
 
-        println!(
+        log::trace!(
             "deleting empty node id {} with low key {:?} and high key {:?}",
-            leaf_guard.node.id.0, leaf.lo, leaf.hi
+            leaf_guard.node.id.0,
+            leaf.lo,
+            leaf.hi
         );
 
         predecessor.hi = leaf.hi.clone();
-        leaf.deleted = true;
+        predecessor.dirty_flush_epoch = Some(merge_epoch);
+
+        leaf.deleted = Some(merge_epoch);
 
         self.index.remove(&leaf_guard.low_key).unwrap();
         self.node_id_to_low_key_index.remove(&leaf_guard.node.id.0).unwrap();
@@ -775,7 +799,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         let leaf = write.as_mut().unwrap();
 
         // NB: these invariants should be enforced in page_in
-        assert!(!leaf.deleted);
+        assert!(leaf.deleted.is_none());
         assert!(&*leaf.lo <= key);
         if let Some(ref hi) = leaf.hi {
             assert!(
@@ -1106,21 +1130,21 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
     pub fn flush(&self) -> io::Result<()> {
         let mut write_batch = vec![];
 
-        println!("advancing epoch");
+        log::trace!("advancing epoch");
         let (
             previous_flush_complete_notifier,
             this_vacant_notifier,
             forward_flush_notifier,
         ) = self.flush_epoch.roll_epoch_forward();
 
-        println!("waiting for previous flush to complete");
+        log::trace!("waiting for previous flush to complete");
         previous_flush_complete_notifier.wait_for_complete();
 
-        println!("waiting for our epoch to become vacant");
+        log::trace!("waiting for our epoch to become vacant");
         let flush_through_epoch: FlushEpoch =
             this_vacant_notifier.wait_for_complete();
 
-        println!("performing flush");
+        log::trace!("performing flush");
 
         let flush_boundary = (flush_through_epoch.increment(), NodeId::MIN);
 
@@ -1156,7 +1180,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
             match dirty_value {
                 Dirty::MergedAndDeleted { node_id } => {
-                    println!(
+                    log::trace!(
                         "MergedAndDeleted for {:?}, adding None to write_batch",
                         node_id
                     );
@@ -1181,16 +1205,33 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                     let data = if leaf_ref.dirty_flush_epoch
                         == Some(flush_through_epoch)
                     {
+                        if let Some(deleted_at) = leaf_ref.deleted {
+                            assert!(deleted_at > flush_through_epoch);
+                        }
                         leaf_ref.dirty_flush_epoch.take();
                         leaf_ref.serialize(self.config.zstd_compression_level)
                     } else {
                         // Here we expect that there was a benign data race and that another thread
                         // mutated the leaf after encountering it being dirty for our epoch, after
                         // storing a CooperativelySerialized in the dirty map.
-                        let dirty_value_2 = self
-                            .dirty
-                            .remove(&(dirty_epoch, dirty_node_id))
-                            .expect("violation of flush responsibility for second read of expected cooperative serialization");
+                        let dirty_value_2_opt =
+                            self.dirty.remove(&(dirty_epoch, dirty_node_id));
+
+                        let dirty_value_2 = if let Some(dv2) = dirty_value_2_opt
+                        {
+                            dv2
+                        } else {
+                            eprintln!(
+                                "violation of flush responsibility for second read \
+                                of expected cooperative serialization. leaf in question's \
+                                dirty_flush_epoch is {:?}, our expected key was {:?}. node.deleted: {:?}",
+                                leaf_ref.dirty_flush_epoch,
+                                (dirty_epoch, dirty_node_id),
+                                leaf_ref.deleted,
+                            );
+
+                            std::process::abort();
+                        };
 
                         if let Dirty::CooperativelySerialized {
                             low_key: low_key_2,
@@ -1213,8 +1254,6 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                         // on page-in due to serde(skip)
                         evict_after_flush.push(node.clone());
                     }
-
-                    assert!(!lock.as_ref().unwrap().deleted);
                 }
             }
         }
@@ -2501,7 +2540,7 @@ fn initialize<const LEAF_FANOUT: usize>(
             in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
             mutation_count: 0,
             page_out_on_flush: None,
-            deleted: false,
+            deleted: None,
         };
         let first_node = Node {
             id: NodeId(first_id),
