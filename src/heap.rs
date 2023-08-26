@@ -17,6 +17,7 @@ use pagetable::PageTable;
 use rayon::prelude::*;
 
 use crate::metadata_store::MetadataStore;
+use crate::NodeId;
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
 const N_SLABS: usize = 78;
@@ -138,9 +139,9 @@ pub struct Config {
     pub path: PathBuf,
 }
 
-pub fn recover<P: AsRef<Path>>(
+pub(crate) fn recover<P: AsRef<Path>>(
     storage_directory: P,
-) -> io::Result<(Heap, Vec<(u64, InlineArray)>)> {
+) -> io::Result<(Heap, Vec<(NodeId, InlineArray)>)> {
     Heap::recover(&Config { path: storage_directory.as_ref().into() })
 }
 
@@ -472,7 +473,7 @@ fn set_error(
 }
 
 #[derive(Clone)]
-pub struct Heap {
+pub(crate) struct Heap {
     config: Config,
     slabs: Arc<[Slab; N_SLABS]>,
     pt: PageTable<AtomicU64>,
@@ -518,7 +519,7 @@ impl Heap {
 
     pub fn recover(
         config: &Config,
-    ) -> io::Result<(Heap, Vec<(u64, InlineArray)>)> {
+    ) -> io::Result<(Heap, Vec<(NodeId, InlineArray)>)> {
         log::trace!("recovering Heap at {:?}", config.path);
         let slabs_dir = config.path.join("slabs");
 
@@ -542,17 +543,18 @@ impl Heap {
             MetadataStore::recover(config.path.join("metadata"))?;
 
         let pt = PageTable::<AtomicU64>::default();
-        let mut user_data =
-            Vec::<(u64, InlineArray)>::with_capacity(recovered_metadata.len());
+        let mut user_data = Vec::<(NodeId, InlineArray)>::with_capacity(
+            recovered_metadata.len(),
+        );
         let mut object_ids: FnvHashSet<u64> = Default::default();
         let mut slots_per_slab: [FnvHashSet<u64>; N_SLABS] =
             core::array::from_fn(|_| Default::default());
         for (k, location, data) in recovered_metadata {
-            object_ids.insert(k);
+            object_ids.insert(k.0);
             let slab_address = SlabAddress::from(location);
             slots_per_slab[slab_address.slab_id as usize]
                 .insert(slab_address.slot());
-            pt.get(k).store(location.get(), Ordering::Relaxed);
+            pt.get(k.0).store(location.get(), Ordering::Relaxed);
             user_data.push((k, data.clone()));
         }
 
@@ -633,24 +635,25 @@ impl Heap {
 
     pub fn write_batch<I>(&self, batch: I) -> io::Result<()>
     where
-        I: Sized + IntoIterator<Item = (u64, Option<(InlineArray, Vec<u8>)>)>,
+        I: Sized
+            + IntoIterator<Item = (NodeId, Option<(InlineArray, Vec<u8>)>)>,
     {
         self.check_error()?;
         let mut guard = self.free_ebr.pin();
 
-        let batch: Vec<(u64, Option<(InlineArray, Vec<u8>)>)> = batch
+        let batch: Vec<(NodeId, Option<(InlineArray, Vec<u8>)>)> = batch
             .into_iter()
             //.map(|(key, val_opt)| (key, val_opt.map(|(user_data, b)| (user_data, b.as_ref()))))
             .collect();
 
         let slabs = &self.slabs;
         let metadata_batch_res: io::Result<
-            Vec<(u64, Option<(NonZeroU64, InlineArray)>)>,
+            Vec<(NodeId, Option<(NonZeroU64, InlineArray)>)>,
         > = batch
             .into_par_iter()
             .map(
                 |(object_id, val_opt): (
-                    u64,
+                    NodeId,
                     Option<(InlineArray, Vec<u8>)>,
                 )| {
                     let new_meta = if let Some((user_data, bytes)) = val_opt {
@@ -712,7 +715,7 @@ impl Heap {
             };
 
             let last_u64 =
-                self.pt.get(object_id).swap(new_location, Ordering::Release);
+                self.pt.get(object_id.0).swap(new_location, Ordering::Release);
 
             if let Some(nzu) = NonZeroU64::new(last_u64) {
                 let last_address = SlabAddress::from(nzu);
@@ -734,13 +737,13 @@ impl Heap {
     }
 
     #[allow(unused)]
-    pub fn free(&self, object_id: u64) -> io::Result<()> {
+    pub fn free(&self, object_id: NodeId) -> io::Result<()> {
         let mut guard = self.free_ebr.pin();
         if let Err(e) = self.metadata_store.insert_batch([(object_id, None)]) {
             self.set_error(&e);
             return Err(e);
         }
-        let last_u64 = self.pt.get(object_id).swap(0, Ordering::Release);
+        let last_u64 = self.pt.get(object_id.0).swap(0, Ordering::Release);
         if let Some(nzu) = NonZeroU64::new(last_u64) {
             let last_address = SlabAddress::from(nzu);
 
