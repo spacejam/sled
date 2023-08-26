@@ -661,17 +661,38 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         self.dirty.fetch_and_update((flush_epoch, node_id), update);
     }
 
+    // NB: must never be called without having already added the empty leaf
+    // operations to a normal flush epoch. This function acquires the lock
+    // for the left sibling so that the empty leaf's hi key can be given
+    // to the left sibling, but for this to happen atomically, the act of
+    // moving left must "happen" in the same flush epoch. By "pushing" the
+    // merge left potentially into a future flush epoch, any deletions that the
+    // leaf had applied that may have been a part of a previous batch would also
+    // be pushed into the future flush epoch, which would break the crash
+    // atomicity of the batch if the updates were not flushed in the same epoch
+    // as the rest of the batch. So, this is why we potentially separate the
+    // flush of the left merge from the flush of the operations that caused
+    // the leaf to empty in the first place.
     fn merge_leaf_into_left_sibling<'a>(
         &'a self,
         mut leaf_guard: LeafWriteGuard<'a, LEAF_FANOUT>,
     ) -> io::Result<()> {
         let mut predecessor_guard = self.predecessor_leaf_mut(&leaf_guard)?;
-        let predecessor = predecessor_guard.leaf_write.as_mut().unwrap();
+
+        assert!(predecessor_guard.epoch() >= leaf_guard.epoch());
+
+        let merge_epoch = leaf_guard.epoch().max(predecessor_guard.epoch());
 
         let leaf = leaf_guard.leaf_write.as_mut().unwrap();
+        let predecessor = predecessor_guard.leaf_write.as_mut().unwrap();
+
         assert!(leaf.data.is_empty());
         assert!(!predecessor.deleted);
         assert_eq!(predecessor.hi.as_ref(), Some(&leaf.lo));
+
+        if leaf_guard.node.id.0 == 0 {
+            assert!(leaf_guard.low_key.is_empty());
+        }
 
         println!(
             "deleting empty node id {} with low key {:?} and high key {:?}",
@@ -686,21 +707,17 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         // NB: these updates must "happen" atomically in the same flush epoch
         self.install_dirty(
-            leaf_guard.epoch(),
+            merge_epoch,
             leaf_guard.node.id,
             Dirty::MergedAndDeleted { node_id: leaf_guard.node.id },
         );
 
-        if leaf_guard.node.id.0 == 0 {
-            assert!(leaf_guard.low_key.is_empty());
-        }
-
         self.install_dirty(
-            leaf_guard.epoch(),
-            leaf_guard.node.id,
+            merge_epoch,
+            predecessor_guard.node.id,
             Dirty::NotYetSerialized {
                 low_key: predecessor.lo.clone(),
-                node: leaf_guard.node.clone(),
+                node: predecessor_guard.node.clone(),
             },
         );
 
@@ -1032,6 +1049,11 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         let key_ref = key.as_ref();
 
         let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
+        if leaf_guard.node.id.0 == 0 {
+            // TODO will break with collections so this is just an early stage scaffolding bit.
+            assert!(leaf_guard.low_key.is_empty());
+        }
+
         let new_epoch = leaf_guard.epoch();
 
         let leaf = leaf_guard.leaf_write.as_mut().unwrap();
@@ -1051,21 +1073,17 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 new_epoch
             );
 
+            self.install_dirty(
+                new_epoch,
+                leaf_guard.node.id,
+                Dirty::NotYetSerialized {
+                    low_key: leaf_guard.low_key.clone(),
+                    node: leaf_guard.node.clone(),
+                },
+            );
+
             if leaf.data.is_empty() && leaf_guard.low_key != InlineArray::MIN {
                 self.merge_leaf_into_left_sibling(leaf_guard)?;
-            } else {
-                if leaf_guard.node.id.0 == 0 {
-                    assert!(leaf_guard.low_key.is_empty());
-                }
-
-                self.install_dirty(
-                    new_epoch,
-                    leaf_guard.node.id,
-                    Dirty::NotYetSerialized {
-                        low_key: leaf_guard.low_key.clone(),
-                        node: leaf_guard.node.clone(),
-                    },
-                );
             }
         }
 
