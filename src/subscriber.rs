@@ -107,9 +107,9 @@ type Senders = Map<usize, (Option<Waker>, SyncSender<OneShot<Option<Event>>>)>;
 /// ```
 /// Asynchronous, non-blocking subscriber:
 ///
-/// `Subscription` implements `Future<Output=Option<Event>>`.
+/// `Subscription` provides a `next` method which returns an `impl Future<Output=Option<Event>>`.
 ///
-/// `while let Some(event) = (&mut subscriber).await { /* use it */ }`
+/// `while let Some(event) = subscriber.next_event().await { /* use it */ }`
 pub struct Subscriber {
     id: usize,
     rx: Receiver<OneShot<Option<Event>>>,
@@ -125,6 +125,44 @@ impl Drop for Subscriber {
 }
 
 impl Subscriber {
+    /// Creates a future that resolves to the next value of the
+    /// subscriber, or None if the backing `Db` shuts down
+    pub fn next_event(&mut self) -> impl Future<Output = Option<Event>> + '_ {
+        Next { subscriber: self }
+    }
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Event>> {
+        loop {
+            let mut future_rx = if let Some(future_rx) = self.existing.take() {
+                future_rx
+            } else {
+                match self.rx.try_recv() {
+                    Ok(future_rx) => future_rx,
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        return Poll::Ready(None)
+                    }
+                }
+            };
+
+            match Future::poll(Pin::new(&mut future_rx), cx) {
+                Poll::Ready(Some(event)) => return Poll::Ready(event),
+                Poll::Ready(None) => continue,
+                Poll::Pending => {
+                    self.existing = Some(future_rx);
+                    return Poll::Pending;
+                }
+            }
+        }
+        let mut home = self.home.write();
+        let entry = home.get_mut(&self.id).unwrap();
+        entry.0 = Some(cx.waker().clone());
+        Poll::Pending
+    }
+
     /// Attempts to wait for a value on this `Subscriber`, returning
     /// an error if no event arrives within the provided `Duration`
     /// or if the backing `Db` shuts down.
@@ -159,42 +197,6 @@ impl Subscriber {
     }
 }
 
-impl Future for Subscriber {
-    type Output = Option<Event>;
-
-    fn poll(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Self::Output> {
-        loop {
-            let mut future_rx = if let Some(future_rx) = self.existing.take() {
-                future_rx
-            } else {
-                match self.rx.try_recv() {
-                    Ok(future_rx) => future_rx,
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => {
-                        return Poll::Ready(None)
-                    }
-                }
-            };
-
-            match Future::poll(Pin::new(&mut future_rx), cx) {
-                Poll::Ready(Some(event)) => return Poll::Ready(event),
-                Poll::Ready(None) => continue,
-                Poll::Pending => {
-                    self.existing = Some(future_rx);
-                    return Poll::Pending;
-                }
-            }
-        }
-        let mut home = self.home.write();
-        let entry = home.get_mut(&self.id).unwrap();
-        entry.0 = Some(cx.waker().clone());
-        Poll::Pending
-    }
-}
-
 impl Iterator for Subscriber {
     type Item = Event;
 
@@ -207,6 +209,23 @@ impl Iterator for Subscriber {
                 None => continue,
             }
         }
+    }
+}
+
+#[doc(hidden)]
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+struct Next<'a> {
+    subscriber: &'a mut Subscriber,
+}
+
+impl<'a> Future for Next<'a> {
+    type Output = Option<Event>;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
+        Pin::new(&mut *self.subscriber).poll_next(cx)
     }
 }
 
