@@ -311,6 +311,14 @@ impl TransactionalTree {
         Ok(get)
     }
 
+    /// Check if there is a value associated with the specified key
+    pub fn contains_key<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> UnabortableTransactionResult<bool> {
+        self.get(key).map(|v| v.is_some())
+    }
+
     /// Atomically apply multiple inserts and removals.
     pub fn apply_batch(
         &self,
