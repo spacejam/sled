@@ -119,6 +119,38 @@ impl concurrent_map::Minimum for CollectionId {
     const MIN: CollectionId = CollectionId(u64::MIN);
 }
 
+type CacheBox<const LEAF_FANOUT: usize> =
+    std::sync::Arc<parking_lot::RwLock<Option<Box<Leaf<LEAF_FANOUT>>>>>;
+
+#[derive(Debug, Clone)]
+struct Node<const LEAF_FANOUT: usize> {
+    // used for access in heap::Heap
+    id: NodeId,
+    inner: CacheBox<LEAF_FANOUT>,
+}
+
+impl<const LEAF_FANOUT: usize> PartialEq for Node<LEAF_FANOUT> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct Leaf<const LEAF_FANOUT: usize> {
+    lo: InlineArray,
+    hi: Option<InlineArray>,
+    prefix_length: usize,
+    data: stack_map::StackMap<InlineArray, InlineArray, LEAF_FANOUT>,
+    in_memory_size: usize,
+    mutation_count: u64,
+    #[serde(skip)]
+    dirty_flush_epoch: Option<FlushEpoch>,
+    #[serde(skip)]
+    page_out_on_flush: Option<FlushEpoch>,
+    #[serde(skip)]
+    deleted: Option<FlushEpoch>,
+}
+
 const fn _assert_public_types_send_sync() {
     use std::fmt::Debug;
 

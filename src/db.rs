@@ -36,8 +36,12 @@ pub struct Db<const LEAF_FANOUT: usize = 1024> {
         INDEX_FANOUT,
         EBR_LOCAL_GC_BUFFER_SIZE,
     >,
-    node_id_to_low_key_index:
-        ConcurrentMap<u64, InlineArray, INDEX_FANOUT, EBR_LOCAL_GC_BUFFER_SIZE>,
+    node_id_index: ConcurrentMap<
+        u64,
+        Node<LEAF_FANOUT>,
+        INDEX_FANOUT,
+        EBR_LOCAL_GC_BUFFER_SIZE,
+    >,
     store: heap::Heap,
     cache_advisor: RefCell<CacheAdvisor>,
     flush_epoch: FlushEpochTracker,
@@ -92,36 +96,6 @@ impl<const LEAF_FANOUT: usize> Dirty<LEAF_FANOUT> {
             Dirty::MergedAndDeleted { .. } => true,
         }
     }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct Node<const LEAF_FANOUT: usize> {
-    // used for access in heap::Heap
-    id: NodeId,
-    #[serde(skip)]
-    inner: Arc<RwLock<Option<Box<Leaf<LEAF_FANOUT>>>>>,
-}
-
-impl<const LEAF_FANOUT: usize> PartialEq for Node<LEAF_FANOUT> {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct Leaf<const LEAF_FANOUT: usize> {
-    lo: InlineArray,
-    hi: Option<InlineArray>,
-    prefix_length: usize,
-    data: StackMap<InlineArray, InlineArray, LEAF_FANOUT>,
-    in_memory_size: usize,
-    mutation_count: u64,
-    #[serde(skip)]
-    dirty_flush_epoch: Option<FlushEpoch>,
-    #[serde(skip)]
-    page_out_on_flush: Option<FlushEpoch>,
-    #[serde(skip)]
-    deleted: Option<FlushEpoch>,
 }
 
 fn flusher<const LEAF_FANOUT: usize>(
@@ -543,12 +517,12 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             EBR_LOCAL_GC_BUFFER_SIZE,
         > = initialize(&index_data, first_id_opt);
 
-        let node_id_to_low_key_index: ConcurrentMap<
+        let node_id_index: ConcurrentMap<
             u64,
-            InlineArray,
+            Node<LEAF_FANOUT>,
             INDEX_FANOUT,
             EBR_LOCAL_GC_BUFFER_SIZE,
-        > = index.iter().map(|(low_key, node)| (node.id.0, low_key)).collect();
+        > = index.iter().map(|(_low_key, node)| (node.id.0, node)).collect();
 
         if config.cache_capacity_bytes < 256 {
             log::debug!(
@@ -572,7 +546,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             )),
             index,
             config: config.clone(),
-            node_id_to_low_key_index,
+            node_id_index,
             dirty: Default::default(),
             flush_epoch: Default::default(),
             shutdown_sender: None,
@@ -727,7 +701,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         leaf.deleted = Some(merge_epoch);
 
         self.index.remove(&leaf_guard.low_key).unwrap();
-        self.node_id_to_low_key_index.remove(&leaf_guard.node.id.0).unwrap();
+        self.node_id_index.remove(&leaf_guard.node.id.0).unwrap();
 
         // NB: these updates must "happen" atomically in the same flush epoch
         self.install_dirty(
@@ -880,22 +854,14 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         let mut ca = self.cache_advisor.borrow_mut();
         let to_evict = ca.accessed_reuse_buffer(node_id.0, size);
         for (node_to_evict, _rough_size) in to_evict {
-            let low_key = if let Some(lk) =
-                self.node_id_to_low_key_index.get(node_to_evict)
-            {
-                lk
-            } else {
-                log::warn!("during cache eviction, unable to find node to evict by id {:?}", node_to_evict);
-                continue;
-            };
-            let node = if let Some(n) = self.index.get(&low_key) {
+            let node = if let Some(n) = self.node_id_index.get(&node_to_evict) {
                 if n.id.0 != *node_to_evict {
-                    log::warn!("during cache eviction, node to evict did not match current occupant with low key {:?} for {:?}", low_key, node_to_evict);
+                    log::warn!("during cache eviction, node to evict did not match current occupant for {:?}", node_to_evict);
                     continue;
                 }
                 n
             } else {
-                log::warn!("during cache eviction, unable to find node to evict by low key {:?}", low_key);
+                log::warn!("during cache eviction, unable to find node to evict for {:?}", node_to_evict);
                 continue;
             };
 
@@ -1031,8 +997,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             assert_ne!(rhs_node.id.0, 0);
             assert!(!split_key.is_empty());
 
-            self.node_id_to_low_key_index
-                .insert(rhs_node.id.0, split_key.clone());
+            self.node_id_index.insert(rhs_node.id.0, rhs_node.clone());
             self.index.insert(split_key.clone(), rhs_node.clone());
 
             self.install_dirty(
@@ -1440,8 +1405,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                     low_key: split_key.clone(),
                 },
             );
-            self.node_id_to_low_key_index
-                .insert(rhs_node.id.0, split_key.clone());
+            self.node_id_index.insert(rhs_node.id.0, rhs_node.clone());
             self.index.insert(split_key, rhs_node);
         }
 
@@ -1796,8 +1760,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         // Make splits globally visible
         for (split_key, rhs_node) in splits {
-            self.node_id_to_low_key_index
-                .insert(rhs_node.id.0, split_key.clone());
+            self.node_id_index.insert(rhs_node.id.0, rhs_node.clone());
             self.index.insert(split_key, rhs_node);
         }
 
