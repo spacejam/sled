@@ -553,7 +553,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         if config.cache_capacity_bytes < 256 {
             log::debug!(
                 "Db configured to have Config.cache_capacity_bytes \
-                of under 256, so we will use the minimum of 256 bytes"
+                of under 256, so we will use the minimum of 256 bytes instead"
             );
         }
         if config.entry_cache_percent > 80 {
@@ -1184,7 +1184,10 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                         "MergedAndDeleted for {:?}, adding None to write_batch",
                         node_id
                     );
-                    write_batch.push((dirty_node_id, None));
+                    write_batch.push(heap::Update::Free {
+                        node_id: dirty_node_id,
+                        collection_id: CollectionId::MIN,
+                    });
                 }
                 Dirty::CooperativelySerialized {
                     low_key,
@@ -1193,7 +1196,12 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 } => {
                     Arc::make_mut(&mut data);
                     let data = Arc::into_inner(data).unwrap();
-                    write_batch.push((dirty_node_id, Some((low_key, data))));
+                    write_batch.push(heap::Update::Store {
+                        node_id: dirty_node_id,
+                        collection_id: CollectionId::MIN,
+                        metadata: low_key,
+                        data,
+                    });
                 }
                 Dirty::NotYetSerialized { low_key, node } => {
                     assert_eq!(dirty_node_id, node.id, "mismatched node ID for NotYetSerialized with low key {:?}", low_key);
@@ -1247,7 +1255,12 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                         }
                     };
 
-                    write_batch.push((dirty_node_id, Some((low_key, data))));
+                    write_batch.push(heap::Update::Store {
+                        node_id: dirty_node_id,
+                        collection_id: CollectionId::MIN,
+                        metadata: low_key,
+                        data,
+                    });
 
                     if leaf_ref.page_out_on_flush == Some(flush_through_epoch) {
                         // page_out_on_flush is set to false
@@ -2519,7 +2532,7 @@ impl Batch {
 }
 
 fn initialize<const LEAF_FANOUT: usize>(
-    index_data: &[(NodeId, InlineArray)],
+    index_data: &[(NodeId, CollectionId, InlineArray)],
     first_id_opt: Option<u64>,
 ) -> ConcurrentMap<
     InlineArray,
@@ -2551,8 +2564,8 @@ fn initialize<const LEAF_FANOUT: usize>(
 
     let ret = ConcurrentMap::default();
 
-    for (id, low_key) in index_data {
-        let node = Node { id: *id, inner: Arc::new(None.into()) };
+    for (node_id, collection_id, low_key) in index_data {
+        let node = Node { id: *node_id, inner: Arc::new(None.into()) };
         ret.insert(low_key.clone(), node);
     }
 

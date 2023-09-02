@@ -1,5 +1,7 @@
+// TODO remove all Drop logic that checks Arc::strong_count, all are race conditions
+// TODO move dirty tracking, cache to shared level
+// TODO write actual CollectionId instead of MIN in Db::flush
 // TODO put aborts behind feature flags for hard crashes
-// TODO implement tree node merges when batches remove items
 // TODO heap maintenance w/ speculative write followed by CAS in pt
 //      maybe with global writer lock that controls flushers too
 // TODO allow waiting flusher to start collecting dirty pages as soon
@@ -10,29 +12,13 @@
 // TODO re-enable transaction tests in test_tree.rs
 // TODO set explicit max key and value sizes w/ corresponding heap
 // TODO skim inlining output of RUSTFLAGS="-Cremark=all -Cdebuginfo=1"
-
-// NB: this macro must appear before the following mod statements
-// for it to be usable within them. One of the few places where
-// this sort of ordering matters in Rust.
-macro_rules! builder {
-    ($(($name:ident, $t:ty, $desc:expr)),*) => {
-        $(
-            #[doc=$desc]
-            pub fn $name(mut self, to: $t) -> Self {
-                self.$name = to;
-                self
-            }
-        )*
-    }
-}
+// TODO measure space savings vs cost of zstd in metadata store
 
 mod config;
 mod db;
 mod flush_epoch;
 mod heap;
-// mod meta_node;
 mod metadata_store;
-// mod varint;
 
 #[cfg(any(
     feature = "testing_shred_allocator",
@@ -113,6 +99,24 @@ struct NodeId(u64);
 
 impl concurrent_map::Minimum for NodeId {
     const MIN: NodeId = NodeId(u64::MIN);
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialOrd,
+    Ord,
+    PartialEq,
+    Eq,
+    Hash,
+)]
+struct CollectionId(u64);
+
+impl concurrent_map::Minimum for CollectionId {
+    const MIN: CollectionId = CollectionId(u64::MIN);
 }
 
 const fn _assert_public_types_send_sync() {

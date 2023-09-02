@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use concurrent_map::Minimum;
 use crossbeam_queue::SegQueue;
 use ebr::{Ebr, Guard};
 use fault_injection::{annotate, fallible, maybe};
@@ -17,7 +18,7 @@ use pagetable::PageTable;
 use rayon::prelude::*;
 
 use crate::metadata_store::MetadataStore;
-use crate::NodeId;
+use crate::{CollectionId, NodeId};
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
 const N_SLABS: usize = 78;
@@ -141,7 +142,7 @@ pub struct Config {
 
 pub(crate) fn recover<P: AsRef<Path>>(
     storage_directory: P,
-) -> io::Result<(Heap, Vec<(NodeId, InlineArray)>)> {
+) -> io::Result<(Heap, Vec<(NodeId, CollectionId, InlineArray)>)> {
     Heap::recover(&Config { path: storage_directory.as_ref().into() })
 }
 
@@ -344,6 +345,11 @@ struct Slab {
 }
 
 impl Slab {
+    fn maintenance(&self) -> io::Result<usize> {
+        // TODO compact
+        Ok(0)
+    }
+
     fn read(
         &self,
         slot: u64,
@@ -472,6 +478,43 @@ fn set_error(
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum Update {
+    Store {
+        node_id: NodeId,
+        collection_id: CollectionId,
+        metadata: InlineArray,
+        data: Vec<u8>,
+    },
+    Free {
+        node_id: NodeId,
+        collection_id: CollectionId,
+    },
+}
+
+#[derive(Debug, PartialOrd, Ord, PartialEq, Eq)]
+pub(crate) enum UpdateMetadata {
+    Store {
+        node_id: NodeId,
+        collection_id: CollectionId,
+        metadata: InlineArray,
+        location: NonZeroU64,
+    },
+    Free {
+        node_id: NodeId,
+        collection_id: CollectionId,
+    },
+}
+
+impl UpdateMetadata {
+    pub fn node_id(&self) -> NodeId {
+        match self {
+            UpdateMetadata::Store { node_id, .. }
+            | UpdateMetadata::Free { node_id, .. } => *node_id,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Heap {
     config: Config,
@@ -519,7 +562,7 @@ impl Heap {
 
     pub fn recover(
         config: &Config,
-    ) -> io::Result<(Heap, Vec<(NodeId, InlineArray)>)> {
+    ) -> io::Result<(Heap, Vec<(NodeId, CollectionId, InlineArray)>)> {
         log::trace!("recovering Heap at {:?}", config.path);
         let slabs_dir = config.path.join("slabs");
 
@@ -543,19 +586,32 @@ impl Heap {
             MetadataStore::recover(config.path.join("metadata"))?;
 
         let pt = PageTable::<AtomicU64>::default();
-        let mut user_data = Vec::<(NodeId, InlineArray)>::with_capacity(
-            recovered_metadata.len(),
-        );
-        let mut object_ids: FnvHashSet<u64> = Default::default();
+        let mut user_data =
+            Vec::<(NodeId, CollectionId, InlineArray)>::with_capacity(
+                recovered_metadata.len(),
+            );
+        let mut node_ids: FnvHashSet<u64> = Default::default();
         let mut slots_per_slab: [FnvHashSet<u64>; N_SLABS] =
             core::array::from_fn(|_| Default::default());
-        for (k, location, data) in recovered_metadata {
-            object_ids.insert(k.0);
-            let slab_address = SlabAddress::from(location);
-            slots_per_slab[slab_address.slab_id as usize]
-                .insert(slab_address.slot());
-            pt.get(k.0).store(location.get(), Ordering::Relaxed);
-            user_data.push((k, data.clone()));
+        for update_metadata in recovered_metadata {
+            match update_metadata {
+                UpdateMetadata::Store {
+                    node_id,
+                    collection_id,
+                    location,
+                    metadata,
+                } => {
+                    node_ids.insert(node_id.0);
+                    let slab_address = SlabAddress::from(location);
+                    slots_per_slab[slab_address.slab_id as usize]
+                        .insert(slab_address.slot());
+                    pt.get(node_id.0).store(location.get(), Ordering::Relaxed);
+                    user_data.push((node_id, collection_id, metadata.clone()));
+                }
+                UpdateMetadata::Free { .. } => {
+                    unreachable!()
+                }
+            }
         }
 
         let mut slabs = vec![];
@@ -582,7 +638,7 @@ impl Heap {
                 slabs: Arc::new(slabs.try_into().unwrap()),
                 config: config.clone(),
                 object_id_allocator: Arc::new(Allocator::from_allocated(
-                    &object_ids,
+                    &node_ids,
                 )),
                 pt,
                 global_error: metadata_store.get_global_error_arc(),
@@ -595,7 +651,10 @@ impl Heap {
     }
 
     pub fn maintenance(&self) -> io::Result<usize> {
-        // TODO
+        for slab in self.slabs.iter() {
+            slab.maintenance()?;
+        }
+
         Ok(0)
     }
 
@@ -633,89 +692,72 @@ impl Heap {
         }
     }
 
-    pub fn write_batch<I>(&self, batch: I) -> io::Result<()>
-    where
-        I: Sized
-            + IntoIterator<Item = (NodeId, Option<(InlineArray, Vec<u8>)>)>,
-    {
+    pub fn write_batch(&self, batch: Vec<Update>) -> io::Result<()> {
         self.check_error()?;
         let mut guard = self.free_ebr.pin();
 
-        let batch: Vec<(NodeId, Option<(InlineArray, Vec<u8>)>)> = batch
-            .into_iter()
-            //.map(|(key, val_opt)| (key, val_opt.map(|(user_data, b)| (user_data, b.as_ref()))))
-            .collect();
-
         let slabs = &self.slabs;
-        let metadata_batch_res: io::Result<
-            Vec<(NodeId, Option<(NonZeroU64, InlineArray)>)>,
-        > = batch
-            .into_par_iter()
-            .map(
-                |(object_id, val_opt): (
-                    NodeId,
-                    Option<(InlineArray, Vec<u8>)>,
-                )| {
-                    let new_meta = if let Some((user_data, bytes)) = val_opt {
-                        let slab_id = slab_for_size(bytes.len());
-                        let slab = &slabs[usize::from(slab_id)];
-                        let slot = slab.slot_allocator.allocate();
-                        let new_location =
-                            SlabAddress::from_slab_slot(slab_id, slot);
-                        let new_location_nzu: NonZeroU64 = new_location.into();
 
-                        let complete_durability_pipeline =
-                            maybe!(slab.write(slot, bytes));
+        let map_closure = |update: Update| match update {
+            Update::Store { node_id, collection_id, metadata, data } => {
+                let slab_id = slab_for_size(data.len());
+                let slab = &slabs[usize::from(slab_id)];
+                let slot = slab.slot_allocator.allocate();
+                let new_location = SlabAddress::from_slab_slot(slab_id, slot);
+                let new_location_nzu: NonZeroU64 = new_location.into();
 
-                        if let Err(e) = complete_durability_pipeline {
-                            // can immediately free slot as the
-                            slab.slot_allocator.free(slot);
-                            return Err(e);
-                        }
-                        Some((new_location_nzu, user_data))
-                    } else {
-                        None
-                    };
+                let complete_durability_pipeline =
+                    maybe!(slab.write(slot, data));
 
-                    Ok((object_id, new_meta))
-                },
-            )
-            .collect();
+                if let Err(e) = complete_durability_pipeline {
+                    // can immediately free slot as the
+                    slab.slot_allocator.free(slot);
+                    return Err(e);
+                }
+                Ok(UpdateMetadata::Store {
+                    node_id,
+                    collection_id,
+                    metadata,
+                    location: new_location_nzu,
+                })
+            }
+            Update::Free { node_id, collection_id } => {
+                Ok(UpdateMetadata::Free { node_id, collection_id })
+            }
+        };
+
+        let metadata_batch_res: io::Result<Vec<UpdateMetadata>> =
+            batch.into_par_iter().map(map_closure).collect();
 
         let metadata_batch = match metadata_batch_res {
-            Ok(mb) => mb,
+            Ok(mut mb) => {
+                // TODO evaluate impact : cost ratio of this sort
+                mb.par_sort_unstable();
+                mb
+            }
             Err(e) => {
                 self.set_error(&e);
                 return Err(e);
             }
         };
 
-        if let Err(e) = self.metadata_store.insert_batch(metadata_batch.clone())
-        {
+        // make metadata durable
+        if let Err(e) = self.metadata_store.insert_batch(&metadata_batch) {
             self.set_error(&e);
-
-            // this is very cold, so it's fine if it's not fast
-            for (_object_id, value_opt) in metadata_batch {
-                let (new_location_u64, _user_data) = value_opt.unwrap();
-                let new_location = SlabAddress::from(new_location_u64);
-                let slab_id = new_location.slab_id;
-                let slab = &self.slabs[usize::from(slab_id)];
-                slab.slot_allocator.free(new_location.slot());
-            }
             return Err(e);
         }
 
-        // now we can update in-memory metadata
-
-        for (object_id, value_opt) in metadata_batch {
-            let new_location = if let Some((nl, _user_data)) = value_opt {
-                nl.get()
-            } else {
-                0
+        // reclaim previous disk locations for future writes
+        for update_metadata in metadata_batch {
+            let (node_id, new_location) = match update_metadata {
+                UpdateMetadata::Store { node_id, location, .. } => {
+                    (node_id, location.get())
+                }
+                UpdateMetadata::Free { node_id, .. } => (node_id, 0),
             };
 
             let last_u64 =
-                self.pt.get(object_id.0).swap(new_location, Ordering::Release);
+                self.pt.get(node_id.0).swap(new_location, Ordering::Release);
 
             if let Some(nzu) = NonZeroU64::new(last_u64) {
                 let last_address = SlabAddress::from(nzu);
@@ -736,14 +778,19 @@ impl Heap {
         self.object_id_allocator.allocate()
     }
 
-    #[allow(unused)]
-    pub fn free(&self, object_id: NodeId) -> io::Result<()> {
+    //#[allow(unused)]
+    pub fn free(&self, node_id: NodeId) -> io::Result<()> {
         let mut guard = self.free_ebr.pin();
-        if let Err(e) = self.metadata_store.insert_batch([(object_id, None)]) {
+        if let Err(e) =
+            self.metadata_store.insert_batch(&[UpdateMetadata::Free {
+                node_id,
+                collection_id: CollectionId::MIN,
+            }])
+        {
             self.set_error(&e);
             return Err(e);
         }
-        let last_u64 = self.pt.get(object_id.0).swap(0, Ordering::Release);
+        let last_u64 = self.pt.get(node_id.0).swap(0, Ordering::Release);
         if let Some(nzu) = NonZeroU64::new(last_u64) {
             let last_address = SlabAddress::from(nzu);
 

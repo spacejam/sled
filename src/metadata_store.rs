@@ -17,7 +17,7 @@ use rayon::prelude::*;
 use zstd::stream::read::Decoder as ZstdDecoder;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
-use crate::NodeId;
+use crate::{heap::UpdateMetadata, CollectionId, NodeId};
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
 const TMP_SUFFIX: &str = ".tmp";
@@ -49,7 +49,7 @@ impl Drop for MetadataStore {
 }
 
 struct Recovery {
-    recovered: Vec<(NodeId, NonZeroU64, InlineArray)>,
+    recovered: Vec<UpdateMetadata>,
     id_for_next_log: u64,
     snapshot_size: u64,
 }
@@ -259,7 +259,7 @@ impl MetadataStore {
         // Metadata writer
         MetadataStore,
         // Metadata - node id, value, user data
-        Vec<(NodeId, NonZeroU64, InlineArray)>,
+        Vec<UpdateMetadata>,
     )> {
         use fs2::FileExt;
 
@@ -346,12 +346,7 @@ impl MetadataStore {
 
     /// Write a batch of metadata. `None` for the second half of the outer tuple represents a
     /// deletion.
-    pub fn insert_batch<
-        I: IntoIterator<Item = (NodeId, Option<(NonZeroU64, InlineArray)>)>,
-    >(
-        &self,
-        batch: I,
-    ) -> io::Result<()> {
+    pub fn insert_batch(&self, batch: &[UpdateMetadata]) -> io::Result<()> {
         self.check_error()?;
 
         let batch_bytes = serialize_batch(batch);
@@ -415,11 +410,7 @@ impl MetadataStore {
     }
 }
 
-fn serialize_batch<
-    I: IntoIterator<Item = (NodeId, Option<(NonZeroU64, InlineArray)>)>,
->(
-    batch: I,
-) -> Vec<u8> {
+fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
     // we initialize the vector to contain placeholder bytes for the frame length
     let batch_bytes = 0_u64.to_le_bytes().to_vec();
 
@@ -432,19 +423,34 @@ fn serialize_batch<
     //  LE encoded crc32 of length + payload raw bytes, XOR 0xAF to make non-zero in empty case
     let mut batch_encoder = ZstdEncoder::new(batch_bytes, ZSTD_LEVEL).unwrap();
 
-    for (k, v_opt) in batch {
-        batch_encoder.write_all(&k.0.to_le_bytes()).unwrap();
-        if let Some((v, user_data)) = v_opt {
-            batch_encoder.write_all(&v.get().to_le_bytes()).unwrap();
+    for update_metadata in batch {
+        match update_metadata {
+            UpdateMetadata::Store {
+                node_id,
+                collection_id,
+                metadata,
+                location,
+            } => {
+                batch_encoder.write_all(&node_id.0.to_le_bytes()).unwrap();
+                batch_encoder
+                    .write_all(&collection_id.0.to_le_bytes())
+                    .unwrap();
+                batch_encoder.write_all(&location.get().to_le_bytes()).unwrap();
 
-            let user_data_len: u64 = user_data.len() as u64;
-            batch_encoder.write_all(&user_data_len.to_le_bytes()).unwrap();
-            batch_encoder.write_all(&user_data).unwrap();
-        } else {
-            // v
-            batch_encoder.write_all(&0_u64.to_le_bytes()).unwrap();
-            // user data len
-            batch_encoder.write_all(&0_u64.to_le_bytes()).unwrap();
+                let metadata_len: u64 = metadata.len() as u64;
+                batch_encoder.write_all(&metadata_len.to_le_bytes()).unwrap();
+                batch_encoder.write_all(&metadata).unwrap();
+            }
+            UpdateMetadata::Free { node_id, collection_id } => {
+                batch_encoder.write_all(&node_id.0.to_le_bytes()).unwrap();
+                batch_encoder
+                    .write_all(&collection_id.0.to_le_bytes())
+                    .unwrap();
+                // heap location
+                batch_encoder.write_all(&0_u64.to_le_bytes()).unwrap();
+                // metadata len
+                batch_encoder.write_all(&0_u64.to_le_bytes()).unwrap();
+            }
         }
     }
 
@@ -463,7 +469,7 @@ fn serialize_batch<
 fn read_frame(
     file: &mut fs::File,
     reusable_frame_buffer: &mut Vec<u8>,
-) -> io::Result<Vec<(NodeId, (u64, InlineArray))>> {
+) -> io::Result<Vec<UpdateMetadata>> {
     let mut frame_size_buf: [u8; 8] = [0; 8];
     // TODO only break if UnexpectedEof, otherwise propagate
     fallible!(file.read_exact(&mut frame_size_buf));
@@ -502,12 +508,18 @@ fn read_frame(
     let mut decoder = ZstdDecoder::new(&reusable_frame_buffer[8..len + 8])
         .expect("failed to create zstd decoder");
 
-    let mut k_buf: [u8; 8] = [0; 8];
-    let mut v_buf: [u8; 8] = [0; 8];
-    let mut user_data_len_buf: [u8; 8] = [0; 8];
-    let mut user_data_buf = vec![];
+    let mut node_id_buf: [u8; 8] = [0; 8];
+    let mut collection_id_buf: [u8; 8] = [0; 8];
+    let mut location_buf: [u8; 8] = [0; 8];
+    let mut metadata_len_buf: [u8; 8] = [0; 8];
+    let mut metadata_buf = vec![];
     loop {
-        let first_read_res = decoder.read_exact(&mut k_buf);
+        let first_read_res = decoder
+            .read_exact(&mut node_id_buf)
+            .and_then(|_| decoder.read_exact(&mut collection_id_buf))
+            .and_then(|_| decoder.read_exact(&mut location_buf))
+            .and_then(|_| decoder.read_exact(&mut metadata_len_buf));
+
         if let Err(e) = first_read_res {
             if e.kind() != io::ErrorKind::UnexpectedEof {
                 return Err(e);
@@ -515,30 +527,35 @@ fn read_frame(
                 break;
             }
         }
-        decoder
-            .read_exact(&mut v_buf)
-            .expect("we expect reads from crc-verified buffers to succeed");
-        decoder
-            .read_exact(&mut user_data_len_buf)
-            .expect("we expect reads from crc-verified buffers to succeed");
 
-        let k = u64::from_le_bytes(k_buf);
-        let v = u64::from_le_bytes(v_buf);
+        let node_id = NodeId(u64::from_le_bytes(node_id_buf));
+        let collection_id = CollectionId(u64::from_le_bytes(collection_id_buf));
+        let location = u64::from_le_bytes(location_buf);
 
-        let user_data_len_raw = u64::from_le_bytes(user_data_len_buf);
-        let user_data_len = usize::try_from(user_data_len_raw).unwrap();
-        user_data_buf.reserve(user_data_len);
+        let metadata_len_raw = u64::from_le_bytes(metadata_len_buf);
+        let metadata_len = usize::try_from(metadata_len_raw).unwrap();
+
+        metadata_buf.reserve(metadata_len);
         unsafe {
-            user_data_buf.set_len(user_data_len);
+            metadata_buf.set_len(metadata_len);
         }
 
         decoder
-            .read_exact(&mut user_data_buf)
+            .read_exact(&mut metadata_buf)
             .expect("we expect reads from crc-verified buffers to succeed");
 
-        let user_data = InlineArray::from(&*user_data_buf);
+        if let Some(location_nzu) = NonZeroU64::new(location) {
+            let metadata = InlineArray::from(&*metadata_buf);
 
-        ret.push((NodeId(k), (v, user_data)));
+            ret.push(UpdateMetadata::Store {
+                node_id,
+                collection_id,
+                location: location_nzu,
+                metadata,
+            });
+        } else {
+            ret.push(UpdateMetadata::Free { node_id, collection_id });
+        }
     }
 
     Ok(ret)
@@ -549,7 +566,7 @@ fn read_frame(
 fn read_log(
     directory_path: &Path,
     lsn: u64,
-) -> io::Result<FnvHashMap<NodeId, (u64, InlineArray)>> {
+) -> io::Result<FnvHashMap<NodeId, UpdateMetadata>> {
     log::trace!("reading log {lsn}");
     let mut ret = FnvHashMap::default();
 
@@ -558,8 +575,8 @@ fn read_log(
     let mut reusable_frame_buffer: Vec<u8> = vec![];
 
     while let Ok(frame) = read_frame(&mut file, &mut reusable_frame_buffer) {
-        for (k, v) in frame {
-            ret.insert(k, v);
+        for update_metadata in frame {
+            ret.insert(update_metadata.node_id(), update_metadata);
         }
     }
 
@@ -572,7 +589,7 @@ fn read_log(
 fn read_snapshot(
     directory_path: &Path,
     lsn: u64,
-) -> io::Result<(FnvHashMap<NodeId, (NonZeroU64, InlineArray)>, u64)> {
+) -> io::Result<(FnvHashMap<NodeId, UpdateMetadata>, u64)> {
     log::trace!("reading snapshot {lsn}");
     let mut reusable_frame_buffer: Vec<u8> = vec![];
     let mut file =
@@ -580,11 +597,9 @@ fn read_snapshot(
     let size = fallible!(file.metadata()).len();
     let raw_frame = read_frame(&mut file, &mut reusable_frame_buffer)?;
 
-    let frame: FnvHashMap<NodeId, (NonZeroU64, InlineArray)> = raw_frame
+    let frame: FnvHashMap<NodeId, UpdateMetadata> = raw_frame
         .into_iter()
-        .map(|(k, (v, user_data))| {
-            (k, (NonZeroU64::new(v).unwrap(), user_data))
-        })
+        .map(|update_metadata| (update_metadata.node_id(), update_metadata))
         .collect();
 
     log::trace!("recovered {} items in snapshot {}", frame.len(), lsn);
@@ -698,7 +713,7 @@ fn read_snapshot_and_apply_logs(
     let mut max_log_id = snapshot_id_opt.unwrap_or(0);
 
     let log_data_res: io::Result<
-        Vec<(u64, FnvHashMap<NodeId, (u64, InlineArray)>)>,
+        Vec<(u64, FnvHashMap<NodeId, UpdateMetadata>)>,
     > = (&log_ids) //.iter().collect::<Vec<_>>())
         .into_par_iter()
         .map(move |log_id| {
@@ -706,13 +721,13 @@ fn read_snapshot_and_apply_logs(
                 assert!(*log_id > snapshot_id);
             }
 
-            let log_datum = read_log(path, *log_id)?;
+            let log_data = read_log(path, *log_id)?;
 
-            Ok((*log_id, log_datum))
+            Ok((*log_id, log_data))
         })
         .collect();
 
-    let mut recovered: FnvHashMap<NodeId, (NonZeroU64, InlineArray)> =
+    let mut recovered: FnvHashMap<NodeId, UpdateMetadata> =
         snapshot_rx.recv().unwrap()?;
 
     log::trace!("recovered snapshot contains {recovered:?}");
@@ -720,29 +735,25 @@ fn read_snapshot_and_apply_logs(
     for (log_id, log_datum) in log_data_res? {
         max_log_id = max_log_id.max(log_id);
 
-        for (k, (v, user_data)) in log_datum {
-            log::trace!("recovery of log contained location {v:?} for object id {k:?} user_data {user_data:?}");
-            if v == 0 {
-                recovered.remove(&k);
+        for (node_id, update_metadata) in log_datum {
+            if matches!(update_metadata, UpdateMetadata::Store { .. }) {
+                recovered.insert(node_id, update_metadata);
             } else {
-                recovered.insert(k, (NonZeroU64::new(v).unwrap(), user_data));
+                let previous = recovered.remove(&node_id);
+                // TODO: assert!(previous.is_some());
             }
         }
     }
 
-    let mut recovered: Vec<(NodeId, NonZeroU64, InlineArray)> = recovered
+    let mut recovered: Vec<UpdateMetadata> = recovered
         .into_iter()
-        .map(|(k, (v, user_data))| (k, v, user_data))
+        .map(|(node_id, update_metadata)| update_metadata)
         .collect();
 
     recovered.par_sort_unstable();
 
     // write fresh snapshot with recovered data
-    let new_snapshot_data = serialize_batch(
-        recovered
-            .iter()
-            .map(|(k, v, user_data)| (*k, Some((*v, user_data.clone())))),
-    );
+    let new_snapshot_data = serialize_batch(&recovered);
     let snapshot_size = new_snapshot_data.len() as u64;
 
     let new_snapshot_tmp_path = snapshot_path(path, max_log_id, true);

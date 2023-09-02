@@ -7,6 +7,18 @@ use tempdir::TempDir;
 
 use crate::Db;
 
+macro_rules! builder {
+    ($(($name:ident, $t:ty, $desc:expr)),*) => {
+        $(
+            #[doc=$desc]
+            pub fn $name(mut self, to: $t) -> Self {
+                self.$name = to;
+                self
+            }
+        )*
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     /// The base directory for storing the database.

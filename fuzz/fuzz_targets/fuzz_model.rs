@@ -8,7 +8,7 @@ use arbitrary::Arbitrary;
 
 use sled::{Config, Db as SledDb, InlineArray};
 
-type Db = SledDb<4, 3, 11>;
+type Db = SledDb<3>;
 
 const KEYSPACE: u64 = 128;
 
