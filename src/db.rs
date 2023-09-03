@@ -21,280 +21,10 @@ use stack_map::StackMap;
 
 use crate::*;
 
-const INDEX_FANOUT: usize = 64;
-const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
-
-#[derive(Clone)]
-struct Io<const LEAF_FANOUT: usize> {
-    config: Config,
-    global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
-    node_id_index: ConcurrentMap<
-        u64,
-        Node<LEAF_FANOUT>,
-        INDEX_FANOUT,
-        EBR_LOCAL_GC_BUFFER_SIZE,
-    >,
-    store: heap::Heap,
-    cache_advisor: RefCell<CacheAdvisor>,
-    flush_epoch: FlushEpochTracker,
-    dirty: ConcurrentMap<(FlushEpoch, NodeId), Dirty<LEAF_FANOUT>>,
-}
-
-impl<const LEAF_FANOUT: usize> Io<LEAF_FANOUT> {
-    fn check_error(&self) -> io::Result<()> {
-        let err_ptr: *const (io::ErrorKind, String) =
-            self.global_error.load(Ordering::Acquire);
-
-        if err_ptr.is_null() {
-            Ok(())
-        } else {
-            let deref: &(io::ErrorKind, String) = unsafe { &*err_ptr };
-            Err(io::Error::new(deref.0, deref.1.clone()))
-        }
-    }
-
-    fn set_error(&self, error: &io::Error) {
-        let kind = error.kind();
-        let reason = error.to_string();
-
-        let boxed = Box::new((kind, reason));
-        let ptr = Box::into_raw(boxed);
-
-        if self
-            .global_error
-            .compare_exchange(
-                std::ptr::null_mut(),
-                ptr,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .is_err()
-        {
-            // global fatal error already installed, drop this one
-            unsafe {
-                drop(Box::from_raw(ptr));
-            }
-        }
-    }
-
-    // NB: must not be called while holding a leaf lock - which also means
-    // that no two LeafGuards can be held concurrently in the same scope due to
-    // this being called in the destructor.
-    fn mark_access_and_evict(
-        &self,
-        node_id: NodeId,
-        size: usize,
-    ) -> io::Result<()> {
-        let mut ca = self.cache_advisor.borrow_mut();
-        let to_evict = ca.accessed_reuse_buffer(node_id.0, size);
-        for (node_to_evict, _rough_size) in to_evict {
-            let node = if let Some(n) = self.node_id_index.get(&node_to_evict) {
-                if n.id.0 != *node_to_evict {
-                    log::warn!("during cache eviction, node to evict did not match current occupant for {:?}", node_to_evict);
-                    continue;
-                }
-                n
-            } else {
-                log::warn!("during cache eviction, unable to find node to evict for {:?}", node_to_evict);
-                continue;
-            };
-
-            let mut write = node.inner.write();
-            if write.is_none() {
-                // already paged out
-                continue;
-            }
-            let leaf: &mut Leaf<LEAF_FANOUT> = write.as_mut().unwrap();
-
-            if let Some(dirty_epoch) = leaf.dirty_flush_epoch {
-                // We can't page out this leaf until it has been
-                // flushed, because its changes are not yet durable.
-                leaf.page_out_on_flush = Some(dirty_epoch);
-            } else {
-                *write = None;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn flush(&self) -> io::Result<()> {
-        let mut write_batch = vec![];
-
-        log::trace!("advancing epoch");
-        let (
-            previous_flush_complete_notifier,
-            this_vacant_notifier,
-            forward_flush_notifier,
-        ) = self.flush_epoch.roll_epoch_forward();
-
-        log::trace!("waiting for previous flush to complete");
-        previous_flush_complete_notifier.wait_for_complete();
-
-        log::trace!("waiting for our epoch to become vacant");
-        let flush_through_epoch: FlushEpoch =
-            this_vacant_notifier.wait_for_complete();
-
-        log::trace!("performing flush");
-
-        let flush_boundary = (flush_through_epoch.increment(), NodeId::MIN);
-
-        let mut evict_after_flush = vec![];
-
-        for ((dirty_epoch, dirty_node_id), dirty_value_initial_read) in
-            self.dirty.range(..flush_boundary)
-        {
-            let dirty_value = self
-                .dirty
-                .remove(&(dirty_epoch, dirty_node_id))
-                .expect("violation of flush responsibility");
-
-            if let Dirty::NotYetSerialized { .. } = &dirty_value {
-                assert_eq!(dirty_value_initial_read, dirty_value);
-            }
-
-            // drop is necessary to increase chance of Arc strong count reaching 1
-            // while taking ownership of the value
-            drop(dirty_value_initial_read);
-
-            assert_eq!(dirty_epoch, flush_through_epoch);
-
-            #[cfg(feature = "for-internal-testing-only")]
-            {
-                let mutation_count = lock.as_ref().unwrap().mutation_count;
-                self.event_verifier.mark_flush(
-                    node.id,
-                    dirty_epoch,
-                    mutation_count,
-                );
-            }
-
-            match dirty_value {
-                Dirty::MergedAndDeleted { node_id } => {
-                    log::trace!(
-                        "MergedAndDeleted for {:?}, adding None to write_batch",
-                        node_id
-                    );
-                    write_batch.push(heap::Update::Free {
-                        node_id: dirty_node_id,
-                        collection_id: CollectionId::MIN,
-                    });
-                }
-                Dirty::CooperativelySerialized {
-                    low_key,
-                    mutation_count: _,
-                    mut data,
-                } => {
-                    Arc::make_mut(&mut data);
-                    let data = Arc::into_inner(data).unwrap();
-                    write_batch.push(heap::Update::Store {
-                        node_id: dirty_node_id,
-                        collection_id: CollectionId::MIN,
-                        metadata: low_key,
-                        data,
-                    });
-                }
-                Dirty::NotYetSerialized { low_key, node } => {
-                    assert_eq!(dirty_node_id, node.id, "mismatched node ID for NotYetSerialized with low key {:?}", low_key);
-                    let mut lock = node.inner.write();
-
-                    let leaf_ref: &mut Leaf<LEAF_FANOUT> =
-                        lock.as_mut().unwrap();
-
-                    let data = if leaf_ref.dirty_flush_epoch
-                        == Some(flush_through_epoch)
-                    {
-                        if let Some(deleted_at) = leaf_ref.deleted {
-                            assert!(deleted_at > flush_through_epoch);
-                        }
-                        leaf_ref.dirty_flush_epoch.take();
-                        leaf_ref.serialize(self.config.zstd_compression_level)
-                    } else {
-                        // Here we expect that there was a benign data race and that another thread
-                        // mutated the leaf after encountering it being dirty for our epoch, after
-                        // storing a CooperativelySerialized in the dirty map.
-                        let dirty_value_2_opt =
-                            self.dirty.remove(&(dirty_epoch, dirty_node_id));
-
-                        let dirty_value_2 = if let Some(dv2) = dirty_value_2_opt
-                        {
-                            dv2
-                        } else {
-                            eprintln!(
-                                "violation of flush responsibility for second read \
-                                of expected cooperative serialization. leaf in question's \
-                                dirty_flush_epoch is {:?}, our expected key was {:?}. node.deleted: {:?}",
-                                leaf_ref.dirty_flush_epoch,
-                                (dirty_epoch, dirty_node_id),
-                                leaf_ref.deleted,
-                            );
-
-                            std::process::abort();
-                        };
-
-                        if let Dirty::CooperativelySerialized {
-                            low_key: low_key_2,
-                            mutation_count: _,
-                            mut data,
-                        } = dirty_value_2
-                        {
-                            assert_eq!(low_key, low_key_2);
-                            Arc::make_mut(&mut data);
-                            Arc::into_inner(data).unwrap()
-                        } else {
-                            unreachable!("a leaf was expected to be cooperatively serialized but it was not available");
-                        }
-                    };
-
-                    write_batch.push(heap::Update::Store {
-                        node_id: dirty_node_id,
-                        collection_id: CollectionId::MIN,
-                        metadata: low_key,
-                        data,
-                    });
-
-                    if leaf_ref.page_out_on_flush == Some(flush_through_epoch) {
-                        // page_out_on_flush is set to false
-                        // on page-in due to serde(skip)
-                        evict_after_flush.push(node.clone());
-                    }
-                }
-            }
-        }
-
-        let written_count = write_batch.len();
-        if written_count > 0 {
-            self.store.write_batch(write_batch)?;
-            log::trace!(
-                "marking {:?} as flushed - {} objects written",
-                flush_through_epoch,
-                written_count
-            );
-        }
-        log::trace!(
-            "marking the forward flush notifier that {:?} is flushed",
-            flush_through_epoch
-        );
-        forward_flush_notifier.mark_complete();
-
-        for node_to_evict in evict_after_flush {
-            let mut lock = node_to_evict.inner.write();
-            if let Some(ref mut leaf) = *lock {
-                if leaf.page_out_on_flush == Some(flush_through_epoch) {
-                    *lock = None;
-                }
-            }
-        }
-
-        self.store.maintenance()?;
-        Ok(())
-    }
-}
-
 /// sled 1.0
 #[derive(Clone)]
 pub struct Db<const LEAF_FANOUT: usize = 1024> {
-    io: Io<LEAF_FANOUT>,
+    pc: PageCache<LEAF_FANOUT>,
     high_level_rc: Arc<()>,
     index: ConcurrentMap<
         InlineArray,
@@ -355,7 +85,7 @@ impl<const LEAF_FANOUT: usize> Dirty<LEAF_FANOUT> {
 }
 
 fn flusher<const LEAF_FANOUT: usize>(
-    io: Io<LEAF_FANOUT>,
+    pc: PageCache<LEAF_FANOUT>,
     shutdown_signal: mpsc::Receiver<mpsc::Sender<()>>,
     flush_every_ms: usize,
 ) {
@@ -609,7 +339,7 @@ impl<const LEAF_FANOUT: usize> Drop for Db<LEAF_FANOUT> {
         }
 
         if Arc::strong_count(&self.high_level_rc) == 1 {
-            if let Err(e) = self.io.flush() {
+            if let Err(e) = self.flush() {
                 eprintln!("failed to flush Db on Drop: {e:?}");
             }
 
@@ -646,21 +376,21 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
     /// This is called automatically on drop of the last open Db
     /// instance.
     pub fn flush(&self) -> io::Result<()> {
-        self.io.flush()
+        self.pc.flush()
     }
 
     // This is only pub for an extra assertion during testing.
     #[doc(hidden)]
     pub fn check_error(&self) -> io::Result<()> {
-        self.io.check_error()
+        self.pc.check_error()
     }
 
     fn set_error(&self, error: &io::Error) {
-        self.io.set_error(error)
+        self.pc.set_error(error)
     }
 
     pub fn storage_stats(&self) -> heap::Stats {
-        self.io.store.stats()
+        self.pc.store.stats()
     }
 
     pub fn size_on_disk(&self) -> io::Result<u64> {
@@ -677,7 +407,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             })
         }
 
-        recurse(read_dir(&self.io.config.path)?)
+        recurse(read_dir(&self.pc.config.path)?)
     }
 
     fn leaf_for_key<'a>(
@@ -782,7 +512,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             );
         }
 
-        let io = Io {
+        let pc = PageCache {
             config: config.clone(),
             node_id_index,
             cache_advisor: RefCell::new(CacheAdvisor::new(
@@ -798,7 +528,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         };
 
         let mut ret = Db {
-            io: io.clone(),
+            pc: pc.clone(),
             high_level_rc: Arc::new(()),
             index,
             shutdown_sender: None,
@@ -811,7 +541,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             ret.shutdown_sender = Some(tx);
             let spawn_res = std::thread::Builder::new()
                 .name("sled_flusher".into())
-                .spawn(move || flusher(io, rx, flush_every_ms));
+                .spawn(move || flusher(pc, rx, flush_every_ms));
 
             if let Err(e) = spawn_res {
                 return Err(io::Error::new(
@@ -835,7 +565,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             let (low_key, node) = self.index.get_lte(key).unwrap();
             let mut write = node.inner.write_arc();
             if write.is_none() {
-                let leaf_bytes = self.io.store.read(node.id.0)?;
+                let leaf_bytes = self.pc.store.read(node.id.0)?;
                 let leaf: Box<Leaf<LEAF_FANOUT>> =
                     Leaf::deserialize(&leaf_bytes).unwrap();
                 *write = Some(leaf);
@@ -852,7 +582,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 let size = leaf.in_memory_size;
                 drop(write);
                 log::trace!("key undershoot in page_in");
-                self.io.mark_access_and_evict(node.id, size)?;
+                self.pc.mark_access_and_evict(node.id, size)?;
 
                 continue;
             }
@@ -862,7 +592,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                     let size = leaf.in_memory_size;
                     drop(write);
                     log::trace!("key overshoot in page_in");
-                    self.io.mark_access_and_evict(node.id, size)?;
+                    self.pc.mark_access_and_evict(node.id, size)?;
 
                     continue;
                 }
@@ -902,7 +632,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             Some(dirty.clone())
         };
 
-        self.io.dirty.fetch_and_update((flush_epoch, node_id), update);
+        self.pc.dirty.fetch_and_update((flush_epoch, node_id), update);
     }
 
     // NB: must never be called without having already added the empty leaf
@@ -951,7 +681,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         leaf.deleted = Some(merge_epoch);
 
         self.index.remove(&leaf_guard.low_key).unwrap();
-        self.io.node_id_index.remove(&leaf_guard.node.id.0).unwrap();
+        self.pc.node_id_index.remove(&leaf_guard.node.id.0).unwrap();
 
         // NB: these updates must "happen" atomically in the same flush epoch
         self.install_dirty(
@@ -974,8 +704,8 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         let (s_node_id, s_sz) =
             leaf_guard.handle_cache_access_and_eviction_externally();
 
-        self.io.mark_access_and_evict(p_node_id, p_sz)?;
-        self.io.mark_access_and_evict(s_node_id, s_sz)?;
+        self.pc.mark_access_and_evict(p_node_id, p_sz)?;
+        self.pc.mark_access_and_evict(s_node_id, s_sz)?;
 
         Ok(())
     }
@@ -1018,7 +748,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
     ) -> io::Result<LeafWriteGuard<'a, LEAF_FANOUT>> {
         let (low_key, mut write, node) = self.page_in(key)?;
 
-        let flush_epoch_guard = self.io.flush_epoch.check_in();
+        let flush_epoch_guard = self.pc.flush_epoch.check_in();
 
         let leaf = write.as_mut().unwrap();
 
@@ -1050,7 +780,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
 
                 let serialized =
-                    leaf_ref.serialize(self.io.config.zstd_compression_level);
+                    leaf_ref.serialize(self.pc.config.zstd_compression_level);
 
                 log::trace!(
                     "D adding node {} to dirty {:?}",
@@ -1174,7 +904,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 leaf.in_memory_size.saturating_sub(old_size - new_size);
         }
 
-        let split = leaf.split_if_full(new_epoch, &self.io.store);
+        let split = leaf.split_if_full(new_epoch, &self.pc.store);
         if split.is_some() || Some(value_ivec) != ret {
             leaf.mutation_count += 1;
             leaf.dirty_flush_epoch = Some(new_epoch);
@@ -1206,7 +936,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             assert_ne!(rhs_node.id.0, 0);
             assert!(!split_key.is_empty());
 
-            self.io.node_id_index.insert(rhs_node.id.0, rhs_node.clone());
+            self.pc.node_id_index.insert(rhs_node.id.0, rhs_node.clone());
             self.index.insert(split_key.clone(), rhs_node.clone());
 
             self.install_dirty(
@@ -1390,7 +1120,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             Err(CompareAndSwapError { current, proposed })
         };
 
-        let split = leaf.split_if_full(new_epoch, &self.io.store);
+        let split = leaf.split_if_full(new_epoch, &self.pc.store);
         let split_happened = split.is_some();
         if split_happened || ret.is_ok() {
             leaf.mutation_count += 1;
@@ -1428,7 +1158,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                     low_key: split_key.clone(),
                 },
             );
-            self.io.node_id_index.insert(rhs_node.id.0, rhs_node.clone());
+            self.pc.node_id_index.insert(rhs_node.id.0, rhs_node.clone());
             self.index.insert(split_key, rhs_node);
         }
 
@@ -1695,7 +1425,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         // NB: add the flush epoch at the end of the lock acquisition
         // process when all locks have been acquired, to avoid situations
         // where a leaf is already dirty with an epoch "from the future".
-        let flush_epoch_guard = self.io.flush_epoch.check_in();
+        let flush_epoch_guard = self.pc.flush_epoch.check_in();
         let new_epoch = flush_epoch_guard.epoch();
 
         // Flush any leaves that are dirty from a previous flush epoch
@@ -1721,7 +1451,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                     let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
 
                     let serialized = leaf_ref
-                        .serialize(self.io.config.zstd_compression_level);
+                        .serialize(self.pc.config.zstd_compression_level);
 
                     log::trace!(
                         "C adding node {} to dirty epoch {:?}",
@@ -1768,7 +1498,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 leaf.data.insert(key, value);
 
                 if let Some((split_key, rhs_node)) =
-                    leaf.split_if_full(new_epoch, &self.io.store)
+                    leaf.split_if_full(new_epoch, &self.pc.store)
                 {
                     let write = rhs_node.inner.write_arc();
                     assert!(write.is_some());
@@ -1783,7 +1513,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         // Make splits globally visible
         for (split_key, rhs_node) in splits {
-            self.io.node_id_index.insert(rhs_node.id.0, rhs_node.clone());
+            self.pc.node_id_index.insert(rhs_node.id.0, rhs_node.clone());
             self.index.insert(split_key, rhs_node);
         }
 
@@ -1809,7 +1539,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         // Perform cache maintenance
         for (node_id, size) in cache_accesses {
-            self.io.mark_access_and_evict(node_id, size)?;
+            self.pc.mark_access_and_evict(node_id, size)?;
         }
 
         Ok(())

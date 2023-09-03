@@ -1,3 +1,4 @@
+// TODO move logic into Tree
 // TODO remove all Drop logic that checks Arc::strong_count, all are race conditions
 // TODO move dirty tracking, cache to shared level
 // TODO write actual CollectionId instead of MIN in Db::flush
@@ -19,6 +20,7 @@ mod db;
 mod flush_epoch;
 mod heap;
 mod metadata_store;
+mod pagecache;
 
 #[cfg(any(
     feature = "testing_shred_allocator",
@@ -32,6 +34,9 @@ mod event_verifier;
 pub use crate::config::Config;
 pub use crate::db::{Batch, Db, Iter};
 pub use inline_array::InlineArray;
+
+const INDEX_FANOUT: usize = 64;
+const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
 
 /// Opens a `Db` with a default configuration at the
 /// specified path. This will create a new storage
