@@ -77,6 +77,47 @@ impl<const LEAF_FANOUT: usize> Io<LEAF_FANOUT> {
         }
     }
 
+    // NB: must not be called while holding a leaf lock - which also means
+    // that no two LeafGuards can be held concurrently in the same scope due to
+    // this being called in the destructor.
+    fn mark_access_and_evict(
+        &self,
+        node_id: NodeId,
+        size: usize,
+    ) -> io::Result<()> {
+        let mut ca = self.cache_advisor.borrow_mut();
+        let to_evict = ca.accessed_reuse_buffer(node_id.0, size);
+        for (node_to_evict, _rough_size) in to_evict {
+            let node = if let Some(n) = self.node_id_index.get(&node_to_evict) {
+                if n.id.0 != *node_to_evict {
+                    log::warn!("during cache eviction, node to evict did not match current occupant for {:?}", node_to_evict);
+                    continue;
+                }
+                n
+            } else {
+                log::warn!("during cache eviction, unable to find node to evict for {:?}", node_to_evict);
+                continue;
+            };
+
+            let mut write = node.inner.write();
+            if write.is_none() {
+                // already paged out
+                continue;
+            }
+            let leaf: &mut Leaf<LEAF_FANOUT> = write.as_mut().unwrap();
+
+            if let Some(dirty_epoch) = leaf.dirty_flush_epoch {
+                // We can't page out this leaf until it has been
+                // flushed, because its changes are not yet durable.
+                leaf.page_out_on_flush = Some(dirty_epoch);
+            } else {
+                *write = None;
+            }
+        }
+
+        Ok(())
+    }
+
     fn flush(&self) -> io::Result<()> {
         let mut write_batch = vec![];
 
@@ -493,7 +534,8 @@ impl<'a, const LEAF_FANOUT: usize> Drop for LeafReadGuard<'a, LEAF_FANOUT> {
         if self.external_cache_access_and_eviction {
             return;
         }
-        if let Err(e) = self.inner.mark_access_and_evict(self.node_id, size) {
+        if let Err(e) = self.inner.io.mark_access_and_evict(self.node_id, size)
+        {
             self.inner.set_error(&e);
             log::error!(
                 "io error while paging out dirty data: {:?} \
@@ -540,7 +582,8 @@ impl<'a, const LEAF_FANOUT: usize> Drop for LeafWriteGuard<'a, LEAF_FANOUT> {
         if self.external_cache_access_and_eviction {
             return;
         }
-        if let Err(e) = self.inner.mark_access_and_evict(self.node.id, size) {
+        if let Err(e) = self.inner.io.mark_access_and_evict(self.node.id, size)
+        {
             self.inner.set_error(&e);
             log::error!("io error while paging out dirty data: {:?}", e);
         }
@@ -809,7 +852,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 let size = leaf.in_memory_size;
                 drop(write);
                 log::trace!("key undershoot in page_in");
-                self.mark_access_and_evict(node.id, size)?;
+                self.io.mark_access_and_evict(node.id, size)?;
 
                 continue;
             }
@@ -819,7 +862,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                     let size = leaf.in_memory_size;
                     drop(write);
                     log::trace!("key overshoot in page_in");
-                    self.mark_access_and_evict(node.id, size)?;
+                    self.io.mark_access_and_evict(node.id, size)?;
 
                     continue;
                 }
@@ -931,8 +974,8 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         let (s_node_id, s_sz) =
             leaf_guard.handle_cache_access_and_eviction_externally();
 
-        self.mark_access_and_evict(p_node_id, p_sz)?;
-        self.mark_access_and_evict(s_node_id, s_sz)?;
+        self.io.mark_access_and_evict(p_node_id, p_sz)?;
+        self.io.mark_access_and_evict(s_node_id, s_sz)?;
 
         Ok(())
     }
@@ -1048,49 +1091,6 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             node,
             external_cache_access_and_eviction: false,
         })
-    }
-
-    // NB: must not be called while holding a leaf lock - which also means
-    // that no two LeafGuards can be held concurrently in the same scope due to
-    // this being called in the destructor.
-    fn mark_access_and_evict(
-        &self,
-        node_id: NodeId,
-        size: usize,
-    ) -> io::Result<()> {
-        let mut ca = self.io.cache_advisor.borrow_mut();
-        let to_evict = ca.accessed_reuse_buffer(node_id.0, size);
-        for (node_to_evict, _rough_size) in to_evict {
-            let node = if let Some(n) =
-                self.io.node_id_index.get(&node_to_evict)
-            {
-                if n.id.0 != *node_to_evict {
-                    log::warn!("during cache eviction, node to evict did not match current occupant for {:?}", node_to_evict);
-                    continue;
-                }
-                n
-            } else {
-                log::warn!("during cache eviction, unable to find node to evict for {:?}", node_to_evict);
-                continue;
-            };
-
-            let mut write = node.inner.write();
-            if write.is_none() {
-                // already paged out
-                continue;
-            }
-            let leaf: &mut Leaf<LEAF_FANOUT> = write.as_mut().unwrap();
-
-            if let Some(dirty_epoch) = leaf.dirty_flush_epoch {
-                // We can't page out this leaf until it has been
-                // flushed, because its changes are not yet durable.
-                leaf.page_out_on_flush = Some(dirty_epoch);
-            } else {
-                *write = None;
-            }
-        }
-
-        Ok(())
     }
 
     /// Retrieve a value from the `Tree` if it exists.
@@ -1809,7 +1809,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         // Perform cache maintenance
         for (node_id, size) in cache_accesses {
-            self.mark_access_and_evict(node_id, size)?;
+            self.io.mark_access_and_evict(node_id, size)?;
         }
 
         Ok(())
