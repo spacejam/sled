@@ -66,7 +66,7 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
         bool,
     )> {
         let HeapRecovery { heap, recovered_nodes, was_recovered } =
-            recover(&config.path)?;
+            recover(&config.path, LEAF_FANOUT)?;
 
         let first_id_opt = if recovered_nodes.is_empty() {
             Some(heap.allocate_object_id())
@@ -74,7 +74,8 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
             None
         };
 
-        let (node_id_index, trees) = initialize(recovered_nodes, first_id_opt);
+        let (node_id_index, indices) =
+            initialize(recovered_nodes, first_id_opt);
 
         if config.cache_capacity_bytes < 256 {
             log::debug!(
@@ -105,7 +106,7 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
             event_verifier: Arc::default(),
         };
 
-        Ok((pc, trees, was_recovered))
+        Ok((pc, indices, was_recovered))
     }
 
     pub fn read(&self, object_id: u64) -> io::Result<Vec<u8>> {

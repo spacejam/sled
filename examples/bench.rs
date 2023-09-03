@@ -6,7 +6,9 @@ use std::{fs, io};
 
 use num_format::{Locale, ToFormattedString};
 
-use sled::{Config, Db};
+use sled::{Config, Db as SledDb};
+
+type Db = SledDb<1024>;
 
 const N_WRITES_PER_THREAD: u32 = 4 * 1024 * 1024;
 const MAX_CONCURRENCY: u32 = 4;

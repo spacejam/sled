@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
@@ -150,7 +150,122 @@ pub(crate) struct HeapRecovery {
     pub was_recovered: bool,
 }
 
-pub(crate) fn recover<P: AsRef<Path>>(path: P) -> io::Result<HeapRecovery> {
+enum PersistentSettings {
+    V1 { leaf_fanout: u64 },
+}
+
+impl PersistentSettings {
+    // NB: should only be called with a directory lock already exclusively acquired
+    fn verify_or_store<P: AsRef<Path>>(
+        &self,
+        path: P,
+        _directory_lock: &std::fs::File,
+    ) -> io::Result<()> {
+        let settings_path = path.as_ref().join("durability_cookie");
+
+        match std::fs::read(&settings_path) {
+            Ok(previous_bytes) => {
+                let previous =
+                    PersistentSettings::deserialize(&previous_bytes)?;
+                self.check_compatibility(&previous)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::write(settings_path, &self.serialize())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn deserialize(buf: &[u8]) -> io::Result<PersistentSettings> {
+        let mut cursor = buf;
+        let mut buf = [0_u8; 64];
+        cursor.read_exact(&mut buf)?;
+
+        let version = u16::from_le_bytes([buf[0], buf[1]]);
+
+        let crc_actual = (crc32fast::hash(&buf[0..60]) ^ 0xAF).to_le_bytes();
+        let crc_expected = &buf[60..];
+
+        if crc_actual != crc_expected {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "encountered corrupted settings cookie with mismatched CRC.",
+            ));
+        }
+
+        match version {
+            1 => {
+                let leaf_fanout = u64::from_le_bytes(buf[2..10].try_into().unwrap());
+                Ok(PersistentSettings::V1 { leaf_fanout })
+            }
+            _ => {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "encountered unknown version number when reading settings cookie"
+                ))
+            }
+        }
+    }
+
+    fn check_compatibility(
+        &self,
+        other: &PersistentSettings,
+    ) -> io::Result<()> {
+        use PersistentSettings::*;
+
+        match (self, other) {
+            (V1 { leaf_fanout: lf1 }, V1 { leaf_fanout: lf2 }) => {
+                if lf1 != lf2 {
+                    Err(io::Error::new(
+                            io::ErrorKind::Unsupported,
+                            format!(
+                                "sled was already opened with a LEAF_FANOUT const generic of {}, \
+                                and this may not be changed after initial creation. Please use \
+                                Db::import / Db::export to migrate, if you wish to change the \
+                                system's format.", lf2
+                            )
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    fn serialize(&self) -> Vec<u8> {
+        // format: 64 bytes in total, with the last 4 being a LE crc32
+        // first 2 are LE version number
+        let mut buf = vec![];
+
+        match self {
+            PersistentSettings::V1 { leaf_fanout } => {
+                // LEAF_FANOUT: 8 bytes LE
+                let version: [u8; 2] = 1_u16.to_le_bytes();
+                buf.extend_from_slice(&version);
+
+                buf.extend_from_slice(&leaf_fanout.to_le_bytes());
+            }
+        }
+
+        // zero-pad the buffer
+        assert!(buf.len() < 60);
+        buf.resize(60, 0);
+
+        let hash: u32 = crc32fast::hash(&buf) ^ 0xAF;
+        let hash_bytes: [u8; 4] = hash.to_le_bytes();
+        buf.extend_from_slice(&hash_bytes);
+
+        // keep the buffer to 64 bytes for easy parsing over time.
+        assert_eq!(buf.len(), 64);
+
+        buf
+    }
+}
+
+pub(crate) fn recover<P: AsRef<Path>>(
+    path: P,
+    leaf_fanout: usize,
+) -> io::Result<HeapRecovery> {
     let path = path.as_ref();
     log::trace!("recovering Heap at {:?}", path);
     let slabs_dir = path.join("slabs");
@@ -172,6 +287,11 @@ pub(crate) fn recover<P: AsRef<Path>>(path: P) -> io::Result<HeapRecovery> {
     file_lock_opts.create(false).read(false).write(false);
     let directory_lock = fallible!(fs::File::open(&path));
     fallible!(directory_lock.try_lock_exclusive());
+
+    let persistent_settings =
+        PersistentSettings::V1 { leaf_fanout: leaf_fanout as u64 };
+
+    persistent_settings.verify_or_store(path, &directory_lock)?;
 
     let (metadata_store, recovered_metadata) =
         MetadataStore::recover(path.join("metadata"))?;
@@ -462,7 +582,7 @@ impl Slab {
         sys_io::read_exact_at(&self.file, &mut data, whence)?;
 
         let hash_actual: [u8; 4] =
-            crc32fast::hash(&data[..self.slot_size - 4]).to_le_bytes();
+            (crc32fast::hash(&data[..self.slot_size - 4]) ^ 0xAF).to_le_bytes();
         let hash_expected = &data[self.slot_size - 4..];
 
         if hash_expected != hash_actual {
@@ -529,7 +649,7 @@ impl Slab {
         }
 
         let hash: [u8; 4] =
-            crc32fast::hash(&data[..self.slot_size - 4]).to_le_bytes();
+            (crc32fast::hash(&data[..self.slot_size - 4]) ^ 0xAF).to_le_bytes();
         data[self.slot_size - 4..].copy_from_slice(&hash);
 
         let whence = self.slot_size as u64 * slot;

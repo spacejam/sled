@@ -1,3 +1,4 @@
+// TODO corrupted data extraction binary
 // TODO make node_id_index private on PageCache
 // TODO move logic into Tree
 // TODO remove all Drop logic that checks Arc::strong_count, all are race conditions
@@ -21,6 +22,7 @@ mod flush_epoch;
 mod heap;
 mod metadata_store;
 mod pagecache;
+mod tree;
 
 #[cfg(any(
     feature = "testing_shred_allocator",
@@ -32,12 +34,15 @@ pub mod alloc;
 mod event_verifier;
 
 pub use crate::config::Config;
-pub use crate::db::{Batch, Db, Iter};
+pub use crate::db::Db;
+pub use crate::tree::{Batch, Iter, Tree};
 pub use inline_array::InlineArray;
 
 const DEFAULT_COLLECTION_ID: CollectionId = CollectionId(u64::MIN);
 const INDEX_FANOUT: usize = 64;
 const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
+
+use std::ops::Bound;
 
 /// Opens a `Db` with a default configuration at the
 /// specified path. This will create a new storage
@@ -162,6 +167,46 @@ struct Leaf<const LEAF_FANOUT: usize> {
     page_out_on_flush: Option<FlushEpoch>,
     #[serde(skip)]
     deleted: Option<FlushEpoch>,
+}
+
+/// Stored on `Db` and `Tree` in an Arc, so that when the
+/// last "high-level" struct is dropped, the flusher thread
+/// is cleaned up.
+struct ShutdownDropper<const LEAF_FANOUT: usize> {
+    shutdown_sender: parking_lot::Mutex<
+        std::sync::mpsc::Sender<std::sync::mpsc::Sender<()>>,
+    >,
+    pc: parking_lot::Mutex<pagecache::PageCache<LEAF_FANOUT>>,
+}
+
+impl<const LEAF_FANOUT: usize> Drop for ShutdownDropper<LEAF_FANOUT> {
+    fn drop(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        if self.shutdown_sender.lock().send(tx).is_ok() {
+            if let Err(e) = rx.recv() {
+                log::error!("failed to shut down flusher thread: {:?}", e);
+            } else {
+                log::trace!("flush thread successfully terminated");
+            }
+        } else {
+            let pc = self.pc.lock();
+            if let Err(e) = pc.flush() {
+                log::error!(
+                    "Db flusher encountered error while flushing: {:?}",
+                    e
+                );
+                pc.set_error(&e);
+            }
+        }
+    }
+}
+
+fn map_bound<T, U, F: FnOnce(T) -> U>(bound: Bound<T>, f: F) -> Bound<U> {
+    match bound {
+        Bound::Unbounded => Bound::Unbounded,
+        Bound::Included(x) => Bound::Included(f(x)),
+        Bound::Excluded(x) => Bound::Excluded(f(x)),
+    }
 }
 
 const fn _assert_public_types_send_sync() {
