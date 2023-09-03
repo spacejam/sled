@@ -14,7 +14,6 @@ use parking_lot::{
     RawRwLock,
 };
 
-use crate::pagecache::{Dirty, PageCache};
 use crate::*;
 
 #[derive(Clone)]
@@ -1951,8 +1950,8 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
 
             let data = self.data.split_off(split_offset);
 
-            let left_max = &self.data.last().as_ref().unwrap().0;
-            let right_min = &data.first().as_ref().unwrap().0;
+            let left_max = &self.data.last().unwrap().0;
+            let right_min = &data.first().unwrap().0;
 
             // suffix truncation attempts to shrink the split key
             // so that shorter keys bubble up into the index

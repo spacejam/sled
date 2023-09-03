@@ -10,7 +10,6 @@ use concurrent_map::{ConcurrentMap, Minimum};
 use inline_array::InlineArray;
 use stack_map::StackMap;
 
-use crate::heap::{recover, Heap, HeapRecovery, NodeRecovery, Stats, Update};
 use crate::*;
 
 #[derive(Clone, Debug, PartialEq)]

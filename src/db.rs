@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-use crate::pagecache::PageCache;
 use crate::*;
 
 /// sled 1.0 alpha :)

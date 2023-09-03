@@ -1,14 +1,11 @@
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
 use std::fmt;
 use std::fs;
 use std::io::{self, Read};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crossbeam_queue::SegQueue;
 use ebr::{Ebr, Guard};
 use fault_injection::{annotate, fallible, maybe};
 use fnv::FnvHashSet;
@@ -16,8 +13,7 @@ use fs2::FileExt as _;
 use pagetable::PageTable;
 use rayon::prelude::*;
 
-use crate::metadata_store::MetadataStore;
-use crate::{CollectionId, NodeId};
+use crate::{Allocator, CollectionId, DeferredFree, MetadataStore, NodeId};
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
 const N_SLABS: usize = 78;
@@ -420,57 +416,6 @@ impl Into<NonZeroU64> for SlabAddress {
     }
 }
 
-#[derive(Default, Debug)]
-struct Allocator {
-    free_and_pending: Mutex<BinaryHeap<Reverse<u64>>>,
-    free_queue: SegQueue<u64>,
-    next_to_allocate: AtomicU64,
-}
-
-impl Allocator {
-    fn from_allocated(allocated: &FnvHashSet<u64>) -> Allocator {
-        let mut heap = BinaryHeap::<Reverse<u64>>::default();
-        let max = allocated.iter().copied().max();
-
-        for i in 0..max.unwrap_or(0) {
-            if !allocated.contains(&i) {
-                heap.push(Reverse(i));
-            }
-        }
-
-        Allocator {
-            free_and_pending: Mutex::new(heap),
-            free_queue: SegQueue::default(),
-            next_to_allocate: max.map(|m| m + 1).unwrap_or(0).into(),
-        }
-    }
-
-    fn allocate(&self) -> u64 {
-        let mut free = self.free_and_pending.lock().unwrap();
-        while let Some(free_id) = self.free_queue.pop() {
-            free.push(Reverse(free_id));
-        }
-        let pop_attempt = free.pop();
-
-        if let Some(id) = pop_attempt {
-            id.0
-        } else {
-            self.next_to_allocate.fetch_add(1, Ordering::Release)
-        }
-    }
-
-    fn free(&self, id: u64) {
-        if let Ok(mut free) = self.free_and_pending.try_lock() {
-            while let Some(free_id) = self.free_queue.pop() {
-                free.push(Reverse(free_id));
-            }
-            free.push(Reverse(id));
-        } else {
-            self.free_queue.push(id);
-        }
-    }
-}
-
 #[cfg(unix)]
 mod sys_io {
     use std::io;
@@ -654,17 +599,6 @@ impl Slab {
         let whence = self.slot_size as u64 * slot;
 
         sys_io::write_all_at(&self.file, &data, whence)
-    }
-}
-
-struct DeferredFree {
-    allocator: Arc<Allocator>,
-    freed_slot: u64,
-}
-
-impl Drop for DeferredFree {
-    fn drop(&mut self) {
-        self.allocator.free(self.freed_slot)
     }
 }
 

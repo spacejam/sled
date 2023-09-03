@@ -20,6 +20,7 @@ mod config;
 mod db;
 mod flush_epoch;
 mod heap;
+mod id_allocator;
 mod metadata_store;
 mod pagecache;
 mod tree;
@@ -43,6 +44,11 @@ const INDEX_FANOUT: usize = 64;
 const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
 
 use std::ops::Bound;
+
+use crate::heap::{recover, Heap, HeapRecovery, NodeRecovery, Stats, Update};
+use crate::id_allocator::{Allocator, DeferredFree};
+use crate::metadata_store::MetadataStore;
+use crate::pagecache::{Dirty, PageCache};
 
 /// Opens a `Db` with a default configuration at the
 /// specified path. This will create a new storage
