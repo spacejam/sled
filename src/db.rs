@@ -12,19 +12,48 @@ use concurrent_map::Minimum;
 use inline_array::InlineArray;
 use parking_lot::{
     lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard},
-    RawRwLock,
+    Mutex, RawRwLock,
 };
 
 use crate::pagecache::{Dirty, PageCache};
 use crate::*;
 
+/// Stored on `Db` and `Tree` in an Arc, so that when the
+/// last "high-level" struct is dropped, the flusher thread
+/// is cleaned up.
+struct ShutdownDropper<const LEAF_FANOUT: usize> {
+    shutdown_sender: Mutex<mpsc::Sender<mpsc::Sender<()>>>,
+    pc: Mutex<PageCache<LEAF_FANOUT>>,
+}
+
+impl<const LEAF_FANOUT: usize> Drop for ShutdownDropper<LEAF_FANOUT> {
+    fn drop(&mut self) {
+        let (tx, rx) = mpsc::channel();
+        if self.shutdown_sender.lock().send(tx).is_ok() {
+            if let Err(e) = rx.recv() {
+                log::error!("failed to shut down flusher thread: {:?}", e);
+            } else {
+                log::trace!("flush thread successfully terminated");
+            }
+        } else {
+            let pc = self.pc.lock();
+            if let Err(e) = pc.lock().flush() {
+                log::error!(
+                    "Db flusher encountered error while flushing: {:?}",
+                    e
+                );
+                pc.lock().set_error(&e);
+            }
+        }
+    }
+}
+
 /// sled 1.0
 #[derive(Clone)]
 pub struct Db<const LEAF_FANOUT: usize = 1024> {
     pc: PageCache<LEAF_FANOUT>,
-    high_level_rc: Arc<()>,
+    _shutdown_dropper: Arc<ShutdownDropper<LEAF_FANOUT>>,
     index: Index<LEAF_FANOUT>,
-    shutdown_sender: Option<mpsc::Sender<mpsc::Sender<()>>>,
     was_recovered: bool,
     #[cfg(feature = "for-internal-testing-only")]
     event_verifier: Arc<crate::event_verifier::EventVerifier>,
@@ -57,13 +86,33 @@ fn flusher<const LEAF_FANOUT: usize>(
 ) {
     let interval = Duration::from_millis(flush_every_ms as _);
     let mut last_flush_duration = Duration::default();
+
+    let flush = || {
+        if let Err(e) = pc.flush() {
+            log::error!("Db flusher encountered error while flushing: {:?}", e);
+            pc.set_error(&e);
+
+            std::process::abort();
+        }
+    };
+
     loop {
         let recv_timeout = interval
             .saturating_sub(last_flush_duration)
             .max(Duration::from_millis(1));
         if let Ok(shutdown_sender) = shutdown_signal.recv_timeout(recv_timeout)
         {
+            flush();
+
+            // this is probably unnecessary but it will avoid issues
+            // if egregious bugs get introduced that trigger it
+            pc.set_error(&io::Error::new(
+                io::ErrorKind::Other,
+                "system has been shut down".to_string(),
+            ));
+
             drop(pc);
+
             if let Err(e) = shutdown_sender.send(()) {
                 log::error!(
                     "Db flusher could not ack shutdown to requestor: {e:?}"
@@ -77,27 +126,7 @@ fn flusher<const LEAF_FANOUT: usize>(
 
         let before_flush = Instant::now();
 
-        let flush_result = pc.flush();
-
-        match flush_result {
-            Ok(_) => {}
-            Err(e) => {
-                log::error!(
-                    "Db flusher encountered error while flushing: {:?}",
-                    e
-                );
-                pc.set_error(&e);
-
-                std::process::abort();
-
-                //return;
-            } /*
-              Err(panicked) => {
-                  eprintln!("flusher thread panicked while flushing sled database: {:?}", panicked);
-                  std::process::abort();
-              }
-              */
-        };
+        flush();
 
         last_flush_duration = before_flush.elapsed();
     }
@@ -288,33 +317,13 @@ impl<'a, const LEAF_FANOUT: usize> Drop for LeafWriteGuard<'a, LEAF_FANOUT> {
 
 impl<const LEAF_FANOUT: usize> Drop for Db<LEAF_FANOUT> {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.high_level_rc) == 1 {
-            if let Some(shutdown_sender) = self.shutdown_sender.take() {
-                let (tx, rx) = mpsc::channel();
-                if shutdown_sender.send(tx).is_ok() {
-                    if let Err(e) = rx.recv() {
-                        log::error!(
-                            "failed to shut down flusher thread: {:?}",
-                            e
-                        );
-                    } else {
-                        log::trace!("flush thread successfully terminated");
-                    }
-                }
-            }
-        }
-
-        if Arc::strong_count(&self.high_level_rc) == 1 {
+        if self.pc.config.flush_every_ms.is_none() {
             if let Err(e) = self.flush() {
                 eprintln!("failed to flush Db on Drop: {e:?}");
             }
-
-            // this is probably unnecessary but it will avoid issues
-            // if egregious bugs get introduced that trigger it
-            self.set_error(&io::Error::new(
-                io::ErrorKind::Other,
-                "system has been shut down".to_string(),
-            ));
+        } else {
+            // otherwise, it is expected that the flusher thread will
+            // flush while shutting down the final Db/Tree instance
         }
     }
 }
@@ -447,20 +456,24 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         let default_index = trees.remove(&DEFAULT_COLLECTION_ID).unwrap();
 
-        let mut ret = Db {
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        let _shutdown_dropper = Arc::new(ShutdownDropper {
+            shutdown_sender: Mutex::new(shutdown_tx),
+            pc: Mutex::new(pc.clone()),
+        });
+
+        let ret = Db {
             pc: pc.clone(),
-            high_level_rc: Arc::new(()),
+            _shutdown_dropper,
             index: default_index,
-            shutdown_sender: None,
             was_recovered,
         };
 
         if let Some(flush_every_ms) = ret.pc.config.flush_every_ms {
-            let (tx, rx) = mpsc::channel();
-            ret.shutdown_sender = Some(tx);
             let spawn_res = std::thread::Builder::new()
                 .name("sled_flusher".into())
-                .spawn(move || flusher(pc, rx, flush_every_ms));
+                .spawn(move || flusher(pc, shutdown_rx, flush_every_ms));
 
             if let Err(e) = spawn_res {
                 return Err(io::Error::new(
