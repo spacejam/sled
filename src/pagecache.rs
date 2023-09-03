@@ -52,7 +52,7 @@ pub(crate) struct PageCache<const LEAF_FANOUT: usize> {
     heap: Heap,
     cache_advisor: RefCell<CacheAdvisor>,
     flush_epoch: FlushEpochTracker,
-    dirty: ConcurrentMap<(FlushEpoch, NodeId), Dirty<LEAF_FANOUT>>,
+    dirty: ConcurrentMap<(FlushEpoch, NodeId), Dirty<LEAF_FANOUT>, 4>,
 }
 
 impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
@@ -180,19 +180,16 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
         //
         // if the new Dirty is not final, we must assert
         // that the old value is also not final.
-        let update = |old_dirty: Option<&Dirty<LEAF_FANOUT>>| -> Option<Dirty<LEAF_FANOUT>> {
-            if let Some(old) = old_dirty {
-                assert!(!old.is_final_state(),
-                    "tried to install another Dirty marker for a node that is already
-                    finalized for this flush epoch. {:?} old: {:?} new: {:?}",
-                    flush_epoch, old_dirty, dirty
-                );
-            }
 
-            Some(dirty.clone())
-        };
+        let old_dirty = self.dirty.insert((flush_epoch, node_id), dirty);
 
-        self.dirty.fetch_and_update((flush_epoch, node_id), update);
+        if let Some(old) = old_dirty {
+            assert!(!old.is_final_state(),
+                "tried to install another Dirty marker for a node that is already
+                finalized for this flush epoch. {:?} old: {:?}",
+                flush_epoch, old
+            );
+        }
     }
 
     // NB: must not be called while holding a leaf lock - which also means
