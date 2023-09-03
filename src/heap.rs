@@ -136,14 +136,111 @@ pub use inline_array::InlineArray;
 pub struct Stats {}
 
 #[derive(Debug, Clone)]
-pub struct Config {
-    pub path: PathBuf,
+pub struct Config {}
+
+pub(crate) struct NodeRecovery {
+    pub node_id: NodeId,
+    pub collection_id: CollectionId,
+    pub metadata: InlineArray,
 }
 
-pub(crate) fn recover<P: AsRef<Path>>(
-    storage_directory: P,
-) -> io::Result<(Heap, Vec<(NodeId, CollectionId, InlineArray)>)> {
-    Heap::recover(&Config { path: storage_directory.as_ref().into() })
+pub(crate) struct HeapRecovery {
+    pub heap: Heap,
+    pub recovered_nodes: Vec<NodeRecovery>,
+    pub was_recovered: bool,
+}
+
+pub(crate) fn recover<P: AsRef<Path>>(path: P) -> io::Result<HeapRecovery> {
+    let path = path.as_ref();
+    log::trace!("recovering Heap at {:?}", path);
+    let slabs_dir = path.join("slabs");
+
+    // initialize directories if not present
+    let mut was_recovered = true;
+    for p in [path, &slabs_dir] {
+        if let Err(e) = fs::read_dir(p) {
+            if e.kind() == io::ErrorKind::NotFound {
+                fallible!(fs::create_dir_all(p));
+                was_recovered = false;
+            }
+        }
+    }
+
+    let _ = fs::File::create(path.join(WARN));
+
+    let mut file_lock_opts = fs::OpenOptions::new();
+    file_lock_opts.create(false).read(false).write(false);
+    let directory_lock = fallible!(fs::File::open(&path));
+    fallible!(directory_lock.try_lock_exclusive());
+
+    let (metadata_store, recovered_metadata) =
+        MetadataStore::recover(path.join("metadata"))?;
+
+    let pt = PageTable::<AtomicU64>::default();
+    let mut recovered_nodes =
+        Vec::<NodeRecovery>::with_capacity(recovered_metadata.len());
+    let mut node_ids: FnvHashSet<u64> = Default::default();
+    let mut slots_per_slab: [FnvHashSet<u64>; N_SLABS] =
+        core::array::from_fn(|_| Default::default());
+    for update_metadata in recovered_metadata {
+        match update_metadata {
+            UpdateMetadata::Store {
+                node_id,
+                collection_id,
+                location,
+                metadata,
+            } => {
+                node_ids.insert(node_id.0);
+                let slab_address = SlabAddress::from(location);
+                slots_per_slab[slab_address.slab_id as usize]
+                    .insert(slab_address.slot());
+                pt.get(node_id.0).store(location.get(), Ordering::Relaxed);
+                recovered_nodes.push(NodeRecovery {
+                    node_id,
+                    collection_id,
+                    metadata: metadata.clone(),
+                });
+            }
+            UpdateMetadata::Free { .. } => {
+                unreachable!()
+            }
+        }
+    }
+
+    let mut slabs = vec![];
+    let mut slab_opts = fs::OpenOptions::new();
+    slab_opts.create(true).read(true).write(true);
+    for i in 0..N_SLABS {
+        let slot_size = SLAB_SIZES[i];
+        let slab_path = slabs_dir.join(format!("{}", slot_size));
+
+        let file = fallible!(slab_opts.open(slab_path));
+
+        slabs.push(Slab {
+            slot_size,
+            file,
+            slot_allocator: Arc::new(Allocator::from_allocated(
+                &slots_per_slab[i],
+            )),
+        })
+    }
+
+    log::info!("recovery of Heap at {:?} complete", path);
+
+    Ok(HeapRecovery {
+        heap: Heap {
+            slabs: Arc::new(slabs.try_into().unwrap()),
+            path: path.into(),
+            object_id_allocator: Arc::new(Allocator::from_allocated(&node_ids)),
+            pt,
+            global_error: metadata_store.get_global_error_arc(),
+            metadata_store: Arc::new(metadata_store),
+            directory_lock: Arc::new(directory_lock),
+            free_ebr: Ebr::default(),
+        },
+        recovered_nodes,
+        was_recovered,
+    })
 }
 
 struct SlabAddress {
@@ -517,7 +614,7 @@ impl UpdateMetadata {
 
 #[derive(Clone)]
 pub(crate) struct Heap {
-    config: Config,
+    path: PathBuf,
     slabs: Arc<[Slab; N_SLABS]>,
     pt: PageTable<AtomicU64>,
     object_id_allocator: Arc<Allocator>,
@@ -531,7 +628,7 @@ pub(crate) struct Heap {
 impl fmt::Debug for Heap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Heap")
-            .field("config", &self.config.path)
+            .field("path", &self.path)
             .field("stats", &self.stats())
             .finish()
     }
@@ -558,97 +655,6 @@ impl Heap {
 
     fn set_error(&self, error: &io::Error) {
         set_error(&self.global_error, error);
-    }
-
-    pub fn recover(
-        config: &Config,
-    ) -> io::Result<(Heap, Vec<(NodeId, CollectionId, InlineArray)>)> {
-        log::trace!("recovering Heap at {:?}", config.path);
-        let slabs_dir = config.path.join("slabs");
-
-        // initialize directories if not present
-        for p in [&config.path, &slabs_dir] {
-            if let Err(e) = fs::read_dir(p) {
-                if e.kind() == io::ErrorKind::NotFound {
-                    fallible!(fs::create_dir_all(p));
-                }
-            }
-        }
-
-        let _ = fs::File::create(config.path.join(WARN));
-
-        let mut file_lock_opts = fs::OpenOptions::new();
-        file_lock_opts.create(false).read(false).write(false);
-        let directory_lock = fallible!(fs::File::open(&config.path));
-        fallible!(directory_lock.try_lock_exclusive());
-
-        let (metadata_store, recovered_metadata) =
-            MetadataStore::recover(config.path.join("metadata"))?;
-
-        let pt = PageTable::<AtomicU64>::default();
-        let mut user_data =
-            Vec::<(NodeId, CollectionId, InlineArray)>::with_capacity(
-                recovered_metadata.len(),
-            );
-        let mut node_ids: FnvHashSet<u64> = Default::default();
-        let mut slots_per_slab: [FnvHashSet<u64>; N_SLABS] =
-            core::array::from_fn(|_| Default::default());
-        for update_metadata in recovered_metadata {
-            match update_metadata {
-                UpdateMetadata::Store {
-                    node_id,
-                    collection_id,
-                    location,
-                    metadata,
-                } => {
-                    node_ids.insert(node_id.0);
-                    let slab_address = SlabAddress::from(location);
-                    slots_per_slab[slab_address.slab_id as usize]
-                        .insert(slab_address.slot());
-                    pt.get(node_id.0).store(location.get(), Ordering::Relaxed);
-                    user_data.push((node_id, collection_id, metadata.clone()));
-                }
-                UpdateMetadata::Free { .. } => {
-                    unreachable!()
-                }
-            }
-        }
-
-        let mut slabs = vec![];
-        let mut slab_opts = fs::OpenOptions::new();
-        slab_opts.create(true).read(true).write(true);
-        for i in 0..N_SLABS {
-            let slot_size = SLAB_SIZES[i];
-            let slab_path = slabs_dir.join(format!("{}", slot_size));
-
-            let file = fallible!(slab_opts.open(slab_path));
-
-            slabs.push(Slab {
-                slot_size,
-                file,
-                slot_allocator: Arc::new(Allocator::from_allocated(
-                    &slots_per_slab[i],
-                )),
-            })
-        }
-
-        log::info!("recovery of Heap at {:?} complete", config.path);
-
-        Ok((
-            Heap {
-                slabs: Arc::new(slabs.try_into().unwrap()),
-                config: config.clone(),
-                object_id_allocator: Arc::new(Allocator::from_allocated(
-                    &node_ids,
-                )),
-                pt,
-                global_error: metadata_store.get_global_error_arc(),
-                metadata_store: Arc::new(metadata_store),
-                directory_lock: Arc::new(directory_lock),
-                free_ebr: Ebr::default(),
-            },
-            user_data,
-        ))
     }
 
     pub fn maintenance(&self) -> io::Result<usize> {
@@ -779,7 +785,6 @@ impl Heap {
         self.object_id_allocator.allocate()
     }
 
-    //#[allow(unused)]
     pub fn free(&self, node_id: NodeId) -> io::Result<()> {
         let mut guard = self.free_ebr.pin();
         if let Err(e) =

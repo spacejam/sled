@@ -29,7 +29,6 @@ panic = "abort"
 [profile.test]
 debug = true
 overflow-checks = true
-panic = "abort"
 
 [dependencies]
 bincode = "1.3.3"

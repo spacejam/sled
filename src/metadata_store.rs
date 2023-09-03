@@ -48,7 +48,7 @@ impl Drop for MetadataStore {
     }
 }
 
-struct Recovery {
+struct MetadataRecovery {
     recovered: Vec<UpdateMetadata>,
     id_for_next_log: u64,
     snapshot_size: u64,
@@ -329,7 +329,7 @@ impl MetadataStore {
     fn recover_inner<P: AsRef<Path>>(
         storage_directory: P,
         directory_lock: &fs::File,
-    ) -> io::Result<Recovery> {
+    ) -> io::Result<MetadataRecovery> {
         let path = storage_directory.as_ref();
 
         log::debug!("opening MetadataStore at {:?}", path);
@@ -697,7 +697,7 @@ fn read_snapshot_and_apply_logs(
     log_ids: BTreeSet<u64>,
     snapshot_id_opt: Option<u64>,
     locked_directory: &fs::File,
-) -> io::Result<Recovery> {
+) -> io::Result<MetadataRecovery> {
     let (snapshot_tx, snapshot_rx) = bounded(1);
     if let Some(snapshot_id) = snapshot_id_opt {
         let path: PathBuf = path.into();
@@ -745,10 +745,7 @@ fn read_snapshot_and_apply_logs(
         }
     }
 
-    let mut recovered: Vec<UpdateMetadata> = recovered
-        .into_iter()
-        .map(|(node_id, update_metadata)| update_metadata)
-        .collect();
+    let mut recovered: Vec<UpdateMetadata> = recovered.into_values().collect();
 
     recovered.par_sort_unstable();
 
@@ -785,5 +782,9 @@ fn read_snapshot_and_apply_logs(
         fallible!(fs::remove_file(old_snapshot_path));
     }
 
-    Ok(Recovery { recovered, id_for_next_log: max_log_id + 1, snapshot_size })
+    Ok(MetadataRecovery {
+        recovered,
+        id_for_next_log: max_log_id + 1,
+        snapshot_size,
+    })
 }
