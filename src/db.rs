@@ -48,7 +48,13 @@ impl<const LEAF_FANOUT: usize> Drop for ShutdownDropper<LEAF_FANOUT> {
     }
 }
 
-/// sled 1.0
+/// sled 1.0 alpha :)
+///
+/// As an alpha release, please do not expect this to be safe for
+/// business-critical use cases. However, if you would like this to
+/// serve your business-critical use cases over time, please give it
+/// a shot in a low-risk non-production environment and report any
+/// issues you encounter in a github issue.
 #[derive(Clone)]
 pub struct Db<const LEAF_FANOUT: usize = 1024> {
     pc: PageCache<LEAF_FANOUT>,
