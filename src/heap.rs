@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use concurrent_map::Minimum;
 use crossbeam_queue::SegQueue;
 use ebr::{Ebr, Guard};
 use fault_injection::{annotate, fallible, maybe};
@@ -880,7 +879,13 @@ impl Heap {
                 UpdateMetadata::Store { node_id, location, .. } => {
                     (node_id, location.get())
                 }
-                UpdateMetadata::Free { node_id, .. } => (node_id, 0),
+                UpdateMetadata::Free { node_id, .. } => {
+                    guard.defer_drop(DeferredFree {
+                        allocator: self.object_id_allocator.clone(),
+                        freed_slot: node_id.0,
+                    });
+                    (node_id, 0)
+                }
             };
 
             let last_u64 =
@@ -903,31 +908,5 @@ impl Heap {
 
     pub fn allocate_object_id(&self) -> u64 {
         self.object_id_allocator.allocate()
-    }
-
-    pub fn free(&self, node_id: NodeId) -> io::Result<()> {
-        let mut guard = self.free_ebr.pin();
-        if let Err(e) =
-            self.metadata_store.insert_batch(&[UpdateMetadata::Free {
-                node_id,
-                collection_id: CollectionId::MIN,
-            }])
-        {
-            self.set_error(&e);
-            return Err(e);
-        }
-        let last_u64 = self.pt.get(node_id.0).swap(0, Ordering::Release);
-        if let Some(nzu) = NonZeroU64::new(last_u64) {
-            let last_address = SlabAddress::from(nzu);
-
-            guard.defer_drop(DeferredFree {
-                allocator: self.slabs[usize::from(last_address.slab_id)]
-                    .slot_allocator
-                    .clone(),
-                freed_slot: last_address.slot(),
-            });
-        }
-
-        Ok(())
     }
 }
