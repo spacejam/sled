@@ -633,6 +633,7 @@ impl Heap {
         }
 
         log::info!("recovery of Heap at {:?} complete", config.path);
+
         Ok((
             Heap {
                 slabs: Arc::new(slabs.try_into().unwrap()),
