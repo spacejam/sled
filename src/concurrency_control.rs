@@ -64,9 +64,7 @@ impl ConcurrencyControl {
         if self.active.fetch_or(RW_REQUIRED_BIT, SeqCst) < RW_REQUIRED_BIT {
             // we are the first to set this bit
             while self.active.load(Acquire) != RW_REQUIRED_BIT {
-                // `hint::spin_loop` requires Rust 1.49.
-                #[allow(deprecated)]
-                std::sync::atomic::spin_loop_hint()
+                std::hint::spin_loop()
             }
             self.upgrade_complete.store(true, Release);
         }
@@ -99,9 +97,7 @@ impl ConcurrencyControl {
         });
         self.enable();
         while !self.upgrade_complete.load(Acquire) {
-            // `hint::spin_loop` requires Rust 1.49.
-            #[allow(deprecated)]
-            std::sync::atomic::spin_loop_hint()
+            std::hint::spin_loop()
         }
         Protector::Write(self.rw.write())
     }

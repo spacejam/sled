@@ -1,6 +1,5 @@
 /// Vendored and simplified from crossbeam-utils
 use core::cell::Cell;
-use core::sync::atomic;
 
 const SPIN_LIMIT: u32 = 6;
 
@@ -31,9 +30,7 @@ impl Backoff {
     #[inline]
     pub fn spin(&self) {
         for _ in 0..1 << self.step.get().min(SPIN_LIMIT) {
-            // `hint::spin_loop` requires Rust 1.49.
-            #[allow(deprecated)]
-            atomic::spin_loop_hint();
+            core::hint::spin_loop();
         }
 
         if self.step.get() <= SPIN_LIMIT {
