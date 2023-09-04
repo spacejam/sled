@@ -510,7 +510,7 @@ impl<E> Transactional<E> for &&Tree {
 
     fn make_overlay(&self) -> Result<TransactionalTrees> {
         Ok(TransactionalTrees {
-            inner: vec![TransactionalTree::from_tree(*self)],
+            inner: vec![TransactionalTree::from_tree(self)],
         })
     }
 

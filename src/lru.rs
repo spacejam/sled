@@ -64,9 +64,7 @@ impl AccessBlock {
 impl Default for AccessQueue {
     fn default() -> AccessQueue {
         AccessQueue {
-            writing: AtomicPtr::new(Box::into_raw(Box::new(
-                AccessBlock::default(),
-            ))),
+            writing: AtomicPtr::new(Box::into_raw(Box::default())),
             full_list: AtomicPtr::default(),
         }
     }

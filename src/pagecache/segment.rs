@@ -636,7 +636,7 @@ impl SegmentAccountant {
             io_fail!(self.config, "zero garbage segment SA");
             pwrite_all(
                 &self.config.file,
-                &*vec![MessageKind::Corrupted.into(); self.config.segment_size],
+                &vec![MessageKind::Corrupted.into(); self.config.segment_size],
                 segment_base,
             )?;
         }

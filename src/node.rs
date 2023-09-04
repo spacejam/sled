@@ -2143,7 +2143,7 @@ impl Inner {
             u8::try_from(prefix_len).unwrap(),
             self.is_index,
             other_next,
-            &*items,
+            &items,
         );
 
         ret.rewrite_generations =

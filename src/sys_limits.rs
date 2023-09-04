@@ -2,7 +2,7 @@
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io;
-#[cfg(any(target_os = "linux"))]
+#[cfg(target_os = "linux")]
 use {std::fs::File, std::io::Read};
 
 use std::convert::TryFrom;

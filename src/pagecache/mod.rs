@@ -464,7 +464,7 @@ impl Debug for PageCache {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
-        f.write_str(&*format!(
+        f.write_str(&format!(
             "PageCache {{ max: {:?} free: {:?} }}\n",
             *self.next_pid_to_allocate.lock(),
             self.free
