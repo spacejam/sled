@@ -20,7 +20,7 @@ impl<'g> Deref for View<'g> {
     type Target = Node;
 
     fn deref(&self) -> &Node {
-        &*self.node_view
+        &self.node_view
     }
 }
 

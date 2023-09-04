@@ -77,7 +77,7 @@ where
             if written {
                 formatter.write_str(", ")?;
             }
-            formatter.write_str(&*format!("({:?}) ", &node))?;
+            formatter.write_str(&format!("({:?}) ", &node))?;
             node.fmt(formatter)?;
             written = true;
         }

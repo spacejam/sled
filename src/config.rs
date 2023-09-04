@@ -524,7 +524,7 @@ impl Config {
             self.get_path().join("DO_NOT_USE_THIS_DIRECTORY_FOR_ANYTHING"),
         );
 
-        let file = self.try_lock(options.open(&self.db_path())?)?;
+        let file = self.try_lock(options.open(self.db_path())?)?;
         maybe_fsync_directory(self.get_path())?;
         Ok(file)
     }
@@ -619,7 +619,7 @@ impl Config {
 
     fn write_config(&self) -> Result<()> {
         let bytes = self.serialize();
-        let crc: u32 = crc32(&*bytes);
+        let crc: u32 = crc32(&bytes);
         let crc_arr = u32_to_arr(crc);
 
         let temp_path = self.get_path().join("conf.tmp");
@@ -629,7 +629,7 @@ impl Config {
             fs::OpenOptions::new().write(true).create(true).open(&temp_path)?;
 
         io_fail!(self, "write_config bytes");
-        f.write_all(&*bytes)?;
+        f.write_all(&bytes)?;
         io_fail!(self, "write_config crc");
         f.write_all(&crc_arr)?;
         io_fail!(self, "write_config fsync");
@@ -672,7 +672,7 @@ impl Config {
         f.read_exact(&mut crc_arr)?;
         let crc_expected = arr_to_u32(&crc_arr);
 
-        let crc_actual = crc32(&*buf);
+        let crc_actual = crc32(&buf);
 
         if crc_expected != crc_actual {
             warn!(
@@ -771,7 +771,7 @@ impl Drop for Inner {
         if self.temporary {
             // Our files are temporary, so nuke them.
             debug!("removing temporary storage file {:?}", self.get_path());
-            let _res = fs::remove_dir_all(&self.get_path());
+            let _res = fs::remove_dir_all(self.get_path());
         }
     }
 }

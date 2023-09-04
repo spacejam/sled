@@ -455,7 +455,7 @@ fn advance_snapshot(
         io_fail!(config, "segment initial free zero");
         pwrite_all(
             &config.file,
-            &*vec![MessageKind::Corrupted.into(); config.segment_size],
+            &vec![MessageKind::Corrupted.into(); config.segment_size],
             *to_zero,
         )?;
         if !config.temporary {
@@ -560,7 +560,7 @@ pub(in crate::pagecache) fn write_snapshot(
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
     io_fail!(config, "snap write");
-    f.write_all(&*bytes)?;
+    f.write_all(&bytes)?;
     io_fail!(config, "snap write len");
     f.write_all(&len_bytes)?;
     io_fail!(config, "snap write crc");

@@ -216,7 +216,7 @@ impl Heap {
             }
         }
 
-        let iter = self.slabs.iter().zip(bitmaps.into_iter());
+        let iter = self.slabs.iter().zip(bitmaps);
 
         for (slab, bitmap) in iter {
             let tip = slab.tip.load(Acquire);

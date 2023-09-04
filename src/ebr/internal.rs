@@ -441,7 +441,7 @@ impl Local {
     /// Returns a reference to the `Collector` in which this `Local` resides.
     #[inline]
     pub(super) fn collector(&self) -> &Collector {
-        unsafe { &**self.collector.get() }
+        unsafe { &*self.collector.get() }
     }
 
     /// Adds `deferred` to the thread-local bag.
