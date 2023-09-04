@@ -18,6 +18,7 @@ use crate::*;
 
 #[derive(Clone)]
 pub struct Tree<const LEAF_FANOUT: usize = 1024> {
+    collection_id: CollectionId,
     pc: PageCache<LEAF_FANOUT>,
     index: Index<LEAF_FANOUT>,
     _shutdown_dropper: Arc<ShutdownDropper<LEAF_FANOUT>>,
@@ -29,7 +30,7 @@ impl<const LEAF_FANOUT: usize> Drop for Tree<LEAF_FANOUT> {
     fn drop(&mut self) {
         if self.pc.config.flush_every_ms.is_none() {
             if let Err(e) = self.flush() {
-                eprintln!("failed to flush Db on Drop: {e:?}");
+                log::error!("failed to flush Db on Drop: {e:?}");
             }
         } else {
             // otherwise, it is expected that the flusher thread will
@@ -137,6 +138,7 @@ impl<'a, const LEAF_FANOUT: usize> Drop for LeafWriteGuard<'a, LEAF_FANOUT> {
 
 impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     pub(crate) fn new(
+        collection_id: CollectionId,
         pc: PageCache<LEAF_FANOUT>,
         index: Index<LEAF_FANOUT>,
         _shutdown_dropper: Arc<ShutdownDropper<LEAF_FANOUT>>,
@@ -145,6 +147,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         >,
     ) -> Tree<LEAF_FANOUT> {
         Tree {
+            collection_id,
             pc,
             index,
             _shutdown_dropper,
@@ -284,7 +287,10 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         self.pc.install_dirty(
             merge_epoch,
             leaf_guard.node.id,
-            Dirty::MergedAndDeleted { node_id: leaf_guard.node.id },
+            Dirty::MergedAndDeleted {
+                node_id: leaf_guard.node.id,
+                collection_id: self.collection_id,
+            },
         );
 
         self.pc.install_dirty(
@@ -293,6 +299,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             Dirty::NotYetSerialized {
                 low_key: predecessor.lo.clone(),
                 node: predecessor_guard.node.clone(),
+                collection_id: self.collection_id,
             },
         );
 
@@ -445,6 +452,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     old_dirty_epoch,
                     node.id,
                     Dirty::CooperativelySerialized {
+                        node_id: node.id,
+                        collection_id: self.collection_id,
                         low_key: leaf.lo.clone(),
                         mutation_count: leaf.mutation_count,
                         data: Arc::new(serialized),
@@ -570,6 +579,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 new_epoch,
                 leaf_guard.node.id,
                 Dirty::NotYetSerialized {
+                    collection_id: self.collection_id,
                     node: leaf_guard.node.clone(),
                     low_key: leaf_guard.low_key.clone(),
                 },
@@ -591,7 +601,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             self.pc.install_dirty(
                 new_epoch,
                 rhs_node.id,
-                Dirty::NotYetSerialized { node: rhs_node, low_key: split_key },
+                Dirty::NotYetSerialized {
+                    collection_id: self.collection_id,
+                    node: rhs_node,
+                    low_key: split_key,
+                },
             );
         }
 
@@ -654,6 +668,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 new_epoch,
                 leaf_guard.node.id,
                 Dirty::NotYetSerialized {
+                    collection_id: self.collection_id,
                     low_key: leaf_guard.low_key.clone(),
                     node: leaf_guard.node.clone(),
                 },
@@ -788,6 +803,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 new_epoch,
                 leaf_guard.node.id,
                 Dirty::NotYetSerialized {
+                    collection_id: self.collection_id,
                     node: leaf_guard.node.clone(),
                     low_key: leaf_guard.low_key.clone(),
                 },
@@ -803,6 +819,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 new_epoch,
                 rhs_node.id,
                 Dirty::NotYetSerialized {
+                    collection_id: self.collection_id,
                     node: rhs_node.clone(),
                     low_key: split_key.clone(),
                 },
@@ -968,7 +985,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             next_back_last_lo: None,
             next_calls: 0,
             next_back_calls: 0,
-            inner: self,
+            inner: self.clone(),
             bounds: (Bound::Unbounded, Bound::Unbounded),
         }
     }
@@ -995,7 +1012,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             next_back_last_lo: None,
             next_calls: 0,
             next_back_calls: 0,
-            inner: self,
+            inner: self.clone(),
             bounds: (start, end),
         }
     }
@@ -1112,6 +1129,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                         old_dirty_epoch,
                         node.id,
                         Dirty::CooperativelySerialized {
+                            node_id: node.id,
+                            collection_id: self.collection_id,
                             mutation_count: leaf_ref.mutation_count,
                             low_key: leaf.lo.clone(),
                             data: Arc::new(serialized),
@@ -1177,6 +1196,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 new_epoch,
                 node.id,
                 Dirty::NotYetSerialized {
+                    collection_id: self.collection_id,
                     node: node.clone(),
                     low_key: low_key.clone(),
                 },
@@ -1360,7 +1380,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     /// assert!(r.next().is_none());
     /// # Ok(()) }
     /// ```
-    pub fn scan_prefix<'a, P>(&'a self, prefix: P) -> Iter<'a, LEAF_FANOUT>
+    pub fn scan_prefix<'a, P>(&'a self, prefix: P) -> Iter<LEAF_FANOUT>
     where
         P: AsRef<[u8]>,
     {
@@ -1674,8 +1694,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 }
 
 #[allow(unused)]
-pub struct Iter<'a, const LEAF_FANOUT: usize> {
-    inner: &'a Tree<LEAF_FANOUT>,
+pub struct Iter<const LEAF_FANOUT: usize> {
+    inner: Tree<LEAF_FANOUT>,
     bounds: (Bound<InlineArray>, Bound<InlineArray>),
     next_calls: usize,
     next_back_calls: usize,
@@ -1685,7 +1705,7 @@ pub struct Iter<'a, const LEAF_FANOUT: usize> {
     prefetched_back: VecDeque<(InlineArray, InlineArray)>,
 }
 
-impl<'a, const LEAF_FANOUT: usize> Iterator for Iter<'a, LEAF_FANOUT> {
+impl<const LEAF_FANOUT: usize> Iterator for Iter<LEAF_FANOUT> {
     type Item = io::Result<(InlineArray, InlineArray)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1730,9 +1750,7 @@ impl<'a, const LEAF_FANOUT: usize> Iterator for Iter<'a, LEAF_FANOUT> {
     }
 }
 
-impl<'a, const LEAF_FANOUT: usize> DoubleEndedIterator
-    for Iter<'a, LEAF_FANOUT>
-{
+impl<const LEAF_FANOUT: usize> DoubleEndedIterator for Iter<LEAF_FANOUT> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.next_back_calls += 1;
         while self.prefetched_back.is_empty() {
@@ -1815,23 +1833,23 @@ impl<'a, const LEAF_FANOUT: usize> DoubleEndedIterator
     }
 }
 
-impl<'a, const LEAF_FANOUT: usize> Iter<'a, LEAF_FANOUT> {
+impl<const LEAF_FANOUT: usize> Iter<LEAF_FANOUT> {
     pub fn keys(
         self,
-    ) -> impl 'a + DoubleEndedIterator<Item = io::Result<InlineArray>> {
+    ) -> impl DoubleEndedIterator<Item = io::Result<InlineArray>> {
         self.into_iter().map(|kv_res| kv_res.map(|(k, _v)| k))
     }
 
     pub fn values(
         self,
-    ) -> impl 'a + DoubleEndedIterator<Item = io::Result<InlineArray>> {
+    ) -> impl DoubleEndedIterator<Item = io::Result<InlineArray>> {
         self.into_iter().map(|kv_res| kv_res.map(|(_k, v)| v))
     }
 }
 
-impl<'a, const LEAF_FANOUT: usize> IntoIterator for &'a Tree<LEAF_FANOUT> {
+impl<const LEAF_FANOUT: usize> IntoIterator for &Tree<LEAF_FANOUT> {
     type Item = io::Result<(InlineArray, InlineArray)>;
-    type IntoIter = Iter<'a, LEAF_FANOUT>;
+    type IntoIter = Iter<LEAF_FANOUT>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()

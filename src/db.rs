@@ -36,6 +36,9 @@ pub struct Db<const LEAF_FANOUT: usize = 1024> {
     config: Config,
     _shutdown_dropper: Arc<ShutdownDropper<LEAF_FANOUT>>,
     pc: PageCache<LEAF_FANOUT>,
+    trees: Arc<Mutex<HashMap<CollectionId, Tree<LEAF_FANOUT>>>>,
+    collection_id_allocator: Arc<Allocator>,
+    collection_name_mapping: Tree<LEAF_FANOUT>,
     default_tree: Tree<LEAF_FANOUT>,
     was_recovered: bool,
     #[cfg(feature = "for-internal-testing-only")]
@@ -101,6 +104,8 @@ fn flusher<const LEAF_FANOUT: usize>(
                 "system has been shut down".to_string(),
             ));
 
+            assert!(pc.is_clean());
+
             drop(pc);
 
             if let Err(e) = shutdown_sender.send(()) {
@@ -126,7 +131,7 @@ impl<const LEAF_FANOUT: usize> Drop for Db<LEAF_FANOUT> {
     fn drop(&mut self) {
         if self.config.flush_every_ms.is_none() {
             if let Err(e) = self.flush() {
-                eprintln!("failed to flush Db on Drop: {e:?}");
+                log::error!("failed to flush Db on Drop: {e:?}");
             }
         } else {
             // otherwise, it is expected that the flusher thread will
@@ -180,12 +185,20 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         #[cfg(feature = "for-internal-testing-only")]
         let event_verifier = Arc::default();
 
+        let mut allocated_collection_ids = fnv::FnvHashSet::default();
+
         let trees: HashMap<CollectionId, Tree<LEAF_FANOUT>> = indices
             .into_iter()
-            .map(|(cid, index)| {
+            .map(|(collection_id, index)| {
+                assert!(
+                    allocated_collection_ids.insert(collection_id.0),
+                    "allocated_collection_ids already contained {:?}",
+                    collection_id
+                );
                 (
-                    cid,
+                    collection_id,
                     Tree::new(
+                        collection_id,
                         pc.clone(),
                         index,
                         _shutdown_dropper.clone(),
@@ -196,12 +209,30 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             })
             .collect();
 
+        let collection_name_mapping =
+            trees.get(&NAME_MAPPING_COLLECTION_ID).unwrap().clone();
         let default_tree = trees.get(&DEFAULT_COLLECTION_ID).unwrap().clone();
+
+        for kv_res in collection_name_mapping.iter() {
+            let (_collection_name, collection_id_buf) = kv_res.unwrap();
+            let collection_id = u64::from_le_bytes(
+                collection_id_buf.as_ref().try_into().unwrap(),
+            );
+            assert!(trees.contains_key(&CollectionId(collection_id)));
+        }
+
+        let collection_id_allocator =
+            Arc::new(Allocator::from_allocated(&allocated_collection_ids));
+
+        assert_eq!(collection_name_mapping.len() + 2, trees.len());
 
         let ret = Db {
             config: config.clone(),
             pc: pc.clone(),
             default_tree,
+            collection_name_mapping,
+            collection_id_allocator,
+            trees: Arc::new(Mutex::new(trees)),
             _shutdown_dropper,
             was_recovered,
             #[cfg(feature = "for-internal-testing-only")]
@@ -222,4 +253,164 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         }
         Ok(ret)
     }
+
+    /// A database export method for all collections in the `Db`,
+    /// for use in sled version upgrades. Can be used in combination
+    /// with the `import` method below on a database running a later
+    /// version.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any IO problems occur while trying
+    /// to perform the export.
+    ///
+    /// # Examples
+    ///
+    /// If you want to migrate from one version of sled
+    /// to another, you need to pull in both versions
+    /// by using version renaming:
+    ///
+    /// `Cargo.toml`:
+    ///
+    /// ```toml
+    /// [dependencies]
+    /// sled = "0.32"
+    /// old_sled = { version = "0.31", package = "sled" }
+    /// ```
+    ///
+    /// and in your code, remember that old versions of
+    /// sled might have a different way to open them
+    /// than the current `sled::open` method:
+    ///
+    /// ```
+    /// # use sled as old_sled;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let old = old_sled::open("my_old_db")?;
+    ///
+    /// // may be a different version of sled,
+    /// // the export type is version agnostic.
+    /// let new = sled::open("my_new_db")?;
+    ///
+    /// let export = old.export();
+    /// new.import(export);
+    ///
+    /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # Ok(()) }
+    /// ```
+    pub fn export(
+        &self,
+    ) -> Vec<(
+        CollectionType,
+        CollectionName,
+        impl Iterator<Item = Vec<Vec<u8>>> + '_,
+    )> {
+        let trees = self.trees.lock();
+
+        let mut ret = vec![];
+
+        for kv_res in self.collection_name_mapping.iter() {
+            let (collection_name, collection_id_buf) = kv_res.unwrap();
+            let collection_id = CollectionId(u64::from_le_bytes(
+                collection_id_buf.as_ref().try_into().unwrap(),
+            ));
+            let tree = trees.get(&collection_id).unwrap().clone();
+
+            ret.push((
+                b"tree".to_vec(),
+                collection_name.to_vec(),
+                tree.iter().map(|kv_opt| {
+                    let kv = kv_opt.unwrap();
+                    vec![kv.0.to_vec(), kv.1.to_vec()]
+                }),
+            ));
+        }
+
+        ret
+    }
+
+    /* TODO
+    /// Imports the collections from a previous database.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any IO problems occur while trying
+    /// to perform the import.
+    ///
+    /// # Examples
+    ///
+    /// If you want to migrate from one version of sled
+    /// to another, you need to pull in both versions
+    /// by using version renaming:
+    ///
+    /// `Cargo.toml`:
+    ///
+    /// ```toml
+    /// [dependencies]
+    /// sled = "0.32"
+    /// old_sled = { version = "0.31", package = "sled" }
+    /// ```
+    ///
+    /// and in your code, remember that old versions of
+    /// sled might have a different way to open them
+    /// than the current `sled::open` method:
+    ///
+    /// ```
+    /// # use sled as old_sled;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let old = old_sled::open("my_old_db")?;
+    ///
+    /// // may be a different version of sled,
+    /// // the export type is version agnostic.
+    /// let new = sled::open("my_new_db")?;
+    ///
+    /// let export = old.export();
+    /// new.import(export);
+    ///
+    /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # Ok(()) }
+    /// ```
+    pub fn import(
+        &self,
+        export: Vec<(
+            CollectionType,
+            CollectionName,
+            impl Iterator<Item = Vec<Vec<u8>>>,
+        )>,
+    ) {
+        for (collection_type, collection_name, collection_iter) in export {
+            match collection_type {
+                ref t if t == b"tree" => {
+                    let tree = self
+                        .open_tree(collection_name)
+                        .expect("failed to open new tree during import");
+                    for mut kv in collection_iter {
+                        let v = kv
+                            .pop()
+                            .expect("failed to get value from tree export");
+                        let k = kv
+                            .pop()
+                            .expect("failed to get key from tree export");
+                        let old = tree.insert(k, v).expect(
+                            "failed to insert value during tree import",
+                        );
+                        assert!(
+                            old.is_none(),
+                            "import is overwriting existing data"
+                        );
+                    }
+                }
+                other => panic!("unknown collection type {:?}", other),
+            }
+        }
+    }
+    */
 }
+
+/// These types provide the information that allows an entire
+/// system to be exported and imported to facilitate
+/// major upgrades. It is comprised entirely
+/// of standard library types to be forward compatible.
+/// NB this definitions are expensive to change, because
+/// they impact the migration path.
+type CollectionType = Vec<u8>;
+type CollectionName = Vec<u8>;

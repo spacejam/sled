@@ -133,6 +133,7 @@ pub struct Stats {}
 #[derive(Debug, Clone)]
 pub struct Config {}
 
+#[derive(Debug)]
 pub(crate) struct NodeRecovery {
     pub node_id: NodeId,
     pub collection_id: CollectionId,

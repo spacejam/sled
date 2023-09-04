@@ -1,8 +1,4 @@
-// TODO corrupted data extraction binary
 // TODO make node_id_index private on PageCache
-// TODO move logic into Tree
-// TODO remove all Drop logic that checks Arc::strong_count, all are race conditions
-// TODO write actual CollectionId instead of MIN in Db::flush
 // TODO put aborts behind feature flags for hard crashes
 // TODO heap maintenance w/ speculative write followed by CAS in pt
 //      maybe with global writer lock that controls flushers too
@@ -15,6 +11,7 @@
 // TODO set explicit max key and value sizes w/ corresponding heap
 // TODO skim inlining output of RUSTFLAGS="-Cremark=all -Cdebuginfo=1"
 // TODO measure space savings vs cost of zstd in metadata store
+// TODO corrupted data extraction binary
 
 mod config;
 mod db;
@@ -39,7 +36,8 @@ pub use crate::db::Db;
 pub use crate::tree::{Batch, Iter, Tree};
 pub use inline_array::InlineArray;
 
-const DEFAULT_COLLECTION_ID: CollectionId = CollectionId(u64::MIN);
+const NAME_MAPPING_COLLECTION_ID: CollectionId = CollectionId(0);
+const DEFAULT_COLLECTION_ID: CollectionId = CollectionId(1);
 const INDEX_FANOUT: usize = 64;
 const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
 
@@ -188,13 +186,17 @@ struct ShutdownDropper<const LEAF_FANOUT: usize> {
 impl<const LEAF_FANOUT: usize> Drop for ShutdownDropper<LEAF_FANOUT> {
     fn drop(&mut self) {
         let (tx, rx) = std::sync::mpsc::channel();
+        log::info!("sending shutdown signal to flusher");
         if self.shutdown_sender.lock().send(tx).is_ok() {
             if let Err(e) = rx.recv() {
                 log::error!("failed to shut down flusher thread: {:?}", e);
             } else {
-                log::trace!("flush thread successfully terminated");
+                log::info!("flush thread successfully terminated");
             }
         } else {
+            log::info!(
+                "failed to shut down flusher, manually flushing PageCache"
+            );
             let pc = self.pc.lock();
             if let Err(e) = pc.flush() {
                 log::error!(

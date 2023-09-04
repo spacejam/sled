@@ -17,14 +17,18 @@ pub(crate) enum Dirty<const LEAF_FANOUT: usize> {
     NotYetSerialized {
         low_key: InlineArray,
         node: Node<LEAF_FANOUT>,
+        collection_id: CollectionId,
     },
     CooperativelySerialized {
+        node_id: NodeId,
+        collection_id: CollectionId,
         low_key: InlineArray,
         data: Arc<Vec<u8>>,
         mutation_count: u64,
     },
     MergedAndDeleted {
         node_id: NodeId,
+        collection_id: CollectionId,
     },
 }
 
@@ -67,14 +71,15 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
         let HeapRecovery { heap, recovered_nodes, was_recovered } =
             recover(&config.path, LEAF_FANOUT)?;
 
-        let first_id_opt = if recovered_nodes.is_empty() {
-            Some(heap.allocate_object_id())
-        } else {
-            None
-        };
+        let (node_id_index, indices) = initialize(&recovered_nodes, &heap);
 
-        let (node_id_index, indices) =
-            initialize(recovered_nodes, first_id_opt);
+        // validate recovery
+        for NodeRecovery { node_id, collection_id, metadata } in recovered_nodes
+        {
+            let index = indices.get(&collection_id).unwrap();
+            let node = index.get(&metadata).unwrap();
+            assert_eq!(node.id, node_id);
+        }
 
         if config.cache_capacity_bytes < 256 {
             log::debug!(
@@ -106,6 +111,10 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
         };
 
         Ok((pc, indices, was_recovered))
+    }
+
+    pub fn is_clean(&self) -> bool {
+        self.dirty.is_empty()
     }
 
     pub fn read(&self, object_id: u64) -> io::Result<Vec<u8>> {
@@ -286,17 +295,19 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
             }
 
             match dirty_value {
-                Dirty::MergedAndDeleted { node_id } => {
+                Dirty::MergedAndDeleted { node_id, collection_id } => {
                     log::trace!(
                         "MergedAndDeleted for {:?}, adding None to write_batch",
                         node_id
                     );
                     write_batch.push(Update::Free {
                         node_id: dirty_node_id,
-                        collection_id: CollectionId::MIN,
+                        collection_id,
                     });
                 }
                 Dirty::CooperativelySerialized {
+                    node_id: _,
+                    collection_id,
                     low_key,
                     mutation_count: _,
                     mut data,
@@ -305,12 +316,12 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
                     let data = Arc::into_inner(data).unwrap();
                     write_batch.push(Update::Store {
                         node_id: dirty_node_id,
-                        collection_id: CollectionId::MIN,
+                        collection_id,
                         metadata: low_key,
                         data,
                     });
                 }
-                Dirty::NotYetSerialized { low_key, node } => {
+                Dirty::NotYetSerialized { low_key, collection_id, node } => {
                     assert_eq!(dirty_node_id, node.id, "mismatched node ID for NotYetSerialized with low key {:?}", low_key);
                     let mut lock = node.inner.write();
 
@@ -336,7 +347,7 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
                         {
                             dv2
                         } else {
-                            eprintln!(
+                            log::error!(
                                 "violation of flush responsibility for second read \
                                 of expected cooperative serialization. leaf in question's \
                                 dirty_flush_epoch is {:?}, our expected key was {:?}. node.deleted: {:?}",
@@ -352,9 +363,14 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
                             low_key: low_key_2,
                             mutation_count: _,
                             mut data,
+                            collection_id: ci2,
+                            node_id: ni2,
                         } = dirty_value_2
                         {
+                            assert_eq!(node.id, ni2);
+                            assert_eq!(node.id, dirty_node_id);
                             assert_eq!(low_key, low_key_2);
+                            assert_eq!(collection_id, ci2);
                             Arc::make_mut(&mut data);
                             Arc::into_inner(data).unwrap()
                         } else {
@@ -364,7 +380,7 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
 
                     write_batch.push(Update::Store {
                         node_id: dirty_node_id,
-                        collection_id: CollectionId::MIN,
+                        collection_id: collection_id,
                         metadata: low_key,
                         data,
                     });
@@ -407,9 +423,29 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
     }
 }
 
+fn empty_tree_node<const LEAF_FANOUT: usize>(id: NodeId) -> Node<LEAF_FANOUT> {
+    let first_key = InlineArray::default();
+
+    let empty_leaf = Leaf {
+        hi: None,
+        lo: first_key.clone(),
+        // this does not need to be marked as dirty until it actually
+        // receives inserted data
+        dirty_flush_epoch: None,
+        prefix_length: 0,
+        data: StackMap::new(),
+        in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
+        mutation_count: 0,
+        page_out_on_flush: None,
+        deleted: None,
+    };
+
+    Node { id, inner: Arc::new(Some(Box::new(empty_leaf)).into()) }
+}
+
 fn initialize<const LEAF_FANOUT: usize>(
-    recovered_nodes: Vec<NodeRecovery>,
-    first_id_opt: Option<u64>,
+    recovered_nodes: &[NodeRecovery],
+    heap: &Heap,
 ) -> (
     ConcurrentMap<
         NodeId,
@@ -428,50 +464,31 @@ fn initialize<const LEAF_FANOUT: usize>(
         EBR_LOCAL_GC_BUFFER_SIZE,
     > = ConcurrentMap::default();
 
-    if let Some(first_id) = first_id_opt {
-        assert!(recovered_nodes.is_empty());
-        let first_low_key = InlineArray::default();
+    for NodeRecovery { node_id, collection_id, metadata } in recovered_nodes {
+        let node = Node { id: *node_id, inner: Arc::new(None.into()) };
 
-        let first_leaf = Leaf {
-            hi: None,
-            lo: first_low_key.clone(),
-            // this does not need to be marked as dirty until it actually
-            // receives inserted data
-            dirty_flush_epoch: None,
-            prefix_length: 0,
-            data: StackMap::new(),
-            in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
-            mutation_count: 0,
-            page_out_on_flush: None,
-            deleted: None,
-        };
+        assert!(node_id_index.insert(*node_id, node.clone()).is_none());
 
-        let first_node = Node {
-            id: NodeId(first_id),
-            inner: Arc::new(Some(Box::new(first_leaf)).into()),
-        };
+        let tree = trees.entry(*collection_id).or_default();
 
-        assert!(node_id_index
-            .insert(NodeId(first_id), first_node.clone())
-            .is_none());
-
-        let tree = trees.entry(DEFAULT_COLLECTION_ID).or_default();
-
-        assert!(tree.insert(first_low_key, first_node).is_none());
-
-        return (node_id_index, trees);
-    } else {
-        assert!(!recovered_nodes.is_empty());
+        assert!(tree.insert(metadata.clone(), node).is_none());
     }
 
-    for NodeRecovery { node_id, collection_id, metadata } in recovered_nodes {
-        let node = Node { id: node_id, inner: Arc::new(None.into()) };
-
-        assert!(node_id_index.insert(node_id, node.clone()).is_none());
-
+    // initialize default collections if not recovered
+    for collection_id in [NAME_MAPPING_COLLECTION_ID, DEFAULT_COLLECTION_ID] {
         let tree = trees.entry(collection_id).or_default();
 
-        assert!(tree.insert(metadata, node).is_none());
+        if tree.is_empty() {
+            let node_id = NodeId(heap.allocate_object_id());
+
+            let empty_node = empty_tree_node(node_id);
+
+            assert!(node_id_index
+                .insert(node_id, empty_node.clone())
+                .is_none());
+
+            assert!(tree.insert(InlineArray::default(), empty_node).is_none());
+        }
     }
 
     for (_cid, tree) in &trees {
