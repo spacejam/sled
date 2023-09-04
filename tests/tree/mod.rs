@@ -277,7 +277,9 @@ fn prop_tree_matches_btreemap_inner(
                         .map(|(rk, rv)| (rk.0.clone(), *rv));
 
                     for r in ref_iter {
-                        let tree_next = tree_iter.next().unwrap();
+                        let tree_next = tree_iter
+                            .next()
+                            .expect("iterator incorrectly stopped early");
                         let lhs = (tree_next.0, &*tree_next.1);
                         let rhs = (r.0.clone(), &*u16_to_bytes(r.1));
                         assert_eq!(

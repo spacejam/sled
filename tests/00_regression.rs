@@ -1603,3 +1603,15 @@ fn tree_bug_50() {
         0
     ))
 }
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_51() {
+    // postmortem:
+    prop_tree_matches_btreemap(
+        vec![Set(Key(vec![]), 135), Restart, Scan(Key(vec![]), -38)],
+        false,
+        0,
+        0,
+    );
+}
