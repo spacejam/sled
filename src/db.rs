@@ -187,7 +187,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         let mut allocated_collection_ids = fnv::FnvHashSet::default();
 
-        let trees: HashMap<CollectionId, Tree<LEAF_FANOUT>> = indices
+        let mut trees: HashMap<CollectionId, Tree<LEAF_FANOUT>> = indices
             .into_iter()
             .map(|(collection_id, index)| {
                 assert!(
@@ -211,14 +211,43 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         let collection_name_mapping =
             trees.get(&NAME_MAPPING_COLLECTION_ID).unwrap().clone();
+
         let default_tree = trees.get(&DEFAULT_COLLECTION_ID).unwrap().clone();
 
         for kv_res in collection_name_mapping.iter() {
             let (_collection_name, collection_id_buf) = kv_res.unwrap();
-            let collection_id = u64::from_le_bytes(
+            let collection_id = CollectionId(u64::from_le_bytes(
                 collection_id_buf.as_ref().try_into().unwrap(),
+            ));
+
+            if trees.contains_key(&collection_id) {
+                continue;
+            }
+
+            // need to initialize tree leaf for empty collection
+
+            assert!(
+                allocated_collection_ids.insert(collection_id.0),
+                "allocated_collection_ids already contained {:?}",
+                collection_id
             );
-            assert!(trees.contains_key(&CollectionId(collection_id)));
+
+            let empty_node = pc.allocate_node();
+
+            let index = Index::default();
+
+            assert!(index.insert(InlineArray::default(), empty_node).is_none());
+
+            let tree = Tree::new(
+                collection_id,
+                pc.clone(),
+                index,
+                _shutdown_dropper.clone(),
+                #[cfg(feature = "for-internal-testing-only")]
+                event_verifier.clone(),
+            );
+
+            trees.insert(collection_id, tree);
         }
 
         let collection_id_allocator =
@@ -328,7 +357,6 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         ret
     }
 
-    /* TODO
     /// Imports the collections from a previous database.
     ///
     /// # Panics
@@ -403,7 +431,79 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             }
         }
     }
-    */
+
+    pub fn contains_tree<V: AsRef<[u8]>>(&self, name: V) -> io::Result<bool> {
+        Ok(self.collection_name_mapping.get(name.as_ref())?.is_some())
+    }
+
+    pub fn drop_tree<V: AsRef<[u8]>>(&self, name: V) -> io::Result<bool> {
+        let name_ref = name.as_ref();
+        let mut trees = self.trees.lock();
+
+        let tree = if let Some(collection_id_buf) =
+            self.collection_name_mapping.get(name_ref)?
+        {
+            let collection_id = CollectionId(u64::from_le_bytes(
+                collection_id_buf.as_ref().try_into().unwrap(),
+            ));
+
+            trees.get(&collection_id).unwrap()
+        } else {
+            return Ok(false);
+        };
+
+        tree.clear()?;
+
+        self.collection_name_mapping.remove(name_ref)?;
+
+        Ok(true)
+    }
+    /// Open or create a new disk-backed Tree with its own keyspace,
+    /// accessible from the `Db` via the provided identifier.
+    pub fn open_tree<V: AsRef<[u8]>>(
+        &self,
+        name: V,
+    ) -> io::Result<Tree<LEAF_FANOUT>> {
+        let name_ref = name.as_ref();
+        let mut trees = self.trees.lock();
+
+        if let Some(collection_id_buf) =
+            self.collection_name_mapping.get(name_ref)?
+        {
+            let collection_id = CollectionId(u64::from_le_bytes(
+                collection_id_buf.as_ref().try_into().unwrap(),
+            ));
+
+            let tree = trees.get(&collection_id).unwrap();
+
+            return Ok(tree.clone());
+        }
+
+        let collection_id =
+            CollectionId(self.collection_id_allocator.allocate());
+
+        let empty_node = self.pc.allocate_node();
+
+        let index = Index::default();
+
+        assert!(index.insert(InlineArray::default(), empty_node).is_none());
+
+        let tree = Tree::new(
+            collection_id,
+            self.pc.clone(),
+            index,
+            self._shutdown_dropper.clone(),
+            #[cfg(feature = "for-internal-testing-only")]
+            event_verifier.clone(),
+        );
+
+        self.collection_name_mapping
+            .insert(name_ref, &collection_id.0.to_le_bytes())?;
+
+        trees.insert(collection_id, tree.clone());
+
+        Ok(tree)
+    }
 }
 
 /// These types provide the information that allows an entire

@@ -1,3 +1,6 @@
+// TODO implement create exclusive
+// TODO test concurrent drop_tree when other threads are still using it
+// TODO list trees test for recovering empty collections
 // TODO make node_id_index private on PageCache
 // TODO put aborts behind feature flags for hard crashes
 // TODO heap maintenance w/ speculative write followed by CAS in pt
@@ -173,6 +176,24 @@ struct Leaf<const LEAF_FANOUT: usize> {
     deleted: Option<FlushEpoch>,
 }
 
+impl<const LEAF_FANOUT: usize> Default for Leaf<LEAF_FANOUT> {
+    fn default() -> Leaf<LEAF_FANOUT> {
+        Leaf {
+            lo: InlineArray::default(),
+            hi: None,
+            prefix_length: 0,
+            data: stack_map::StackMap::default(),
+            // this does not need to be marked as dirty until it actually
+            // receives inserted data
+            dirty_flush_epoch: None,
+            in_memory_size: std::mem::size_of::<Leaf<LEAF_FANOUT>>(),
+            mutation_count: 0,
+            page_out_on_flush: None,
+            deleted: None,
+        }
+    }
+}
+
 /// Stored on `Db` and `Tree` in an Arc, so that when the
 /// last "high-level" struct is dropped, the flusher thread
 /// is cleaned up.
@@ -186,15 +207,15 @@ struct ShutdownDropper<const LEAF_FANOUT: usize> {
 impl<const LEAF_FANOUT: usize> Drop for ShutdownDropper<LEAF_FANOUT> {
     fn drop(&mut self) {
         let (tx, rx) = std::sync::mpsc::channel();
-        log::info!("sending shutdown signal to flusher");
+        log::debug!("sending shutdown signal to flusher");
         if self.shutdown_sender.lock().send(tx).is_ok() {
             if let Err(e) = rx.recv() {
                 log::error!("failed to shut down flusher thread: {:?}", e);
             } else {
-                log::info!("flush thread successfully terminated");
+                log::debug!("flush thread successfully terminated");
             }
         } else {
-            log::info!(
+            log::debug!(
                 "failed to shut down flusher, manually flushing PageCache"
             );
             let pc = self.pc.lock();

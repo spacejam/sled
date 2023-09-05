@@ -1,14 +1,12 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
-use std::mem;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::Arc;
 
 use cache_advisor::CacheAdvisor;
 use concurrent_map::{ConcurrentMap, Minimum};
 use inline_array::InlineArray;
-use stack_map::StackMap;
 
 use crate::*;
 
@@ -159,6 +157,16 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
                 drop(Box::from_raw(ptr));
             }
         }
+    }
+
+    pub fn allocate_node(&self) -> Node<LEAF_FANOUT> {
+        let id = NodeId(self.heap.allocate_object_id());
+
+        let node = Node { id, inner: Arc::new(Some(Box::default()).into()) };
+
+        self.node_id_index.insert(id, node.clone());
+
+        node
     }
 
     pub fn allocate_object_id(&self) -> u64 {
@@ -423,26 +431,6 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
     }
 }
 
-fn empty_tree_node<const LEAF_FANOUT: usize>(id: NodeId) -> Node<LEAF_FANOUT> {
-    let first_key = InlineArray::default();
-
-    let empty_leaf = Leaf {
-        hi: None,
-        lo: first_key.clone(),
-        // this does not need to be marked as dirty until it actually
-        // receives inserted data
-        dirty_flush_epoch: None,
-        prefix_length: 0,
-        data: StackMap::new(),
-        in_memory_size: mem::size_of::<Leaf<LEAF_FANOUT>>(),
-        mutation_count: 0,
-        page_out_on_flush: None,
-        deleted: None,
-    };
-
-    Node { id, inner: Arc::new(Some(Box::new(empty_leaf)).into()) }
-}
-
 fn initialize<const LEAF_FANOUT: usize>(
     recovered_nodes: &[NodeRecovery],
     heap: &Heap,
@@ -481,7 +469,10 @@ fn initialize<const LEAF_FANOUT: usize>(
         if tree.is_empty() {
             let node_id = NodeId(heap.allocate_object_id());
 
-            let empty_node = empty_tree_node(node_id);
+            let empty_node = Node {
+                id: node_id,
+                inner: Arc::new(Some(Box::default()).into()),
+            };
 
             assert!(node_id_index
                 .insert(node_id, empty_node.clone())

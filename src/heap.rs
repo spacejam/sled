@@ -728,19 +728,12 @@ impl Heap {
 
         let mut trace_spin = false;
         let mut guard = self.free_ebr.pin();
-        let slab_address = loop {
-            let location_u64 = self.pt.get(object_id).load(Ordering::Acquire);
+        let location_u64 = self.pt.get(object_id).load(Ordering::Acquire);
 
-            if let Some(nzu) = NonZeroU64::new(location_u64) {
-                break SlabAddress::from(nzu);
-            } else {
-                if !trace_spin {
-                    log::warn!("spinning for paged-out object to be persisted");
-                    trace_spin = true;
-                }
-                std::thread::yield_now();
-            }
-        };
+        let nzu = NonZeroU64::new(location_u64)
+            .expect("node location metadata not present in pagetable");
+
+        let slab_address = SlabAddress::from(nzu);
 
         let slab = &self.slabs[usize::from(slab_address.slab_id)];
 

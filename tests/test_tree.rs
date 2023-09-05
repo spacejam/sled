@@ -1111,7 +1111,7 @@ fn recover_tree() {
 
 /*
 #[test]
-fn create_tree() {
+fn create_exclusive() {
     common::setup_logger();
 
     let path = "create_exclusive_db";
@@ -1126,22 +1126,23 @@ fn create_tree() {
     config.open().unwrap_err();
     std::fs::remove_dir_all(path).unwrap();
 }
+*/
 
 #[test]
 fn contains_tree() {
-    let db: Db<64, 1024, 128> = Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
+    let db: Db = Config::tmp().unwrap().flush_every_ms(None).open().unwrap();
     let tree_one = db.open_tree("tree 1").unwrap();
     let tree_two = db.open_tree("tree 2").unwrap();
 
     drop(tree_one);
     drop(tree_two);
 
-    assert_eq!(false, db.contains_tree("tree 3"));
-    assert_eq!(true, db.contains_tree("tree 1"));
-    assert_eq!(true, db.contains_tree("tree 2"));
+    assert_eq!(false, db.contains_tree("tree 3").unwrap());
+    assert_eq!(true, db.contains_tree("tree 1").unwrap());
+    assert_eq!(true, db.contains_tree("tree 2").unwrap());
 
     assert!(db.drop_tree("tree 1").unwrap());
-    assert_eq!(false, db.contains_tree("tree 1"));
+    assert_eq!(false, db.contains_tree("tree 1").unwrap());
 }
 
 #[test]
@@ -1152,7 +1153,7 @@ fn tree_import_export() -> io::Result<()> {
     let config_1 = Config::tmp().unwrap();
     let config_2 = Config::tmp().unwrap();
 
-    let db: Db<64, 1024, 128> = config_1.open()?;
+    let db: Db = config_1.open()?;
     for db_id in 0..N_THREADS {
         let tree_id = format!("tree_{}", db_id);
         let tree = db.open_tree(tree_id.as_bytes())?;
@@ -1166,8 +1167,8 @@ fn tree_import_export() -> io::Result<()> {
 
     drop(db);
 
-    let exporter = config_1.open()?;
-    let importer = config_2.open()?;
+    let exporter: Db = config_1.open()?;
+    let importer: Db = config_2.open()?;
 
     let export = exporter.export();
     importer.import(export);
@@ -1176,7 +1177,7 @@ fn tree_import_export() -> io::Result<()> {
     drop(config_1);
     drop(importer);
 
-    let db: Db<64, 1024, 128> = config_2.open()?;
+    let db: Db = config_2.open()?;
 
     let checksum_b = db.checksum().unwrap();
     assert_eq!(checksum_a, checksum_b);
@@ -1196,14 +1197,14 @@ fn tree_import_export() -> io::Result<()> {
 
     drop(db);
 
-    let db: Db<64, 1024, 128> = config_2.open()?;
+    let db: Db = config_2.open()?;
     for db_id in 0..N_THREADS {
         let tree_id = format!("tree_{}", db_id);
         let tree = db.open_tree(tree_id.as_bytes())?;
 
         for i in 0..N_THREADS {
             let k = kv(i as usize);
-            assert_eq!(tree.get(&*k), Ok(None));
+            assert_eq!(tree.get(&*k).unwrap(), None);
         }
     }
 
@@ -1212,7 +1213,6 @@ fn tree_import_export() -> io::Result<()> {
 
     Ok(())
 }
-*/
 
 #[test]
 #[cfg_attr(any(target_os = "fuchsia", miri), ignore)]
