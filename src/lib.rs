@@ -34,6 +34,21 @@ pub mod alloc;
 #[cfg(feature = "for-internal-testing-only")]
 mod event_verifier;
 
+#[inline]
+fn debug_delay() {
+    #[cfg(debug_assertions)]
+    {
+        let rand =
+            std::time::SystemTime::UNIX_EPOCH.elapsed().unwrap().as_nanos();
+
+        if rand % 128 > 100 {
+            for _ in 0..rand % 16 {
+                std::thread::yield_now();
+            }
+        }
+    }
+}
+
 pub use crate::config::Config;
 pub use crate::db::Db;
 pub use crate::tree::{Batch, Iter, Tree};

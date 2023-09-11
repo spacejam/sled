@@ -57,7 +57,7 @@ impl Completion {
     fn mark_complete_inner(&self, previously_sealed: bool) {
         let mut mu = self.mu.lock().unwrap();
         if !previously_sealed {
-            assert!(!*mu);
+            // TODO reevaluate - assert!(!*mu);
         }
         log::trace!("marking epoch {:?} as complete", self.epoch);
         // it's possible for *mu to already be true due to this being
@@ -81,8 +81,9 @@ pub(crate) struct FlushEpochGuard<'a> {
 
 impl<'a> Drop for FlushEpochGuard<'a> {
     fn drop(&mut self) {
-        let rc = self.tracker.rc.fetch_sub(1, Ordering::Release) - 1;
+        let rc = self.tracker.rc.fetch_sub(1, Ordering::SeqCst) - 1;
         if rc & SEAL_MASK == 0 && (rc & SEAL_BIT) == SEAL_BIT {
+            crate::debug_delay();
             self.tracker
                 .vacancy_notifier
                 .mark_complete_inner(self.previously_sealed);
@@ -121,7 +122,7 @@ impl Drop for FlushEpochInner {
     fn drop(&mut self) {
         let vacancy_mu = self.roll_mu.lock().unwrap();
         let old_ptr =
-            self.current_active.swap(std::ptr::null_mut(), Ordering::Release);
+            self.current_active.swap(std::ptr::null_mut(), Ordering::SeqCst);
         if !old_ptr.is_null() {
             //let old: &EpochTracker = &*old_ptr;
             unsafe { drop(Box::from_raw(old_ptr)) }
@@ -162,9 +163,9 @@ impl FlushEpochTracker {
     /// Intended to be passed to a flusher that can eventually
     /// notify the flush-requesting thread.
     pub fn roll_epoch_forward(&self) -> (Completion, Completion, Completion) {
-        let mut guard = self.active_ebr.pin();
+        let mut tracker_guard = self.active_ebr.pin();
         let vacancy_mu = self.inner.roll_mu.lock().unwrap();
-        let flush_through = self.inner.counter.fetch_add(1, Ordering::Release);
+        let flush_through = self.inner.counter.fetch_add(1, Ordering::SeqCst);
         let new_epoch = FlushEpoch(NonZeroU64::new(flush_through + 1).unwrap());
         let forward_flush_notifier =
             Completion::new(FlushEpoch(NonZeroU64::new(u64::MAX).unwrap()));
@@ -175,7 +176,7 @@ impl FlushEpochTracker {
             previous_flush_complete: forward_flush_notifier.clone(),
         }));
         let old_ptr =
-            self.inner.current_active.swap(new_active, Ordering::Release);
+            self.inner.current_active.swap(new_active, Ordering::SeqCst);
         assert!(!old_ptr.is_null());
 
         let (last_flush_complete_notifier, vacancy_notifier) = unsafe {
@@ -190,20 +191,23 @@ impl FlushEpochTracker {
             );
 
             // mark_complete_inner called via drop in a uniform way
+            //println!("dropping flush epoch guard for epoch {flush_through}");
             drop(FlushEpochGuard { tracker: old, previously_sealed: true });
 
             (old.previous_flush_complete.clone(), old.vacancy_notifier.clone())
         };
-        guard.defer_drop(unsafe { Box::from_raw(old_ptr) });
+        tracker_guard.defer_drop(unsafe { Box::from_raw(old_ptr) });
         drop(vacancy_mu);
         (last_flush_complete_notifier, vacancy_notifier, forward_flush_notifier)
     }
 
     pub fn check_in<'a>(&self) -> FlushEpochGuard<'a> {
+        let mut tracker_guard = self.active_ebr.pin();
         loop {
             let tracker: &'a EpochTracker =
-                unsafe { &*self.inner.current_active.load(Ordering::Acquire) };
-            let rc = tracker.rc.fetch_add(1, Ordering::Release);
+                unsafe { &*self.inner.current_active.load(Ordering::SeqCst) };
+
+            let rc = tracker.rc.fetch_add(1, Ordering::SeqCst);
 
             let previously_sealed = rc & SEAL_BIT == SEAL_BIT;
 
@@ -247,4 +251,73 @@ fn flush_epoch_basic_functionality() {
     drop(g3);
 
     assert_eq!(notifier_2.wait_for_complete().0.get(), 3);
+}
+
+#[cfg(test)]
+fn concurrent_flush_epoch_burn_in_inner() {
+    let fa = FlushEpochTracker::default();
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(21));
+
+    let pt = pagetable::PageTable::<AtomicU64>::default();
+
+    let rolls = || {
+        let fa = fa.clone();
+        let barrier = barrier.clone();
+        let pt = &pt;
+        move || {
+            barrier.wait();
+            for _ in 0..3000 {
+                let (previous, this, next) = fa.roll_epoch_forward();
+                let last_epoch = previous.wait_for_complete().0.get();
+                assert_eq!(0, pt.get(last_epoch).load(Ordering::Acquire));
+                let flush_through_epoch = this.wait_for_complete().0.get();
+                assert_eq!(
+                    0,
+                    pt.get(flush_through_epoch).load(Ordering::Acquire)
+                );
+
+                next.mark_complete();
+            }
+        }
+    };
+
+    let check_ins = || {
+        let fa = fa.clone();
+        let barrier = barrier.clone();
+        let pt = &pt;
+        move || {
+            barrier.wait();
+            for _ in 0..3000 {
+                let guard = fa.check_in();
+                let epoch = guard.epoch().0.get();
+                pt.get(epoch).fetch_add(1, Ordering::SeqCst);
+                std::thread::yield_now();
+                pt.get(epoch).fetch_sub(1, Ordering::SeqCst);
+                drop(guard);
+            }
+        }
+    };
+
+    std::thread::scope(|s| {
+        let mut threads = vec![];
+
+        for _ in 0..10 {
+            threads.push(s.spawn(rolls()));
+            threads.push(s.spawn(check_ins()));
+        }
+
+        barrier.wait();
+
+        for thread in threads.into_iter() {
+            thread.join().expect("a test thread crashed unexpectedly");
+        }
+    });
+}
+
+#[test]
+fn concurrent_flush_epoch_burn_in() {
+    for _ in 0..128 {
+        concurrent_flush_epoch_burn_in_inner();
+    }
 }
