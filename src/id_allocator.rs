@@ -10,6 +10,9 @@ use parking_lot::Mutex;
 #[derive(Default, Debug)]
 pub(crate) struct Allocator {
     free_and_pending: Mutex<BinaryHeap<Reverse<u64>>>,
+    /// Flat combining.
+    ///
+    /// A lock free queue of recently freed ids which uses when there is contention on `free_and_pending`.
     free_queue: SegQueue<u64>,
     next_to_allocate: AtomicU64,
 }
