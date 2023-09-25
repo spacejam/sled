@@ -116,7 +116,7 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
     }
 
     pub fn read(&self, object_id: u64) -> io::Result<Vec<u8>> {
-        self.heap.read(object_id)
+        self.heap.read(NodeId(object_id))
     }
 
     pub fn stats(&self) -> Stats {

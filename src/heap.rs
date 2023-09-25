@@ -13,10 +13,11 @@ use fs2::FileExt as _;
 use pagetable::PageTable;
 use rayon::prelude::*;
 
+use crate::object_location_map::ObjectLocationMap;
 use crate::{Allocator, CollectionId, DeferredFree, MetadataStore, NodeId};
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
-const N_SLABS: usize = 78;
+pub(crate) const N_SLABS: usize = 78;
 
 const SLAB_SIZES: [usize; N_SLABS] = [
     64,     // 0x40
@@ -348,7 +349,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
             slabs: Arc::new(slabs.try_into().unwrap()),
             path: path.into(),
             object_id_allocator: Arc::new(Allocator::from_allocated(&node_ids)),
-            pt,
+            pt: ObjectLocationMap { object_id_to_location: pt },
             global_error: metadata_store.get_global_error_arc(),
             metadata_store: Arc::new(metadata_store),
             directory_lock: Arc::new(directory_lock),
@@ -359,7 +360,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
     })
 }
 
-struct SlabAddress {
+pub(crate) struct SlabAddress {
     slab_id: u8,
     slab_slot: [u8; 7],
 }
@@ -670,7 +671,7 @@ impl UpdateMetadata {
 pub(crate) struct Heap {
     path: PathBuf,
     slabs: Arc<[Slab; N_SLABS]>,
-    pt: PageTable<AtomicU64>,
+    pt: ObjectLocationMap,
     object_id_allocator: Arc<Allocator>,
     metadata_store: Arc<MetadataStore>,
     free_ebr: Ebr<DeferredFree, 1>,
@@ -723,17 +724,12 @@ impl Heap {
         Stats {}
     }
 
-    pub fn read(&self, object_id: u64) -> io::Result<Vec<u8>> {
+    pub fn read(&self, object_id: NodeId) -> io::Result<Vec<u8>> {
         self.check_error()?;
 
         let mut trace_spin = false;
         let mut guard = self.free_ebr.pin();
-        let location_u64 = self.pt.get(object_id).load(Ordering::Acquire);
-
-        let nzu = NonZeroU64::new(location_u64)
-            .expect("node location metadata not present in pagetable");
-
-        let slab_address = SlabAddress::from(nzu);
+        let slab_address = self.pt.get_location_for_object(object_id);
 
         let slab = &self.slabs[usize::from(slab_address.slab_id)];
 
@@ -803,25 +799,20 @@ impl Heap {
 
         // reclaim previous disk locations for future writes
         for update_metadata in metadata_batch {
-            let (node_id, new_location) = match update_metadata {
+            let last_address_opt = match update_metadata {
                 UpdateMetadata::Store { node_id, location, .. } => {
-                    (node_id, location.get())
+                    self.pt.insert(node_id, SlabAddress::from(location))
                 }
                 UpdateMetadata::Free { node_id, .. } => {
                     guard.defer_drop(DeferredFree {
                         allocator: self.object_id_allocator.clone(),
                         freed_slot: node_id.0,
                     });
-                    (node_id, 0)
+                    self.pt.remove(node_id)
                 }
             };
 
-            let last_u64 =
-                self.pt.get(node_id.0).swap(new_location, Ordering::Release);
-
-            if let Some(nzu) = NonZeroU64::new(last_u64) {
-                let last_address = SlabAddress::from(nzu);
-
+            if let Some(last_address) = last_address_opt {
                 guard.defer_drop(DeferredFree {
                     allocator: self.slabs[usize::from(last_address.slab_id)]
                         .slot_allocator

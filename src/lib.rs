@@ -22,6 +22,7 @@ mod flush_epoch;
 mod heap;
 mod id_allocator;
 mod metadata_store;
+mod object_location_map;
 mod pagecache;
 mod tree;
 
@@ -61,7 +62,9 @@ const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
 
 use std::ops::Bound;
 
-use crate::heap::{recover, Heap, HeapRecovery, NodeRecovery, Stats, Update};
+use crate::heap::{
+    recover, Heap, HeapRecovery, NodeRecovery, SlabAddress, Stats, Update,
+};
 use crate::id_allocator::{Allocator, DeferredFree};
 use crate::metadata_store::MetadataStore;
 use crate::pagecache::{Dirty, PageCache};
