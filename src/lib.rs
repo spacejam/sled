@@ -1,9 +1,10 @@
+// TODO store low key and collection ID directly on Object
+// TODO make the Arc<Option<Box<Leaf just a single pointer chase w/ custom container
 // TODO heap maintenance w/ speculative write followed by CAS in pt
 //      maybe with global writer lock that controls flushers too
 // TODO implement create exclusive
 // TODO test concurrent drop_tree when other threads are still using it
 // TODO list trees test for recovering empty collections
-// TODO make node_id_index private on ObjectCache
 // TODO put aborts behind feature flags for hard crashes
 // TODO allow waiting flusher to start collecting dirty pages as soon
 //      as it is evacuated - just wait until last flush is done before
@@ -169,13 +170,15 @@ type CacheBox<const LEAF_FANOUT: usize> =
 #[derive(Debug, Clone)]
 struct Object<const LEAF_FANOUT: usize> {
     // used for access in heap::Heap
-    id: ObjectId,
+    object_id: ObjectId,
+    collection_id: CollectionId,
+    low_key: InlineArray,
     inner: CacheBox<LEAF_FANOUT>,
 }
 
 impl<const LEAF_FANOUT: usize> PartialEq for Object<LEAF_FANOUT> {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.object_id == other.object_id
     }
 }
 

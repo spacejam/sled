@@ -18,14 +18,14 @@ pub(crate) enum Dirty<const LEAF_FANOUT: usize> {
         collection_id: CollectionId,
     },
     CooperativelySerialized {
-        node_id: ObjectId,
+        object_id: ObjectId,
         collection_id: CollectionId,
         low_key: InlineArray,
         data: Arc<Vec<u8>>,
         mutation_count: u64,
     },
     MergedAndDeleted {
-        node_id: ObjectId,
+        object_id: ObjectId,
         collection_id: CollectionId,
     },
 }
@@ -44,7 +44,7 @@ impl<const LEAF_FANOUT: usize> Dirty<LEAF_FANOUT> {
 pub(crate) struct ObjectCache<const LEAF_FANOUT: usize> {
     pub config: Config,
     global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
-    pub node_id_index: ConcurrentMap<
+    pub object_id_index: ConcurrentMap<
         ObjectId,
         Object<LEAF_FANOUT>,
         INDEX_FANOUT,
@@ -69,15 +69,15 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         let HeapRecovery { heap, recovered_nodes, was_recovered } =
             recover(&config.path, LEAF_FANOUT)?;
 
-        let (node_id_index, indices) = initialize(&recovered_nodes, &heap);
+        let (object_id_index, indices) = initialize(&recovered_nodes, &heap);
 
         // validate recovery
-        for ObjectRecovery { node_id, collection_id, metadata } in
+        for ObjectRecovery { object_id, collection_id, metadata } in
             recovered_nodes
         {
             let index = indices.get(&collection_id).unwrap();
             let node = index.get(&metadata).unwrap();
-            assert_eq!(node.id, node_id);
+            assert_eq!(node.object_id, object_id);
         }
 
         if config.cache_capacity_bytes < 256 {
@@ -96,7 +96,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
         let pc = ObjectCache {
             config: config.clone(),
-            node_id_index,
+            object_id_index,
             cache_advisor: RefCell::new(CacheAdvisor::new(
                 config.cache_capacity_bytes.max(256),
                 config.entry_cache_percent.min(80),
@@ -160,12 +160,21 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         }
     }
 
-    pub fn allocate_node(&self) -> Object<LEAF_FANOUT> {
-        let id = ObjectId(self.heap.allocate_object_id());
+    pub fn allocate_node(
+        &self,
+        collection_id: CollectionId,
+        low_key: InlineArray,
+    ) -> Object<LEAF_FANOUT> {
+        let object_id = ObjectId(self.heap.allocate_object_id());
 
-        let node = Object { id, inner: Arc::new(Some(Box::default()).into()) };
+        let node = Object {
+            object_id,
+            collection_id,
+            low_key,
+            inner: Arc::new(Some(Box::default()).into()),
+        };
 
-        self.node_id_index.insert(id, node.clone());
+        self.object_id_index.insert(object_id, node.clone());
 
         node
     }
@@ -181,7 +190,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     pub fn install_dirty(
         &self,
         flush_epoch: FlushEpoch,
-        node_id: ObjectId,
+        object_id: ObjectId,
         dirty: Dirty<LEAF_FANOUT>,
     ) {
         // dirty can transition from:
@@ -198,7 +207,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         // if the new Dirty is not final, we must assert
         // that the old value is also not final.
 
-        let old_dirty = self.dirty.insert((flush_epoch, node_id), dirty);
+        let old_dirty = self.dirty.insert((flush_epoch, object_id), dirty);
 
         if let Some(old) = old_dirty {
             assert!(!old.is_final_state(),
@@ -214,16 +223,16 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     // this being called in the destructor.
     pub fn mark_access_and_evict(
         &self,
-        node_id: ObjectId,
+        object_id: ObjectId,
         size: usize,
     ) -> io::Result<()> {
         let mut ca = self.cache_advisor.borrow_mut();
-        let to_evict = ca.accessed_reuse_buffer(node_id.0, size);
+        let to_evict = ca.accessed_reuse_buffer(object_id.0, size);
         for (node_to_evict, _rough_size) in to_evict {
             let node = if let Some(n) =
-                self.node_id_index.get(&ObjectId(*node_to_evict))
+                self.object_id_index.get(&ObjectId(*node_to_evict))
             {
-                if n.id.0 != *node_to_evict {
+                if n.object_id.0 != *node_to_evict {
                     log::warn!("during cache eviction, node to evict did not match current occupant for {:?}", node_to_evict);
                     continue;
                 }
@@ -275,12 +284,12 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
         let mut evict_after_flush = vec![];
 
-        for ((dirty_epoch, dirty_node_id), dirty_value_initial_read) in
+        for ((dirty_epoch, dirty_object_id), dirty_value_initial_read) in
             self.dirty.range(..flush_boundary)
         {
             let dirty_value = self
                 .dirty
-                .remove(&(dirty_epoch, dirty_node_id))
+                .remove(&(dirty_epoch, dirty_object_id))
                 .expect("violation of flush responsibility");
 
             if let Dirty::NotYetSerialized { .. } = &dirty_value {
@@ -304,18 +313,18 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             }
 
             match dirty_value {
-                Dirty::MergedAndDeleted { node_id, collection_id } => {
+                Dirty::MergedAndDeleted { object_id, collection_id } => {
                     log::trace!(
                         "MergedAndDeleted for {:?}, adding None to write_batch",
-                        node_id
+                        object_id
                     );
                     write_batch.push(Update::Free {
-                        node_id: dirty_node_id,
+                        object_id: dirty_object_id,
                         collection_id,
                     });
                 }
                 Dirty::CooperativelySerialized {
-                    node_id: _,
+                    object_id: _,
                     collection_id,
                     low_key,
                     mutation_count: _,
@@ -324,14 +333,14 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     Arc::make_mut(&mut data);
                     let data = Arc::into_inner(data).unwrap();
                     write_batch.push(Update::Store {
-                        node_id: dirty_node_id,
+                        object_id: dirty_object_id,
                         collection_id,
                         metadata: low_key,
                         data,
                     });
                 }
                 Dirty::NotYetSerialized { low_key, collection_id, node } => {
-                    assert_eq!(dirty_node_id, node.id, "mismatched node ID for NotYetSerialized with low key {:?}", low_key);
+                    assert_eq!(dirty_object_id, node.object_id, "mismatched node ID for NotYetSerialized with low key {:?}", low_key);
                     let mut lock = node.inner.write();
 
                     let leaf_ref: &mut Leaf<LEAF_FANOUT> =
@@ -350,7 +359,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                         // mutated the leaf after encountering it being dirty for our epoch, after
                         // storing a CooperativelySerialized in the dirty map.
                         let dirty_value_2_opt =
-                            self.dirty.remove(&(dirty_epoch, dirty_node_id));
+                            self.dirty.remove(&(dirty_epoch, dirty_object_id));
 
                         let dirty_value_2 = if let Some(dv2) = dirty_value_2_opt
                         {
@@ -361,7 +370,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                                 of expected cooperative serialization. leaf in question's \
                                 dirty_flush_epoch is {:?}, our expected key was {:?}. node.deleted: {:?}",
                                 leaf_ref.dirty_flush_epoch,
-                                (dirty_epoch, dirty_node_id),
+                                (dirty_epoch, dirty_object_id),
                                 leaf_ref.deleted,
                             );
 
@@ -373,11 +382,11 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                             mutation_count: _,
                             mut data,
                             collection_id: ci2,
-                            node_id: ni2,
+                            object_id: ni2,
                         } = dirty_value_2
                         {
-                            assert_eq!(node.id, ni2);
-                            assert_eq!(node.id, dirty_node_id);
+                            assert_eq!(node.object_id, ni2);
+                            assert_eq!(node.object_id, dirty_object_id);
                             assert_eq!(low_key, low_key_2);
                             assert_eq!(collection_id, ci2);
                             Arc::make_mut(&mut data);
@@ -388,7 +397,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     };
 
                     write_batch.push(Update::Store {
-                        node_id: dirty_node_id,
+                        object_id: dirty_object_id,
                         collection_id: collection_id,
                         metadata: low_key,
                         data,
@@ -437,12 +446,12 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         let epoch = self.check_into_flush_epoch();
 
         /*
-        for (node_id, collection_id, low_key) in objects_to_defrag {
+        for (object_id, collection_id, low_key) in objects_to_defrag {
             //
-            let node = if let Some(node) = self.node_id_index.get(&node_id) {
+            let node = if let Some(node) = self.object_id_index.get(&object_id) {
                 node
             } else {
-                log::error!("tried to get node for maintenance but it was not present in node_id_index");
+                log::error!("tried to get node for maintenance but it was not present in object_id_index");
                 continue;
             };
 
@@ -455,7 +464,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     epoch.epoch(),
                     node.id,
                     Dirty::CooperativelySerialized {
-                        node_id: node.id,
+                        object_id: node.id,
                         collection_id,
                         low_key,
                         mutation_count: leaf.mutation_count,
@@ -486,17 +495,23 @@ fn initialize<const LEAF_FANOUT: usize>(
 ) {
     let mut trees: HashMap<CollectionId, Index<LEAF_FANOUT>> = HashMap::new();
 
-    let node_id_index: ConcurrentMap<
+    let object_id_index: ConcurrentMap<
         ObjectId,
         Object<LEAF_FANOUT>,
         INDEX_FANOUT,
         EBR_LOCAL_GC_BUFFER_SIZE,
     > = ConcurrentMap::default();
 
-    for ObjectRecovery { node_id, collection_id, metadata } in recovered_nodes {
-        let node = Object { id: *node_id, inner: Arc::new(None.into()) };
+    for ObjectRecovery { object_id, collection_id, metadata } in recovered_nodes
+    {
+        let node = Object {
+            object_id: *object_id,
+            collection_id: *collection_id,
+            low_key: metadata.clone(),
+            inner: Arc::new(None.into()),
+        };
 
-        assert!(node_id_index.insert(*node_id, node.clone()).is_none());
+        assert!(object_id_index.insert(*object_id, node.clone()).is_none());
 
         let tree = trees.entry(*collection_id).or_default();
 
@@ -508,18 +523,22 @@ fn initialize<const LEAF_FANOUT: usize>(
         let tree = trees.entry(collection_id).or_default();
 
         if tree.is_empty() {
-            let node_id = ObjectId(heap.allocate_object_id());
+            let object_id = ObjectId(heap.allocate_object_id());
+
+            let initial_low_key = InlineArray::default();
 
             let empty_node = Object {
-                id: node_id,
+                object_id,
+                collection_id,
+                low_key: initial_low_key.clone(),
                 inner: Arc::new(Some(Box::default()).into()),
             };
 
-            assert!(node_id_index
-                .insert(node_id, empty_node.clone())
+            assert!(object_id_index
+                .insert(object_id, empty_node.clone())
                 .is_none());
 
-            assert!(tree.insert(InlineArray::default(), empty_node).is_none());
+            assert!(tree.insert(initial_low_key, empty_node).is_none());
         }
     }
 
@@ -527,5 +546,5 @@ fn initialize<const LEAF_FANOUT: usize>(
         assert!(tree.contains_key(&InlineArray::MIN));
     }
 
-    (node_id_index, trees)
+    (object_id_index, trees)
 }

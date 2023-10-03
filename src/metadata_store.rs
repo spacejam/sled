@@ -426,12 +426,12 @@ fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
     for update_metadata in batch {
         match update_metadata {
             UpdateMetadata::Store {
-                node_id,
+                object_id,
                 collection_id,
                 metadata,
                 location,
             } => {
-                batch_encoder.write_all(&node_id.0.to_le_bytes()).unwrap();
+                batch_encoder.write_all(&object_id.0.to_le_bytes()).unwrap();
                 batch_encoder
                     .write_all(&collection_id.0.to_le_bytes())
                     .unwrap();
@@ -441,8 +441,8 @@ fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
                 batch_encoder.write_all(&metadata_len.to_le_bytes()).unwrap();
                 batch_encoder.write_all(&metadata).unwrap();
             }
-            UpdateMetadata::Free { node_id, collection_id } => {
-                batch_encoder.write_all(&node_id.0.to_le_bytes()).unwrap();
+            UpdateMetadata::Free { object_id, collection_id } => {
+                batch_encoder.write_all(&object_id.0.to_le_bytes()).unwrap();
                 batch_encoder
                     .write_all(&collection_id.0.to_le_bytes())
                     .unwrap();
@@ -508,14 +508,14 @@ fn read_frame(
     let mut decoder = ZstdDecoder::new(&reusable_frame_buffer[8..len + 8])
         .expect("failed to create zstd decoder");
 
-    let mut node_id_buf: [u8; 8] = [0; 8];
+    let mut object_id_buf: [u8; 8] = [0; 8];
     let mut collection_id_buf: [u8; 8] = [0; 8];
     let mut location_buf: [u8; 8] = [0; 8];
     let mut metadata_len_buf: [u8; 8] = [0; 8];
     let mut metadata_buf = vec![];
     loop {
         let first_read_res = decoder
-            .read_exact(&mut node_id_buf)
+            .read_exact(&mut object_id_buf)
             .and_then(|_| decoder.read_exact(&mut collection_id_buf))
             .and_then(|_| decoder.read_exact(&mut location_buf))
             .and_then(|_| decoder.read_exact(&mut metadata_len_buf));
@@ -528,7 +528,7 @@ fn read_frame(
             }
         }
 
-        let node_id = ObjectId(u64::from_le_bytes(node_id_buf));
+        let object_id = ObjectId(u64::from_le_bytes(object_id_buf));
         let collection_id = CollectionId(u64::from_le_bytes(collection_id_buf));
         let location = u64::from_le_bytes(location_buf);
 
@@ -548,13 +548,13 @@ fn read_frame(
             let metadata = InlineArray::from(&*metadata_buf);
 
             ret.push(UpdateMetadata::Store {
-                node_id,
+                object_id,
                 collection_id,
                 location: location_nzu,
                 metadata,
             });
         } else {
-            ret.push(UpdateMetadata::Free { node_id, collection_id });
+            ret.push(UpdateMetadata::Free { object_id, collection_id });
         }
     }
 
@@ -576,7 +576,7 @@ fn read_log(
 
     while let Ok(frame) = read_frame(&mut file, &mut reusable_frame_buffer) {
         for update_metadata in frame {
-            ret.insert(update_metadata.node_id(), update_metadata);
+            ret.insert(update_metadata.object_id(), update_metadata);
         }
     }
 
@@ -599,7 +599,7 @@ fn read_snapshot(
 
     let frame: FnvHashMap<ObjectId, UpdateMetadata> = raw_frame
         .into_iter()
-        .map(|update_metadata| (update_metadata.node_id(), update_metadata))
+        .map(|update_metadata| (update_metadata.object_id(), update_metadata))
         .collect();
 
     log::trace!("recovered {} items in snapshot {}", frame.len(), lsn);
@@ -735,11 +735,11 @@ fn read_snapshot_and_apply_logs(
     for (log_id, log_datum) in log_data_res? {
         max_log_id = max_log_id.max(log_id);
 
-        for (node_id, update_metadata) in log_datum {
+        for (object_id, update_metadata) in log_datum {
             if matches!(update_metadata, UpdateMetadata::Store { .. }) {
-                recovered.insert(node_id, update_metadata);
+                recovered.insert(object_id, update_metadata);
             } else {
-                let _previous = recovered.remove(&node_id);
+                let _previous = recovered.remove(&object_id);
                 // TODO: assert!(previous.is_some());
             }
         }

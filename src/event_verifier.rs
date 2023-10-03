@@ -12,7 +12,7 @@ pub(crate) struct EventVerifier {
 impl EventVerifier {
     pub(crate) fn mark_flush(
         &self,
-        node_id: ObjectId,
+        object_id: ObjectId,
         flush_epoch: NonZeroU64,
         mutation_count: u64,
     ) {
@@ -20,13 +20,13 @@ impl EventVerifier {
 
         let epoch_entry = flush_model.entry(flush_epoch).or_default();
 
-        let last = epoch_entry.insert(node_id, mutation_count);
+        let last = epoch_entry.insert(object_id, mutation_count);
         assert_eq!(last, None);
     }
 
     pub(crate) fn mark_unexpected_flush_epoch(
         &self,
-        node_id: ObjectId,
+        object_id: ObjectId,
         flush_epoch: NonZeroU64,
         mutation_count: u64,
     ) {
@@ -34,7 +34,7 @@ impl EventVerifier {
         // assert that this object+mutation count was
         // already flushed
         let epoch_entry = flush_model.entry(flush_epoch).or_default();
-        let flushed_mutation_count = epoch_entry.get(&node_id);
+        let flushed_mutation_count = epoch_entry.get(&object_id);
         println!("checking!");
         assert_eq!(Some(&mutation_count), flushed_mutation_count);
         println!("good!");

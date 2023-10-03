@@ -232,11 +232,14 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 collection_id
             );
 
-            let empty_node = cache.allocate_node();
+            let initial_low_key = InlineArray::default();
+
+            let empty_node =
+                cache.allocate_node(collection_id, initial_low_key.clone());
 
             let index = Index::default();
 
-            assert!(index.insert(InlineArray::default(), empty_node).is_none());
+            assert!(index.insert(initial_low_key, empty_node).is_none());
 
             let tree = Tree::new(
                 collection_id,
@@ -482,11 +485,14 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         let collection_id =
             CollectionId(self.collection_id_allocator.allocate());
 
-        let empty_node = self.cache.allocate_node();
+        let initial_low_key = InlineArray::default();
+
+        let empty_node =
+            self.cache.allocate_node(collection_id, initial_low_key.clone());
 
         let index = Index::default();
 
-        assert!(index.insert(InlineArray::default(), empty_node).is_none());
+        assert!(index.insert(initial_low_key, empty_node).is_none());
 
         let tree = Tree::new(
             collection_id,

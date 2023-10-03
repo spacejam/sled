@@ -135,7 +135,7 @@ pub struct Config {}
 
 #[derive(Debug)]
 pub(crate) struct ObjectRecovery {
-    pub node_id: ObjectId,
+    pub object_id: ObjectId,
     pub collection_id: CollectionId,
     pub metadata: InlineArray,
 }
@@ -295,24 +295,24 @@ pub(crate) fn recover<P: AsRef<Path>>(
     let pt = ObjectLocationMap::default();
     let mut recovered_nodes =
         Vec::<ObjectRecovery>::with_capacity(recovered_metadata.len());
-    let mut node_ids: FnvHashSet<u64> = Default::default();
+    let mut object_ids: FnvHashSet<u64> = Default::default();
     let mut slots_per_slab: [FnvHashSet<u64>; N_SLABS] =
         core::array::from_fn(|_| Default::default());
     for update_metadata in recovered_metadata {
         match update_metadata {
             UpdateMetadata::Store {
-                node_id,
+                object_id,
                 collection_id,
                 location,
                 metadata,
             } => {
-                node_ids.insert(node_id.0);
+                object_ids.insert(object_id.0);
                 let slab_address = SlabAddress::from(location);
                 slots_per_slab[slab_address.slab_id as usize]
                     .insert(slab_address.slot());
-                pt.insert(node_id, slab_address);
+                pt.insert(object_id, slab_address);
                 recovered_nodes.push(ObjectRecovery {
-                    node_id,
+                    object_id,
                     collection_id,
                     metadata: metadata.clone(),
                 });
@@ -347,7 +347,9 @@ pub(crate) fn recover<P: AsRef<Path>>(
         heap: Heap {
             slabs: Arc::new(slabs.try_into().unwrap()),
             path: path.into(),
-            object_id_allocator: Arc::new(Allocator::from_allocated(&node_ids)),
+            object_id_allocator: Arc::new(Allocator::from_allocated(
+                &object_ids,
+            )),
             pt,
             global_error: metadata_store.get_global_error_arc(),
             metadata_store: Arc::new(metadata_store),
@@ -632,13 +634,13 @@ fn set_error(
 #[derive(Debug)]
 pub(crate) enum Update {
     Store {
-        node_id: ObjectId,
+        object_id: ObjectId,
         collection_id: CollectionId,
         metadata: InlineArray,
         data: Vec<u8>,
     },
     Free {
-        node_id: ObjectId,
+        object_id: ObjectId,
         collection_id: CollectionId,
     },
 }
@@ -646,22 +648,22 @@ pub(crate) enum Update {
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub(crate) enum UpdateMetadata {
     Store {
-        node_id: ObjectId,
+        object_id: ObjectId,
         collection_id: CollectionId,
         metadata: InlineArray,
         location: NonZeroU64,
     },
     Free {
-        node_id: ObjectId,
+        object_id: ObjectId,
         collection_id: CollectionId,
     },
 }
 
 impl UpdateMetadata {
-    pub fn node_id(&self) -> ObjectId {
+    pub fn object_id(&self) -> ObjectId {
         match self {
-            UpdateMetadata::Store { node_id, .. }
-            | UpdateMetadata::Free { node_id, .. } => *node_id,
+            UpdateMetadata::Store { object_id, .. }
+            | UpdateMetadata::Free { object_id, .. } => *object_id,
         }
     }
 }
@@ -739,7 +741,7 @@ impl Heap {
         let slabs = &self.slabs;
 
         let map_closure = |update: Update| match update {
-            Update::Store { node_id, collection_id, metadata, data } => {
+            Update::Store { object_id, collection_id, metadata, data } => {
                 let slab_id = slab_for_size(data.len());
                 let slab = &slabs[usize::from(slab_id)];
                 let slot = slab.slot_allocator.allocate();
@@ -755,14 +757,14 @@ impl Heap {
                     return Err(e);
                 }
                 Ok(UpdateMetadata::Store {
-                    node_id,
+                    object_id,
                     collection_id,
                     metadata,
                     location: new_location_nzu,
                 })
             }
-            Update::Free { node_id, collection_id } => {
-                Ok(UpdateMetadata::Free { node_id, collection_id })
+            Update::Free { object_id, collection_id } => {
+                Ok(UpdateMetadata::Free { object_id, collection_id })
             }
         };
 
@@ -790,15 +792,15 @@ impl Heap {
         // reclaim previous disk locations for future writes
         for update_metadata in metadata_batch {
             let last_address_opt = match update_metadata {
-                UpdateMetadata::Store { node_id, location, .. } => {
-                    self.pt.insert(node_id, SlabAddress::from(location))
+                UpdateMetadata::Store { object_id, location, .. } => {
+                    self.pt.insert(object_id, SlabAddress::from(location))
                 }
-                UpdateMetadata::Free { node_id, .. } => {
+                UpdateMetadata::Free { object_id, .. } => {
                     guard.defer_drop(DeferredFree {
                         allocator: self.object_id_allocator.clone(),
-                        freed_slot: node_id.0,
+                        freed_slot: object_id.0,
                     });
-                    self.pt.remove(node_id)
+                    self.pt.remove(object_id)
                 }
             };
 
