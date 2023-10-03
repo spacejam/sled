@@ -35,7 +35,7 @@ use crate::*;
 pub struct Db<const LEAF_FANOUT: usize = 1024> {
     config: Config,
     _shutdown_dropper: Arc<ShutdownDropper<LEAF_FANOUT>>,
-    pc: PageCache<LEAF_FANOUT>,
+    cache: ObjectCache<LEAF_FANOUT>,
     trees: Arc<Mutex<HashMap<CollectionId, Tree<LEAF_FANOUT>>>>,
     collection_id_allocator: Arc<Allocator>,
     collection_name_mapping: Tree<LEAF_FANOUT>,
@@ -73,7 +73,7 @@ impl<const LEAF_FANOUT: usize> fmt::Debug for Db<LEAF_FANOUT> {
 }
 
 fn flusher<const LEAF_FANOUT: usize>(
-    pc: PageCache<LEAF_FANOUT>,
+    cache: ObjectCache<LEAF_FANOUT>,
     shutdown_signal: mpsc::Receiver<mpsc::Sender<()>>,
     flush_every_ms: usize,
 ) {
@@ -81,9 +81,9 @@ fn flusher<const LEAF_FANOUT: usize>(
     let mut last_flush_duration = Duration::default();
 
     let flush = || {
-        if let Err(e) = pc.flush() {
+        if let Err(e) = cache.flush() {
             log::error!("Db flusher encountered error while flushing: {:?}", e);
-            pc.set_error(&e);
+            cache.set_error(&e);
 
             std::process::abort();
         }
@@ -99,14 +99,14 @@ fn flusher<const LEAF_FANOUT: usize>(
 
             // this is probably unnecessary but it will avoid issues
             // if egregious bugs get introduced that trigger it
-            pc.set_error(&io::Error::new(
+            cache.set_error(&io::Error::new(
                 io::ErrorKind::Other,
                 "system has been shut down".to_string(),
             ));
 
-            assert!(pc.is_clean());
+            assert!(cache.is_clean());
 
-            drop(pc);
+            drop(cache);
 
             if let Err(e) = shutdown_sender.send(()) {
                 log::error!(
@@ -155,7 +155,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             })
         }
 
-        recurse(read_dir(&self.pc.config.path)?)
+        recurse(read_dir(&self.cache.config.path)?)
     }
 
     /// Returns `true` if the database was
@@ -175,11 +175,11 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
     pub fn open_with_config(config: &Config) -> io::Result<Db<LEAF_FANOUT>> {
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
-        let (pc, indices, was_recovered) = PageCache::recover(&config)?;
+        let (cache, indices, was_recovered) = ObjectCache::recover(&config)?;
 
         let _shutdown_dropper = Arc::new(ShutdownDropper {
             shutdown_sender: Mutex::new(shutdown_tx),
-            pc: Mutex::new(pc.clone()),
+            cache: Mutex::new(cache.clone()),
         });
 
         #[cfg(feature = "for-internal-testing-only")]
@@ -199,7 +199,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                     collection_id,
                     Tree::new(
                         collection_id,
-                        pc.clone(),
+                        cache.clone(),
                         index,
                         _shutdown_dropper.clone(),
                         #[cfg(feature = "for-internal-testing-only")]
@@ -232,7 +232,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 collection_id
             );
 
-            let empty_node = pc.allocate_node();
+            let empty_node = cache.allocate_node();
 
             let index = Index::default();
 
@@ -240,7 +240,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
             let tree = Tree::new(
                 collection_id,
-                pc.clone(),
+                cache.clone(),
                 index,
                 _shutdown_dropper.clone(),
                 #[cfg(feature = "for-internal-testing-only")]
@@ -257,7 +257,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         let ret = Db {
             config: config.clone(),
-            pc: pc.clone(),
+            cache: cache.clone(),
             default_tree,
             collection_name_mapping,
             collection_id_allocator,
@@ -268,10 +268,10 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             event_verifier,
         };
 
-        if let Some(flush_every_ms) = ret.pc.config.flush_every_ms {
+        if let Some(flush_every_ms) = ret.cache.config.flush_every_ms {
             let spawn_res = std::thread::Builder::new()
                 .name("sled_flusher".into())
-                .spawn(move || flusher(pc, shutdown_rx, flush_every_ms));
+                .spawn(move || flusher(cache, shutdown_rx, flush_every_ms));
 
             if let Err(e) = spawn_res {
                 return Err(io::Error::new(
@@ -482,7 +482,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         let collection_id =
             CollectionId(self.collection_id_allocator.allocate());
 
-        let empty_node = self.pc.allocate_node();
+        let empty_node = self.cache.allocate_node();
 
         let index = Index::default();
 
@@ -490,7 +490,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         let tree = Tree::new(
             collection_id,
-            self.pc.clone(),
+            self.cache.clone(),
             index,
             self._shutdown_dropper.clone(),
             #[cfg(feature = "for-internal-testing-only")]

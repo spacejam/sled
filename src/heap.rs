@@ -13,7 +13,7 @@ use fs2::FileExt as _;
 use rayon::prelude::*;
 
 use crate::object_location_map::ObjectLocationMap;
-use crate::{Allocator, CollectionId, DeferredFree, MetadataStore, NodeId};
+use crate::{Allocator, CollectionId, DeferredFree, MetadataStore, ObjectId};
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
 pub(crate) const N_SLABS: usize = 78;
@@ -134,15 +134,15 @@ pub struct Stats {}
 pub struct Config {}
 
 #[derive(Debug)]
-pub(crate) struct NodeRecovery {
-    pub node_id: NodeId,
+pub(crate) struct ObjectRecovery {
+    pub node_id: ObjectId,
     pub collection_id: CollectionId,
     pub metadata: InlineArray,
 }
 
 pub(crate) struct HeapRecovery {
     pub heap: Heap,
-    pub recovered_nodes: Vec<NodeRecovery>,
+    pub recovered_nodes: Vec<ObjectRecovery>,
     pub was_recovered: bool,
 }
 
@@ -294,7 +294,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
 
     let pt = ObjectLocationMap::default();
     let mut recovered_nodes =
-        Vec::<NodeRecovery>::with_capacity(recovered_metadata.len());
+        Vec::<ObjectRecovery>::with_capacity(recovered_metadata.len());
     let mut node_ids: FnvHashSet<u64> = Default::default();
     let mut slots_per_slab: [FnvHashSet<u64>; N_SLABS] =
         core::array::from_fn(|_| Default::default());
@@ -311,7 +311,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
                 slots_per_slab[slab_address.slab_id as usize]
                     .insert(slab_address.slot());
                 pt.insert(node_id, slab_address);
-                recovered_nodes.push(NodeRecovery {
+                recovered_nodes.push(ObjectRecovery {
                     node_id,
                     collection_id,
                     metadata: metadata.clone(),
@@ -632,13 +632,13 @@ fn set_error(
 #[derive(Debug)]
 pub(crate) enum Update {
     Store {
-        node_id: NodeId,
+        node_id: ObjectId,
         collection_id: CollectionId,
         metadata: InlineArray,
         data: Vec<u8>,
     },
     Free {
-        node_id: NodeId,
+        node_id: ObjectId,
         collection_id: CollectionId,
     },
 }
@@ -646,19 +646,19 @@ pub(crate) enum Update {
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub(crate) enum UpdateMetadata {
     Store {
-        node_id: NodeId,
+        node_id: ObjectId,
         collection_id: CollectionId,
         metadata: InlineArray,
         location: NonZeroU64,
     },
     Free {
-        node_id: NodeId,
+        node_id: ObjectId,
         collection_id: CollectionId,
     },
 }
 
 impl UpdateMetadata {
-    pub fn node_id(&self) -> NodeId {
+    pub fn node_id(&self) -> ObjectId {
         match self {
             UpdateMetadata::Store { node_id, .. }
             | UpdateMetadata::Free { node_id, .. } => *node_id,
@@ -715,7 +715,7 @@ impl Heap {
         Stats {}
     }
 
-    pub fn read(&self, object_id: NodeId) -> io::Result<Vec<u8>> {
+    pub fn read(&self, object_id: ObjectId) -> io::Result<Vec<u8>> {
         self.check_error()?;
 
         let mut guard = self.free_ebr.pin();
@@ -819,7 +819,7 @@ impl Heap {
         self.object_id_allocator.allocate()
     }
 
-    pub fn objects_to_defrag(&self) -> Vec<NodeId> {
+    pub fn objects_to_defrag(&self) -> Vec<ObjectId> {
         self.pt.objects_to_defrag()
     }
 }

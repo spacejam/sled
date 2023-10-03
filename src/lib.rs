@@ -3,7 +3,7 @@
 // TODO implement create exclusive
 // TODO test concurrent drop_tree when other threads are still using it
 // TODO list trees test for recovering empty collections
-// TODO make node_id_index private on PageCache
+// TODO make node_id_index private on ObjectCache
 // TODO put aborts behind feature flags for hard crashes
 // TODO allow waiting flusher to start collecting dirty pages as soon
 //      as it is evacuated - just wait until last flush is done before
@@ -23,8 +23,8 @@ mod flush_epoch;
 mod heap;
 mod id_allocator;
 mod metadata_store;
+mod object_cache;
 mod object_location_map;
-mod pagecache;
 mod tree;
 
 #[cfg(any(
@@ -64,11 +64,11 @@ const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
 use std::ops::Bound;
 
 use crate::heap::{
-    recover, Heap, HeapRecovery, NodeRecovery, SlabAddress, Stats, Update,
+    recover, Heap, HeapRecovery, ObjectRecovery, SlabAddress, Stats, Update,
 };
 use crate::id_allocator::{Allocator, DeferredFree};
 use crate::metadata_store::MetadataStore;
-use crate::pagecache::{Dirty, PageCache};
+use crate::object_cache::{Dirty, ObjectCache};
 
 /// Opens a `Db` with a default configuration at the
 /// specified path. This will create a new storage
@@ -96,7 +96,7 @@ pub type CompareAndSwapResult = std::io::Result<
 
 type Index<const LEAF_FANOUT: usize> = concurrent_map::ConcurrentMap<
     InlineArray,
-    Node<LEAF_FANOUT>,
+    Object<LEAF_FANOUT>,
     INDEX_FANOUT,
     EBR_LOCAL_GC_BUFFER_SIZE,
 >;
@@ -139,10 +139,10 @@ impl std::error::Error for CompareAndSwapError {}
     Eq,
     Hash,
 )]
-struct NodeId(u64);
+struct ObjectId(u64);
 
-impl concurrent_map::Minimum for NodeId {
-    const MIN: NodeId = NodeId(u64::MIN);
+impl concurrent_map::Minimum for ObjectId {
+    const MIN: ObjectId = ObjectId(u64::MIN);
 }
 
 #[derive(
@@ -167,13 +167,13 @@ type CacheBox<const LEAF_FANOUT: usize> =
     std::sync::Arc<parking_lot::RwLock<Option<Box<Leaf<LEAF_FANOUT>>>>>;
 
 #[derive(Debug, Clone)]
-struct Node<const LEAF_FANOUT: usize> {
+struct Object<const LEAF_FANOUT: usize> {
     // used for access in heap::Heap
-    id: NodeId,
+    id: ObjectId,
     inner: CacheBox<LEAF_FANOUT>,
 }
 
-impl<const LEAF_FANOUT: usize> PartialEq for Node<LEAF_FANOUT> {
+impl<const LEAF_FANOUT: usize> PartialEq for Object<LEAF_FANOUT> {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
@@ -220,7 +220,7 @@ struct ShutdownDropper<const LEAF_FANOUT: usize> {
     shutdown_sender: parking_lot::Mutex<
         std::sync::mpsc::Sender<std::sync::mpsc::Sender<()>>,
     >,
-    pc: parking_lot::Mutex<pagecache::PageCache<LEAF_FANOUT>>,
+    cache: parking_lot::Mutex<object_cache::ObjectCache<LEAF_FANOUT>>,
 }
 
 impl<const LEAF_FANOUT: usize> Drop for ShutdownDropper<LEAF_FANOUT> {
@@ -235,15 +235,15 @@ impl<const LEAF_FANOUT: usize> Drop for ShutdownDropper<LEAF_FANOUT> {
             }
         } else {
             log::debug!(
-                "failed to shut down flusher, manually flushing PageCache"
+                "failed to shut down flusher, manually flushing ObjectCache"
             );
-            let pc = self.pc.lock();
-            if let Err(e) = pc.flush() {
+            let cache = self.cache.lock();
+            if let Err(e) = cache.flush() {
                 log::error!(
                     "Db flusher encountered error while flushing: {:?}",
                     e
                 );
-                pc.set_error(&e);
+                cache.set_error(&e);
             }
         }
     }

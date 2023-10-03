@@ -17,7 +17,7 @@ use rayon::prelude::*;
 use zstd::stream::read::Decoder as ZstdDecoder;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
-use crate::{heap::UpdateMetadata, CollectionId, NodeId};
+use crate::{heap::UpdateMetadata, CollectionId, ObjectId};
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
 const TMP_SUFFIX: &str = ".tmp";
@@ -528,7 +528,7 @@ fn read_frame(
             }
         }
 
-        let node_id = NodeId(u64::from_le_bytes(node_id_buf));
+        let node_id = ObjectId(u64::from_le_bytes(node_id_buf));
         let collection_id = CollectionId(u64::from_le_bytes(collection_id_buf));
         let location = u64::from_le_bytes(location_buf);
 
@@ -566,7 +566,7 @@ fn read_frame(
 fn read_log(
     directory_path: &Path,
     lsn: u64,
-) -> io::Result<FnvHashMap<NodeId, UpdateMetadata>> {
+) -> io::Result<FnvHashMap<ObjectId, UpdateMetadata>> {
     log::trace!("reading log {lsn}");
     let mut ret = FnvHashMap::default();
 
@@ -589,7 +589,7 @@ fn read_log(
 fn read_snapshot(
     directory_path: &Path,
     lsn: u64,
-) -> io::Result<(FnvHashMap<NodeId, UpdateMetadata>, u64)> {
+) -> io::Result<(FnvHashMap<ObjectId, UpdateMetadata>, u64)> {
     log::trace!("reading snapshot {lsn}");
     let mut reusable_frame_buffer: Vec<u8> = vec![];
     let mut file =
@@ -597,7 +597,7 @@ fn read_snapshot(
     let size = fallible!(file.metadata()).len();
     let raw_frame = read_frame(&mut file, &mut reusable_frame_buffer)?;
 
-    let frame: FnvHashMap<NodeId, UpdateMetadata> = raw_frame
+    let frame: FnvHashMap<ObjectId, UpdateMetadata> = raw_frame
         .into_iter()
         .map(|update_metadata| (update_metadata.node_id(), update_metadata))
         .collect();
@@ -713,7 +713,7 @@ fn read_snapshot_and_apply_logs(
     let mut max_log_id = snapshot_id_opt.unwrap_or(0);
 
     let log_data_res: io::Result<
-        Vec<(u64, FnvHashMap<NodeId, UpdateMetadata>)>,
+        Vec<(u64, FnvHashMap<ObjectId, UpdateMetadata>)>,
     > = (&log_ids) //.iter().collect::<Vec<_>>())
         .into_par_iter()
         .map(move |log_id| {
@@ -727,7 +727,7 @@ fn read_snapshot_and_apply_logs(
         })
         .collect();
 
-    let mut recovered: FnvHashMap<NodeId, UpdateMetadata> =
+    let mut recovered: FnvHashMap<ObjectId, UpdateMetadata> =
         snapshot_rx.recv().unwrap()?;
 
     log::trace!("recovered snapshot contains {recovered:?}");

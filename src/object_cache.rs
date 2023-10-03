@@ -14,18 +14,18 @@ use crate::*;
 pub(crate) enum Dirty<const LEAF_FANOUT: usize> {
     NotYetSerialized {
         low_key: InlineArray,
-        node: Node<LEAF_FANOUT>,
+        node: Object<LEAF_FANOUT>,
         collection_id: CollectionId,
     },
     CooperativelySerialized {
-        node_id: NodeId,
+        node_id: ObjectId,
         collection_id: CollectionId,
         low_key: InlineArray,
         data: Arc<Vec<u8>>,
         mutation_count: u64,
     },
     MergedAndDeleted {
-        node_id: NodeId,
+        node_id: ObjectId,
         collection_id: CollectionId,
     },
 }
@@ -41,28 +41,28 @@ impl<const LEAF_FANOUT: usize> Dirty<LEAF_FANOUT> {
 }
 
 #[derive(Clone)]
-pub(crate) struct PageCache<const LEAF_FANOUT: usize> {
+pub(crate) struct ObjectCache<const LEAF_FANOUT: usize> {
     pub config: Config,
     global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
     pub node_id_index: ConcurrentMap<
-        NodeId,
-        Node<LEAF_FANOUT>,
+        ObjectId,
+        Object<LEAF_FANOUT>,
         INDEX_FANOUT,
         EBR_LOCAL_GC_BUFFER_SIZE,
     >,
     heap: Heap,
     cache_advisor: RefCell<CacheAdvisor>,
     flush_epoch: FlushEpochTracker,
-    dirty: ConcurrentMap<(FlushEpoch, NodeId), Dirty<LEAF_FANOUT>, 4>,
+    dirty: ConcurrentMap<(FlushEpoch, ObjectId), Dirty<LEAF_FANOUT>, 4>,
 }
 
-impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
-    /// Returns the recovered PageCache, the tree indexes, and a bool signifying whether the system
+impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
+    /// Returns the recovered ObjectCache, the tree indexes, and a bool signifying whether the system
     /// was recovered or not
     pub(crate) fn recover(
         config: &Config,
     ) -> io::Result<(
-        PageCache<LEAF_FANOUT>,
+        ObjectCache<LEAF_FANOUT>,
         HashMap<CollectionId, Index<LEAF_FANOUT>>,
         bool,
     )> {
@@ -72,7 +72,8 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
         let (node_id_index, indices) = initialize(&recovered_nodes, &heap);
 
         // validate recovery
-        for NodeRecovery { node_id, collection_id, metadata } in recovered_nodes
+        for ObjectRecovery { node_id, collection_id, metadata } in
+            recovered_nodes
         {
             let index = indices.get(&collection_id).unwrap();
             let node = index.get(&metadata).unwrap();
@@ -93,7 +94,7 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
             );
         }
 
-        let pc = PageCache {
+        let pc = ObjectCache {
             config: config.clone(),
             node_id_index,
             cache_advisor: RefCell::new(CacheAdvisor::new(
@@ -116,7 +117,7 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
     }
 
     pub fn read(&self, object_id: u64) -> io::Result<Vec<u8>> {
-        self.heap.read(NodeId(object_id))
+        self.heap.read(ObjectId(object_id))
     }
 
     pub fn stats(&self) -> Stats {
@@ -159,10 +160,10 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
         }
     }
 
-    pub fn allocate_node(&self) -> Node<LEAF_FANOUT> {
-        let id = NodeId(self.heap.allocate_object_id());
+    pub fn allocate_node(&self) -> Object<LEAF_FANOUT> {
+        let id = ObjectId(self.heap.allocate_object_id());
 
-        let node = Node { id, inner: Arc::new(Some(Box::default()).into()) };
+        let node = Object { id, inner: Arc::new(Some(Box::default()).into()) };
 
         self.node_id_index.insert(id, node.clone());
 
@@ -180,7 +181,7 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
     pub fn install_dirty(
         &self,
         flush_epoch: FlushEpoch,
-        node_id: NodeId,
+        node_id: ObjectId,
         dirty: Dirty<LEAF_FANOUT>,
     ) {
         // dirty can transition from:
@@ -213,14 +214,14 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
     // this being called in the destructor.
     pub fn mark_access_and_evict(
         &self,
-        node_id: NodeId,
+        node_id: ObjectId,
         size: usize,
     ) -> io::Result<()> {
         let mut ca = self.cache_advisor.borrow_mut();
         let to_evict = ca.accessed_reuse_buffer(node_id.0, size);
         for (node_to_evict, _rough_size) in to_evict {
             let node = if let Some(n) =
-                self.node_id_index.get(&NodeId(*node_to_evict))
+                self.node_id_index.get(&ObjectId(*node_to_evict))
             {
                 if n.id.0 != *node_to_evict {
                     log::warn!("during cache eviction, node to evict did not match current occupant for {:?}", node_to_evict);
@@ -270,7 +271,7 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
 
         log::trace!("performing flush");
 
-        let flush_boundary = (flush_through_epoch.increment(), NodeId::MIN);
+        let flush_boundary = (flush_through_epoch.increment(), ObjectId::MIN);
 
         let mut evict_after_flush = vec![];
 
@@ -472,12 +473,12 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
 }
 
 fn initialize<const LEAF_FANOUT: usize>(
-    recovered_nodes: &[NodeRecovery],
+    recovered_nodes: &[ObjectRecovery],
     heap: &Heap,
 ) -> (
     ConcurrentMap<
-        NodeId,
-        Node<LEAF_FANOUT>,
+        ObjectId,
+        Object<LEAF_FANOUT>,
         INDEX_FANOUT,
         EBR_LOCAL_GC_BUFFER_SIZE,
     >,
@@ -486,14 +487,14 @@ fn initialize<const LEAF_FANOUT: usize>(
     let mut trees: HashMap<CollectionId, Index<LEAF_FANOUT>> = HashMap::new();
 
     let node_id_index: ConcurrentMap<
-        NodeId,
-        Node<LEAF_FANOUT>,
+        ObjectId,
+        Object<LEAF_FANOUT>,
         INDEX_FANOUT,
         EBR_LOCAL_GC_BUFFER_SIZE,
     > = ConcurrentMap::default();
 
-    for NodeRecovery { node_id, collection_id, metadata } in recovered_nodes {
-        let node = Node { id: *node_id, inner: Arc::new(None.into()) };
+    for ObjectRecovery { node_id, collection_id, metadata } in recovered_nodes {
+        let node = Object { id: *node_id, inner: Arc::new(None.into()) };
 
         assert!(node_id_index.insert(*node_id, node.clone()).is_none());
 
@@ -507,9 +508,9 @@ fn initialize<const LEAF_FANOUT: usize>(
         let tree = trees.entry(collection_id).or_default();
 
         if tree.is_empty() {
-            let node_id = NodeId(heap.allocate_object_id());
+            let node_id = ObjectId(heap.allocate_object_id());
 
-            let empty_node = Node {
+            let empty_node = Object {
                 id: node_id,
                 inner: Arc::new(Some(Box::default()).into()),
             };

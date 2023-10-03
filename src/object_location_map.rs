@@ -6,7 +6,7 @@ use pagetable::PageTable;
 
 use crate::{
     heap::{SlabAddress, N_SLABS},
-    NodeId,
+    ObjectId,
 };
 
 #[derive(Clone)]
@@ -31,7 +31,7 @@ pub(crate) struct ObjectLocationMap {
 impl ObjectLocationMap {
     pub(crate) fn get_location_for_object(
         &self,
-        object_id: NodeId,
+        object_id: ObjectId,
     ) -> crate::SlabAddress {
         let location_u64 =
             self.object_id_to_location.get(object_id.0).load(Ordering::Acquire);
@@ -50,7 +50,7 @@ impl ObjectLocationMap {
     /// correctness violation if that isn't true.
     pub(crate) fn insert(
         &self,
-        object_id: NodeId,
+        object_id: ObjectId,
         new_location: SlabAddress,
     ) -> Option<SlabAddress> {
         // insert into object_id_to_location
@@ -87,7 +87,7 @@ impl ObjectLocationMap {
     /// # Panics
     ///
     /// Asserts that the object was actually stored in a location.
-    pub(crate) fn remove(&self, object_id: NodeId) -> Option<SlabAddress> {
+    pub(crate) fn remove(&self, object_id: ObjectId) -> Option<SlabAddress> {
         let last_u64 = self
             .object_id_to_location
             .get(object_id.0)
@@ -111,7 +111,7 @@ impl ObjectLocationMap {
         }
     }
 
-    pub(crate) fn objects_to_defrag(&self) -> Vec<NodeId> {
+    pub(crate) fn objects_to_defrag(&self) -> Vec<ObjectId> {
         // TODO
         //todo!()
         vec![]

@@ -19,7 +19,7 @@ use crate::*;
 #[derive(Clone)]
 pub struct Tree<const LEAF_FANOUT: usize = 1024> {
     collection_id: CollectionId,
-    pc: PageCache<LEAF_FANOUT>,
+    cache: ObjectCache<LEAF_FANOUT>,
     index: Index<LEAF_FANOUT>,
     _shutdown_dropper: Arc<ShutdownDropper<LEAF_FANOUT>>,
     #[cfg(feature = "for-internal-testing-only")]
@@ -28,7 +28,7 @@ pub struct Tree<const LEAF_FANOUT: usize = 1024> {
 
 impl<const LEAF_FANOUT: usize> Drop for Tree<LEAF_FANOUT> {
     fn drop(&mut self) {
-        if self.pc.config.flush_every_ms.is_none() {
+        if self.cache.config.flush_every_ms.is_none() {
             if let Err(e) = self.flush() {
                 log::error!("failed to flush Db on Drop: {e:?}");
             }
@@ -66,7 +66,7 @@ struct LeafReadGuard<'a, const LEAF_FANOUT: usize = 1024> {
     >,
     low_key: InlineArray,
     inner: &'a Tree<LEAF_FANOUT>,
-    node_id: NodeId,
+    node_id: ObjectId,
     external_cache_access_and_eviction: bool,
 }
 
@@ -80,7 +80,8 @@ impl<'a, const LEAF_FANOUT: usize> Drop for LeafReadGuard<'a, LEAF_FANOUT> {
         if self.external_cache_access_and_eviction {
             return;
         }
-        if let Err(e) = self.inner.pc.mark_access_and_evict(self.node_id, size)
+        if let Err(e) =
+            self.inner.cache.mark_access_and_evict(self.node_id, size)
         {
             self.inner.set_error(&e);
             log::error!(
@@ -100,7 +101,7 @@ struct LeafWriteGuard<'a, const LEAF_FANOUT: usize = 1024> {
     flush_epoch_guard: FlushEpochGuard<'a>,
     low_key: InlineArray,
     inner: &'a Tree<LEAF_FANOUT>,
-    node: Node<LEAF_FANOUT>,
+    node: Object<LEAF_FANOUT>,
     external_cache_access_and_eviction: bool,
 }
 
@@ -111,7 +112,7 @@ impl<'a, const LEAF_FANOUT: usize> LeafWriteGuard<'a, LEAF_FANOUT> {
 
     fn handle_cache_access_and_eviction_externally(
         mut self,
-    ) -> (NodeId, usize) {
+    ) -> (ObjectId, usize) {
         self.external_cache_access_and_eviction = true;
         (self.node.id, self.leaf_write.as_ref().unwrap().in_memory_size)
     }
@@ -128,7 +129,8 @@ impl<'a, const LEAF_FANOUT: usize> Drop for LeafWriteGuard<'a, LEAF_FANOUT> {
         if self.external_cache_access_and_eviction {
             return;
         }
-        if let Err(e) = self.inner.pc.mark_access_and_evict(self.node.id, size)
+        if let Err(e) =
+            self.inner.cache.mark_access_and_evict(self.node.id, size)
         {
             self.inner.set_error(&e);
             log::error!("io error while paging out dirty data: {:?}", e);
@@ -139,7 +141,7 @@ impl<'a, const LEAF_FANOUT: usize> Drop for LeafWriteGuard<'a, LEAF_FANOUT> {
 impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     pub(crate) fn new(
         collection_id: CollectionId,
-        pc: PageCache<LEAF_FANOUT>,
+        cache: ObjectCache<LEAF_FANOUT>,
         index: Index<LEAF_FANOUT>,
         _shutdown_dropper: Arc<ShutdownDropper<LEAF_FANOUT>>,
         #[cfg(feature = "for-internal-testing-only")] event_verifier: Arc<
@@ -148,7 +150,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     ) -> Tree<LEAF_FANOUT> {
         Tree {
             collection_id,
-            pc,
+            cache,
             index,
             _shutdown_dropper,
             #[cfg(feature = "for-internal-testing-only")]
@@ -159,15 +161,15 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     // This is only pub for an extra assertion during testing.
     #[doc(hidden)]
     pub fn check_error(&self) -> io::Result<()> {
-        self.pc.check_error()
+        self.cache.check_error()
     }
 
     fn set_error(&self, error: &io::Error) {
-        self.pc.set_error(error)
+        self.cache.set_error(error)
     }
 
     pub fn storage_stats(&self) -> heap::Stats {
-        self.pc.stats()
+        self.cache.stats()
     }
 
     /// Synchronously flushes all dirty IO buffers and calls
@@ -184,7 +186,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     /// This is called automatically on drop of the last open Db
     /// instance.
     pub fn flush(&self) -> io::Result<()> {
-        self.pc.flush()
+        self.cache.flush()
     }
 
     fn page_in(
@@ -193,13 +195,13 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     ) -> io::Result<(
         InlineArray,
         ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
-        Node<LEAF_FANOUT>,
+        Object<LEAF_FANOUT>,
     )> {
         loop {
             let (low_key, node) = self.index.get_lte(key).unwrap();
             let mut write = node.inner.write_arc();
             if write.is_none() {
-                let leaf_bytes = self.pc.read(node.id.0)?;
+                let leaf_bytes = self.cache.read(node.id.0)?;
                 let leaf: Box<Leaf<LEAF_FANOUT>> =
                     Leaf::deserialize(&leaf_bytes).unwrap();
                 *write = Some(leaf);
@@ -216,7 +218,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 let size = leaf.in_memory_size;
                 drop(write);
                 log::trace!("key undershoot in page_in");
-                self.pc.mark_access_and_evict(node.id, size)?;
+                self.cache.mark_access_and_evict(node.id, size)?;
 
                 continue;
             }
@@ -226,7 +228,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     let size = leaf.in_memory_size;
                     drop(write);
                     log::trace!("key overshoot in page_in");
-                    self.pc.mark_access_and_evict(node.id, size)?;
+                    self.cache.mark_access_and_evict(node.id, size)?;
 
                     continue;
                 }
@@ -281,10 +283,10 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         leaf.deleted = Some(merge_epoch);
 
         self.index.remove(&leaf_guard.low_key).unwrap();
-        self.pc.node_id_index.remove(&leaf_guard.node.id).unwrap();
+        self.cache.node_id_index.remove(&leaf_guard.node.id).unwrap();
 
         // NB: these updates must "happen" atomically in the same flush epoch
-        self.pc.install_dirty(
+        self.cache.install_dirty(
             merge_epoch,
             leaf_guard.node.id,
             Dirty::MergedAndDeleted {
@@ -293,7 +295,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             },
         );
 
-        self.pc.install_dirty(
+        self.cache.install_dirty(
             merge_epoch,
             predecessor_guard.node.id,
             Dirty::NotYetSerialized {
@@ -308,8 +310,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         let (s_node_id, s_sz) =
             leaf_guard.handle_cache_access_and_eviction_externally();
 
-        self.pc.mark_access_and_evict(p_node_id, p_sz)?;
-        self.pc.mark_access_and_evict(s_node_id, s_sz)?;
+        self.cache.mark_access_and_evict(p_node_id, p_sz)?;
+        self.cache.mark_access_and_evict(s_node_id, s_sz)?;
 
         Ok(())
     }
@@ -404,7 +406,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     ) -> io::Result<LeafWriteGuard<'a, LEAF_FANOUT>> {
         let (low_key, mut write, node) = self.page_in(key)?;
 
-        let flush_epoch_guard = self.pc.check_into_flush_epoch();
+        let flush_epoch_guard = self.cache.check_into_flush_epoch();
 
         let leaf = write.as_mut().unwrap();
 
@@ -435,8 +437,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 // be extra-explicit about serialized bytes
                 let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
 
-                let serialized =
-                    leaf_ref.serialize(self.pc.config.zstd_compression_level);
+                let serialized = leaf_ref
+                    .serialize(self.cache.config.zstd_compression_level);
 
                 log::trace!(
                     "D adding node {} to dirty {:?}",
@@ -448,7 +450,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     assert!(leaf.lo.is_empty());
                 }
 
-                self.pc.install_dirty(
+                self.cache.install_dirty(
                     old_dirty_epoch,
                     node.id,
                     Dirty::CooperativelySerialized {
@@ -562,7 +564,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 leaf.in_memory_size.saturating_sub(old_size - new_size);
         }
 
-        let split = leaf.split_if_full(new_epoch, &self.pc);
+        let split = leaf.split_if_full(new_epoch, &self.cache);
         if split.is_some() || Some(value_ivec) != ret {
             leaf.mutation_count += 1;
             leaf.dirty_flush_epoch = Some(new_epoch);
@@ -575,7 +577,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 assert!(leaf_guard.low_key.is_empty());
             }
 
-            self.pc.install_dirty(
+            self.cache.install_dirty(
                 new_epoch,
                 leaf_guard.node.id,
                 Dirty::NotYetSerialized {
@@ -595,10 +597,10 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             assert_ne!(rhs_node.id.0, 0);
             assert!(!split_key.is_empty());
 
-            self.pc.node_id_index.insert(rhs_node.id, rhs_node.clone());
+            self.cache.node_id_index.insert(rhs_node.id, rhs_node.clone());
             self.index.insert(split_key.clone(), rhs_node.clone());
 
-            self.pc.install_dirty(
+            self.cache.install_dirty(
                 new_epoch,
                 rhs_node.id,
                 Dirty::NotYetSerialized {
@@ -664,7 +666,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 new_epoch
             );
 
-            self.pc.install_dirty(
+            self.cache.install_dirty(
                 new_epoch,
                 leaf_guard.node.id,
                 Dirty::NotYetSerialized {
@@ -784,7 +786,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             Err(CompareAndSwapError { current, proposed })
         };
 
-        let split = leaf.split_if_full(new_epoch, &self.pc);
+        let split = leaf.split_if_full(new_epoch, &self.cache);
         let split_happened = split.is_some();
         if split_happened || ret.is_ok() {
             leaf.mutation_count += 1;
@@ -799,7 +801,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 assert!(leaf_guard.low_key.is_empty());
             }
 
-            self.pc.install_dirty(
+            self.cache.install_dirty(
                 new_epoch,
                 leaf_guard.node.id,
                 Dirty::NotYetSerialized {
@@ -815,7 +817,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 rhs_node.id,
                 new_epoch
             );
-            self.pc.install_dirty(
+            self.cache.install_dirty(
                 new_epoch,
                 rhs_node.id,
                 Dirty::NotYetSerialized {
@@ -824,7 +826,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     low_key: split_key.clone(),
                 },
             );
-            self.pc.node_id_index.insert(rhs_node.id, rhs_node.clone());
+            self.cache.node_id_index.insert(rhs_node.id, rhs_node.clone());
             self.index.insert(split_key, rhs_node);
         }
 
@@ -1054,7 +1056,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             InlineArray,
             (
                 ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
-                Node<LEAF_FANOUT>,
+                Object<LEAF_FANOUT>,
             ),
         > = BTreeMap::new();
 
@@ -1062,7 +1064,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         let mut last: Option<(
             InlineArray,
             ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
-            Node<LEAF_FANOUT>,
+            Object<LEAF_FANOUT>,
         )> = None;
 
         for key in batch.writes.keys() {
@@ -1091,7 +1093,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         // NB: add the flush epoch at the end of the lock acquisition
         // process when all locks have been acquired, to avoid situations
         // where a leaf is already dirty with an epoch "from the future".
-        let flush_epoch_guard = self.pc.check_into_flush_epoch();
+        let flush_epoch_guard = self.cache.check_into_flush_epoch();
         let new_epoch = flush_epoch_guard.epoch();
 
         // Flush any leaves that are dirty from a previous flush epoch
@@ -1117,7 +1119,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
 
                     let serialized = leaf_ref
-                        .serialize(self.pc.config.zstd_compression_level);
+                        .serialize(self.cache.config.zstd_compression_level);
 
                     log::trace!(
                         "C adding node {} to dirty epoch {:?}",
@@ -1125,7 +1127,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                         old_dirty_epoch
                     );
 
-                    self.pc.install_dirty(
+                    self.cache.install_dirty(
                         old_dirty_epoch,
                         node.id,
                         Dirty::CooperativelySerialized {
@@ -1146,7 +1148,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             }
         }
 
-        let mut splits: Vec<(InlineArray, Node<LEAF_FANOUT>)> = vec![];
+        let mut splits: Vec<(InlineArray, Object<LEAF_FANOUT>)> = vec![];
 
         // Insert and split when full
         for (key, value_opt) in batch.writes {
@@ -1166,7 +1168,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 leaf.data.insert(key, value);
 
                 if let Some((split_key, rhs_node)) =
-                    leaf.split_if_full(new_epoch, &self.pc)
+                    leaf.split_if_full(new_epoch, &self.cache)
                 {
                     let write = rhs_node.inner.write_arc();
                     assert!(write.is_some());
@@ -1181,7 +1183,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         // Make splits globally visible
         for (split_key, rhs_node) in splits {
-            self.pc.node_id_index.insert(rhs_node.id, rhs_node.clone());
+            self.cache.node_id_index.insert(rhs_node.id, rhs_node.clone());
             self.index.insert(split_key, rhs_node);
         }
 
@@ -1192,7 +1194,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             leaf.dirty_flush_epoch = Some(new_epoch);
             leaf.mutation_count += 1;
             cache_accesses.push((node.id, leaf.in_memory_size));
-            self.pc.install_dirty(
+            self.cache.install_dirty(
                 new_epoch,
                 node.id,
                 Dirty::NotYetSerialized {
@@ -1208,7 +1210,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         // Perform cache maintenance
         for (node_id, size) in cache_accesses {
-            self.pc.mark_access_and_evict(node_id, size)?;
+            self.cache.mark_access_and_evict(node_id, size)?;
         }
 
         Ok(())
@@ -1950,8 +1952,8 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
     fn split_if_full(
         &mut self,
         new_epoch: FlushEpoch,
-        allocator: &PageCache<LEAF_FANOUT>,
-    ) -> Option<(InlineArray, Node<LEAF_FANOUT>)> {
+        allocator: &ObjectCache<LEAF_FANOUT>,
+    ) -> Option<(InlineArray, Object<LEAF_FANOUT>)> {
         if self.data.is_full() {
             // split
             let split_offset = if self.lo.is_empty() {
@@ -2008,8 +2010,8 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
             self.hi = Some(split_key.clone());
             self.set_in_memory_size();
 
-            let rhs_node = Node {
-                id: NodeId(rhs_id),
+            let rhs_node = Object {
+                id: ObjectId(rhs_id),
                 inner: Arc::new(Some(Box::new(rhs)).into()),
             };
 
