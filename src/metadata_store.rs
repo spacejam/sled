@@ -739,7 +739,7 @@ fn read_snapshot_and_apply_logs(
             if matches!(update_metadata, UpdateMetadata::Store { .. }) {
                 recovered.insert(node_id, update_metadata);
             } else {
-                let previous = recovered.remove(&node_id);
+                let _previous = recovered.remove(&node_id);
                 // TODO: assert!(previous.is_some());
             }
         }

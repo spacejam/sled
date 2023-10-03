@@ -438,7 +438,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
     pub fn drop_tree<V: AsRef<[u8]>>(&self, name: V) -> io::Result<bool> {
         let name_ref = name.as_ref();
-        let mut trees = self.trees.lock();
+        let trees = self.trees.lock();
 
         let tree = if let Some(collection_id_buf) =
             self.collection_name_mapping.get(name_ref)?

@@ -293,7 +293,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
     let (metadata_store, recovered_metadata) =
         MetadataStore::recover(path.join("metadata"))?;
 
-    let pt = PageTable::<AtomicU64>::default();
+    let pt = ObjectLocationMap::default();
     let mut recovered_nodes =
         Vec::<NodeRecovery>::with_capacity(recovered_metadata.len());
     let mut node_ids: FnvHashSet<u64> = Default::default();
@@ -311,7 +311,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
                 let slab_address = SlabAddress::from(location);
                 slots_per_slab[slab_address.slab_id as usize]
                     .insert(slab_address.slot());
-                pt.get(node_id.0).store(location.get(), Ordering::Relaxed);
+                pt.insert(node_id, slab_address);
                 recovered_nodes.push(NodeRecovery {
                     node_id,
                     collection_id,
@@ -349,7 +349,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
             slabs: Arc::new(slabs.try_into().unwrap()),
             path: path.into(),
             object_id_allocator: Arc::new(Allocator::from_allocated(&node_ids)),
-            pt: ObjectLocationMap { object_id_to_location: pt },
+            pt,
             global_error: metadata_store.get_global_error_arc(),
             metadata_store: Arc::new(metadata_store),
             directory_lock: Arc::new(directory_lock),
@@ -508,11 +508,6 @@ struct Slab {
 }
 
 impl Slab {
-    fn maintenance(&self) -> io::Result<usize> {
-        // TODO compact
-        Ok(0)
-    }
-
     fn read(
         &self,
         slot: u64,
@@ -712,14 +707,6 @@ impl Heap {
         set_error(&self.global_error, error);
     }
 
-    pub fn maintenance(&self) -> io::Result<usize> {
-        for slab in self.slabs.iter() {
-            slab.maintenance()?;
-        }
-
-        Ok(0)
-    }
-
     pub fn stats(&self) -> Stats {
         Stats {}
     }
@@ -727,7 +714,6 @@ impl Heap {
     pub fn read(&self, object_id: NodeId) -> io::Result<Vec<u8>> {
         self.check_error()?;
 
-        let mut trace_spin = false;
         let mut guard = self.free_ebr.pin();
         let slab_address = self.pt.get_location_for_object(object_id);
 
@@ -827,5 +813,9 @@ impl Heap {
 
     pub fn allocate_object_id(&self) -> u64 {
         self.object_id_allocator.allocate()
+    }
+
+    pub fn objects_to_defrag(&self) -> Vec<NodeId> {
+        self.pt.objects_to_defrag()
     }
 }

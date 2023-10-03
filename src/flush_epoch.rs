@@ -202,7 +202,7 @@ impl FlushEpochTracker {
     }
 
     pub fn check_in<'a>(&self) -> FlushEpochGuard<'a> {
-        let mut tracker_guard = self.active_ebr.pin();
+        let _tracker_guard = self.active_ebr.pin();
         loop {
             let tracker: &'a EpochTracker =
                 unsafe { &*self.inner.current_active.load(Ordering::SeqCst) };

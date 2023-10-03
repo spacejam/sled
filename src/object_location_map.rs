@@ -1,10 +1,6 @@
-use std::{
-    num::NonZeroU64,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-};
+use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use pagetable::PageTable;
 
@@ -15,17 +11,21 @@ use crate::{
 
 #[derive(Clone)]
 struct SlabTenancy {
-    inner: Arc<[SlabTenancyInner; N_SLABS]>,
+    inner: Arc<[PageTable<AtomicU64>; N_SLABS]>,
 }
 
-struct SlabTenancyInner {
-    slot_to_object_id: PageTable<AtomicU64>,
+impl Default for SlabTenancy {
+    fn default() -> SlabTenancy {
+        SlabTenancy {
+            inner: Arc::new(core::array::from_fn(|_| PageTable::default())),
+        }
+    }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct ObjectLocationMap {
-    pub(crate) object_id_to_location: PageTable<AtomicU64>,
-    // location_to_object_id: SlabTenancy,
+    object_id_to_location: PageTable<AtomicU64>,
+    location_to_object_id: SlabTenancy,
 }
 
 impl ObjectLocationMap {
@@ -78,5 +78,9 @@ impl ObjectLocationMap {
         } else {
             None
         }
+    }
+
+    pub(crate) fn objects_to_defrag(&self) -> Vec<NodeId> {
+        todo!()
     }
 }
