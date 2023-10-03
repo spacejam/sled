@@ -360,6 +360,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
     })
 }
 
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct SlabAddress {
     slab_id: u8,
     slab_slot: [u8; 7],
@@ -377,7 +378,11 @@ impl SlabAddress {
         }
     }
 
-    fn slot(&self) -> u64 {
+    pub fn slab(&self) -> usize {
+        usize::from(self.slab_id)
+    }
+
+    pub fn slot(&self) -> u64 {
         u64::from_be_bytes([
             0,
             self.slab_slot[0],
@@ -794,7 +799,7 @@ impl Heap {
                         allocator: self.object_id_allocator.clone(),
                         freed_slot: node_id.0,
                     });
-                    self.pt.remove(node_id)
+                    Some(self.pt.remove(node_id))
                 }
             };
 

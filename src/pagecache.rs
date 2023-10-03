@@ -464,7 +464,10 @@ impl<const LEAF_FANOUT: usize> PageCache<LEAF_FANOUT> {
             }
         }
         */
-        todo!()
+
+        // TODO
+
+        Ok(0)
     }
 }
 
