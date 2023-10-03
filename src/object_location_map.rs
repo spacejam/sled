@@ -87,27 +87,28 @@ impl ObjectLocationMap {
     /// # Panics
     ///
     /// Asserts that the object was actually stored in a location.
-    pub(crate) fn remove(&self, object_id: NodeId) -> SlabAddress {
+    pub(crate) fn remove(&self, object_id: NodeId) -> Option<SlabAddress> {
         let last_u64 = self
             .object_id_to_location
             .get(object_id.0)
             .swap(0, Ordering::Release);
 
-        assert_ne!(0, last_u64);
+        if let Some(nzu) = NonZeroU64::new(last_u64) {
+            let last_address = SlabAddress::from(nzu);
 
-        let nzu = NonZeroU64::new(last_u64).unwrap();
-        let last_address = SlabAddress::from(nzu);
+            let slab = last_address.slab();
+            let slot = last_address.slot();
 
-        let slab = last_address.slab();
-        let slot = last_address.slot();
+            let last_oid_at_location = self.location_to_object_id.inner[slab]
+                .get(slot)
+                .swap(0, Ordering::Release);
 
-        let last_oid_at_location = self.location_to_object_id.inner[slab]
-            .get(slot)
-            .swap(0, Ordering::Release);
+            assert_eq!(object_id.0, last_oid_at_location);
 
-        assert_eq!(object_id.0, last_oid_at_location);
-
-        last_address
+            Some(last_address)
+        } else {
+            None
+        }
     }
 
     pub(crate) fn objects_to_defrag(&self) -> Vec<NodeId> {

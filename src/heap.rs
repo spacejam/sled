@@ -3,14 +3,13 @@ use std::fs;
 use std::io::{self, Read};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::Arc;
 
 use ebr::{Ebr, Guard};
 use fault_injection::{annotate, fallible, maybe};
 use fnv::FnvHashSet;
 use fs2::FileExt as _;
-use pagetable::PageTable;
 use rayon::prelude::*;
 
 use crate::object_location_map::ObjectLocationMap;
@@ -799,7 +798,7 @@ impl Heap {
                         allocator: self.object_id_allocator.clone(),
                         freed_slot: node_id.0,
                     });
-                    Some(self.pt.remove(node_id))
+                    self.pt.remove(node_id)
                 }
             };
 

@@ -1,10 +1,10 @@
+// TODO heap maintenance w/ speculative write followed by CAS in pt
+//      maybe with global writer lock that controls flushers too
 // TODO implement create exclusive
 // TODO test concurrent drop_tree when other threads are still using it
 // TODO list trees test for recovering empty collections
 // TODO make node_id_index private on PageCache
 // TODO put aborts behind feature flags for hard crashes
-// TODO heap maintenance w/ speculative write followed by CAS in pt
-//      maybe with global writer lock that controls flushers too
 // TODO allow waiting flusher to start collecting dirty pages as soon
 //      as it is evacuated - just wait until last flush is done before
 //      we persist the batch
@@ -15,6 +15,7 @@
 // TODO skim inlining output of RUSTFLAGS="-Cremark=all -Cdebuginfo=1"
 // TODO measure space savings vs cost of zstd in metadata store
 // TODO corrupted data extraction binary
+// TODO if the crash_iter test panics, the test doesn't fail as expected
 
 mod config;
 mod db;
