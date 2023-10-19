@@ -10,6 +10,7 @@ use ebr::{Ebr, Guard};
 use fault_injection::{annotate, fallible, maybe};
 use fnv::FnvHashSet;
 use fs2::FileExt as _;
+use parking_lot::Mutex;
 use rayon::prelude::*;
 
 use crate::object_location_map::ObjectLocationMap;
@@ -292,7 +293,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
     let (metadata_store, recovered_metadata) =
         MetadataStore::recover(path.join("metadata"))?;
 
-    let pt = ObjectLocationMap::default();
+    let table = ObjectLocationMap::default();
     let mut recovered_nodes =
         Vec::<ObjectRecovery>::with_capacity(recovered_metadata.len());
     let mut object_ids: FnvHashSet<u64> = Default::default();
@@ -310,7 +311,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
                 let slab_address = SlabAddress::from(location);
                 slots_per_slab[slab_address.slab_id as usize]
                     .insert(slab_address.slot());
-                pt.insert(object_id, slab_address);
+                table.insert(object_id, slab_address);
                 recovered_nodes.push(ObjectRecovery {
                     object_id,
                     collection_id,
@@ -350,11 +351,12 @@ pub(crate) fn recover<P: AsRef<Path>>(
             object_id_allocator: Arc::new(Allocator::from_allocated(
                 &object_ids,
             )),
-            pt,
+            table,
             global_error: metadata_store.get_global_error_arc(),
             metadata_store: Arc::new(metadata_store),
             directory_lock: Arc::new(directory_lock),
             free_ebr: Ebr::default(),
+            write_batch_atomicity_mutex: Default::default(),
         },
         recovered_nodes,
         was_recovered,
@@ -379,8 +381,8 @@ impl SlabAddress {
         }
     }
 
-    pub fn slab(&self) -> usize {
-        usize::from(self.slab_id)
+    pub fn slab(&self) -> u8 {
+        self.slab_id
     }
 
     pub fn slot(&self) -> u64 {
@@ -672,13 +674,14 @@ impl UpdateMetadata {
 pub(crate) struct Heap {
     path: PathBuf,
     slabs: Arc<[Slab; N_SLABS]>,
-    pt: ObjectLocationMap,
+    table: ObjectLocationMap,
     object_id_allocator: Arc<Allocator>,
     metadata_store: Arc<MetadataStore>,
     free_ebr: Ebr<DeferredFree, 1>,
     global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
     #[allow(unused)]
     directory_lock: Arc<fs::File>,
+    write_batch_atomicity_mutex: Arc<Mutex<()>>,
 }
 
 impl fmt::Debug for Heap {
@@ -721,7 +724,7 @@ impl Heap {
         self.check_error()?;
 
         let mut guard = self.free_ebr.pin();
-        let slab_address = self.pt.get_location_for_object(object_id);
+        let slab_address = self.table.get_location_for_object(object_id);
 
         let slab = &self.slabs[usize::from(slab_address.slab_id)];
 
@@ -736,6 +739,7 @@ impl Heap {
 
     pub fn write_batch(&self, batch: Vec<Update>) -> io::Result<()> {
         self.check_error()?;
+        let atomicity_mu = self.write_batch_atomicity_mutex.lock();
         let mut guard = self.free_ebr.pin();
 
         let slabs = &self.slabs;
@@ -793,14 +797,14 @@ impl Heap {
         for update_metadata in metadata_batch {
             let last_address_opt = match update_metadata {
                 UpdateMetadata::Store { object_id, location, .. } => {
-                    self.pt.insert(object_id, SlabAddress::from(location))
+                    self.table.insert(object_id, SlabAddress::from(location))
                 }
                 UpdateMetadata::Free { object_id, .. } => {
                     guard.defer_drop(DeferredFree {
                         allocator: self.object_id_allocator.clone(),
                         freed_slot: object_id.0,
                     });
-                    self.pt.remove(object_id)
+                    self.table.remove(object_id)
                 }
             };
 
@@ -814,6 +818,8 @@ impl Heap {
             }
         }
 
+        drop(atomicity_mu);
+
         Ok(())
     }
 
@@ -821,7 +827,62 @@ impl Heap {
         self.object_id_allocator.allocate()
     }
 
-    pub fn objects_to_defrag(&self) -> Vec<ObjectId> {
-        self.pt.objects_to_defrag()
+    pub fn maintenance(&self) {
+        let atomicity_mu = self.write_batch_atomicity_mutex.lock();
+        let mut guard = self.free_ebr.pin();
+        let to_defrag = self.table.objects_to_defrag();
+
+        let mut metadata_batch = vec![];
+
+        let mut allocations_to_free_on_failure = vec![];
+
+        for (object_id, old_location) in to_defrag {
+            let slab_id = old_location.slab();
+            let slab = &self.slabs[usize::from(slab_id)];
+
+            let fragmented_slot = old_location.slot();
+
+            // read
+            let data = match slab.read(fragmented_slot, &mut guard) {
+                Ok(data) => data,
+                Err(e) => {
+                    // this doesn't need to propagate the error
+                    // because this work is not correctness
+                    // critical for anything, it's just a space
+                    // optimization if it happens to work out.
+                    log::error!("failed to read object during GC: {e:?}");
+                    return;
+                }
+            };
+
+            // allocate new slot
+            let compacted_slot = slab.slot_allocator.allocate();
+
+            allocations_to_free_on_failure.push((slab_id, compacted_slot));
+
+            let new_location =
+                SlabAddress::from_slab_slot(slab_id, compacted_slot);
+
+            let new_location_nzu: NonZeroU64 = new_location.into();
+
+            let complete_durability_pipeline =
+                maybe!(slab.write(compacted_slot, data));
+
+            match complete_durability_pipeline {
+                Ok(()) => {
+                    //
+                }
+                Err(e) => {
+                    // free the whole batch and return
+                }
+            }
+        }
+
+        // try to write the metadata batch, freeing all allocated ids if we failed.
+        if let Err(e) = self.metadata_store.insert_batch(&metadata_batch) {
+            self.set_error(&e);
+        }
+
+        drop(atomicity_mu);
     }
 }

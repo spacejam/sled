@@ -199,6 +199,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     )> {
         loop {
             let (low_key, node) = self.index.get_lte(key).unwrap();
+            if node.collection_id != self.collection_id {
+                log::trace!("retry due to mismatched collection id in page_in");
+                continue;
+            }
+
             let mut write = node.inner.write_arc();
             if write.is_none() {
                 let leaf_bytes = self.cache.read(node.object_id.0)?;

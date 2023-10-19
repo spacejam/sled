@@ -436,49 +436,14 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             }
         }
 
-        self.maintenance()?;
+        self.maintenance();
 
         Ok(())
     }
 
-    fn maintenance(&self) -> io::Result<usize> {
-        let objects_to_defrag = self.heap.objects_to_defrag();
-        let epoch = self.check_into_flush_epoch();
-
-        /*
-        for (object_id, collection_id, low_key) in objects_to_defrag {
-            //
-            let node = if let Some(node) = self.object_id_index.get(&object_id) {
-                node
-            } else {
-                log::error!("tried to get node for maintenance but it was not present in object_id_index");
-                continue;
-            };
-
-            let mut write_opt = node.inner.write_arc();
-            if let Some(write) = *write_opt {
-            } else {
-                // read then write, skipping cache
-                let leaf_bytes = self.read(node.id.0)?;
-                self.install_dirty(
-                    epoch.epoch(),
-                    node.id,
-                    Dirty::CooperativelySerialized {
-                        object_id: node.id,
-                        collection_id,
-                        low_key,
-                        mutation_count: leaf.mutation_count,
-                        data: Arc::new(leaf_bytes),
-                    },
-                );
-            }
-        }
-        */
-
-        // TODO
-
-        Ok(0)
-    }
+    // maintenance is infallible because if it fails, it doesn't invalidate
+    // the durability already achieved earlier.
+    fn maintenance(&self) {}
 }
 
 fn initialize<const LEAF_FANOUT: usize>(

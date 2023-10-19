@@ -1,3 +1,5 @@
+// TODO collection_id on page_in checks - it needs to be pinned w/ heap's EBR?
+// TODO after defrag, reduce self.tip while popping the max items in the free list
 // TODO store low key and collection ID directly on Object
 // TODO make the Arc<Option<Box<Leaf just a single pointer chase w/ custom container
 // TODO heap maintenance w/ speculative write followed by CAS in pt

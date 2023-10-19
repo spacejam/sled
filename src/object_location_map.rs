@@ -73,9 +73,10 @@ impl ObjectLocationMap {
         let slab = new_location.slab();
         let slot = new_location.slot();
 
-        let last_oid_at_location = self.location_to_object_id.inner[slab]
-            .get(slot)
-            .swap(object_id.0, Ordering::Release);
+        let last_oid_at_location = self.location_to_object_id.inner
+            [usize::from(slab)]
+        .get(slot)
+        .swap(object_id.0, Ordering::Release);
 
         assert_eq!(0, last_oid_at_location);
 
@@ -99,9 +100,10 @@ impl ObjectLocationMap {
             let slab = last_address.slab();
             let slot = last_address.slot();
 
-            let last_oid_at_location = self.location_to_object_id.inner[slab]
-                .get(slot)
-                .swap(0, Ordering::Release);
+            let last_oid_at_location = self.location_to_object_id.inner
+                [usize::from(slab)]
+            .get(slot)
+            .swap(0, Ordering::Release);
 
             assert_eq!(object_id.0, last_oid_at_location);
 
@@ -111,7 +113,7 @@ impl ObjectLocationMap {
         }
     }
 
-    pub(crate) fn objects_to_defrag(&self) -> Vec<ObjectId> {
+    pub(crate) fn objects_to_defrag(&self) -> Vec<(ObjectId, SlabAddress)> {
         // TODO
         //todo!()
         vec![]
