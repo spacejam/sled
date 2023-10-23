@@ -295,6 +295,18 @@ impl PartialEq<[u8]> for IVec {
 
 impl Eq for IVec {}
 
+impl PartialOrd<IVec> for [u8] {
+    fn partial_cmp(&self, other: &IVec) -> Option<std::cmp::Ordering> {
+        <[u8] as PartialOrd<[u8]>>::partial_cmp(self, other)
+    }
+}
+
+impl PartialEq<IVec> for [u8] {
+    fn eq(&self, other: &IVec) -> bool {
+        self.eq(other.deref())
+    }
+}
+
 impl fmt::Debug for IVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_ref().fmt(f)
