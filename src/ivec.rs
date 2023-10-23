@@ -303,7 +303,7 @@ impl PartialOrd<IVec> for [u8] {
 
 impl PartialEq<IVec> for [u8] {
     fn eq(&self, other: &IVec) -> bool {
-        *self == *other
+        self.eq(other.deref())
     }
 }
 
