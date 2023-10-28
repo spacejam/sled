@@ -20,6 +20,7 @@ trait Databench: Clone + Send {
     const NAME: &'static str;
     const PATH: &'static str;
     fn open() -> Self;
+    fn remove_generic(&self, key: &[u8]);
     fn insert_generic(&self, key: &[u8], value: &[u8]);
     fn get_generic(&self, key: &[u8]) -> Option<Self::READ>;
     fn flush_generic(&self);
@@ -46,6 +47,9 @@ impl Databench for Db {
 
     fn insert_generic(&self, key: &[u8], value: &[u8]) {
         self.insert(key, value).unwrap();
+    }
+    fn remove_generic(&self, key: &[u8]) {
+        self.remove(key).unwrap();
     }
     fn get_generic(&self, key: &[u8]) -> Option<Self::READ> {
         self.get(key).unwrap()
@@ -284,6 +288,56 @@ fn inserts<D: Databench>(store: &D) -> Vec<InsertStats> {
     ret
 }
 
+fn removes<D: Databench>(store: &D) -> Vec<RemoveStats> {
+    println!("{} removals", D::NAME);
+    let mut i = 0_u32;
+
+    let factory = move || {
+        i += 1;
+        (store.clone(), i - 1)
+    };
+
+    let f = |state: (D, u32)| {
+        let (store, offset) = state;
+        let start = N_WRITES_PER_THREAD * offset;
+        let end = N_WRITES_PER_THREAD * (offset + 1);
+        for i in start..end {
+            let k: &[u8] = &i.to_be_bytes();
+            store.remove_generic(k);
+        }
+    };
+
+    let mut ret = vec![];
+
+    for concurrency in CONCURRENCY {
+        let remove_elapsed =
+            execute_lockstep_concurrent(factory, f, *concurrency);
+
+        let flush_timer = Instant::now();
+        store.flush_generic();
+
+        let wps = (N_WRITES_PER_THREAD * *concurrency as u32) as u64
+            * 1_000_000_u64
+            / u64::try_from(remove_elapsed.as_micros().max(1))
+                .unwrap_or(u64::MAX);
+
+        ret.push(RemoveStats {
+            thread_count: *concurrency,
+            removes_per_second: wps,
+        });
+
+        println!(
+            "{} removes/s with {concurrency} threads over {:?}, then {:?} to flush {}",
+            wps.to_formatted_string(&Locale::en),
+            remove_elapsed,
+            flush_timer.elapsed(),
+            D::NAME,
+        );
+    }
+
+    ret
+}
+
 fn gets<D: Databench>(store: &D) -> Vec<GetStats> {
     println!("{} reads", D::NAME);
 
@@ -371,22 +425,34 @@ struct GetStats {
     gets_per_second: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RemoveStats {
+    thread_count: usize,
+    removes_per_second: u64,
+}
+
 #[allow(unused)]
 #[derive(Debug, Clone)]
 struct Stats {
-    disk_space: u64,
+    post_insert_disk_space: u64,
+    post_remove_disk_space: u64,
     allocated_memory: usize,
     freed_memory: usize,
     resident_memory: usize,
     insert_stats: Vec<InsertStats>,
     get_stats: Vec<GetStats>,
+    remove_stats: Vec<RemoveStats>,
 }
 
 impl Stats {
     fn print_report(&self) {
         println!(
-            "bytes on disk: {}",
-            self.disk_space.to_formatted_string(&Locale::en)
+            "bytes on disk after inserts: {}",
+            self.post_insert_disk_space.to_formatted_string(&Locale::en)
+        );
+        println!(
+            "bytes on disk after removes: {}",
+            self.post_remove_disk_space.to_formatted_string(&Locale::en)
         );
         println!(
             "bytes in memory: {}",
@@ -406,6 +472,13 @@ impl Stats {
                 stats.gets_per_second.to_formatted_string(&Locale::en)
             );
         }
+        for stats in &self.remove_stats {
+            println!(
+                "{} threads {} removes per second",
+                stats.thread_count,
+                stats.removes_per_second.to_formatted_string(&Locale::en)
+            );
+        }
     }
 }
 
@@ -418,15 +491,21 @@ fn bench<D: Databench>() -> Stats {
     store.flush_generic();
     println!("final flush took {:?} for {}", before_flush.elapsed(), D::NAME);
 
+    let post_insert_disk_space = du(D::PATH.as_ref()).unwrap();
+
     let get_stats = gets(&store);
 
+    let remove_stats = removes(&store);
+
     Stats {
-        disk_space: du(D::PATH.as_ref()).unwrap(),
+        post_insert_disk_space,
+        post_remove_disk_space: du(D::PATH.as_ref()).unwrap(),
         allocated_memory: allocated(),
         freed_memory: freed(),
         resident_memory: resident(),
         insert_stats,
         get_stats,
+        remove_stats,
     }
 }
 

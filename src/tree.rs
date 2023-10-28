@@ -2000,7 +2000,7 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
             let rhs_id = allocator.allocate_object_id();
 
             log::trace!(
-                "split leaf {:?} at split key: {:?} into new node {} at {:?}",
+                "split leaf {:?} at split key: {:?} into new {:?} at {:?}",
                 self.lo,
                 split_key,
                 rhs_id,
@@ -2024,7 +2024,7 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
             self.set_in_memory_size();
 
             let rhs_node = Object {
-                object_id: ObjectId(rhs_id),
+                object_id: rhs_id,
                 collection_id,
                 low_key: split_key.clone(),
                 inner: Arc::new(Some(Box::new(rhs)).into()),

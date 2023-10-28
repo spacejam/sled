@@ -13,8 +13,8 @@ use fs2::FileExt as _;
 use parking_lot::Mutex;
 use rayon::prelude::*;
 
-use crate::object_location_map::ObjectLocationMap;
-use crate::{Allocator, CollectionId, DeferredFree, MetadataStore, ObjectId};
+use crate::object_location_mapper::ObjectLocationMapper;
+use crate::{CollectionId, Config, DeferredFree, MetadataStore, ObjectId};
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
 pub(crate) const N_SLABS: usize = 78;
@@ -130,9 +130,6 @@ pub use inline_array::InlineArray;
 
 #[derive(Debug, Clone)]
 pub struct Stats {}
-
-#[derive(Debug, Clone)]
-pub struct Config {}
 
 #[derive(Debug)]
 pub(crate) struct ObjectRecovery {
@@ -262,6 +259,7 @@ impl PersistentSettings {
 pub(crate) fn recover<P: AsRef<Path>>(
     path: P,
     leaf_fanout: usize,
+    config: &Config,
 ) -> io::Result<HeapRecovery> {
     let path = path.as_ref();
     log::trace!("recovering Heap at {:?}", path);
@@ -293,25 +291,22 @@ pub(crate) fn recover<P: AsRef<Path>>(
     let (metadata_store, recovered_metadata) =
         MetadataStore::recover(path.join("metadata"))?;
 
-    let table = ObjectLocationMap::default();
+    let table = ObjectLocationMapper::new(
+        &recovered_metadata,
+        config.target_heap_file_fill_ratio,
+    );
+
     let mut recovered_nodes =
         Vec::<ObjectRecovery>::with_capacity(recovered_metadata.len());
-    let mut object_ids: FnvHashSet<u64> = Default::default();
-    let mut slots_per_slab: [FnvHashSet<u64>; N_SLABS] =
-        core::array::from_fn(|_| Default::default());
+
     for update_metadata in recovered_metadata {
         match update_metadata {
             UpdateMetadata::Store {
                 object_id,
                 collection_id,
-                location,
+                location: _,
                 metadata,
             } => {
-                object_ids.insert(object_id.0);
-                let slab_address = SlabAddress::from(location);
-                slots_per_slab[slab_address.slab_id as usize]
-                    .insert(slab_address.slot());
-                table.insert(object_id, slab_address);
                 recovered_nodes.push(ObjectRecovery {
                     object_id,
                     collection_id,
@@ -333,13 +328,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
 
         let file = fallible!(slab_opts.open(slab_path));
 
-        slabs.push(Slab {
-            slot_size,
-            file,
-            slot_allocator: Arc::new(Allocator::from_allocated(
-                &slots_per_slab[i],
-            )),
-        })
+        slabs.push(Slab { slot_size, file })
     }
 
     log::info!("recovery of Heap at {:?} complete", path);
@@ -348,9 +337,6 @@ pub(crate) fn recover<P: AsRef<Path>>(
         heap: Heap {
             slabs: Arc::new(slabs.try_into().unwrap()),
             path: path.into(),
-            object_id_allocator: Arc::new(Allocator::from_allocated(
-                &object_ids,
-            )),
             table,
             global_error: metadata_store.get_global_error_arc(),
             metadata_store: Arc::new(metadata_store),
@@ -363,14 +349,14 @@ pub(crate) fn recover<P: AsRef<Path>>(
     })
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SlabAddress {
     slab_id: u8,
     slab_slot: [u8; 7],
 }
 
 impl SlabAddress {
-    fn from_slab_slot(slab: u8, slot: u64) -> SlabAddress {
+    pub(crate) fn from_slab_slot(slab: u8, slot: u64) -> SlabAddress {
         let slot_bytes = slot.to_be_bytes();
 
         assert_eq!(slot_bytes[0], 0);
@@ -381,11 +367,13 @@ impl SlabAddress {
         }
     }
 
-    pub fn slab(&self) -> u8 {
+    #[inline]
+    pub const fn slab(&self) -> u8 {
         self.slab_id
     }
 
-    pub fn slot(&self) -> u64 {
+    #[inline]
+    pub const fn slot(&self) -> u64 {
         u64::from_be_bytes([
             0,
             self.slab_slot[0],
@@ -512,7 +500,6 @@ mod sys_io {
 struct Slab {
     file: fs::File,
     slot_size: usize,
-    slot_allocator: Arc<Allocator>,
 }
 
 impl Slab {
@@ -674,8 +661,7 @@ impl UpdateMetadata {
 pub(crate) struct Heap {
     path: PathBuf,
     slabs: Arc<[Slab; N_SLABS]>,
-    table: ObjectLocationMap,
-    object_id_allocator: Arc<Allocator>,
+    table: ObjectLocationMapper,
     metadata_store: Arc<MetadataStore>,
     free_ebr: Ebr<DeferredFree, 1>,
     global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
@@ -739,25 +725,26 @@ impl Heap {
 
     pub fn write_batch(&self, batch: Vec<Update>) -> io::Result<()> {
         self.check_error()?;
-        let atomicity_mu = self.write_batch_atomicity_mutex.lock();
+        let atomicity_mu = self.write_batch_atomicity_mutex.try_lock()
+            .expect("write_batch called concurrently! major correctness assumpiton violated");
         let mut guard = self.free_ebr.pin();
 
         let slabs = &self.slabs;
+        let table = &self.table;
 
         let map_closure = |update: Update| match update {
             Update::Store { object_id, collection_id, metadata, data } => {
                 let slab_id = slab_for_size(data.len());
                 let slab = &slabs[usize::from(slab_id)];
-                let slot = slab.slot_allocator.allocate();
-                let new_location = SlabAddress::from_slab_slot(slab_id, slot);
+                let new_location = table.allocate_slab_slot(slab_id);
                 let new_location_nzu: NonZeroU64 = new_location.into();
 
                 let complete_durability_pipeline =
-                    maybe!(slab.write(slot, data));
+                    maybe!(slab.write(new_location.slot(), data));
 
                 if let Err(e) = complete_durability_pipeline {
                     // can immediately free slot as the
-                    slab.slot_allocator.free(slot);
+                    table.free_slab_slot(new_location);
                     return Err(e);
                 }
                 Ok(UpdateMetadata::Store {
@@ -801,7 +788,7 @@ impl Heap {
                 }
                 UpdateMetadata::Free { object_id, .. } => {
                     guard.defer_drop(DeferredFree {
-                        allocator: self.object_id_allocator.clone(),
+                        allocator: self.table.clone_object_id_allocator_arc(),
                         freed_slot: object_id.0,
                     });
                     self.table.remove(object_id)
@@ -810,9 +797,9 @@ impl Heap {
 
             if let Some(last_address) = last_address_opt {
                 guard.defer_drop(DeferredFree {
-                    allocator: self.slabs[usize::from(last_address.slab_id)]
-                        .slot_allocator
-                        .clone(),
+                    allocator: self
+                        .table
+                        .clone_slab_allocator_arc(last_address.slab_id),
                     freed_slot: last_address.slot(),
                 });
             }
@@ -823,66 +810,11 @@ impl Heap {
         Ok(())
     }
 
-    pub fn allocate_object_id(&self) -> u64 {
-        self.object_id_allocator.allocate()
+    pub fn allocate_object_id(&self) -> ObjectId {
+        self.table.allocate_object_id()
     }
 
-    pub fn maintenance(&self) {
-        let atomicity_mu = self.write_batch_atomicity_mutex.lock();
-        let mut guard = self.free_ebr.pin();
-        let to_defrag = self.table.objects_to_defrag();
-
-        let mut metadata_batch = vec![];
-
-        let mut allocations_to_free_on_failure = vec![];
-
-        for (object_id, old_location) in to_defrag {
-            let slab_id = old_location.slab();
-            let slab = &self.slabs[usize::from(slab_id)];
-
-            let fragmented_slot = old_location.slot();
-
-            // read
-            let data = match slab.read(fragmented_slot, &mut guard) {
-                Ok(data) => data,
-                Err(e) => {
-                    // this doesn't need to propagate the error
-                    // because this work is not correctness
-                    // critical for anything, it's just a space
-                    // optimization if it happens to work out.
-                    log::error!("failed to read object during GC: {e:?}");
-                    return;
-                }
-            };
-
-            // allocate new slot
-            let compacted_slot = slab.slot_allocator.allocate();
-
-            allocations_to_free_on_failure.push((slab_id, compacted_slot));
-
-            let new_location =
-                SlabAddress::from_slab_slot(slab_id, compacted_slot);
-
-            let new_location_nzu: NonZeroU64 = new_location.into();
-
-            let complete_durability_pipeline =
-                maybe!(slab.write(compacted_slot, data));
-
-            match complete_durability_pipeline {
-                Ok(()) => {
-                    //
-                }
-                Err(e) => {
-                    // free the whole batch and return
-                }
-            }
-        }
-
-        // try to write the metadata batch, freeing all allocated ids if we failed.
-        if let Err(e) = self.metadata_store.insert_batch(&metadata_batch) {
-            self.set_error(&e);
-        }
-
-        drop(atomicity_mu);
+    pub(crate) fn objects_to_defrag(&self) -> FnvHashSet<ObjectId> {
+        self.table.objects_to_defrag()
     }
 }

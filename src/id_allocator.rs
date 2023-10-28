@@ -18,6 +18,46 @@ pub(crate) struct Allocator {
 }
 
 impl Allocator {
+    /// Intended primarily for heap slab slot allocators when performing GC.
+    ///
+    /// If the slab is fragmented beyond the desired fill ratio, this returns
+    /// the range of offsets (min inclusive, max exclusive) that may be copied
+    /// into earlier free slots if they are currently occupied in order to
+    /// achieve the desired fragmentation ratio.
+    pub fn fragmentation_cutoff(
+        &self,
+        desired_ratio: f32,
+    ) -> Option<(u64, u64)> {
+        let next_to_allocate = self.next_to_allocate.load(Ordering::Acquire);
+
+        if next_to_allocate == 0 {
+            return None;
+        }
+
+        let mut free = self.free_and_pending.lock();
+        while let Some(free_id) = self.free_queue.pop() {
+            free.push(Reverse(free_id));
+        }
+
+        let live_objects = next_to_allocate - free.len() as u64;
+        let actual_ratio = live_objects as f32 / next_to_allocate as f32;
+
+        log::trace!(
+            "fragmented_slots actual ratio: {actual_ratio}, free len: {}",
+            free.len()
+        );
+
+        if desired_ratio <= actual_ratio {
+            return None;
+        }
+
+        // calculate theoretical cut-off point, return everything past that
+        let min = (live_objects as f32 / desired_ratio) as u64;
+        let max = next_to_allocate;
+        assert!(min < max);
+        Some((min, max))
+    }
+
     pub fn from_allocated(allocated: &FnvHashSet<u64>) -> Allocator {
         let mut heap = BinaryHeap::<Reverse<u64>>::default();
         let max = allocated.iter().copied().max();
@@ -32,6 +72,16 @@ impl Allocator {
             free_and_pending: Mutex::new(heap),
             free_queue: SegQueue::default(),
             next_to_allocate: max.map(|m| m + 1).unwrap_or(0).into(),
+        }
+    }
+
+    pub fn max_allocated(&self) -> Option<u64> {
+        let next = self.next_to_allocate.load(Ordering::Acquire);
+
+        if next == 0 {
+            None
+        } else {
+            Some(next - 1)
         }
     }
 

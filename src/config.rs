@@ -37,6 +37,9 @@ pub struct Config {
     /// `Config::tmp`, and will remove the storage directory
     /// when the final Arc drops.
     pub tempdir_deleter: Option<Arc<TempDir>>,
+    /// A float between 0.0 and 1.0 that controls how much fragmentation can
+    /// exist in a file before GC attempts to recompact it.
+    pub target_heap_file_fill_ratio: f32,
 }
 
 impl Default for Config {
@@ -48,6 +51,7 @@ impl Default for Config {
             entry_cache_percent: 20,
             zstd_compression_level: 3,
             tempdir_deleter: None,
+            target_heap_file_fill_ratio: 0.9,
         }
     }
 }

@@ -1,3 +1,9 @@
+// TODO event log assertion for testing heap location bidirectional referential integrity
+// TODO make ObjectId wrap NonZeroU64 so it's more clear when slab tenant PageTable has a 0 that
+//      it's unoccupied
+// TODO ensure nothing "from the future" gets copied into earlier epochs during GC
+//      not sure if that's possible though?
+// TODO concurrent serialization of NotYetSerialized dirty objects
 // TODO collection_id on page_in checks - it needs to be pinned w/ heap's EBR?
 // TODO after defrag, reduce self.tip while popping the max items in the free list
 // TODO store low key and collection ID directly on Object
@@ -19,6 +25,7 @@
 // TODO measure space savings vs cost of zstd in metadata store
 // TODO corrupted data extraction binary
 // TODO if the crash_iter test panics, the test doesn't fail as expected
+// TODO remove/make conditionally compiled for testing the explicit process aborts
 
 mod config;
 mod db;
@@ -27,7 +34,7 @@ mod heap;
 mod id_allocator;
 mod metadata_store;
 mod object_cache;
-mod object_location_map;
+mod object_location_mapper;
 mod tree;
 
 #[cfg(any(

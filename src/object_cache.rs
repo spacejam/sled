@@ -67,7 +67,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         bool,
     )> {
         let HeapRecovery { heap, recovered_nodes, was_recovered } =
-            recover(&config.path, LEAF_FANOUT)?;
+            recover(&config.path, LEAF_FANOUT, config)?;
 
         let (object_id_index, indices) = initialize(&recovered_nodes, &heap);
 
@@ -165,7 +165,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         collection_id: CollectionId,
         low_key: InlineArray,
     ) -> Object<LEAF_FANOUT> {
-        let object_id = ObjectId(self.heap.allocate_object_id());
+        let object_id = self.heap.allocate_object_id();
 
         let node = Object {
             object_id,
@@ -179,7 +179,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         node
     }
 
-    pub fn allocate_object_id(&self) -> u64 {
+    pub fn allocate_object_id(&self) -> ObjectId {
         self.heap.allocate_object_id()
     }
 
@@ -278,6 +278,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         let flush_through_epoch: FlushEpoch =
             this_vacant_notifier.wait_for_complete();
 
+        let mut objects_to_defrag = self.heap.objects_to_defrag();
+
         log::trace!("performing flush");
 
         let flush_boundary = (flush_through_epoch.increment(), ObjectId::MIN);
@@ -287,6 +289,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         for ((dirty_epoch, dirty_object_id), dirty_value_initial_read) in
             self.dirty.range(..flush_boundary)
         {
+            objects_to_defrag.remove(&dirty_object_id);
+
             let dirty_value = self
                 .dirty
                 .remove(&(dirty_epoch, dirty_object_id))
@@ -412,6 +416,35 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             }
         }
 
+        log::info!(
+            "objects to defrag (after flush loop): {}",
+            objects_to_defrag.len()
+        );
+        for fragmented_object_id in objects_to_defrag {
+            let object_opt = self.object_id_index.get(&fragmented_object_id);
+
+            let object = if let Some(object) = object_opt {
+                object
+            } else {
+                panic!("defragmenting object not found in object_id_index: {fragmented_object_id:?}");
+            };
+
+            let data = match self.heap.read(fragmented_object_id) {
+                Ok(data) => data,
+                Err(e) => {
+                    log::error!("failed to read object during GC: {e:?}");
+                    continue;
+                }
+            };
+
+            write_batch.push(Update::Store {
+                object_id: fragmented_object_id,
+                collection_id: object.collection_id,
+                metadata: object.low_key,
+                data,
+            });
+        }
+
         let written_count = write_batch.len();
         if written_count > 0 {
             self.heap.write_batch(write_batch)?;
@@ -436,14 +469,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             }
         }
 
-        self.maintenance();
-
         Ok(())
     }
-
-    // maintenance is infallible because if it fails, it doesn't invalidate
-    // the durability already achieved earlier.
-    fn maintenance(&self) {}
 }
 
 fn initialize<const LEAF_FANOUT: usize>(
@@ -488,7 +515,7 @@ fn initialize<const LEAF_FANOUT: usize>(
         let tree = trees.entry(collection_id).or_default();
 
         if tree.is_empty() {
-            let object_id = ObjectId(heap.allocate_object_id());
+            let object_id = heap.allocate_object_id();
 
             let initial_low_key = InlineArray::default();
 
