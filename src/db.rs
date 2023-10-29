@@ -141,6 +141,10 @@ impl<const LEAF_FANOUT: usize> Drop for Db<LEAF_FANOUT> {
 }
 
 impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
+    pub fn stats(&self) -> Stats {
+        self.cache.stats()
+    }
+
     pub fn size_on_disk(&self) -> io::Result<u64> {
         use std::fs::read_dir;
 

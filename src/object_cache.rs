@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use cache_advisor::CacheAdvisor;
@@ -54,6 +54,7 @@ pub(crate) struct ObjectCache<const LEAF_FANOUT: usize> {
     cache_advisor: RefCell<CacheAdvisor>,
     flush_epoch: FlushEpochTracker,
     dirty: ConcurrentMap<(FlushEpoch, ObjectId), Dirty<LEAF_FANOUT>, 4>,
+    compacted_heap_slots: Arc<AtomicU64>,
 }
 
 impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
@@ -107,6 +108,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             flush_epoch: Default::default(),
             #[cfg(feature = "for-internal-testing-only")]
             event_verifier: Arc::default(),
+            compacted_heap_slots: Arc::default(),
         };
 
         Ok((pc, indices, was_recovered))
@@ -121,7 +123,12 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     }
 
     pub fn stats(&self) -> Stats {
-        self.heap.stats()
+        Stats {
+            compacted_heap_slots: self
+                .compacted_heap_slots
+                .load(Ordering::Acquire),
+            ..self.heap.stats()
+        }
     }
 
     pub fn check_error(&self) -> io::Result<()> {
@@ -420,6 +427,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             "objects to defrag (after flush loop): {}",
             objects_to_defrag.len()
         );
+        self.compacted_heap_slots
+            .fetch_add(objects_to_defrag.len() as u64, Ordering::Relaxed);
         for fragmented_object_id in objects_to_defrag {
             let object_opt = self.object_id_index.get(&fragmented_object_id);
 

@@ -128,8 +128,14 @@ fn slab_for_size(size: usize) -> u8 {
 
 pub use inline_array::InlineArray;
 
-#[derive(Debug, Clone)]
-pub struct Stats {}
+#[derive(Debug, Clone, Copy)]
+pub struct Stats {
+    pub objects_allocated: u64,
+    pub objects_freed: u64,
+    pub heap_slots_allocated: u64,
+    pub heap_slots_freed: u64,
+    pub compacted_heap_slots: u64,
+}
 
 #[derive(Debug)]
 pub(crate) struct ObjectRecovery {
@@ -703,7 +709,7 @@ impl Heap {
     }
 
     pub fn stats(&self) -> Stats {
-        Stats {}
+        self.table.stats()
     }
 
     pub fn read(&self, object_id: ObjectId) -> io::Result<Vec<u8>> {

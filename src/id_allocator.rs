@@ -15,6 +15,8 @@ pub(crate) struct Allocator {
     /// A lock free queue of recently freed ids which uses when there is contention on `free_and_pending`.
     free_queue: SegQueue<u64>,
     next_to_allocate: AtomicU64,
+    allocation_counter: AtomicU64,
+    free_counter: AtomicU64,
 }
 
 impl Allocator {
@@ -72,6 +74,8 @@ impl Allocator {
             free_and_pending: Mutex::new(heap),
             free_queue: SegQueue::default(),
             next_to_allocate: max.map(|m| m + 1).unwrap_or(0).into(),
+            allocation_counter: 0.into(),
+            free_counter: 0.into(),
         }
     }
 
@@ -86,6 +90,7 @@ impl Allocator {
     }
 
     pub fn allocate(&self) -> u64 {
+        self.allocation_counter.fetch_add(1, Ordering::Relaxed);
         let mut free = self.free_and_pending.lock();
         while let Some(free_id) = self.free_queue.pop() {
             free.push(Reverse(free_id));
@@ -100,6 +105,7 @@ impl Allocator {
     }
 
     pub fn free(&self, id: u64) {
+        self.free_counter.fetch_add(1, Ordering::Relaxed);
         if let Some(mut free) = self.free_and_pending.try_lock() {
             while let Some(free_id) = self.free_queue.pop() {
                 free.push(Reverse(free_id));
@@ -108,6 +114,14 @@ impl Allocator {
         } else {
             self.free_queue.push(id);
         }
+    }
+
+    /// Returns the counters for allocated, free
+    pub fn counters(&self) -> (u64, u64) {
+        (
+            self.allocation_counter.load(Ordering::Acquire),
+            self.free_counter.load(Ordering::Acquire),
+        )
     }
 }
 
