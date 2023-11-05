@@ -26,7 +26,7 @@ use tree::{
 };
 
 const N_THREADS: usize = 10;
-const N_PER_THREAD: usize = 100;
+const N_PER_THREAD: usize = 1000;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
@@ -354,7 +354,10 @@ fn concurrent_tree_ops() {
     for i in 0..INTENSITY {
         debug!("beginning test {}", i);
 
-        let config = Config::tmp().unwrap().flush_every_ms(Some(1));
+        let config = Config::tmp()
+            .unwrap()
+            .flush_every_ms(Some(1))
+            .cache_capacity_bytes(1024);
 
         macro_rules! par {
             ($t:ident, $f:expr) => {
@@ -1107,6 +1110,40 @@ fn recover_tree() {
             i
         );
     }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_gc() {
+    const FANOUT: usize = 7;
+
+    common::setup_logger();
+
+    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
+
+    let t: sled::Db<FANOUT> = config.open().unwrap();
+    for i in 0..N {
+        let k = kv(i);
+        t.insert(&k, k.clone()).unwrap();
+    }
+
+    for i in 0..N {
+        let k = kv(i);
+        assert_eq!(t.get(&*k).unwrap(), Some(k.clone().into()), "{k:?}");
+        t.remove(&*k).unwrap();
+    }
+
+    for _ in 0..256 {
+        t.flush().unwrap();
+        t.stats();
+    }
+
+    let stats = t.stats();
+
+    assert!(stats.objects_allocated >= (N / FANOUT) as u64, "{stats:?}");
+    assert!(stats.objects_freed >= (N / 2) as u64, "{stats:?}");
+    assert!(stats.heap_slots_allocated >= (N / FANOUT) as u64, "{stats:?}");
+    assert!(stats.heap_slots_freed >= (N / 2) as u64, "{stats:?}");
 }
 
 /*
