@@ -79,6 +79,16 @@ impl Allocator {
         }
     }
 
+    pub fn max_allocated(&self) -> Option<u64> {
+        let next = self.next_to_allocate.load(Ordering::Acquire);
+
+        if next == 0 {
+            None
+        } else {
+            Some(next - 1)
+        }
+    }
+
     pub fn allocate(&self) -> u64 {
         self.allocation_counter.fetch_add(1, Ordering::Relaxed);
         let mut free = self.free_and_pending.lock();
