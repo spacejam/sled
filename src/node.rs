@@ -2,6 +2,7 @@
 
 // TODO we can skip the first offset because it's always 0
 
+use std::ptr::slice_from_raw_parts;
 use std::{
     alloc::{alloc_zeroed, dealloc, Layout},
     cell::UnsafeCell,
@@ -41,7 +42,8 @@ fn uninitialized_node(len: usize) -> Inner {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Header {
-    // NB always lay out fields from largest to smallest to properly pack the struct
+    // NB always lay out fields from largest to smallest to properly pack the
+    // struct
     pub next: Option<NonZeroU64>,
     pub merging_child: Option<NonZeroU64>,
     lo_len: u64,
@@ -96,16 +98,12 @@ fn apply_computed_distance(mut buf: &mut [u8], mut distance: usize) {
 
 // TODO change to u64 or u128 output
 // This function has several responsibilities:
-// * `find` will call this when looking for the
-//   proper child pid on an index, with slice
-//   lengths that may or may not match
-// * `KeyRef::Ord` and `KeyRef::distance` call
-//   this while performing node iteration,
-//   again with possibly mismatching slice
-//   lengths. Merging nodes together, or
-//   merging overlays into inner nodes
-//   will rely on this functionality, and
-//   it's possible for the lengths to vary.
+// * `find` will call this when looking for the proper child pid on an index,
+//   with slice lengths that may or may not match
+// * `KeyRef::Ord` and `KeyRef::distance` call this while performing node
+//   iteration, again with possibly mismatching slice lengths. Merging nodes
+//   together, or merging overlays into inner nodes will rely on this
+//   functionality, and it's possible for the lengths to vary.
 //
 // This is not a general-purpose function. It
 // is not possible to determine distances when
@@ -412,9 +410,10 @@ impl<'a> Iterator for Iter<'a> {
                 (Some((_, Some(_))), None) => {
                     log::trace!("src/node.rs:114");
                     log::trace!("iterator returning {:?}", self.next_a);
-                    return self.next_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(k), v.unwrap().as_ref())
-                    });
+                    return self
+                        .next_a
+                        .take()
+                        .map(|(k, v)| (KeyRef::Slice(k), v.unwrap().as_ref()));
                 }
                 (Some((k_a, v_a_opt)), Some((k_b, _))) => {
                     let cmp = KeyRef::Slice(k_a).cmp(&k_b);
@@ -511,9 +510,10 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 (Some((_, Some(_))), None) => {
                     log::trace!("src/node.rs:483");
                     log::trace!("iterator returning {:?}", self.next_back_a);
-                    return self.next_back_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(k), v.unwrap().as_ref())
-                    });
+                    return self
+                        .next_back_a
+                        .take()
+                        .map(|(k, v)| (KeyRef::Slice(k), v.unwrap().as_ref()));
                 }
                 (Some((k_a, Some(_))), Some((k_b, _))) if k_b > *k_a => {
                     log::trace!("src/node.rs:508");
@@ -522,18 +522,20 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 }
                 (Some((k_a, Some(_))), Some((k_b, _))) if k_b < *k_a => {
                     log::trace!("iterator returning {:?}", self.next_back_a);
-                    return self.next_back_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(k), v.unwrap().as_ref())
-                    });
+                    return self
+                        .next_back_a
+                        .take()
+                        .map(|(k, v)| (KeyRef::Slice(k), v.unwrap().as_ref()));
                 }
                 (Some((k_a, Some(_))), Some((k_b, _))) if k_b == *k_a => {
                     // prefer overlay, discard node value
                     self.next_back_b.take();
                     log::trace!("src/node.rs:520");
                     log::trace!("iterator returning {:?}", self.next_back_a);
-                    return self.next_back_a.take().map(|(k, v)| {
-                        (KeyRef::Slice(k), v.unwrap().as_ref())
-                    });
+                    return self
+                        .next_back_a
+                        .take()
+                        .map(|(k, v)| (KeyRef::Slice(k), v.unwrap().as_ref()));
                 }
                 _ => unreachable!(
                     "did not expect combination a: {:?} b: {:?}",
@@ -905,8 +907,9 @@ impl Node {
         Some(Node { overlay: Default::default(), inner: new_inner })
     }
 
-    /// `node_kv_pair` returns either the existing (node/key, value, current offset) tuple or
-    /// (node/key, none, future offset) where a node/key is node level encoded key.
+    /// `node_kv_pair` returns either the existing (node/key, value, current
+    /// offset) tuple or (node/key, none, future offset) where a node/key is
+    /// node level encoded key.
     pub(crate) fn node_kv_pair<'a>(
         &'a self,
         key: &'a [u8],
@@ -949,7 +952,7 @@ impl Node {
                         return Some((
                             self.prefix_decode(self.inner.index_key(idx)),
                             self.inner.index_value(idx).into(),
-                        ))
+                        ));
                     }
                     Err(idx) => idx,
                 };
@@ -1018,7 +1021,7 @@ impl Node {
                         return Some((
                             self.prefix_decode(self.inner.index_key(idx)),
                             self.inner.index_value(idx).into(),
-                        ))
+                        ));
                     }
                     Err(idx) => idx,
                 };
@@ -1088,7 +1091,12 @@ impl Node {
         let pid_bytes = self.index_value(idx);
         let pid = u64::from_le_bytes(pid_bytes.try_into().unwrap());
 
-        log::trace!("index_next_node for key {:?} returning pid {} after searching node {:?}", key, pid, self);
+        log::trace!(
+            "index_next_node for key {:?} returning pid {} after searching node {:?}",
+            key,
+            pid,
+            self
+        );
         (is_leftmost, pid)
     }
 
@@ -1741,29 +1749,10 @@ impl Inner {
                 * (tf!(size_of::<usize>(), u32)
                     - u32::from(self.offset_bytes)));
 
-        let mut tmp = std::mem::MaybeUninit::<usize>::uninit();
         let len = size_of::<usize>();
 
-        // we use unsafe code here because it cuts a significant number of
-        // CPU cycles on a simple insertion workload compared to using the
-        // more idiomatic approach of copying the correct number of bytes into
-        // a buffer initialized with zeroes. the seemingly "less" unsafe
-        // approach of using ptr::copy_nonoverlapping did not improve matters.
-        // using a match statement on offset_bytes and performing simpler
-        // casting for one or two bytes slowed things down due to increasing
-        // code size. this approach is branch-free and cut CPU usage of this
-        // function from 7-11% down to 0.5-2% in a monotonic insertion workload.
-        #[allow(unsafe_code)]
-        unsafe {
-            let ptr: *const u8 = self.ptr().add(start);
-            std::ptr::copy_nonoverlapping(
-                ptr,
-                tmp.as_mut_ptr() as *mut u8,
-                len,
-            );
-            *tmp.as_mut_ptr() &= mask;
-            tmp.assume_init()
-        }
+        usize::from_ne_bytes(self.buf()[start..start + len].try_into().unwrap())
+            & mask
     }
 
     fn set_offset(&mut self, index: usize, offset: usize) {
@@ -2217,10 +2206,17 @@ impl Inner {
             {
                 // search key does not evenly fit based on
                 // our fixed stride length
-                log::trace!("failed to find, search: {:?} lo: {:?} \
+                log::trace!(
+                    "failed to find, search: {:?} lo: {:?} \
                     prefix_len: {} distance: {} stride: {} offset: {} children: {}, node: {:?}",
-                    key, self.lo(), self.prefix_len, distance,
-                    stride.get(), offset, self.children, self
+                    key,
+                    self.lo(),
+                    self.prefix_len,
+                    distance,
+                    stride.get(),
+                    offset,
+                    self.children,
+                    self
                 );
                 return Err((offset + 1).min(self.children()));
             }
@@ -2263,19 +2259,19 @@ impl Inner {
     fn iter_keys(
         &self,
     ) -> impl Iterator<Item = KeyRef<'_>>
-           + ExactSizeIterator
-           + DoubleEndedIterator
-           + Clone {
+    + ExactSizeIterator
+    + DoubleEndedIterator
+    + Clone {
         (0..self.children()).map(move |idx| self.index_key(idx))
     }
 
     fn iter_index_pids(
         &self,
     ) -> impl '_
-           + Iterator<Item = u64>
-           + ExactSizeIterator
-           + DoubleEndedIterator
-           + Clone {
+    + Iterator<Item = u64>
+    + ExactSizeIterator
+    + DoubleEndedIterator
+    + Clone {
         assert!(self.is_index);
         self.iter_values().map(move |pid_bytes| {
             u64::from_le_bytes(pid_bytes.try_into().unwrap())
@@ -2308,21 +2304,13 @@ impl Inner {
     pub(crate) fn hi(&self) -> Option<&[u8]> {
         let start = tf!(self.lo_len) + size_of::<Header>();
         let end = start + tf!(self.hi_len);
-        if start == end {
-            None
-        } else {
-            Some(&self.as_ref()[start..end])
-        }
+        if start == end { None } else { Some(&self.as_ref()[start..end]) }
     }
 
     fn hi_mut(&mut self) -> Option<&mut [u8]> {
         let start = tf!(self.lo_len) + size_of::<Header>();
         let end = start + tf!(self.hi_len);
-        if start == end {
-            None
-        } else {
-            Some(&mut self.as_mut()[start..end])
-        }
+        if start == end { None } else { Some(&mut self.as_mut()[start..end]) }
     }
 
     fn index_key(&self, idx: usize) -> KeyRef<'_> {
@@ -3000,7 +2988,8 @@ mod test {
 
     #[test]
     fn node_bug_02() {
-        // postmortem: the test code had some issues with handling invalid keys for nodes
+        // postmortem: the test code had some issues with handling invalid keys
+        // for nodes
         let node = Inner::new(
             &[47, 97][..],
             None,
@@ -3057,7 +3046,8 @@ mod test {
     #[test]
     fn node_bug_05() {
         // postmortem: `prop_indexable` did not account for the requirement
-        // of feeding sorted items that are >= the lo key to the Node::new method.
+        // of feeding sorted items that are >= the lo key to the Node::new
+        // method.
         assert!(prop_indexable(
             vec![1],
             vec![],
