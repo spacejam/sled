@@ -65,8 +65,8 @@ impl IoBuf {
     /// uninitialized memory. For this to be correct, we must
     /// ensure that:
     /// 1. overlapping mutable slices are never created.
-    /// 2. a read to any subslice of this slice only happens
-    ///    after a write has initialized that memory
+    /// 2. a read to any subslice of this slice only happens after a write has
+    ///    initialized that memory
     ///
     /// It is intended that the log reservation code guarantees
     /// that no two `Reservation` objects will hold overlapping
@@ -719,16 +719,7 @@ impl IoBufs {
         } else if maxed {
             // initialize the remainder of this buffer's red zone
             let data = iobuf.get_mut_range(bytes_to_write, unused_space);
-
-            #[allow(unsafe_code)]
-            unsafe {
-                // note: this could use slice::fill() if it stabilizes
-                std::ptr::write_bytes(
-                    data.as_mut_ptr(),
-                    MessageKind::Corrupted.into(),
-                    unused_space,
-                );
-            }
+            data.fill(MessageKind::Corrupted.into());
         }
 
         let total_len = if maxed { capacity } else { bytes_to_write };
@@ -953,7 +944,10 @@ pub(in crate::pagecache) fn make_stable_inner(
 
     while stable < lsn {
         if let Err(e) = iobufs.config.global_error() {
-            error!("bailing out of stabilization code due to detected IO error: {:?}", e);
+            error!(
+                "bailing out of stabilization code due to detected IO error: {:?}",
+                e
+            );
             let intervals = iobufs.intervals.lock();
 
             // having held the mutex makes this linearized

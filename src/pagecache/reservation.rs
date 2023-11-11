@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use crate::{pagecache::*, *};
 
 /// A pending log reservation which can be aborted or completed.
@@ -104,40 +105,19 @@ impl<'a> Reservation<'a> {
             self.buf[4] = MessageKind::Canceled.into();
 
             // zero the message contents to prevent UB
-            #[allow(unsafe_code)]
-            unsafe {
-                std::ptr::write_bytes(
-                    self.buf[self.header_len..].as_mut_ptr(),
-                    0,
-                    self.buf.len() - self.header_len,
-                )
-            }
+            self.buf[self.header_len..].fill(0);
         }
 
         // zero the crc bytes to prevent UB
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::write_bytes(
-                self.buf[..].as_mut_ptr(),
-                0,
-                std::mem::size_of::<u32>(),
-            )
-        }
+        self.buf[0..4].fill(0);
 
         let crc32 = calculate_message_crc32(
-            self.buf[..self.header_len].as_ref(),
+            &self.buf[..self.header_len],
             &self.buf[self.header_len..],
         );
         let crc32_arr = u32_to_arr(crc32);
 
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                crc32_arr.as_ptr(),
-                self.buf.as_mut_ptr(),
-                std::mem::size_of::<u32>(),
-            );
-        }
+        self.buf[0..4].copy_from_slice(&crc32_arr);
         self.log.exit_reservation(&self.iobuf)?;
 
         Ok((self.lsn, self.pointer))
