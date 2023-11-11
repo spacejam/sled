@@ -1,15 +1,11 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use jemallocator::Jemalloc;
-
 use sled::Config;
 
-#[cfg_attr(
-    // only enable jemalloc on linux and macos by default
-    any(target_os = "linux", target_os = "macos"),
-    global_allocator
-)]
-static ALLOC: Jemalloc = Jemalloc;
+// only enable jemalloc on linux and macos by default
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 fn counter() -> usize {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
