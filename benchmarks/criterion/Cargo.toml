@@ -14,4 +14,6 @@ harness = false
 [dependencies]
 criterion = "0.3.0"
 sled = { path = "../.." }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 jemallocator = "0.3.2"
