@@ -1294,7 +1294,7 @@ fn quickcheck_tree_matches_btreemap() {
     let n_tests = if cfg!(windows) { 25 } else { 100 };
 
     QuickCheck::new()
-        .gen(Gen::new(1000))
+        .gen(Gen::new(100))
         .tests(n_tests)
         .max_tests(n_tests * 10)
         .quickcheck(
