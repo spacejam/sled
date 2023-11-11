@@ -491,34 +491,6 @@ pub trait Transactional<E = ()> {
     }
 }
 
-impl<E> Transactional<E> for &Tree {
-    type View = TransactionalTree;
-
-    fn make_overlay(&self) -> Result<TransactionalTrees> {
-        Ok(TransactionalTrees {
-            inner: vec![TransactionalTree::from_tree(self)],
-        })
-    }
-
-    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
-        overlay.inner[0].clone()
-    }
-}
-
-impl<E> Transactional<E> for &&Tree {
-    type View = TransactionalTree;
-
-    fn make_overlay(&self) -> Result<TransactionalTrees> {
-        Ok(TransactionalTrees {
-            inner: vec![TransactionalTree::from_tree(*self)],
-        })
-    }
-
-    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
-        overlay.inner[0].clone()
-    }
-}
-
 impl<E> Transactional<E> for Tree {
     type View = TransactionalTree;
 
