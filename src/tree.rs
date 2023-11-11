@@ -287,6 +287,12 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         leaf.deleted = Some(merge_epoch);
 
+        leaf_guard
+            .inner
+            .cache
+            .tree_leaves_merged
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         self.index.remove(&leaf_guard.low_key).unwrap();
         self.cache.object_id_index.remove(&leaf_guard.node.object_id).unwrap();
 

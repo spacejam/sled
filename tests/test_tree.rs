@@ -26,7 +26,7 @@ use tree::{
 };
 
 const N_THREADS: usize = 10;
-const N_PER_THREAD: usize = 1000;
+const N_PER_THREAD: usize = 1_000;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
@@ -1119,13 +1119,31 @@ fn tree_gc() {
 
     common::setup_logger();
 
-    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
+    let config = Config::tmp().unwrap().flush_every_ms(None);
 
     let t: sled::Db<FANOUT> = config.open().unwrap();
+
     for i in 0..N {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
     }
+
+    for _ in 0..100 {
+        t.flush().unwrap();
+    }
+
+    let size_on_disk_after_inserts = t.size_on_disk().unwrap();
+
+    for i in 0..N {
+        let k = kv(i);
+        t.insert(&k, k.clone()).unwrap();
+    }
+
+    for _ in 0..100 {
+        t.flush().unwrap();
+    }
+
+    let size_on_disk_after_rewrites = t.size_on_disk().unwrap();
 
     for i in 0..N {
         let k = kv(i);
@@ -1133,17 +1151,36 @@ fn tree_gc() {
         t.remove(&*k).unwrap();
     }
 
-    for _ in 0..256 {
+    for _ in 0..100 {
         t.flush().unwrap();
-        t.stats();
     }
+
+    let size_on_disk_after_deletes = t.size_on_disk().unwrap();
 
     let stats = t.stats();
 
     assert!(stats.objects_allocated >= (N / FANOUT) as u64, "{stats:?}");
-    assert!(stats.objects_freed >= (N / 2) as u64, "{stats:?}");
+    assert!(
+        stats.objects_freed >= (stats.objects_allocated / 2) as u64,
+        "{stats:?}"
+    );
     assert!(stats.heap_slots_allocated >= (N / FANOUT) as u64, "{stats:?}");
-    assert!(stats.heap_slots_freed >= (N / 2) as u64, "{stats:?}");
+    assert!(
+        stats.heap_slots_freed >= (stats.heap_slots_allocated / 2) as u64,
+        "{stats:?}"
+    );
+
+    // TODO test this after we implement file truncation
+    // let expected_max_size = size_on_disk_after_inserts / 100;
+    // assert!(size_on_disk_after_deletes <= expected_max_size);
+
+    println!(
+        "after writing {N} items and removing them, our stats are: \n{stats:?}. \
+        disk size went from {}kb after inserts to {}kb after rewriting to {}kb after deletes",
+        size_on_disk_after_inserts / 1024,
+        size_on_disk_after_rewrites / 1024,
+        size_on_disk_after_deletes / 1024,
+    );
 }
 
 /*

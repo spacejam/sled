@@ -1,4 +1,6 @@
-// TODO event log assertion for testing heap location bidirectional referential integrity
+// TODO temporary trees for transactional in-memory coordination
+// TODO event log assertion for testing heap location bidirectional referential integrity,
+//      particularly in the object location mapper.
 // TODO make ObjectId wrap NonZeroU64 so it's more clear when slab tenant PageTable has a 0 that
 //      it's unoccupied
 // TODO ensure nothing "from the future" gets copied into earlier epochs during GC
@@ -26,6 +28,9 @@
 // TODO corrupted data extraction binary
 // TODO if the crash_iter test panics, the test doesn't fail as expected
 // TODO remove/make conditionally compiled for testing the explicit process aborts
+// TODO make EBR and index fanout consts as small as possible to reduce memory usage
+// TODO make leaf fanout as small as possible while retaining perf
+// TODO dynamically sized fanouts for reducing fragmentation
 
 mod config;
 mod db;

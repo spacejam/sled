@@ -130,11 +130,13 @@ pub use inline_array::InlineArray;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Stats {
+    pub flushes: u64,
     pub objects_allocated: u64,
     pub objects_freed: u64,
     pub heap_slots_allocated: u64,
     pub heap_slots_freed: u64,
     pub compacted_heap_slots: u64,
+    pub tree_leaves_merged: u64,
 }
 
 #[derive(Debug)]
@@ -512,7 +514,7 @@ impl Slab {
     fn read(
         &self,
         slot: u64,
-        _guard: &mut Guard<'_, DeferredFree, 1>,
+        _guard: &mut Guard<'_, DeferredFree, 16, 16>,
     ) -> io::Result<Vec<u8>> {
         let mut data = Vec::with_capacity(self.slot_size);
         unsafe {
@@ -669,7 +671,7 @@ pub(crate) struct Heap {
     slabs: Arc<[Slab; N_SLABS]>,
     table: ObjectLocationMapper,
     metadata_store: Arc<MetadataStore>,
-    free_ebr: Ebr<DeferredFree, 1>,
+    free_ebr: Ebr<DeferredFree, 16, 16>,
     global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
     #[allow(unused)]
     directory_lock: Arc<fs::File>,
@@ -706,6 +708,10 @@ impl Heap {
 
     fn set_error(&self, error: &io::Error) {
         set_error(&self.global_error, error);
+    }
+
+    pub fn manually_advance_epoch(&self) {
+        self.free_ebr.manually_advance_epoch();
     }
 
     pub fn stats(&self) -> Stats {

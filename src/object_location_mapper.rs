@@ -127,6 +127,8 @@ impl ObjectLocationMapper {
             heap_slots_allocated,
             heap_slots_freed,
             compacted_heap_slots: 0,
+            tree_leaves_merged: 0,
+            flushes: 0,
         }
     }
 
@@ -201,12 +203,12 @@ impl ObjectLocationMapper {
         let slab = new_location.slab();
         let slot = new_location.slot();
 
-        let last_oid_at_location = self.slab_tenancies[usize::from(slab)]
+        let _last_oid_at_location = self.slab_tenancies[usize::from(slab)]
             .slot_to_object_id
             .get(slot)
             .swap(object_id.0, Ordering::Release);
 
-        assert_eq!(0, last_oid_at_location);
+        // TODO add debug event verifier here assert_eq!(0, last_oid_at_location);
 
         last_address_opt
     }

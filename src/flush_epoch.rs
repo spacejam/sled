@@ -37,6 +37,10 @@ pub(crate) struct Completion {
 }
 
 impl Completion {
+    pub fn epoch(&self) -> FlushEpoch {
+        self.epoch
+    }
+
     pub fn new(epoch: FlushEpoch) -> Completion {
         Completion { mu: Default::default(), cv: Default::default(), epoch }
     }
@@ -107,7 +111,7 @@ pub(crate) struct EpochTracker {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FlushEpochTracker {
-    active_ebr: ebr::Ebr<Box<EpochTracker>>,
+    active_ebr: ebr::Ebr<Box<EpochTracker>, 16, 16>,
     inner: Arc<FlushEpochInner>,
 }
 
@@ -222,6 +226,10 @@ impl FlushEpochTracker {
                 return guard;
             }
         }
+    }
+
+    pub fn manually_advance_epoch(&self) {
+        self.active_ebr.manually_advance_epoch();
     }
 }
 

@@ -55,6 +55,8 @@ pub(crate) struct ObjectCache<const LEAF_FANOUT: usize> {
     flush_epoch: FlushEpochTracker,
     dirty: ConcurrentMap<(FlushEpoch, ObjectId), Dirty<LEAF_FANOUT>, 4>,
     compacted_heap_slots: Arc<AtomicU64>,
+    pub(super) tree_leaves_merged: Arc<AtomicU64>,
+    pub(super) flushes: Arc<AtomicU64>,
 }
 
 impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
@@ -109,6 +111,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             #[cfg(feature = "for-internal-testing-only")]
             event_verifier: Arc::default(),
             compacted_heap_slots: Arc::default(),
+            tree_leaves_merged: Arc::default(),
+            flushes: Arc::default(),
         };
 
         Ok((pc, indices, was_recovered))
@@ -127,6 +131,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             compacted_heap_slots: self
                 .compacted_heap_slots
                 .load(Ordering::Acquire),
+            tree_leaves_merged: self.tree_leaves_merged.load(Ordering::Acquire),
+            flushes: self.flushes.load(Ordering::Acquire),
             ..self.heap.stats()
         }
     }
@@ -240,12 +246,12 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 self.object_id_index.get(&ObjectId(*node_to_evict))
             {
                 if n.object_id.0 != *node_to_evict {
-                    log::warn!("during cache eviction, node to evict did not match current occupant for {:?}", node_to_evict);
+                    log::debug!("during cache eviction, node to evict did not match current occupant for {:?}", node_to_evict);
                     continue;
                 }
                 n
             } else {
-                log::warn!("during cache eviction, unable to find node to evict for {:?}", node_to_evict);
+                log::debug!("during cache eviction, unable to find node to evict for {:?}", node_to_evict);
                 continue;
             };
 
@@ -278,16 +284,20 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             forward_flush_notifier,
         ) = self.flush_epoch.roll_epoch_forward();
 
-        log::trace!("waiting for previous flush to complete");
+        log::trace!(
+            "waiting for previous flush of {:?} to complete",
+            previous_flush_complete_notifier.epoch()
+        );
         previous_flush_complete_notifier.wait_for_complete();
 
-        log::trace!("waiting for our epoch to become vacant");
+        log::trace!(
+            "waiting for our epoch {:?} to become vacant",
+            this_vacant_notifier.epoch()
+        );
         let flush_through_epoch: FlushEpoch =
             this_vacant_notifier.wait_for_complete();
 
         let mut objects_to_defrag = self.heap.objects_to_defrag();
-
-        log::trace!("performing flush");
 
         let flush_boundary = (flush_through_epoch.increment(), ObjectId::MIN);
 
@@ -423,20 +433,32 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             }
         }
 
-        log::info!(
-            "objects to defrag (after flush loop): {}",
-            objects_to_defrag.len()
-        );
+        if !objects_to_defrag.is_empty() {
+            log::debug!(
+                "objects to defrag (after flush loop): {}",
+                objects_to_defrag.len()
+            );
+        }
         self.compacted_heap_slots
             .fetch_add(objects_to_defrag.len() as u64, Ordering::Relaxed);
+
         for fragmented_object_id in objects_to_defrag {
             let object_opt = self.object_id_index.get(&fragmented_object_id);
 
             let object = if let Some(object) = object_opt {
                 object
             } else {
-                panic!("defragmenting object not found in object_id_index: {fragmented_object_id:?}");
+                log::debug!("defragmenting object not found in object_id_index: {fragmented_object_id:?}");
+                continue;
             };
+
+            if let Some(ref inner) = *object.inner.read() {
+                if let Some(dirty) = inner.dirty_flush_epoch {
+                    assert!(dirty > flush_through_epoch);
+                    // This object will be rewritten anyway when its dirty epoch gets flushed
+                    continue;
+                }
+            }
 
             let data = match self.heap.read(fragmented_object_id) {
                 Ok(data) => data,
@@ -477,6 +499,11 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 }
             }
         }
+
+        self.flush_epoch.manually_advance_epoch();
+        self.heap.manually_advance_epoch();
+
+        self.flushes.fetch_add(1, Ordering::Release);
 
         Ok(())
     }
