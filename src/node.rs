@@ -2,7 +2,6 @@
 
 // TODO we can skip the first offset because it's always 0
 
-use std::ptr::slice_from_raw_parts;
 use std::{
     alloc::{alloc_zeroed, dealloc, Layout},
     cell::UnsafeCell,
@@ -2235,7 +2234,7 @@ impl Inner {
             let mid = left + size / 2;
 
             let l = self.index_key(mid);
-            let cmp = crate::fastcmp(l.unwrap_slice(), key);
+            let cmp = l.unwrap_slice().cmp(key);
 
             if cmp == Less {
                 left = mid + 1;
