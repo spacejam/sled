@@ -37,12 +37,14 @@ impl AlignedBuf {
 impl Deref for AlignedBuf {
     type Target = [u8];
 
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         unsafe { slice_from_raw_parts(self.0, self.1).as_ref().unwrap() }
     }
 }
 
 impl DerefMut for AlignedBuf {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { slice_from_raw_parts_mut(self.0, self.1).as_mut().unwrap() }
     }
@@ -97,16 +99,38 @@ impl IoBuf {
     /// to meet this requirement.
     ///
     /// The safety of this method was discussed in #1044.
-    pub(crate) fn get_mut_range(
-        &self,
-        at: usize,
-        len: usize,
-    ) -> &'static mut [u8] {
+    #[inline(always)]
+    pub(crate) fn get_mut_range(&self, at: usize, len: usize) -> &mut [u8] {
+        unsafe { &mut self.get_mut()[at..at + len] }
+    }
+
+    /// # Safety
+    ///
+    /// This operation provides access to a mutable buffer of
+    /// uninitialized memory. For this to be correct, we must
+    /// ensure that:
+    /// 1. overlapping mutable slices are never created.
+    /// 2. a read to any subslice of this slice only happens after a write has
+    ///    initialized that memory
+    ///
+    /// It is intended that the log reservation code guarantees
+    /// that no two `Reservation` objects will hold overlapping
+    /// mutable slices to our io buffer.
+    ///
+    /// It is intended that the `write_to_log` function only
+    /// tries to write initialized bytes to the underlying storage.
+    ///
+    /// It is intended that the `write_to_log` function will
+    /// initialize any yet-to-be-initialized bytes before writing
+    /// the buffer to storage. #1040 added logic that was intended
+    /// to meet this requirement.
+    ///
+    /// The safety of this method was discussed in #1044.
+    #[inline(always)]
+    pub(crate) fn get_mut(&self) -> &mut [u8] {
         unsafe {
             let buf_ptr = self.buf.get().as_mut().unwrap();
-            let start = self.base + at;
-            let end = start + len;
-            &mut buf_ptr[start..end]
+            &mut buf_ptr[self.base..]
         }
     }
 

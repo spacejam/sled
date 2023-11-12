@@ -422,7 +422,7 @@ impl Log {
             return Ok(Reservation {
                 iobuf,
                 log: self,
-                buf: destination,
+                buf_range: buf_offset..buf_offset + inline_buf_len,
                 flushed: false,
                 lsn: reservation_lsn,
                 pointer,
