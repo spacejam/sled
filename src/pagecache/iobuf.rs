@@ -1,3 +1,5 @@
+use std::ops::DerefMut;
+use std::ptr::{slice_from_raw_parts, slice_from_raw_parts_mut};
 use std::{
     alloc::{alloc, dealloc, Layout},
     cell::UnsafeCell,
@@ -29,6 +31,20 @@ impl AlignedBuf {
         assert!(!ptr.is_null(), "failed to allocate critical IO buffer");
 
         AlignedBuf(ptr, len)
+    }
+}
+
+impl Deref for AlignedBuf {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { slice_from_raw_parts(self.0, self.1).as_ref().unwrap() }
+    }
+}
+
+impl DerefMut for AlignedBuf {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { slice_from_raw_parts_mut(self.0, self.1).as_mut().unwrap() }
     }
 }
 
@@ -86,14 +102,11 @@ impl IoBuf {
         at: usize,
         len: usize,
     ) -> &'static mut [u8] {
-        let buf_ptr = self.buf.get();
-
         unsafe {
-            assert!((*buf_ptr).1 >= at + len);
-            std::slice::from_raw_parts_mut(
-                (*buf_ptr).0.add(self.base + at),
-                len,
-            )
+            let buf_ptr = self.buf.get().as_mut().unwrap();
+            let start = self.base + at;
+            let end = start + len;
+            &mut buf_ptr[start..end]
         }
     }
 
@@ -119,11 +132,8 @@ impl IoBuf {
 
         #[allow(unsafe_code)]
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                header_bytes.as_ptr(),
-                (*self.buf.get()).0,
-                SEG_HEADER_LEN,
-            );
+            let buf = self.buf.get().as_mut().unwrap();
+            buf[..SEG_HEADER_LEN].copy_from_slice(&header_bytes);
         }
 
         // ensure writes to the buffer land after our header.
@@ -687,35 +697,16 @@ impl IoBufs {
                 unused_space - header_bytes.len()
             ];
 
-            #[allow(unsafe_code)]
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    header_bytes.as_ptr(),
-                    data.as_mut_ptr(),
-                    header_bytes.len(),
-                );
-                std::ptr::copy_nonoverlapping(
-                    padding_bytes.as_ptr(),
-                    data.as_mut_ptr().add(header_bytes.len()),
-                    padding_bytes.len(),
-                );
-            }
-
+            let (hdat, rem) = data.split_at_mut(header_bytes.len());
+            hdat.copy_from_slice(&header_bytes);
+            let (pdat, _) = rem.split_at_mut(padding_bytes.len());
+            pdat.copy_from_slice(&padding_bytes);
             // this as to stay aligned with the hashing
             let crc32_arr = u32_to_arr(calculate_message_crc32(
                 &header_bytes,
                 &padding_bytes[..pad_len],
             ));
-
-            #[allow(unsafe_code)]
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    crc32_arr.as_ptr(),
-                    // the crc32 is the first part of the buffer
-                    data.as_mut_ptr(),
-                    std::mem::size_of::<u32>(),
-                );
-            }
+            data[0..4].copy_from_slice(&crc32_arr)
         } else if maxed {
             // initialize the remainder of this buffer's red zone
             let data = iobuf.get_mut_range(bytes_to_write, unused_space);
