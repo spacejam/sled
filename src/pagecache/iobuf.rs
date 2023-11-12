@@ -39,14 +39,18 @@ impl Deref for AlignedBuf {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        unsafe { slice_from_raw_parts(self.0, self.1).as_ref().unwrap() }
+        unsafe {
+            slice_from_raw_parts(self.0, self.1).as_ref().unwrap_unchecked()
+        }
     }
 }
 
 impl DerefMut for AlignedBuf {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { slice_from_raw_parts_mut(self.0, self.1).as_mut().unwrap() }
+        unsafe {
+            slice_from_raw_parts_mut(self.0, self.1).as_mut().unwrap_unchecked()
+        }
     }
 }
 
@@ -129,7 +133,7 @@ impl IoBuf {
     #[inline(always)]
     pub(crate) fn get_mut(&self) -> &mut [u8] {
         unsafe {
-            let buf_ptr = self.buf.get().as_mut().unwrap();
+            let buf_ptr = self.buf.get().as_mut().unwrap_unchecked();
             &mut buf_ptr[self.base..]
         }
     }
