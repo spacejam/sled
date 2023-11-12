@@ -1,3 +1,5 @@
+use std::ops::DerefMut;
+use std::ptr::{slice_from_raw_parts, slice_from_raw_parts_mut};
 use std::{
     alloc::{alloc, dealloc, Layout},
     cell::UnsafeCell,
@@ -29,6 +31,26 @@ impl AlignedBuf {
         assert!(!ptr.is_null(), "failed to allocate critical IO buffer");
 
         AlignedBuf(ptr, len)
+    }
+}
+
+impl Deref for AlignedBuf {
+    type Target = [u8];
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        unsafe {
+            slice_from_raw_parts(self.0, self.1).as_ref().unwrap_unchecked()
+        }
+    }
+}
+
+impl DerefMut for AlignedBuf {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe {
+            slice_from_raw_parts_mut(self.0, self.1).as_mut().unwrap_unchecked()
+        }
     }
 }
 
@@ -65,8 +87,8 @@ impl IoBuf {
     /// uninitialized memory. For this to be correct, we must
     /// ensure that:
     /// 1. overlapping mutable slices are never created.
-    /// 2. a read to any subslice of this slice only happens
-    ///    after a write has initialized that memory
+    /// 2. a read to any subslice of this slice only happens after a write has
+    ///    initialized that memory
     ///
     /// It is intended that the log reservation code guarantees
     /// that no two `Reservation` objects will hold overlapping
@@ -81,19 +103,38 @@ impl IoBuf {
     /// to meet this requirement.
     ///
     /// The safety of this method was discussed in #1044.
-    pub(crate) fn get_mut_range(
-        &self,
-        at: usize,
-        len: usize,
-    ) -> &'static mut [u8] {
-        let buf_ptr = self.buf.get();
+    #[inline(always)]
+    pub(crate) fn get_mut_range(&self, at: usize, len: usize) -> &mut [u8] {
+        unsafe { &mut self.get_mut()[at..at + len] }
+    }
 
+    /// # Safety
+    ///
+    /// This operation provides access to a mutable buffer of
+    /// uninitialized memory. For this to be correct, we must
+    /// ensure that:
+    /// 1. overlapping mutable slices are never created.
+    /// 2. a read to any subslice of this slice only happens after a write has
+    ///    initialized that memory
+    ///
+    /// It is intended that the log reservation code guarantees
+    /// that no two `Reservation` objects will hold overlapping
+    /// mutable slices to our io buffer.
+    ///
+    /// It is intended that the `write_to_log` function only
+    /// tries to write initialized bytes to the underlying storage.
+    ///
+    /// It is intended that the `write_to_log` function will
+    /// initialize any yet-to-be-initialized bytes before writing
+    /// the buffer to storage. #1040 added logic that was intended
+    /// to meet this requirement.
+    ///
+    /// The safety of this method was discussed in #1044.
+    #[inline(always)]
+    pub(crate) fn get_mut(&self) -> &mut [u8] {
         unsafe {
-            assert!((*buf_ptr).1 >= at + len);
-            std::slice::from_raw_parts_mut(
-                (*buf_ptr).0.add(self.base + at),
-                len,
-            )
+            let buf_ptr = self.buf.get().as_mut().unwrap_unchecked();
+            &mut buf_ptr[self.base..]
         }
     }
 
@@ -119,11 +160,8 @@ impl IoBuf {
 
         #[allow(unsafe_code)]
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                header_bytes.as_ptr(),
-                (*self.buf.get()).0,
-                SEG_HEADER_LEN,
-            );
+            let buf = self.buf.get().as_mut().unwrap();
+            buf[..SEG_HEADER_LEN].copy_from_slice(&header_bytes);
         }
 
         // ensure writes to the buffer land after our header.
@@ -687,48 +725,20 @@ impl IoBufs {
                 unused_space - header_bytes.len()
             ];
 
-            #[allow(unsafe_code)]
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    header_bytes.as_ptr(),
-                    data.as_mut_ptr(),
-                    header_bytes.len(),
-                );
-                std::ptr::copy_nonoverlapping(
-                    padding_bytes.as_ptr(),
-                    data.as_mut_ptr().add(header_bytes.len()),
-                    padding_bytes.len(),
-                );
-            }
-
+            let (hdat, rem) = data.split_at_mut(header_bytes.len());
+            hdat.copy_from_slice(&header_bytes);
+            let (pdat, _) = rem.split_at_mut(padding_bytes.len());
+            pdat.copy_from_slice(&padding_bytes);
             // this as to stay aligned with the hashing
             let crc32_arr = u32_to_arr(calculate_message_crc32(
                 &header_bytes,
                 &padding_bytes[..pad_len],
             ));
-
-            #[allow(unsafe_code)]
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    crc32_arr.as_ptr(),
-                    // the crc32 is the first part of the buffer
-                    data.as_mut_ptr(),
-                    std::mem::size_of::<u32>(),
-                );
-            }
+            data[0..4].copy_from_slice(&crc32_arr)
         } else if maxed {
             // initialize the remainder of this buffer's red zone
             let data = iobuf.get_mut_range(bytes_to_write, unused_space);
-
-            #[allow(unsafe_code)]
-            unsafe {
-                // note: this could use slice::fill() if it stabilizes
-                std::ptr::write_bytes(
-                    data.as_mut_ptr(),
-                    MessageKind::Corrupted.into(),
-                    unused_space,
-                );
-            }
+            data.fill(MessageKind::Corrupted.into());
         }
 
         let total_len = if maxed { capacity } else { bytes_to_write };
@@ -953,7 +963,10 @@ pub(in crate::pagecache) fn make_stable_inner(
 
     while stable < lsn {
         if let Err(e) = iobufs.config.global_error() {
-            error!("bailing out of stabilization code due to detected IO error: {:?}", e);
+            error!(
+                "bailing out of stabilization code due to detected IO error: {:?}",
+                e
+            );
             let intervals = iobufs.intervals.lock();
 
             // having held the mutex makes this linearized

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use std::fs::File;
 
 use super::{
@@ -421,7 +422,7 @@ impl Log {
             return Ok(Reservation {
                 iobuf,
                 log: self,
-                buf: destination,
+                buf_range: buf_offset..buf_offset + inline_buf_len,
                 flushed: false,
                 lsn: reservation_lsn,
                 pointer,
@@ -571,31 +572,27 @@ impl LogRead {
 
 impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn from(buf: [u8; SEG_HEADER_LEN]) -> Self {
-        #[allow(unsafe_code)]
-        unsafe {
-            let crc32_header =
-                arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
+        let crc32_header = arr_to_u32(&buf[0..4]) ^ 0xFFFF_FFFF;
 
-            let xor_lsn = arr_to_lsn(buf.get_unchecked(4..12));
-            let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+        let xor_lsn = arr_to_lsn(&buf[4..12]);
+        let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
-            let xor_max_stable_lsn = arr_to_lsn(buf.get_unchecked(12..20));
-            let max_stable_lsn = xor_max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+        let xor_max_stable_lsn = arr_to_lsn(&buf[12..20]);
+        let max_stable_lsn = xor_max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
-            let crc32_tested = crc32(&buf[4..20]);
+        let crc32_tested = crc32(&buf[4..20]);
 
-            let ok = crc32_tested == crc32_header;
+        let ok = crc32_tested == crc32_header;
 
-            if !ok {
-                debug!(
-                    "segment with lsn {} had computed crc {}, \
+        if !ok {
+            debug!(
+                "segment with lsn {} had computed crc {}, \
                      but stored crc {}",
-                    lsn, crc32_tested, crc32_header
-                );
-            }
-
-            Self { lsn, max_stable_lsn, ok }
+                lsn, crc32_tested, crc32_header
+            );
         }
+
+        Self { lsn, max_stable_lsn, ok }
     }
 }
 
@@ -609,30 +606,11 @@ impl From<SegmentHeader> for [u8; SEG_HEADER_LEN] {
         let xor_max_stable_lsn = header.max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let highest_stable_lsn_arr = lsn_to_arr(xor_max_stable_lsn);
 
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                lsn_arr.as_ptr(),
-                buf.as_mut_ptr().add(4),
-                std::mem::size_of::<u64>(),
-            );
-            std::ptr::copy_nonoverlapping(
-                highest_stable_lsn_arr.as_ptr(),
-                buf.as_mut_ptr().add(12),
-                std::mem::size_of::<u64>(),
-            );
-        }
+        buf[4..12].copy_from_slice(&lsn_arr);
+        buf[12..20].copy_from_slice(&highest_stable_lsn_arr);
 
         let crc32 = u32_to_arr(crc32(&buf[4..20]) ^ 0xFFFF_FFFF);
-
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                crc32.as_ptr(),
-                buf.as_mut_ptr(),
-                std::mem::size_of::<u32>(),
-            );
-        }
+        buf[0..4].copy_from_slice(&crc32);
 
         buf
     }

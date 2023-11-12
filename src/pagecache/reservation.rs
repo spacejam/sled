@@ -1,4 +1,7 @@
+#![forbid(unsafe_code)]
+
 use crate::{pagecache::*, *};
+use std::ops::Range;
 
 /// A pending log reservation which can be aborted or completed.
 /// NB the holder should quickly call `complete` or `abort` as
@@ -8,7 +11,7 @@ use crate::{pagecache::*, *};
 pub struct Reservation<'a> {
     pub(super) log: &'a Log,
     pub(super) iobuf: Arc<IoBuf>,
-    pub(super) buf: &'a mut [u8],
+    pub(super) buf_range: Range<usize>,
     pub(super) flushed: bool,
     pub pointer: DiskPtr,
     pub lsn: Lsn,
@@ -28,6 +31,10 @@ impl<'a> Drop for Reservation<'a> {
 }
 
 impl<'a> Reservation<'a> {
+    #[inline]
+    fn buf(&self) -> &mut [u8] {
+        &mut self.iobuf.get_mut()[self.buf_range.clone()]
+    }
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
     pub fn abort(mut self) -> Result<(Lsn, DiskPtr)> {
@@ -72,17 +79,16 @@ impl<'a> Reservation<'a> {
             self.lsn
         );
 
+        let this_buf = self.buf();
         if self.lsn == peg_lsn {
             // this can happen because high-level tree updates
             // may result in no work happening.
             self.abort()
         } else {
-            self.buf[4] = MessageKind::BatchManifest.into();
+            this_buf[4] = MessageKind::BatchManifest.into();
+            let dst = &mut this_buf[self.header_len..];
 
             let buf = lsn_to_arr(peg_lsn);
-
-            let dst = &mut self.buf[self.header_len..];
-
             dst.copy_from_slice(&buf);
 
             let mut intervals = self.log.iobufs.intervals.lock();
@@ -99,45 +105,25 @@ impl<'a> Reservation<'a> {
         }
 
         self.flushed = true;
+        let buf = self.buf();
 
         if !valid {
-            self.buf[4] = MessageKind::Canceled.into();
+            buf[4] = MessageKind::Canceled.into();
 
             // zero the message contents to prevent UB
-            #[allow(unsafe_code)]
-            unsafe {
-                std::ptr::write_bytes(
-                    self.buf[self.header_len..].as_mut_ptr(),
-                    0,
-                    self.buf.len() - self.header_len,
-                )
-            }
+            buf[self.header_len..].fill(0);
         }
 
         // zero the crc bytes to prevent UB
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::write_bytes(
-                self.buf[..].as_mut_ptr(),
-                0,
-                std::mem::size_of::<u32>(),
-            )
-        }
+        buf[0..4].fill(0);
 
         let crc32 = calculate_message_crc32(
-            self.buf[..self.header_len].as_ref(),
-            &self.buf[self.header_len..],
+            &buf[..self.header_len],
+            &buf[self.header_len..],
         );
         let crc32_arr = u32_to_arr(crc32);
 
-        #[allow(unsafe_code)]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                crc32_arr.as_ptr(),
-                self.buf.as_mut_ptr(),
-                std::mem::size_of::<u32>(),
-            );
-        }
+        buf[0..4].copy_from_slice(&crc32_arr);
         self.log.exit_reservation(&self.iobuf)?;
 
         Ok((self.lsn, self.pointer))

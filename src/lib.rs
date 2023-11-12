@@ -192,7 +192,6 @@ mod context;
 mod db;
 mod dll;
 mod ebr;
-mod fastcmp;
 mod fastlock;
 mod fnv;
 mod histogram;
@@ -302,7 +301,6 @@ use {
             pin as crossbeam_pin, Atomic, Guard as CrossbeamGuard, Owned,
             Shared,
         },
-        fastcmp::fastcmp,
         lru::Lru,
         meta::Meta,
         node::Node,

@@ -4,7 +4,6 @@ use std::{
     borrow::{Borrow, BorrowMut},
     convert::TryFrom,
     hash::{Hash, Hasher},
-    mem::MaybeUninit,
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 
@@ -38,7 +37,7 @@ impl Default for AccessBlock {
     fn default() -> AccessBlock {
         AccessBlock {
             len: AtomicUsize::new(0),
-            block: unsafe { MaybeUninit::zeroed().assume_init() },
+            block: [(); MAX_QUEUE_ITEMS].map(|_| AtomicU64::default() ),
             next: AtomicPtr::default(),
         }
     }
@@ -53,7 +52,7 @@ impl AccessBlock {
     fn new(item: CacheAccess) -> AccessBlock {
         let mut ret = AccessBlock {
             len: AtomicUsize::new(1),
-            block: unsafe { MaybeUninit::zeroed().assume_init() },
+            block: [(); MAX_QUEUE_ITEMS].map(|_| AtomicU64::default() ),
             next: AtomicPtr::default(),
         };
         ret.block[0] = AtomicU64::from(u64::from(item));
