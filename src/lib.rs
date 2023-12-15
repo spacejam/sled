@@ -464,7 +464,7 @@ use std::collections::{BTreeMap as Map, BTreeSet as Set};
 ///   .temporary(true);
 ///
 /// let tree = config.open()?;
-/// tree.set_merge_operator(concatenate_merge);
+/// tree.set_merge_operator(Box::new(concatenate_merge));
 ///
 /// let k = b"k1";
 ///

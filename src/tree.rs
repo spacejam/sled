@@ -1114,7 +1114,7 @@ impl Tree {
     ///   Some(ret)
     /// }
     ///
-    /// db.set_merge_operator(concatenate_merge);
+    /// db.set_merge_operator(Box::new(concatenate_merge));
     ///
     /// let k = b"k1";
     ///
@@ -1247,7 +1247,7 @@ impl Tree {
     ///   Some(ret)
     /// }
     ///
-    /// db.set_merge_operator(concatenate_merge);
+    /// db.set_merge_operator(Box::new(concatenate_merge));
     ///
     /// let k = b"k1";
     ///
@@ -1270,10 +1270,10 @@ impl Tree {
     /// ```
     pub fn set_merge_operator(
         &self,
-        merge_operator: impl MergeOperator + 'static,
+        merge_operator: Box<dyn MergeOperator>,
     ) {
         let mut mo_write = self.merge_operator.write();
-        *mo_write = Some(Box::new(merge_operator));
+        *mo_write = Some(merge_operator);
     }
 
     /// Create a double-ended iterator over the tuples of keys and

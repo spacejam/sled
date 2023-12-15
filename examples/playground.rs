@@ -53,7 +53,7 @@ fn merge_operator() -> Result<()> {
     let config = Config::new().temporary(true);
 
     let db = config.open()?;
-    db.set_merge_operator(concatenate_merge);
+    db.set_merge_operator(Box::new(concatenate_merge));
 
     let k = b"k".to_vec();
 
