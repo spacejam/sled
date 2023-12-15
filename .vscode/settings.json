@@ -1,5 +1,0 @@
-{
-    "rust-analyzer.cargo.features": [
-        "light_testing"
-    ]
-}
