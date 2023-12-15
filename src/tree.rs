@@ -1421,7 +1421,7 @@ impl Tree {
         while let Some(last) = upper.pop() {
             if last < u8::max_value() {
                 upper.push(last + 1);
-                return self.range(prefix_ref..&upper);
+                return self.range(prefix_ref..upper.as_ref());
             }
         }
 
