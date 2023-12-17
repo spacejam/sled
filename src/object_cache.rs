@@ -122,8 +122,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         self.dirty.is_empty()
     }
 
-    pub fn read(&self, object_id: u64) -> io::Result<Vec<u8>> {
-        self.heap.read(ObjectId(object_id))
+    pub fn read(&self, object_id: ObjectId) -> Option<io::Result<Vec<u8>>> {
+        self.heap.read(object_id)
     }
 
     pub fn stats(&self) -> Stats {
@@ -223,7 +223,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         let old_dirty = self.dirty.insert((flush_epoch, object_id), dirty);
 
         if let Some(old) = old_dirty {
-            assert!(!old.is_final_state(),
+            assert!(
+                !old.is_final_state(),
                 "tried to install another Dirty marker for a node that is already
                 finalized for this flush epoch. {:?} old: {:?}",
                 flush_epoch, old
@@ -272,6 +273,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         }
 
         Ok(())
+    }
+
+    pub fn heap_object_id_pin(&self) -> ebr::Guard<'_, DeferredFree, 16, 16> {
+        self.heap.heap_object_id_pin()
     }
 
     pub fn flush(&self) -> io::Result<()> {
@@ -364,8 +369,14 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     assert_eq!(dirty_object_id, node.object_id, "mismatched node ID for NotYetSerialized with low key {:?}", low_key);
                     let mut lock = node.inner.write();
 
-                    let leaf_ref: &mut Leaf<LEAF_FANOUT> =
-                        lock.as_mut().unwrap();
+                    let leaf_ref: &mut Leaf<LEAF_FANOUT> = if let Some(
+                        lock_ref,
+                    ) = lock.as_mut()
+                    {
+                        lock_ref
+                    } else {
+                        panic!("failed to get lock for node that was NotYetSerialized, low key {:?} id {:?}", low_key, node.object_id);
+                    };
 
                     let data = if leaf_ref.dirty_flush_epoch
                         == Some(flush_through_epoch)
@@ -438,10 +449,9 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 "objects to defrag (after flush loop): {}",
                 objects_to_defrag.len()
             );
+            self.compacted_heap_slots
+                .fetch_add(objects_to_defrag.len() as u64, Ordering::Relaxed);
         }
-        self.compacted_heap_slots
-            .fetch_add(objects_to_defrag.len() as u64, Ordering::Relaxed);
-
         for fragmented_object_id in objects_to_defrag {
             let object_opt = self.object_id_index.get(&fragmented_object_id);
 
@@ -460,10 +470,16 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 }
             }
 
-            let data = match self.heap.read(fragmented_object_id) {
-                Ok(data) => data,
-                Err(e) => {
+            let data = match self.read(fragmented_object_id) {
+                Some(Ok(data)) => data,
+                Some(Err(e)) => {
                     log::error!("failed to read object during GC: {e:?}");
+                    continue;
+                }
+                None => {
+                    log::error!(
+                        "failed to read object during GC: object not found"
+                    );
                     continue;
                 }
             };
@@ -485,6 +501,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 written_count
             );
         }
+
         log::trace!(
             "marking the forward flush notifier that {:?} is flushed",
             flush_through_epoch

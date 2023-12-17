@@ -718,19 +718,21 @@ impl Heap {
         self.table.stats()
     }
 
-    pub fn read(&self, object_id: ObjectId) -> io::Result<Vec<u8>> {
-        self.check_error()?;
+    pub fn read(&self, object_id: ObjectId) -> Option<io::Result<Vec<u8>>> {
+        if let Err(e) = self.check_error() {
+            return Some(Err(e));
+        }
 
         let mut guard = self.free_ebr.pin();
-        let slab_address = self.table.get_location_for_object(object_id);
+        let slab_address = self.table.get_location_for_object(object_id)?;
 
         let slab = &self.slabs[usize::from(slab_address.slab_id)];
 
         match slab.read(slab_address.slot(), &mut guard) {
-            Ok(bytes) => Ok(bytes),
+            Ok(bytes) => Some(Ok(bytes)),
             Err(e) => {
                 self.set_error(&e);
-                Err(e)
+                Some(Err(e))
             }
         }
     }
@@ -820,6 +822,10 @@ impl Heap {
         drop(atomicity_mu);
 
         Ok(())
+    }
+
+    pub fn heap_object_id_pin(&self) -> ebr::Guard<'_, DeferredFree, 16, 16> {
+        self.free_ebr.pin()
     }
 
     pub fn allocate_object_id(&self) -> ObjectId {

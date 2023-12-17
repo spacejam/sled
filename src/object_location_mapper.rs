@@ -162,14 +162,13 @@ impl ObjectLocationMapper {
     pub(crate) fn get_location_for_object(
         &self,
         object_id: ObjectId,
-    ) -> crate::SlabAddress {
+    ) -> Option<crate::SlabAddress> {
         let location_u64 =
             self.object_id_to_location.get(object_id.0).load(Ordering::Acquire);
 
-        let nzu = NonZeroU64::new(location_u64)
-            .expect("node location metadata not present in pagetable");
+        let nzu = NonZeroU64::new(location_u64)?;
 
-        SlabAddress::from(nzu)
+        Some(SlabAddress::from(nzu))
     }
 
     /// Returns the previous address for this object, if it is vacating one.

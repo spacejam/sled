@@ -197,7 +197,10 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
         Object<LEAF_FANOUT>,
     )> {
+        let mut read_loops = 0;
         loop {
+            let _heap_pin = self.cache.heap_object_id_pin();
+
             let (low_key, node) = self.index.get_lte(key).unwrap();
             if node.collection_id != self.collection_id {
                 log::trace!("retry due to mismatched collection id in page_in");
@@ -206,7 +209,22 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
             let mut write = node.inner.write_arc();
             if write.is_none() {
-                let leaf_bytes = self.cache.read(node.object_id.0)?;
+                let leaf_bytes =
+                    if let Some(read_res) = self.cache.read(node.object_id) {
+                        read_res?
+                    } else {
+                        // this particular object ID is not present
+                        read_loops += 1;
+                        // TODO change this assertion
+                        assert!(
+                            read_loops < 10_000,
+                            "search key: {:?} node key: {:?} object id: {:?}",
+                            key,
+                            low_key,
+                            node.object_id
+                        );
+                        continue;
+                    };
                 let leaf: Box<Leaf<LEAF_FANOUT>> =
                     Leaf::deserialize(&leaf_bytes).unwrap();
                 *write = Some(leaf);
