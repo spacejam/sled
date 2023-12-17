@@ -362,11 +362,14 @@ fn concurrent_tree_ops() {
         macro_rules! par {
             ($t:ident, $f:expr) => {
                 let mut threads = vec![];
+                let barrier = Arc::new(Barrier::new(N_THREADS));
                 for tn in 0..N_THREADS {
                     let tree = $t.clone();
+                    let barrier = barrier.clone();
                     let thread = thread::Builder::new()
                         .name(format!("t(thread: {} test: {})", tn, i))
                         .spawn(move || {
+                            barrier.wait();
                             for i in
                                 (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                             {
@@ -456,7 +459,7 @@ fn concurrent_tree_ops() {
 
         debug!("========== deleting in test {} ==========", i);
         par! {t, move |tree: &Db, k: Vec<u8>| {
-            tree.remove(&*k).unwrap();
+            tree.remove(&*k).unwrap().unwrap();
         }};
 
         drop(t);
