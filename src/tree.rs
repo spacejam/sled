@@ -22,8 +22,6 @@ pub struct Tree<const LEAF_FANOUT: usize = 1024> {
     cache: ObjectCache<LEAF_FANOUT>,
     index: Index<LEAF_FANOUT>,
     _shutdown_dropper: Arc<ShutdownDropper<LEAF_FANOUT>>,
-    #[cfg(feature = "for-internal-testing-only")]
-    event_verifier: Arc<crate::event_verifier::EventVerifier>,
 }
 
 impl<const LEAF_FANOUT: usize> Drop for Tree<LEAF_FANOUT> {
@@ -144,18 +142,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         cache: ObjectCache<LEAF_FANOUT>,
         index: Index<LEAF_FANOUT>,
         _shutdown_dropper: Arc<ShutdownDropper<LEAF_FANOUT>>,
-        #[cfg(feature = "for-internal-testing-only")] event_verifier: Arc<
-            crate::event_verifier::EventVerifier,
-        >,
     ) -> Tree<LEAF_FANOUT> {
-        Tree {
-            collection_id,
-            cache,
-            index,
-            _shutdown_dropper,
-            #[cfg(feature = "for-internal-testing-only")]
-            event_verifier,
-        }
+        Tree { collection_id, cache, index, _shutdown_dropper }
     }
 
     // This is only pub for an extra assertion during testing.
@@ -575,8 +563,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
-        // TODO handle prefix encoding
-
         let ret = leaf.data.insert(key_ref.into(), value_ivec.clone());
 
         let old_size =
@@ -679,8 +665,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         let new_epoch = leaf_guard.epoch();
 
         let leaf = leaf_guard.leaf_write.as_mut().unwrap();
-
-        // TODO handle prefix encoding
 
         let ret = leaf.data.remove(key_ref);
 

@@ -20,6 +20,7 @@
 //      as it is evacuated - just wait until last flush is done before
 //      we persist the batch
 // TODO serialize flush batch in parallel
+// TODO handle prefix encoding
 // TODO add failpoints to writepath
 // TODO re-enable transaction tests in test_tree.rs
 // TODO set explicit max key and value sizes w/ corresponding heap

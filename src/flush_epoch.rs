@@ -263,6 +263,9 @@ fn flush_epoch_basic_functionality() {
 
 #[cfg(test)]
 fn concurrent_flush_epoch_burn_in_inner() {
+    const N_THREADS: usize = 10;
+    const N_OPS_PER_THREAD: usize = 3000;
+
     let fa = FlushEpochTracker::default();
 
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(21));
@@ -275,7 +278,7 @@ fn concurrent_flush_epoch_burn_in_inner() {
         let pt = &pt;
         move || {
             barrier.wait();
-            for _ in 0..3000 {
+            for _ in 0..N_OPS_PER_THREAD {
                 let (previous, this, next) = fa.roll_epoch_forward();
                 let last_epoch = previous.wait_for_complete().0.get();
                 assert_eq!(0, pt.get(last_epoch).load(Ordering::Acquire));
@@ -296,7 +299,7 @@ fn concurrent_flush_epoch_burn_in_inner() {
         let pt = &pt;
         move || {
             barrier.wait();
-            for _ in 0..3000 {
+            for _ in 0..N_OPS_PER_THREAD {
                 let guard = fa.check_in();
                 let epoch = guard.epoch().0.get();
                 pt.get(epoch).fetch_add(1, Ordering::SeqCst);
@@ -310,7 +313,7 @@ fn concurrent_flush_epoch_burn_in_inner() {
     std::thread::scope(|s| {
         let mut threads = vec![];
 
-        for _ in 0..10 {
+        for _ in 0..N_THREADS {
             threads.push(s.spawn(rolls()));
             threads.push(s.spawn(check_ins()));
         }
@@ -321,6 +324,10 @@ fn concurrent_flush_epoch_burn_in_inner() {
             thread.join().expect("a test thread crashed unexpectedly");
         }
     });
+
+    for i in 0..N_OPS_PER_THREAD * N_THREADS {
+        assert_eq!(0, pt.get(i as u64).load(Ordering::Acquire));
+    }
 }
 
 #[test]

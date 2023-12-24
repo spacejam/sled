@@ -1006,7 +1006,7 @@ fn failpoints_bug_11() {
 #[cfg_attr(miri, ignore)]
 fn failpoints_bug_12() {
     // postmortem 1: we were not sorting the recovery state, which
-    // led to divergent state across recoveries. TODO wut
+    // led to divergent state across recoveries.
     assert!(prop_tree_crashes_nicely(
         vec![
             Set,

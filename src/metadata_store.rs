@@ -739,8 +739,10 @@ fn read_snapshot_and_apply_logs(
             if matches!(update_metadata, UpdateMetadata::Store { .. }) {
                 recovered.insert(object_id, update_metadata);
             } else {
-                let _previous = recovered.remove(&object_id);
-                // TODO: assert!(previous.is_some());
+                let previous = recovered.remove(&object_id);
+                if previous.is_none() {
+                    log::trace!("recovered a Free for {object_id:?} without a preceeding Store");
+                }
             }
         }
     }
