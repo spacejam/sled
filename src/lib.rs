@@ -96,7 +96,9 @@ pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Db> {
     Config::new().path(path).open()
 }
 
-use crate::flush_epoch::{FlushEpoch, FlushEpochGuard, FlushEpochTracker};
+use crate::flush_epoch::{
+    FlushEpoch, FlushEpochGuard, FlushEpochTracker, FlushInvariants,
+};
 
 /// Compare and swap result.
 ///

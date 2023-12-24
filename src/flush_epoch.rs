@@ -34,6 +34,39 @@ impl concurrent_map::Minimum for FlushEpoch {
     const MIN: FlushEpoch = FlushEpoch(NonZeroU64::MIN);
 }
 
+#[derive(Debug)]
+pub(crate) struct FlushInvariants {
+    max_flushed_epoch: AtomicU64,
+    max_flushing_epoch: AtomicU64,
+}
+
+impl Default for FlushInvariants {
+    fn default() -> FlushInvariants {
+        FlushInvariants {
+            max_flushed_epoch: (MIN_EPOCH - 1).into(),
+            max_flushing_epoch: (MIN_EPOCH - 1).into(),
+        }
+    }
+}
+
+impl FlushInvariants {
+    pub(crate) fn mark_flushed_epoch(&self, epoch: FlushEpoch) {
+        let last = self.max_flushed_epoch.swap(epoch.get(), Ordering::SeqCst);
+
+        println!("swapped max_flushed_epoch {} for {}", last, epoch.get());
+
+        assert_eq!(last + 1, epoch.get());
+    }
+
+    pub(crate) fn mark_flushing_epoch(&self, epoch: FlushEpoch) {
+        let last = self.max_flushing_epoch.swap(epoch.get(), Ordering::SeqCst);
+
+        println!("swapped max_flushing_epoch {} for {}", last, epoch.get());
+
+        assert_eq!(last + 1, epoch.get());
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Completion {
     mu: Arc<Mutex<bool>>,
@@ -173,19 +206,28 @@ impl FlushEpochTracker {
     /// notify the flush-requesting thread.
     pub fn roll_epoch_forward(&self) -> (Completion, Completion, Completion) {
         let mut tracker_guard = self.active_ebr.pin();
+
         let vacancy_mu = self.inner.roll_mu.lock().unwrap();
+
         let flush_through = self.inner.counter.fetch_add(1, Ordering::SeqCst);
-        let new_epoch = FlushEpoch(NonZeroU64::new(flush_through + 1).unwrap());
-        let forward_flush_notifier =
-            Completion::new(FlushEpoch(NonZeroU64::new(u64::MAX).unwrap()));
+
+        let flush_through_epoch =
+            FlushEpoch(NonZeroU64::new(flush_through).unwrap());
+
+        let new_epoch = flush_through_epoch.increment();
+
+        let forward_flush_notifier = Completion::new(flush_through_epoch);
+
         let new_active = Box::into_raw(Box::new(EpochTracker {
             epoch: new_epoch,
             rc: AtomicU64::new(0),
             vacancy_notifier: Completion::new(new_epoch),
             previous_flush_complete: forward_flush_notifier.clone(),
         }));
+
         let old_ptr =
             self.inner.current_active.swap(new_active, Ordering::SeqCst);
+
         assert!(!old_ptr.is_null());
 
         let (last_flush_complete_notifier, vacancy_notifier) = unsafe {

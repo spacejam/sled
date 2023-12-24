@@ -215,6 +215,17 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     };
                 let leaf: Box<Leaf<LEAF_FANOUT>> =
                     Leaf::deserialize(&leaf_bytes).unwrap();
+
+                #[cfg(feature = "for-internal-testing-only")]
+                {
+                    self.cache.event_verifier.mark(
+                        node.object_id,
+                        None,
+                        event_verifier::State::CleanPagedIn,
+                        concat!(file!(), ':', line!(), ":page-in"),
+                    );
+                }
+
                 *write = Some(leaf);
             }
             let leaf = write.as_mut().unwrap();
@@ -291,6 +302,23 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         predecessor.hi = leaf.hi.clone();
         predecessor.dirty_flush_epoch = Some(merge_epoch);
 
+        #[cfg(feature = "for-internal-testing-only")]
+        {
+            self.cache.event_verifier.mark(
+                predecessor_guard.node.object_id,
+                None,
+                event_verifier::State::Dirty,
+                concat!(file!(), ':', line!(), ":merged-into"),
+            );
+
+            self.cache.event_verifier.mark(
+                leaf_guard.node.object_id,
+                None,
+                event_verifier::State::Unallocated,
+                concat!(file!(), ':', line!(), ":merged"),
+            );
+        }
+
         leaf.deleted = Some(merge_epoch);
 
         leaf_guard
@@ -312,6 +340,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             },
         );
 
+        #[cfg(feature = "for-internal-testing-only")]
+        {
+            self.cache.event_verifier.mark(
+                leaf_guard.node.object_id,
+                None,
+                event_verifier::State::Dirty,
+                concat!(file!(), ':', line!(), ":merged-into-sibling"),
+            );
+        }
+
         self.cache.install_dirty(
             merge_epoch,
             predecessor_guard.node.object_id,
@@ -321,6 +359,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 collection_id: self.collection_id,
             },
         );
+
+        #[cfg(feature = "for-internal-testing-only")]
+        {
+            self.cache.event_verifier.mark(
+                predecessor_guard.node.object_id,
+                None,
+                event_verifier::State::Dirty,
+                concat!(file!(), ':', line!(), ":received-merge-from-sibling"),
+            );
+        }
 
         let (p_object_id, p_sz) =
             predecessor_guard.handle_cache_access_and_eviction_externally();
@@ -393,6 +441,9 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
             let leaf = leaf_guard.leaf_read.as_ref().unwrap();
 
+            assert!(leaf.deleted.is_none());
+            assert!(&*leaf.lo <= key);
+
             if leaf.deleted.is_some() {
                 log::trace!("retry due to deleted node in leaf_for_key");
                 drop(leaf_guard);
@@ -451,6 +502,21 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 // cooperatively serialize and put into dirty
                 let old_dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
 
+                #[cfg(feature = "for-internal-testing-only")]
+                {
+                    self.cache.event_verifier.mark(
+                        node.object_id,
+                        None,
+                        event_verifier::State::CleanPagedIn,
+                        concat!(
+                            file!(),
+                            ':',
+                            line!(),
+                            ":cooperative-serialize"
+                        ),
+                    );
+                }
+
                 // be extra-explicit about serialized bytes
                 let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
 
@@ -478,6 +544,21 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                         data: Arc::new(serialized),
                     },
                 );
+
+                #[cfg(feature = "for-internal-testing-only")]
+                {
+                    self.cache.event_verifier.mark(
+                        node.object_id,
+                        None,
+                        event_verifier::State::Dirty,
+                        concat!(
+                            file!(),
+                            ':',
+                            line!(),
+                            ":cooperative-serialize"
+                        ),
+                    );
+                }
 
                 assert_eq!(
                     old_flush_epoch.increment(),
@@ -599,6 +680,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     low_key: leaf_guard.low_key.clone(),
                 },
             );
+
+            #[cfg(feature = "for-internal-testing-only")]
+            {
+                self.cache.event_verifier.mark(
+                    leaf_guard.node.object_id,
+                    Some(new_epoch),
+                    event_verifier::State::Dirty,
+                    concat!(file!(), ':', line!(), ":insert"),
+                );
+            }
         }
         if let Some((split_key, rhs_node)) = split {
             log::trace!(
@@ -607,6 +698,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 new_epoch
             );
 
+            assert_ne!(rhs_node.object_id, leaf_guard.node.object_id);
             assert_ne!(rhs_node.object_id.0, 0);
             assert!(!split_key.is_empty());
 
@@ -615,15 +707,27 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 .insert(rhs_node.object_id, rhs_node.clone());
             self.index.insert(split_key.clone(), rhs_node.clone());
 
+            let rhs_object_id = rhs_node.object_id;
+
             self.cache.install_dirty(
                 new_epoch,
-                rhs_node.object_id,
+                rhs_object_id,
                 Dirty::NotYetSerialized {
                     collection_id: self.collection_id,
                     node: rhs_node,
                     low_key: split_key,
                 },
             );
+
+            #[cfg(feature = "for-internal-testing-only")]
+            {
+                self.cache.event_verifier.mark(
+                    rhs_object_id,
+                    Some(new_epoch),
+                    event_verifier::State::Dirty,
+                    concat!(file!(), ':', line!(), ":insert-split"),
+                );
+            }
         }
 
         // this is for clarity, that leaf_guard is held while
@@ -688,6 +792,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     node: leaf_guard.node.clone(),
                 },
             );
+
+            #[cfg(feature = "for-internal-testing-only")]
+            {
+                self.cache.event_verifier.mark(
+                    leaf_guard.node.object_id,
+                    None,
+                    event_verifier::State::Dirty,
+                    concat!(file!(), ':', line!(), ":remove"),
+                );
+            }
 
             if leaf.data.is_empty() && leaf_guard.low_key != InlineArray::MIN {
                 self.merge_leaf_into_left_sibling(leaf_guard)?;
@@ -824,6 +938,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     low_key: leaf_guard.low_key.clone(),
                 },
             );
+
+            #[cfg(feature = "for-internal-testing-only")]
+            {
+                self.cache.event_verifier.mark(
+                    leaf_guard.node.object_id,
+                    None,
+                    event_verifier::State::Dirty,
+                    concat!(file!(), ':', line!(), ":cas"),
+                );
+            }
         }
         if let Some((split_key, rhs_node)) = split {
             log::trace!(
@@ -840,6 +964,17 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     low_key: split_key.clone(),
                 },
             );
+
+            #[cfg(feature = "for-internal-testing-only")]
+            {
+                self.cache.event_verifier.mark(
+                    rhs_node.object_id,
+                    None,
+                    event_verifier::State::Dirty,
+                    concat!(file!(), ':', line!(), "cas-split"),
+                );
+            }
+
             self.cache
                 .object_id_index
                 .insert(rhs_node.object_id, rhs_node.clone());
@@ -1117,50 +1252,72 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         for (write, node) in acquired_locks.values_mut() {
             let leaf = write.as_mut().unwrap();
             if let Some(old_flush_epoch) = leaf.dirty_flush_epoch {
-                if old_flush_epoch != new_epoch {
-                    assert_eq!(old_flush_epoch.increment(), new_epoch);
+                if old_flush_epoch == new_epoch {
+                    // no need to cooperatively flush
+                    continue;
+                }
 
-                    log::trace!(
+                assert_eq!(old_flush_epoch.increment(), new_epoch);
+
+                log::trace!(
                         "cooperatively flushing {:?} with dirty {:?} after checking into {:?}",
                         node.object_id,
                         old_flush_epoch,
                         new_epoch
                     );
 
-                    // cooperatively serialize and put into dirty
-                    let old_dirty_epoch =
-                        leaf.dirty_flush_epoch.take().unwrap();
+                // cooperatively serialize and put into dirty
+                let old_dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
 
-                    // be extra-explicit about serialized bytes
-                    let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
-
-                    let serialized = leaf_ref
-                        .serialize(self.cache.config.zstd_compression_level);
-
-                    log::trace!(
-                        "C adding node {} to dirty epoch {:?}",
-                        node.object_id.0,
-                        old_dirty_epoch
-                    );
-
-                    self.cache.install_dirty(
-                        old_dirty_epoch,
+                #[cfg(feature = "for-internal-testing-only")]
+                {
+                    self.cache.event_verifier.mark(
                         node.object_id,
-                        Dirty::CooperativelySerialized {
-                            object_id: node.object_id,
-                            collection_id: self.collection_id,
-                            mutation_count: leaf_ref.mutation_count,
-                            low_key: leaf.lo.clone(),
-                            data: Arc::new(serialized),
-                        },
-                    );
-
-                    assert_eq!(
-                        old_flush_epoch.increment(),
-                        flush_epoch_guard.epoch(),
-                        "flush epochs somehow became unlinked"
+                        None,
+                        event_verifier::State::CleanPagedIn,
+                        concat!(file!(), ':', line!()),
                     );
                 }
+
+                // be extra-explicit about serialized bytes
+                let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
+
+                let serialized = leaf_ref
+                    .serialize(self.cache.config.zstd_compression_level);
+
+                log::trace!(
+                    "C adding node {} to dirty epoch {:?}",
+                    node.object_id.0,
+                    old_dirty_epoch
+                );
+
+                self.cache.install_dirty(
+                    old_dirty_epoch,
+                    node.object_id,
+                    Dirty::CooperativelySerialized {
+                        object_id: node.object_id,
+                        collection_id: self.collection_id,
+                        mutation_count: leaf_ref.mutation_count,
+                        low_key: leaf.lo.clone(),
+                        data: Arc::new(serialized),
+                    },
+                );
+
+                #[cfg(feature = "for-internal-testing-only")]
+                {
+                    self.cache.event_verifier.mark(
+                        node.object_id,
+                        None,
+                        event_verifier::State::Dirty,
+                        concat!(file!(), ':', line!(), ":apply-batch"),
+                    );
+                }
+
+                assert_eq!(
+                    old_flush_epoch.increment(),
+                    flush_epoch_guard.epoch(),
+                    "flush epochs somehow became unlinked"
+                );
             }
         }
 
@@ -1223,6 +1380,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     low_key: low_key.clone(),
                 },
             );
+
+            #[cfg(feature = "for-internal-testing-only")]
+            {
+                self.cache.event_verifier.mark(
+                    node.object_id,
+                    None,
+                    event_verifier::State::Dirty,
+                    concat!(file!(), ':', line!(), ":apply-batch"),
+                );
+            }
         }
 
         // Drop locks
@@ -1765,6 +1932,7 @@ impl<const LEAF_FANOUT: usize> Iterator for Iter<LEAF_FANOUT> {
                     self.prefetched.push_back((k.clone(), v.clone()));
                 }
             }
+
             self.next_fetch = leaf.hi.clone();
         }
 

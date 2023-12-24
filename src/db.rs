@@ -41,8 +41,6 @@ pub struct Db<const LEAF_FANOUT: usize = 1024> {
     collection_name_mapping: Tree<LEAF_FANOUT>,
     default_tree: Tree<LEAF_FANOUT>,
     was_recovered: bool,
-    #[cfg(feature = "for-internal-testing-only")]
-    event_verifier: Arc<crate::event_verifier::EventVerifier>,
 }
 
 impl<const LEAF_FANOUT: usize> std::ops::Deref for Db<LEAF_FANOUT> {
@@ -186,9 +184,6 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             cache: Mutex::new(cache.clone()),
         });
 
-        #[cfg(feature = "for-internal-testing-only")]
-        let event_verifier = Arc::default();
-
         let mut allocated_collection_ids = fnv::FnvHashSet::default();
 
         let mut trees: HashMap<CollectionId, Tree<LEAF_FANOUT>> = indices
@@ -206,8 +201,6 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                         cache.clone(),
                         index,
                         _shutdown_dropper.clone(),
-                        #[cfg(feature = "for-internal-testing-only")]
-                        event_verifier.clone(),
                     ),
                 )
             })
@@ -250,8 +243,6 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 cache.clone(),
                 index,
                 _shutdown_dropper.clone(),
-                #[cfg(feature = "for-internal-testing-only")]
-                event_verifier.clone(),
             );
 
             trees.insert(collection_id, tree);
@@ -271,8 +262,6 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             trees: Arc::new(Mutex::new(trees)),
             _shutdown_dropper,
             was_recovered,
-            #[cfg(feature = "for-internal-testing-only")]
-            event_verifier,
         };
 
         if let Some(flush_every_ms) = ret.cache.config.flush_every_ms {
@@ -503,8 +492,6 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             self.cache.clone(),
             index,
             self._shutdown_dropper.clone(),
-            #[cfg(feature = "for-internal-testing-only")]
-            event_verifier.clone(),
         );
 
         self.collection_name_mapping

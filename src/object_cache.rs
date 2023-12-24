@@ -57,6 +57,9 @@ pub(crate) struct ObjectCache<const LEAF_FANOUT: usize> {
     compacted_heap_slots: Arc<AtomicU64>,
     pub(super) tree_leaves_merged: Arc<AtomicU64>,
     pub(super) flushes: Arc<AtomicU64>,
+    #[cfg(feature = "for-internal-testing-only")]
+    pub(super) event_verifier: Arc<crate::event_verifier::EventVerifier>,
+    invariants: Arc<FlushInvariants>,
 }
 
 impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
@@ -113,6 +116,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             compacted_heap_slots: Arc::default(),
             tree_leaves_merged: Arc::default(),
             flushes: Arc::default(),
+            invariants: Arc::default(),
         };
 
         Ok((pc, indices, was_recovered))
@@ -178,7 +182,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         collection_id: CollectionId,
         low_key: InlineArray,
     ) -> Object<LEAF_FANOUT> {
-        let object_id = self.heap.allocate_object_id();
+        let object_id = self.allocate_object_id();
 
         let node = Object {
             object_id,
@@ -193,7 +197,19 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     }
 
     pub fn allocate_object_id(&self) -> ObjectId {
-        self.heap.allocate_object_id()
+        let object_id = self.heap.allocate_object_id();
+
+        #[cfg(feature = "for-internal-testing-only")]
+        {
+            self.event_verifier.mark(
+                object_id,
+                None,
+                event_verifier::State::CleanPagedIn,
+                concat!(file!(), ':', line!(), ":allocated"),
+            );
+        }
+
+        object_id
     }
 
     pub fn check_into_flush_epoch(&self) -> FlushEpochGuard {
@@ -268,6 +284,15 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 // flushed, because its changes are not yet durable.
                 leaf.page_out_on_flush = Some(dirty_epoch);
             } else {
+                #[cfg(feature = "for-internal-testing-only")]
+                {
+                    self.event_verifier.mark(
+                        object_id,
+                        None,
+                        event_verifier::State::PagedOut,
+                        concat!(file!(), ':', line!(), ":paging-out"),
+                    );
+                }
                 *write = None;
             }
         }
@@ -293,14 +318,20 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             "waiting for previous flush of {:?} to complete",
             previous_flush_complete_notifier.epoch()
         );
-        previous_flush_complete_notifier.wait_for_complete();
+        let previous_epoch =
+            previous_flush_complete_notifier.wait_for_complete();
 
         log::trace!(
             "waiting for our epoch {:?} to become vacant",
             this_vacant_notifier.epoch()
         );
+
+        assert_eq!(previous_epoch.increment(), this_vacant_notifier.epoch());
+
         let flush_through_epoch: FlushEpoch =
             this_vacant_notifier.wait_for_complete();
+
+        self.invariants.mark_flushing_epoch(flush_through_epoch);
 
         let mut objects_to_defrag = self.heap.objects_to_defrag();
 
@@ -328,16 +359,6 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
             assert_eq!(dirty_epoch, flush_through_epoch);
 
-            #[cfg(feature = "for-internal-testing-only")]
-            {
-                let mutation_count = lock.as_ref().unwrap().mutation_count;
-                self.event_verifier.mark_flush(
-                    node.id,
-                    dirty_epoch,
-                    mutation_count,
-                );
-            }
-
             match dirty_value {
                 Dirty::MergedAndDeleted { object_id, collection_id } => {
                     log::trace!(
@@ -348,6 +369,21 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                         object_id: dirty_object_id,
                         collection_id,
                     });
+
+                    #[cfg(feature = "for-internal-testing-only")]
+                    {
+                        self.event_verifier.mark(
+                            dirty_object_id,
+                            Some(dirty_epoch),
+                            event_verifier::State::CleanPagedIn,
+                            concat!(
+                                file!(),
+                                ':',
+                                line!(),
+                                ":flush-merged-and-deleted"
+                            ),
+                        );
+                    }
                 }
                 Dirty::CooperativelySerialized {
                     object_id: _,
@@ -364,6 +400,21 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                         metadata: low_key,
                         data,
                     });
+
+                    #[cfg(feature = "for-internal-testing-only")]
+                    {
+                        self.event_verifier.mark(
+                            dirty_object_id,
+                            Some(dirty_epoch),
+                            event_verifier::State::CleanPagedIn,
+                            concat!(
+                                file!(),
+                                ':',
+                                line!(),
+                                ":flush-cooperative"
+                            ),
+                        );
+                    }
                 }
                 Dirty::NotYetSerialized { low_key, collection_id, node } => {
                     assert_eq!(dirty_object_id, node.object_id, "mismatched node ID for NotYetSerialized with low key {:?}", low_key);
@@ -375,6 +426,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     {
                         lock_ref
                     } else {
+                        #[cfg(feature = "for-internal-testing-only")]
+                        self.event_verifier
+                            .print_debug_history_for_object(dirty_object_id);
+
                         panic!("failed to get lock for node that was NotYetSerialized, low key {:?} id {:?}", low_key, node.object_id);
                     };
 
@@ -385,6 +440,22 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                             assert!(deleted_at > flush_through_epoch);
                         }
                         leaf_ref.dirty_flush_epoch.take();
+
+                        #[cfg(feature = "for-internal-testing-only")]
+                        {
+                            self.event_verifier.mark(
+                                dirty_object_id,
+                                Some(dirty_epoch),
+                                event_verifier::State::CleanPagedIn,
+                                concat!(
+                                    file!(),
+                                    ':',
+                                    line!(),
+                                    ":flush-serialize"
+                                ),
+                            );
+                        }
+
                         leaf_ref.serialize(self.config.zstd_compression_level)
                     } else {
                         // Here we expect that there was a benign data race and that another thread
@@ -408,6 +479,21 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
                             std::process::abort();
                         };
+
+                        #[cfg(feature = "for-internal-testing-only")]
+                        {
+                            self.event_verifier.mark(
+                                dirty_object_id,
+                                Some(dirty_epoch),
+                                event_verifier::State::CleanPagedIn,
+                                concat!(
+                                    file!(),
+                                    ':',
+                                    line!(),
+                                    ":flush-laggy-cooperative"
+                                ),
+                            );
+                        }
 
                         if let Dirty::CooperativelySerialized {
                             low_key: low_key_2,
@@ -506,12 +592,25 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             "marking the forward flush notifier that {:?} is flushed",
             flush_through_epoch
         );
+
+        self.invariants.mark_flushed_epoch(flush_through_epoch);
+
         forward_flush_notifier.mark_complete();
 
         for node_to_evict in evict_after_flush {
             let mut lock = node_to_evict.inner.write();
             if let Some(ref mut leaf) = *lock {
                 if leaf.page_out_on_flush == Some(flush_through_epoch) {
+                    #[cfg(feature = "for-internal-testing-only")]
+                    {
+                        self.event_verifier.mark(
+                            node_to_evict.object_id,
+                            Some(flush_through_epoch),
+                            event_verifier::State::PagedOut,
+                            concat!(file!(), ':', line!()),
+                        );
+                    }
+
                     *lock = None;
                 }
             }
