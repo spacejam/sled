@@ -4,6 +4,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 const SEAL_BIT: u64 = 1 << 63;
 const SEAL_MASK: u64 = u64::MAX - SEAL_BIT;
+const MIN_EPOCH: u64 = 2;
 
 #[derive(
     Debug,
@@ -22,6 +23,10 @@ pub(crate) struct FlushEpoch(NonZeroU64);
 impl FlushEpoch {
     pub fn increment(&self) -> FlushEpoch {
         FlushEpoch(NonZeroU64::new(self.0.get() + 1).unwrap())
+    }
+
+    pub fn get(&self) -> u64 {
+        self.0.get()
     }
 }
 
@@ -139,10 +144,10 @@ impl Default for FlushEpochTracker {
     fn default() -> FlushEpochTracker {
         let last = Completion::new(FlushEpoch(NonZeroU64::new(1).unwrap()));
         let current_active_ptr = Box::into_raw(Box::new(EpochTracker {
-            epoch: FlushEpoch(NonZeroU64::new(2).unwrap()),
+            epoch: FlushEpoch(NonZeroU64::new(MIN_EPOCH).unwrap()),
             rc: AtomicU64::new(0),
             vacancy_notifier: Completion::new(FlushEpoch(
-                NonZeroU64::new(2).unwrap(),
+                NonZeroU64::new(MIN_EPOCH).unwrap(),
             )),
             previous_flush_complete: last.clone(),
         }));
@@ -235,30 +240,23 @@ impl FlushEpochTracker {
 
 #[test]
 fn flush_epoch_basic_functionality() {
-    let fa = FlushEpochTracker::default();
+    let epoch_tracker = FlushEpochTracker::default();
 
-    let g1 = fa.check_in();
-    let g2 = fa.check_in();
+    for expected in MIN_EPOCH..1_000_000 {
+        let g1 = epoch_tracker.check_in();
+        let g2 = epoch_tracker.check_in();
 
-    assert_eq!(g1.tracker.epoch.0.get(), 2);
-    assert_eq!(g2.tracker.epoch.0.get(), 2);
+        assert_eq!(g1.tracker.epoch.0.get(), expected);
+        assert_eq!(g2.tracker.epoch.0.get(), expected);
 
-    let notifier = fa.roll_epoch_forward().1;
-    assert!(!notifier.is_complete());
+        let previous_notifier = epoch_tracker.roll_epoch_forward().1;
+        assert!(!previous_notifier.is_complete());
 
-    drop(g1);
-    assert!(!notifier.is_complete());
-    drop(g2);
-    assert_eq!(notifier.wait_for_complete().0.get(), 2);
-
-    let g3 = fa.check_in();
-    assert_eq!(g3.tracker.epoch.0.get(), 3);
-
-    let notifier_2 = fa.roll_epoch_forward().1;
-
-    drop(g3);
-
-    assert_eq!(notifier_2.wait_for_complete().0.get(), 3);
+        drop(g1);
+        assert!(!previous_notifier.is_complete());
+        drop(g2);
+        assert_eq!(previous_notifier.wait_for_complete().0.get(), expected);
+    }
 }
 
 #[cfg(test)]
