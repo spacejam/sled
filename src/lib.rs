@@ -1,35 +1,53 @@
-// TODO force writers to flush when some number of dirty epochs have built up
-// TODO temporary trees for transactional in-memory coordination
+// 1.0 blockers
+//
+// reliability
+// TODO test concurrent drop_tree when other threads are still using it
+// TODO list trees test for recovering empty collections
+// TODO set explicit max key and value sizes w/ corresponding heap
+// TODO add failpoints to writepath
+//
+// performance
+// TODO after defrag, reduce self.tip while popping the max items in the free list
+// TODO handle prefix encoding
+//
+// features
+// TODO multi-collection batch
+//
+// misc
+// TODO skim inlining output of RUSTFLAGS="-Cremark=all -Cdebuginfo=1"
+//
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~ 1.0 cutoff ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//
+// post-1.0 improvements
+//
+// reliability
+// TODO bug hiding: if the crash_iter test panics, the test doesn't fail as expected
 // TODO event log assertion for testing heap location bidirectional referential integrity,
 //      particularly in the object location mapper.
 // TODO ensure nothing "from the future" gets copied into earlier epochs during GC
-// TODO concurrent serialization of NotYetSerialized dirty objects
 // TODO collection_id on page_in checks - it needs to be pinned w/ heap's EBR?
-// TODO after defrag, reduce self.tip while popping the max items in the free list
-// TODO store low key and collection ID directly on Object
-// TODO make the Arc<Option<Box<Leaf just a single pointer chase w/ custom container
-// TODO heap maintenance w/ speculative write followed by CAS in pt
-//      maybe with global writer lock that controls flushers too
-// TODO implement create exclusive
-// TODO test concurrent drop_tree when other threads are still using it
-// TODO list trees test for recovering empty collections
 // TODO put aborts behind feature flags for hard crashes
+// TODO re-enable transaction tests in test_tree.rs
+//
+// performance
+// TODO force writers to flush when some number of dirty epochs have built up
+// TODO serialize flush batch in parallel
+// TODO concurrent serialization of NotYetSerialized dirty objects
+// TODO make the Arc<Option<Box<Leaf just a single pointer chase w/ custom container
 // TODO allow waiting flusher to start collecting dirty pages as soon
 //      as it is evacuated - just wait until last flush is done before
 //      we persist the batch
-// TODO serialize flush batch in parallel
-// TODO handle prefix encoding
-// TODO add failpoints to writepath
-// TODO re-enable transaction tests in test_tree.rs
-// TODO set explicit max key and value sizes w/ corresponding heap
-// TODO skim inlining output of RUSTFLAGS="-Cremark=all -Cdebuginfo=1"
 // TODO measure space savings vs cost of zstd in metadata store
-// TODO corrupted data extraction binary
-// TODO if the crash_iter test panics, the test doesn't fail as expected
-// TODO remove/make conditionally compiled for testing the explicit process aborts
 // TODO make EBR and index fanout consts as small as possible to reduce memory usage
 // TODO make leaf fanout as small as possible while retaining perf
 // TODO dynamically sized fanouts for reducing fragmentation
+//
+// features
+// TODO transactions
+// TODO implement create exclusive
+// TODO temporary trees for transactional in-memory coordination
+// TODO corrupted data extraction binary
+//
 
 //! `sled` is a high-performance embedded database with
 //! an API that is similar to a `BTreeMap<[u8], [u8]>`,
@@ -41,29 +59,13 @@
 //! are supported with the
 //! [`Db::open_tree`](struct.Db.html#method.open_tree) method.
 //!
-//! ACID transactions involving reads and writes to
-//! multiple items are supported with the
-//! [`Tree::transaction`](struct.Tree.html#method.transaction)
-//! method. Transactions may also operate over
-//! multiple `Tree`s (see
-//! [`Tree::transaction`](struct.Tree.html#method.transaction)
-//! docs for more info).
-//!
-//! Users may also subscribe to updates on individual
-//! `Tree`s by using the
-//! [`Tree::watch_prefix`](struct.Tree.html#method.watch_prefix)
-//! method, which returns a blocking `Iterator` over
-//! updates to keys that begin with the provided
-//! prefix. You may supply an empty prefix to subscribe
-//! to everything.
-//!
 //! `sled` is built by experienced database engineers
 //! who think users should spend less time tuning and
 //! working against high-friction APIs. Expect
 //! significant ergonomic and performance improvements
 //! over time. Most surprises are bugs, so please
-//! [let us know](mailto:tylerneely@gmail.com?subject=sled%20sucks!!!) if something
-//! is high friction.
+//! [let us know](mailto:tylerneely@gmail.com?subject=sled%20sucks!!!)
+//! if something is high friction.
 //!
 //! # Examples
 //!
