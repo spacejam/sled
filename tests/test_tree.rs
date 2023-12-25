@@ -25,8 +25,8 @@ use tree::{
     Op::{self},
 };
 
-const N_THREADS: usize = 10;
-const N_PER_THREAD: usize = 1_000;
+const N_THREADS: usize = 16;
+const N_PER_THREAD: usize = 512;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
@@ -349,6 +349,8 @@ fn concurrent_tree_pops() -> std::io::Result<()> {
 fn concurrent_tree_ops() {
     use std::thread;
 
+    const CACHE_SIZE: usize = 1024;
+
     common::setup_logger();
 
     for i in 0..INTENSITY {
@@ -357,7 +359,7 @@ fn concurrent_tree_ops() {
         let config = Config::tmp()
             .unwrap()
             .flush_every_ms(Some(1))
-            .cache_capacity_bytes(1024);
+            .cache_capacity_bytes(CACHE_SIZE);
 
         macro_rules! par {
             ($t:ident, $f:expr) => {

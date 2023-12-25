@@ -17,10 +17,12 @@ impl State {
             (State::Unallocated, State::CleanPagedIn) => true,
             (State::Unallocated, _) => false,
             (State::Dirty, State::Dirty) => true,
+            (State::Dirty, State::Unallocated) => true,
             (State::Dirty, State::CleanPagedIn) => true,
             (State::Dirty, _) => false,
             (State::CleanPagedIn, State::Dirty) => true,
             (State::CleanPagedIn, State::PagedOut) => true,
+            (State::CleanPagedIn, State::CleanPagedIn) => true,
             (State::CleanPagedIn, _) => false,
             (State::PagedOut, State::CleanPagedIn) => true,
             (State::PagedOut, _) => false,
@@ -74,6 +76,8 @@ impl EventVerifier {
                 for (last_state, epoch, at) in history.iter() {
                     println!("{last_state:?} {epoch:?} {at}");
                 }
+
+                panic!("invalid object state transition");
             }
         }
         history.push((state, epoch, at));

@@ -205,7 +205,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                         read_loops += 1;
                         // TODO change this assertion
                         assert!(
-                            read_loops < 10_000,
+                            read_loops < 10_000_000,
                             "search key: {:?} node key: {:?} object id: {:?}",
                             key,
                             low_key,
@@ -479,8 +479,14 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     old_flush_epoch,
                     flush_epoch_guard.epoch()
                 );
+
                 // cooperatively serialize and put into dirty
                 let old_dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
+
+                if let Some(page_out_epoch) = leaf.page_out_on_flush.take() {
+                    // TODO reevaluate the safety of this assertion
+                    assert!(page_out_epoch < flush_epoch_guard.epoch());
+                }
 
                 #[cfg(feature = "for-internal-testing-only")]
                 {

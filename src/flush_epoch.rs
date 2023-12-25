@@ -53,15 +53,11 @@ impl FlushInvariants {
     pub(crate) fn mark_flushed_epoch(&self, epoch: FlushEpoch) {
         let last = self.max_flushed_epoch.swap(epoch.get(), Ordering::SeqCst);
 
-        println!("swapped max_flushed_epoch {} for {}", last, epoch.get());
-
         assert_eq!(last + 1, epoch.get());
     }
 
     pub(crate) fn mark_flushing_epoch(&self, epoch: FlushEpoch) {
         let last = self.max_flushing_epoch.swap(epoch.get(), Ordering::SeqCst);
-
-        println!("swapped max_flushing_epoch {} for {}", last, epoch.get());
 
         assert_eq!(last + 1, epoch.get());
     }
