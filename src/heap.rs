@@ -803,7 +803,7 @@ impl Heap {
                 UpdateMetadata::Free { object_id, .. } => {
                     guard.defer_drop(DeferredFree {
                         allocator: self.table.clone_object_id_allocator_arc(),
-                        freed_slot: object_id.0,
+                        freed_slot: object_id.0.get(),
                     });
                     self.table.remove(object_id)
                 }

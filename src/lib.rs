@@ -1,10 +1,8 @@
+// TODO force writers to flush when some number of dirty epochs have built up
 // TODO temporary trees for transactional in-memory coordination
 // TODO event log assertion for testing heap location bidirectional referential integrity,
 //      particularly in the object location mapper.
-// TODO make ObjectId wrap NonZeroU64 so it's more clear when slab tenant PageTable has a 0 that
-//      it's unoccupied
 // TODO ensure nothing "from the future" gets copied into earlier epochs during GC
-//      not sure if that's possible though?
 // TODO concurrent serialization of NotYetSerialized dirty objects
 // TODO collection_id on page_in checks - it needs to be pinned w/ heap's EBR?
 // TODO after defrag, reduce self.tip while popping the max items in the free list
@@ -33,11 +31,80 @@
 // TODO make leaf fanout as small as possible while retaining perf
 // TODO dynamically sized fanouts for reducing fragmentation
 
+//! `sled` is a high-performance embedded database with
+//! an API that is similar to a `BTreeMap<[u8], [u8]>`,
+//! but with several additional capabilities for
+//! assisting creators of stateful systems.
+//!
+//! It is fully thread-safe, and all operations are
+//! atomic. Multiple `Tree`s with isolated keyspaces
+//! are supported with the
+//! [`Db::open_tree`](struct.Db.html#method.open_tree) method.
+//!
+//! ACID transactions involving reads and writes to
+//! multiple items are supported with the
+//! [`Tree::transaction`](struct.Tree.html#method.transaction)
+//! method. Transactions may also operate over
+//! multiple `Tree`s (see
+//! [`Tree::transaction`](struct.Tree.html#method.transaction)
+//! docs for more info).
+//!
+//! Users may also subscribe to updates on individual
+//! `Tree`s by using the
+//! [`Tree::watch_prefix`](struct.Tree.html#method.watch_prefix)
+//! method, which returns a blocking `Iterator` over
+//! updates to keys that begin with the provided
+//! prefix. You may supply an empty prefix to subscribe
+//! to everything.
+//!
+//! `sled` is built by experienced database engineers
+//! who think users should spend less time tuning and
+//! working against high-friction APIs. Expect
+//! significant ergonomic and performance improvements
+//! over time. Most surprises are bugs, so please
+//! [let us know](mailto:tylerneely@gmail.com?subject=sled%20sucks!!!) if something
+//! is high friction.
+//!
+//! # Examples
+//!
+//! ```
+//! # let _ = std::fs::remove_dir_all("my_db");
+//! let db: sled::Db = sled::open("my_db").unwrap();
+//!
+//! // insert and get
+//! db.insert(b"yo!", b"v1");
+//! assert_eq!(&db.get(b"yo!").unwrap().unwrap(), b"v1");
+//!
+//! // Atomic compare-and-swap.
+//! db.compare_and_swap(
+//!     b"yo!",      // key
+//!     Some(b"v1"), // old value, None for not present
+//!     Some(b"v2"), // new value, None for delete
+//! )
+//! .unwrap();
+//!
+//! // Iterates over key-value pairs, starting at the given key.
+//! let scan_key: &[u8] = b"a non-present key before yo!";
+//! let mut iter = db.range(scan_key..);
+//! assert_eq!(&iter.next().unwrap().unwrap().0, b"yo!");
+//! assert_eq!(iter.next(), None);
+//!
+//! db.remove(b"yo!");
+//! assert_eq!(db.get(b"yo!"), Ok(None));
+//!
+//! let other_tree: sled::Tree = db.open_tree(b"cool db facts").unwrap();
+//! other_tree.insert(
+//!     b"k1",
+//!     &b"a Db acts like a Tree due to implementing Deref<Target = Tree>"[..]
+//! ).unwrap();
+//! # let _ = std::fs::remove_dir_all("my_db");
+//! ```
 mod config;
 mod db;
 mod flush_epoch;
 mod heap;
 mod id_allocator;
+mod leaf;
 mod metadata_store;
 mod object_cache;
 mod object_location_mapper;
@@ -77,12 +144,14 @@ const DEFAULT_COLLECTION_ID: CollectionId = CollectionId(1);
 const INDEX_FANOUT: usize = 64;
 const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
 
+use std::num::NonZeroU64;
 use std::ops::Bound;
 
 use crate::heap::{
     recover, Heap, HeapRecovery, ObjectRecovery, SlabAddress, Stats, Update,
 };
 use crate::id_allocator::{Allocator, DeferredFree};
+use crate::leaf::Leaf;
 use crate::metadata_store::MetadataStore;
 use crate::object_cache::{Dirty, ObjectCache};
 
@@ -157,10 +226,33 @@ impl std::error::Error for CompareAndSwapError {}
     Eq,
     Hash,
 )]
-struct ObjectId(u64);
+struct ObjectId(NonZeroU64);
+
+impl ObjectId {
+    fn new(from: u64) -> Option<ObjectId> {
+        NonZeroU64::new(from).map(ObjectId)
+    }
+}
+
+impl std::ops::Deref for ObjectId {
+    type Target = u64;
+
+    fn deref(&self) -> &u64 {
+        let self_ref: &NonZeroU64 = &self.0;
+
+        // NonZeroU64 is repr(transparent) where it wraps a u64
+        // so it is guaranteed to match the binary layout. This
+        // makes it safe to cast a reference to one as a reference
+        // to the other like this.
+        let self_ptr: *const NonZeroU64 = self_ref as *const _;
+        let reference: *const u64 = self_ptr as *const u64;
+
+        unsafe { &*reference }
+    }
+}
 
 impl concurrent_map::Minimum for ObjectId {
-    const MIN: ObjectId = ObjectId(u64::MIN);
+    const MIN: ObjectId = ObjectId(NonZeroU64::MIN);
 }
 
 #[derive(
@@ -196,40 +288,6 @@ struct Object<const LEAF_FANOUT: usize> {
 impl<const LEAF_FANOUT: usize> PartialEq for Object<LEAF_FANOUT> {
     fn eq(&self, other: &Self) -> bool {
         self.object_id == other.object_id
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct Leaf<const LEAF_FANOUT: usize> {
-    lo: InlineArray,
-    hi: Option<InlineArray>,
-    prefix_length: usize,
-    data: stack_map::StackMap<InlineArray, InlineArray, LEAF_FANOUT>,
-    in_memory_size: usize,
-    mutation_count: u64,
-    #[serde(skip)]
-    dirty_flush_epoch: Option<FlushEpoch>,
-    #[serde(skip)]
-    page_out_on_flush: Option<FlushEpoch>,
-    #[serde(skip)]
-    deleted: Option<FlushEpoch>,
-}
-
-impl<const LEAF_FANOUT: usize> Default for Leaf<LEAF_FANOUT> {
-    fn default() -> Leaf<LEAF_FANOUT> {
-        Leaf {
-            lo: InlineArray::default(),
-            hi: None,
-            prefix_length: 0,
-            data: stack_map::StackMap::default(),
-            // this does not need to be marked as dirty until it actually
-            // receives inserted data
-            dirty_flush_epoch: None,
-            in_memory_size: std::mem::size_of::<Leaf<LEAF_FANOUT>>(),
-            mutation_count: 0,
-            page_out_on_flush: None,
-            deleted: None,
-        }
     }
 }
 

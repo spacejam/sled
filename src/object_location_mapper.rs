@@ -33,13 +33,13 @@ impl SlabTenancy {
         let mut ret = vec![];
 
         for fragmented_slot in frag_min..frag_max {
-            let object_id = self
+            let object_id_u64 = self
                 .slot_to_object_id
                 .get(fragmented_slot)
                 .load(Ordering::Acquire);
 
-            if object_id != 0 {
-                ret.push((ObjectId(object_id), fragmented_slot));
+            if let Some(object_id) = ObjectId::new(object_id_u64) {
+                ret.push((object_id, fragmented_slot));
             }
         }
 
@@ -81,7 +81,7 @@ impl ObjectLocationMapper {
                     location,
                     metadata: _,
                 } => {
-                    object_ids.insert(object_id.0);
+                    object_ids.insert(**object_id);
                     let slab_address = SlabAddress::from(*location);
                     slots_per_slab[slab_address.slab() as usize]
                         .insert(slab_address.slot());
@@ -137,7 +137,14 @@ impl ObjectLocationMapper {
     }
 
     pub(crate) fn allocate_object_id(&self) -> ObjectId {
-        ObjectId(self.object_id_allocator.allocate())
+        // object IDs wrap a NonZeroU64, so if we get 0, just re-allocate and leak the id
+
+        let mut object_id = self.object_id_allocator.allocate();
+        if object_id == 0 {
+            object_id = self.object_id_allocator.allocate();
+            assert_ne!(object_id, 0);
+        }
+        ObjectId::new(object_id).unwrap()
     }
 
     pub(crate) fn clone_slab_allocator_arc(
@@ -164,7 +171,7 @@ impl ObjectLocationMapper {
         object_id: ObjectId,
     ) -> Option<crate::SlabAddress> {
         let location_u64 =
-            self.object_id_to_location.get(object_id.0).load(Ordering::Acquire);
+            self.object_id_to_location.get(*object_id).load(Ordering::Acquire);
 
         let nzu = NonZeroU64::new(location_u64)?;
 
@@ -188,7 +195,7 @@ impl ObjectLocationMapper {
 
         let last_u64 = self
             .object_id_to_location
-            .get(object_id.0)
+            .get(*object_id)
             .swap(location_u64, Ordering::Release);
 
         let last_address_opt = if let Some(nzu) = NonZeroU64::new(last_u64) {
@@ -205,7 +212,7 @@ impl ObjectLocationMapper {
         let _last_oid_at_location = self.slab_tenancies[usize::from(slab)]
             .slot_to_object_id
             .get(slot)
-            .swap(object_id.0, Ordering::Release);
+            .swap(*object_id, Ordering::Release);
 
         // TODO add debug event verifier here assert_eq!(0, last_oid_at_location);
 
@@ -220,7 +227,7 @@ impl ObjectLocationMapper {
     pub(crate) fn remove(&self, object_id: ObjectId) -> Option<SlabAddress> {
         let last_u64 = self
             .object_id_to_location
-            .get(object_id.0)
+            .get(*object_id)
             .swap(0, Ordering::Release);
 
         if let Some(nzu) = NonZeroU64::new(last_u64) {
@@ -234,7 +241,7 @@ impl ObjectLocationMapper {
                 .get(slot)
                 .swap(0, Ordering::Release);
 
-            assert_eq!(object_id.0, last_oid_at_location);
+            assert_eq!(*object_id, last_oid_at_location);
 
             Some(last_address)
         } else {
@@ -258,7 +265,7 @@ impl ObjectLocationMapper {
 
                 let rt_sa = if let Some(rt_raw_sa) = NonZeroU64::new(
                     self.object_id_to_location
-                        .get(object_id.0)
+                        .get(*object_id)
                         .load(Ordering::Acquire),
                 ) {
                     SlabAddress::from(rt_raw_sa)

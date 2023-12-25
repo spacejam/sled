@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
+use std::hint;
 use std::io;
 use std::mem::{self, ManuallyDrop};
 use std::ops;
@@ -185,13 +186,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
         Object<LEAF_FANOUT>,
     )> {
-        let mut read_loops = 0;
+        let mut read_loops: u64 = 0;
         loop {
             let _heap_pin = self.cache.heap_object_id_pin();
 
             let (low_key, node) = self.index.get_lte(key).unwrap();
             if node.collection_id != self.collection_id {
                 log::trace!("retry due to mismatched collection id in page_in");
+
+                hint::spin_loop();
+
                 continue;
             }
 
@@ -204,13 +208,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                         // this particular object ID is not present
                         read_loops += 1;
                         // TODO change this assertion
-                        assert!(
-                            read_loops < 10_000_000,
+                        debug_assert!(
+                            read_loops < 10_000_000_000,
                             "search key: {:?} node key: {:?} object id: {:?}",
                             key,
                             low_key,
                             node.object_id
                         );
+
+                        hint::spin_loop();
+
                         continue;
                     };
                 let leaf: Box<Leaf<LEAF_FANOUT>> =
@@ -233,6 +240,9 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             if leaf.deleted.is_some() {
                 log::trace!("retry due to deleted node in page_in");
                 drop(write);
+
+                hint::spin_loop();
+
                 continue;
             }
 
@@ -241,6 +251,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 drop(write);
                 log::trace!("key undershoot in page_in");
                 self.cache.mark_access_and_evict(node.object_id, size)?;
+
+                hint::spin_loop();
 
                 continue;
             }
@@ -251,6 +263,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     drop(write);
                     log::trace!("key overshoot in page_in");
                     self.cache.mark_access_and_evict(node.object_id, size)?;
+
+                    hint::spin_loop();
 
                     continue;
                 }
@@ -287,10 +301,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         assert!(leaf.data.is_empty());
         assert!(predecessor.deleted.is_none());
         assert_eq!(predecessor.hi.as_ref(), Some(&leaf.lo));
-
-        if leaf_guard.node.object_id.0 == 0 {
-            assert!(leaf_guard.low_key.is_empty());
-        }
 
         log::trace!(
             "deleting empty node id {} with low key {:?} and high key {:?}",
@@ -407,10 +417,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 read = ArcRwLockWriteGuard::downgrade(write);
             }
 
-            if node.object_id.0 == 0 {
-                assert!(low_key.is_empty());
-            }
-
             let leaf_guard = LeafReadGuard {
                 leaf_read: ManuallyDrop::new(read),
                 inner: self,
@@ -424,11 +430,13 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             if leaf.deleted.is_some() {
                 log::trace!("retry due to deleted node in leaf_for_key");
                 drop(leaf_guard);
+                hint::spin_loop();
                 continue;
             }
             if &*leaf.lo > key {
                 log::trace!("key undershoot in leaf_for_key");
                 drop(leaf_guard);
+                hint::spin_loop();
                 continue;
             }
             if let Some(ref hi) = leaf.hi {
@@ -436,6 +444,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     log::trace!("key overshoot on leaf_for_key");
                     // cache maintenance occurs in Drop for LeafReadGuard
                     drop(leaf_guard);
+                    hint::spin_loop();
                     continue;
                 }
             }
@@ -510,10 +519,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     node.object_id.0,
                     old_dirty_epoch
                 );
-
-                if node.object_id.0 == 0 {
-                    assert!(leaf.lo.is_empty());
-                }
 
                 self.cache.install_dirty(
                     old_dirty_epoch,
@@ -634,9 +639,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 leaf_guard.node.object_id.0,
                 new_epoch
             );
-            if leaf_guard.node.object_id.0 == 0 {
-                assert!(leaf_guard.low_key.is_empty());
-            }
 
             self.cache.install_dirty(
                 new_epoch,
@@ -666,7 +668,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             );
 
             assert_ne!(rhs_node.object_id, leaf_guard.node.object_id);
-            assert_ne!(rhs_node.object_id.0, 0);
             assert!(!split_key.is_empty());
 
             self.cache
@@ -728,10 +729,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         let key_ref = key.as_ref();
 
         let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
-        if leaf_guard.node.object_id.0 == 0 {
-            // TODO will break with collections so this is just an early stage scaffolding bit.
-            assert!(leaf_guard.low_key.is_empty());
-        }
 
         let new_epoch = leaf_guard.epoch();
 
@@ -892,9 +889,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 leaf_guard.node.object_id.0,
                 new_epoch
             );
-            if leaf_guard.node.object_id.0 == 0 {
-                assert!(leaf_guard.low_key.is_empty());
-            }
 
             self.cache.install_dirty(
                 new_epoch,

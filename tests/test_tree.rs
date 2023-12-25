@@ -4,7 +4,7 @@ mod tree;
 use std::{
     io,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc, Barrier,
     },
 };
@@ -26,7 +26,7 @@ use tree::{
 };
 
 const N_THREADS: usize = 16;
-const N_PER_THREAD: usize = 512;
+const N_PER_THREAD: usize = 10_000;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
@@ -284,22 +284,29 @@ fn test_interleaved_gets_sets() {
     let db: Db =
         Config::tmp().unwrap().cache_capacity_bytes(1024).open().unwrap();
 
+    let done = Arc::new(AtomicBool::new(false));
+
     std::thread::scope(|scope| {
         let db_2 = db.clone();
+        let done = &done;
         scope.spawn(move || {
             for v in 0..500_000_u32 {
                 db_2.insert(v.to_be_bytes(), &[42u8; 4096][..])
                     .expect("failed to insert");
                 if v % 10_000 == 0 {
-                    eprintln!("WRITING: {}", v)
+                    log::trace!("WRITING: {}", v);
+                    db_2.flush().unwrap();
                 }
             }
+            done.store(true, SeqCst);
         });
         scope.spawn(move || {
-            for v in (0..500_000_u32).rev() {
-                db.get(v.to_be_bytes()).expect("Fatal error?");
-                if v % 10_000 == 0 {
-                    eprintln!("READING: {}", v)
+            while !done.load(SeqCst) {
+                for v in (0..500_000_u32).rev() {
+                    db.get(v.to_be_bytes()).expect("Fatal error?");
+                    if v % 10_000 == 0 {
+                        log::trace!("READING: {}", v)
+                    }
                 }
             }
         });

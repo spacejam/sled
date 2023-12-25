@@ -431,7 +431,9 @@ fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
                 metadata,
                 location,
             } => {
-                batch_encoder.write_all(&object_id.0.to_le_bytes()).unwrap();
+                batch_encoder
+                    .write_all(&object_id.0.get().to_le_bytes())
+                    .unwrap();
                 batch_encoder
                     .write_all(&collection_id.0.to_le_bytes())
                     .unwrap();
@@ -442,7 +444,9 @@ fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
                 batch_encoder.write_all(&metadata).unwrap();
             }
             UpdateMetadata::Free { object_id, collection_id } => {
-                batch_encoder.write_all(&object_id.0.to_le_bytes()).unwrap();
+                batch_encoder
+                    .write_all(&object_id.0.get().to_le_bytes())
+                    .unwrap();
                 batch_encoder
                     .write_all(&collection_id.0.to_le_bytes())
                     .unwrap();
@@ -528,7 +532,17 @@ fn read_frame(
             }
         }
 
-        let object_id = ObjectId(u64::from_le_bytes(object_id_buf));
+        let object_id_u64 = u64::from_le_bytes(object_id_buf);
+
+        let object_id = if let Some(object_id) = ObjectId::new(object_id_u64) {
+            object_id
+        } else {
+            return Err(annotate!(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "corrupt object ID 0 somehow passed crc check"
+            )));
+        };
+
         let collection_id = CollectionId(u64::from_le_bytes(collection_id_buf));
         let location = u64::from_le_bytes(location_buf);
 

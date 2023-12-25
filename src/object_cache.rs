@@ -257,12 +257,17 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         size: usize,
     ) -> io::Result<()> {
         let mut ca = self.cache_advisor.borrow_mut();
-        let to_evict = ca.accessed_reuse_buffer(object_id.0, size);
+        let to_evict = ca.accessed_reuse_buffer(*object_id, size);
         for (node_to_evict, _rough_size) in to_evict {
-            let node = if let Some(n) =
-                self.object_id_index.get(&ObjectId(*node_to_evict))
-            {
-                if n.object_id.0 != *node_to_evict {
+            let object_id =
+                if let Some(object_id) = ObjectId::new(*node_to_evict) {
+                    object_id
+                } else {
+                    unreachable!("object ID must never have been 0");
+                };
+
+            let node = if let Some(n) = self.object_id_index.get(&object_id) {
+                if *n.object_id != *node_to_evict {
                     log::debug!("during cache eviction, node to evict did not match current occupant for {:?}", node_to_evict);
                     continue;
                 }
@@ -610,6 +615,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 }
 
                 assert_eq!(leaf.dirty_flush_epoch, None);
+
                 #[cfg(feature = "for-internal-testing-only")]
                 {
                     self.event_verifier.mark(

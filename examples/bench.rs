@@ -368,7 +368,7 @@ fn gets<D: Databench>(store: &D) -> Vec<GetStats> {
 
         println!(
             "{} gets/s with concurrency of {concurrency}, {:?} total reads {}",
-            rps,
+            rps.to_formatted_string(&Locale::en),
             get_stone_elapsed,
             D::NAME
         );
