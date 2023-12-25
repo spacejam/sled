@@ -89,10 +89,10 @@
 //! let scan_key: &[u8] = b"a non-present key before yo!";
 //! let mut iter = db.range(scan_key..);
 //! assert_eq!(&iter.next().unwrap().unwrap().0, b"yo!");
-//! assert_eq!(iter.next(), None);
+//! assert!(iter.next().is_none());
 //!
 //! db.remove(b"yo!");
-//! assert_eq!(db.get(b"yo!"), Ok(None));
+//! assert!(db.get(b"yo!").unwrap().is_none());
 //!
 //! let other_tree: sled::Tree = db.open_tree(b"cool db facts").unwrap();
 //! other_tree.insert(

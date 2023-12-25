@@ -839,28 +839,37 @@ impl Heap {
                 .max_allocated_slot_since_last_truncation
                 .fetch_max(current_allocated, Ordering::SeqCst);
 
-            let max_since_last_truncation =
-                last_max.max(current_allocated).max(1);
+            let max_since_last_truncation = last_max.max(current_allocated);
 
-            let ratio =
-                current_allocated.max(1) * 100 / max_since_last_truncation;
+            let currently_occupied =
+                (current_allocated + 1) * slab.slot_size as u64;
+
+            let max_occupied =
+                (max_since_last_truncation + 1) * slab.slot_size as u64;
+
+            let ratio = currently_occupied * 100 / max_occupied;
 
             if ratio < FILE_TARGET_FILL_RATIO {
-                let current_len =
-                    slab.slot_size as u64 * max_since_last_truncation;
-                let target_len =
-                    slab.slot_size as u64 * max_since_last_truncation * 100
-                        / FILE_RESIZE_MARGIN;
-                assert!(target_len > current_allocated * slab.slot_size as u64);
+                let target_len = currently_occupied * FILE_RESIZE_MARGIN / 100;
+
+                assert!(target_len < max_occupied);
+                assert!(
+                    target_len > currently_occupied,
+                    "target_len of {} is above actual occupied len of {}",
+                    target_len,
+                    currently_occupied
+                );
 
                 if slab.file.set_len(target_len).is_ok() {
                     slab.max_allocated_slot_since_last_truncation
                         .store(current_allocated, Ordering::SeqCst);
 
                     let truncated_bytes =
-                        current_len.saturating_sub(target_len);
+                        currently_occupied.saturating_sub(target_len);
                     self.truncated_file_bytes
                         .fetch_add(truncated_bytes, Ordering::Release);
+                } else {
+                    // TODO surface stats
                 }
             }
         }
