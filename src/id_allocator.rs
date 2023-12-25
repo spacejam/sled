@@ -1,5 +1,4 @@
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -9,7 +8,7 @@ use parking_lot::Mutex;
 
 #[derive(Default, Debug)]
 pub(crate) struct Allocator {
-    free_and_pending: Mutex<BinaryHeap<Reverse<u64>>>,
+    free_and_pending: Mutex<BTreeSet<u64>>,
     /// Flat combining.
     ///
     /// A lock free queue of recently freed ids which uses when there is contention on `free_and_pending`.
@@ -38,7 +37,7 @@ impl Allocator {
 
         let mut free = self.free_and_pending.lock();
         while let Some(free_id) = self.free_queue.pop() {
-            free.push(Reverse(free_id));
+            free.insert(free_id);
         }
 
         let live_objects = next_to_allocate - free.len() as u64;
@@ -61,12 +60,12 @@ impl Allocator {
     }
 
     pub fn from_allocated(allocated: &FnvHashSet<u64>) -> Allocator {
-        let mut heap = BinaryHeap::<Reverse<u64>>::default();
+        let mut heap = BTreeSet::<u64>::default();
         let max = allocated.iter().copied().max();
 
         for i in 0..max.unwrap_or(0) {
             if !allocated.contains(&i) {
-                heap.push(Reverse(i));
+                heap.insert(i);
             }
         }
 
@@ -93,12 +92,12 @@ impl Allocator {
         self.allocation_counter.fetch_add(1, Ordering::Relaxed);
         let mut free = self.free_and_pending.lock();
         while let Some(free_id) = self.free_queue.pop() {
-            free.push(Reverse(free_id));
+            free.insert(free_id);
         }
-        let pop_attempt = free.pop();
+        let pop_attempt = free.pop_first();
 
         if let Some(id) = pop_attempt {
-            id.0
+            id
         } else {
             self.next_to_allocate.fetch_add(1, Ordering::Release)
         }
@@ -108,9 +107,9 @@ impl Allocator {
         self.free_counter.fetch_add(1, Ordering::Relaxed);
         if let Some(mut free) = self.free_and_pending.try_lock() {
             while let Some(free_id) = self.free_queue.pop() {
-                free.push(Reverse(free_id));
+                free.insert(free_id);
             }
-            free.push(Reverse(id));
+            free.insert(id);
         } else {
             self.free_queue.push(id);
         }
