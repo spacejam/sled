@@ -287,10 +287,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 #[cfg(feature = "for-internal-testing-only")]
                 {
                     self.event_verifier.mark(
-                        object_id,
+                        node.object_id,
                         None,
                         event_verifier::State::PagedOut,
-                        concat!(file!(), ':', line!(), ":paging-out"),
+                        concat!(file!(), ':', line!(), ":page-out"),
                     );
                 }
                 *write = None;
@@ -361,19 +361,18 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
             match dirty_value {
                 Dirty::MergedAndDeleted { object_id, collection_id } => {
+                    assert_eq!(object_id, dirty_object_id);
+
                     log::trace!(
                         "MergedAndDeleted for {:?}, adding None to write_batch",
                         object_id
                     );
-                    write_batch.push(Update::Free {
-                        object_id: dirty_object_id,
-                        collection_id,
-                    });
+                    write_batch.push(Update::Free { object_id, collection_id });
 
                     #[cfg(feature = "for-internal-testing-only")]
                     {
                         self.event_verifier.mark(
-                            dirty_object_id,
+                            object_id,
                             Some(dirty_epoch),
                             event_verifier::State::CleanPagedIn,
                             concat!(
@@ -607,7 +606,12 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                             node_to_evict.object_id,
                             Some(flush_through_epoch),
                             event_verifier::State::PagedOut,
-                            concat!(file!(), ':', line!()),
+                            concat!(
+                                file!(),
+                                ':',
+                                line!(),
+                                ":page-out-after-flush"
+                            ),
                         );
                     }
 

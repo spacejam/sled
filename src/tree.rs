@@ -306,14 +306,14 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         {
             self.cache.event_verifier.mark(
                 predecessor_guard.node.object_id,
-                None,
+                Some(merge_epoch),
                 event_verifier::State::Dirty,
                 concat!(file!(), ':', line!(), ":merged-into"),
             );
 
             self.cache.event_verifier.mark(
                 leaf_guard.node.object_id,
-                None,
+                Some(merge_epoch),
                 event_verifier::State::Unallocated,
                 concat!(file!(), ':', line!(), ":merged"),
             );
@@ -340,16 +340,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             },
         );
 
-        #[cfg(feature = "for-internal-testing-only")]
-        {
-            self.cache.event_verifier.mark(
-                leaf_guard.node.object_id,
-                None,
-                event_verifier::State::Dirty,
-                concat!(file!(), ':', line!(), ":merged-into-sibling"),
-            );
-        }
-
         self.cache.install_dirty(
             merge_epoch,
             predecessor_guard.node.object_id,
@@ -359,16 +349,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 collection_id: self.collection_id,
             },
         );
-
-        #[cfg(feature = "for-internal-testing-only")]
-        {
-            self.cache.event_verifier.mark(
-                predecessor_guard.node.object_id,
-                None,
-                event_verifier::State::Dirty,
-                concat!(file!(), ':', line!(), ":received-merge-from-sibling"),
-            );
-        }
 
         let (p_object_id, p_sz) =
             predecessor_guard.handle_cache_access_and_eviction_externally();
@@ -506,7 +486,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 {
                     self.cache.event_verifier.mark(
                         node.object_id,
-                        None,
+                        Some(old_flush_epoch),
                         event_verifier::State::CleanPagedIn,
                         concat!(
                             file!(),
@@ -544,21 +524,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                         data: Arc::new(serialized),
                     },
                 );
-
-                #[cfg(feature = "for-internal-testing-only")]
-                {
-                    self.cache.event_verifier.mark(
-                        node.object_id,
-                        None,
-                        event_verifier::State::Dirty,
-                        concat!(
-                            file!(),
-                            ':',
-                            line!(),
-                            ":cooperative-serialize"
-                        ),
-                    );
-                }
 
                 assert_eq!(
                     old_flush_epoch.increment(),

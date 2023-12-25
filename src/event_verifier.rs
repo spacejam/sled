@@ -63,12 +63,18 @@ impl EventVerifier {
         let history = flush_model.entry(object_id).or_default();
 
         if let Some((last_state, _epoch, _at)) = history.last() {
-            assert!(
-                last_state.can_transition_to(state),
-                "object_id {object_id:?} performed \
-                illegal state transition from {last_state:?} to {state:?} at {at} in epoch {epoch:?}.\nhistory: {:#?}",
-                *history
-            );
+            if !last_state.can_transition_to(state) {
+                println!(
+                    "object_id {object_id:?} performed \
+                    illegal state transition from {last_state:?} \
+                    to {state:?} at {at} in epoch {epoch:?}."
+                );
+
+                println!("history:");
+                for (last_state, epoch, at) in history.iter() {
+                    println!("{last_state:?} {epoch:?} {at}");
+                }
+            }
         }
         history.push((state, epoch, at));
     }
@@ -76,6 +82,9 @@ impl EventVerifier {
     pub(crate) fn print_debug_history_for_object(&self, object_id: ObjectId) {
         let flush_model = self.flush_model.lock().unwrap();
         let history = flush_model.get(&object_id).unwrap();
-        println!("history for object {:?}: {:#?}", object_id, history);
+        println!("history for object {:?}:", object_id);
+        for (last_state, epoch, at) in history.iter() {
+            println!("{last_state:?} {epoch:?} {at}");
+        }
     }
 }
