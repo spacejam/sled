@@ -421,9 +421,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
             let leaf = leaf_guard.leaf_read.as_ref().unwrap();
 
-            assert!(leaf.deleted.is_none());
-            assert!(&*leaf.lo <= key);
-
             if leaf.deleted.is_some() {
                 log::trace!("retry due to deleted node in leaf_for_key");
                 drop(leaf_guard);
@@ -432,7 +429,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             if &*leaf.lo > key {
                 log::trace!("key undershoot in leaf_for_key");
                 drop(leaf_guard);
-
                 continue;
             }
             if let Some(ref hi) = leaf.hi {
