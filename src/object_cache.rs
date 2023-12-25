@@ -599,24 +599,28 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         for node_to_evict in evict_after_flush {
             let mut lock = node_to_evict.inner.write();
             if let Some(ref mut leaf) = *lock {
-                if leaf.page_out_on_flush == Some(flush_through_epoch) {
-                    #[cfg(feature = "for-internal-testing-only")]
-                    {
-                        self.event_verifier.mark(
-                            node_to_evict.object_id,
-                            Some(flush_through_epoch),
-                            event_verifier::State::PagedOut,
-                            concat!(
-                                file!(),
-                                ':',
-                                line!(),
-                                ":page-out-after-flush"
-                            ),
-                        );
-                    }
-
-                    *lock = None;
+                if leaf.page_out_on_flush != Some(flush_through_epoch) {
+                    continue;
                 }
+
+                if let Some(dirty_flush_epoch) = leaf.dirty_flush_epoch {
+                    if dirty_flush_epoch != flush_through_epoch {
+                        continue;
+                    }
+                }
+
+                assert_eq!(leaf.dirty_flush_epoch, None);
+                #[cfg(feature = "for-internal-testing-only")]
+                {
+                    self.event_verifier.mark(
+                        node_to_evict.object_id,
+                        Some(flush_through_epoch),
+                        event_verifier::State::PagedOut,
+                        concat!(file!(), ':', line!(), ":page-out-after-flush"),
+                    );
+                }
+
+                *lock = None;
             }
         }
 
