@@ -24,7 +24,6 @@ impl State {
             (State::CleanPagedIn, State::PagedOut) => true,
             (State::CleanPagedIn, State::CleanPagedIn) => true,
             (State::CleanPagedIn, State::Unallocated) => true,
-            (State::CleanPagedIn, _) => false,
             (State::PagedOut, State::CleanPagedIn) => true,
             (State::PagedOut, _) => false,
         }
