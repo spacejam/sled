@@ -24,6 +24,7 @@ trait Databench: Clone + Send {
     fn insert_generic(&self, key: &[u8], value: &[u8]);
     fn get_generic(&self, key: &[u8]) -> Option<Self::READ>;
     fn flush_generic(&self);
+    fn print_stats(&self);
 }
 
 impl Databench for Db {
@@ -56,6 +57,9 @@ impl Databench for Db {
     }
     fn flush_generic(&self) {
         self.flush().unwrap();
+    }
+    fn print_stats(&self) {
+        dbg!(self.stats());
     }
 }
 
@@ -496,6 +500,8 @@ fn bench<D: Databench>() -> Stats {
     let get_stats = gets(&store);
 
     let remove_stats = removes(&store);
+
+    store.print_stats();
 
     Stats {
         post_insert_disk_space,

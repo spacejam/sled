@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use ebr::{Ebr, Guard};
@@ -18,6 +18,8 @@ use crate::{CollectionId, Config, DeferredFree, MetadataStore, ObjectId};
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
 pub(crate) const N_SLABS: usize = 78;
+const FILE_TARGET_FILL_RATIO: u64 = 80;
+const FILE_RESIZE_MARGIN: u64 = 115;
 
 const SLAB_SIZES: [usize; N_SLABS] = [
     64,     // 0x40
@@ -137,6 +139,7 @@ pub struct Stats {
     pub heap_slots_freed: u64,
     pub compacted_heap_slots: u64,
     pub tree_leaves_merged: u64,
+    pub truncated_file_bytes: u64,
 }
 
 #[derive(Debug)]
@@ -336,7 +339,11 @@ pub(crate) fn recover<P: AsRef<Path>>(
 
         let file = fallible!(slab_opts.open(slab_path));
 
-        slabs.push(Slab { slot_size, file })
+        slabs.push(Slab {
+            slot_size,
+            file,
+            max_allocated_slot_since_last_truncation: AtomicU64::new(0),
+        })
     }
 
     log::info!("recovery of Heap at {:?} complete", path);
@@ -351,6 +358,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
             directory_lock: Arc::new(directory_lock),
             free_ebr: Ebr::default(),
             write_batch_atomicity_mutex: Default::default(),
+            truncated_file_bytes: Arc::default(),
         },
         recovered_nodes,
         was_recovered,
@@ -508,6 +516,7 @@ mod sys_io {
 struct Slab {
     file: fs::File,
     slot_size: usize,
+    max_allocated_slot_since_last_truncation: AtomicU64,
 }
 
 impl Slab {
@@ -676,6 +685,7 @@ pub(crate) struct Heap {
     #[allow(unused)]
     directory_lock: Arc<fs::File>,
     write_batch_atomicity_mutex: Arc<Mutex<()>>,
+    truncated_file_bytes: Arc<AtomicU64>,
 }
 
 impl fmt::Debug for Heap {
@@ -715,7 +725,9 @@ impl Heap {
     }
 
     pub fn stats(&self) -> Stats {
-        self.table.stats()
+        let truncated_file_bytes =
+            self.truncated_file_bytes.load(Ordering::Acquire);
+        Stats { truncated_file_bytes, ..self.table.stats() }
     }
 
     pub fn read(&self, object_id: ObjectId) -> Option<io::Result<Vec<u8>>> {
@@ -816,6 +828,40 @@ impl Heap {
                         .clone_slab_allocator_arc(last_address.slab_id),
                     freed_slot: last_address.slot(),
                 });
+            }
+        }
+
+        // truncate files that are now too fragmented
+        for (i, current_allocated) in self.table.get_max_allocated_per_slab() {
+            let slab = &self.slabs[i];
+
+            let last_max = slab
+                .max_allocated_slot_since_last_truncation
+                .fetch_max(current_allocated, Ordering::SeqCst);
+
+            let max_since_last_truncation =
+                last_max.max(current_allocated).max(1);
+
+            let ratio =
+                current_allocated.max(1) * 100 / max_since_last_truncation;
+
+            if ratio < FILE_TARGET_FILL_RATIO {
+                let current_len =
+                    slab.slot_size as u64 * max_since_last_truncation;
+                let target_len =
+                    slab.slot_size as u64 * max_since_last_truncation * 100
+                        / FILE_RESIZE_MARGIN;
+                assert!(target_len > current_allocated * slab.slot_size as u64);
+
+                if slab.file.set_len(target_len).is_ok() {
+                    slab.max_allocated_slot_since_last_truncation
+                        .store(current_allocated, Ordering::SeqCst);
+
+                    let truncated_bytes =
+                        current_len.saturating_sub(target_len);
+                    self.truncated_file_bytes
+                        .fetch_add(truncated_bytes, Ordering::Release);
+                }
             }
         }
 

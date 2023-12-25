@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crossbeam_queue::SegQueue;
 use fnv::FnvHashSet;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 
 #[derive(Default, Debug)]
 pub(crate) struct Allocator {
@@ -94,6 +94,9 @@ impl Allocator {
         while let Some(free_id) = self.free_queue.pop() {
             free.insert(free_id);
         }
+
+        compact(&mut free, &self.next_to_allocate);
+
         let pop_attempt = free.pop_first();
 
         if let Some(id) = pop_attempt {
@@ -110,6 +113,8 @@ impl Allocator {
                 free.insert(free_id);
             }
             free.insert(id);
+
+            compact(&mut free, &self.next_to_allocate);
         } else {
             self.free_queue.push(id);
         }
@@ -121,6 +126,18 @@ impl Allocator {
             self.allocation_counter.load(Ordering::Acquire),
             self.free_counter.load(Ordering::Acquire),
         )
+    }
+}
+
+fn compact(
+    free: &mut MutexGuard<'_, BTreeSet<u64>>,
+    next_to_allocate: &AtomicU64,
+) {
+    let mut next = next_to_allocate.load(Ordering::Acquire);
+
+    while next > 1 && free.contains(&(next - 1)) {
+        free.remove(&(next - 1));
+        next = next_to_allocate.fetch_sub(1, Ordering::SeqCst) - 1;
     }
 }
 

@@ -269,7 +269,7 @@ impl concurrent_map::Minimum for ObjectId {
     Eq,
     Hash,
 )]
-struct CollectionId(u64);
+pub struct CollectionId(u64);
 
 impl concurrent_map::Minimum for CollectionId {
     const MIN: CollectionId = CollectionId(u64::MIN);

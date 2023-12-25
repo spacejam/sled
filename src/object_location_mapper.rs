@@ -107,6 +107,18 @@ impl ObjectLocationMapper {
         ret
     }
 
+    pub(crate) fn get_max_allocated_per_slab(&self) -> Vec<(usize, u64)> {
+        let mut ret = vec![];
+
+        for (i, slab) in self.slab_tenancies.iter().enumerate() {
+            if let Some(max_allocated) = slab.slot_allocator.max_allocated() {
+                ret.push((i, max_allocated));
+            }
+        }
+
+        ret
+    }
+
     pub(crate) fn stats(&self) -> Stats {
         let (objects_allocated, objects_freed) =
             self.object_id_allocator.counters();
@@ -129,6 +141,7 @@ impl ObjectLocationMapper {
             compacted_heap_slots: 0,
             tree_leaves_merged: 0,
             flushes: 0,
+            truncated_file_bytes: 0,
         }
     }
 
