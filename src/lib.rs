@@ -7,7 +7,6 @@
 // TODO add failpoints to writepath
 //
 // performance
-// TODO after defrag, reduce self.tip while popping the max items in the free list
 // TODO handle prefix encoding
 //
 // features
