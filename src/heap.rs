@@ -346,7 +346,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
         })
     }
 
-    log::info!("recovery of Heap at {:?} complete", path);
+    log::debug!("recovery of Heap at {:?} complete", path);
 
     Ok(HeapRecovery {
         heap: Heap {

@@ -1,5 +1,8 @@
 // 1.0 blockers
 //
+// bugs
+// * object_cache violation of flush responsibility for second read of expected cooperative serialization. leaf in question's dirty_flush_epoch is Some(FlushEpoch(3)), our expected key was (FlushEpoch(2), ObjectId(263)). node.deleted: None
+//
 // reliability
 // TODO test concurrent drop_tree when other threads are still using it
 // TODO list trees test for recovering empty collections

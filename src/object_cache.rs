@@ -472,6 +472,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                         {
                             dv2
                         } else {
+                            // TODO this is being triggered
                             log::error!(
                                 "violation of flush responsibility for second read \
                                 of expected cooperative serialization. leaf in question's \
@@ -479,6 +480,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                                 leaf_ref.dirty_flush_epoch,
                                 (dirty_epoch, dirty_object_id),
                                 leaf_ref.deleted,
+                            );
+                            #[cfg(feature = "for-internal-testing-only")]
+                            self.event_verifier.print_debug_history_for_object(
+                                dirty_object_id,
                             );
 
                             std::process::abort();

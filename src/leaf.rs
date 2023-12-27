@@ -33,3 +33,42 @@ impl<const LEAF_FANOUT: usize> Default for Leaf<LEAF_FANOUT> {
         }
     }
 }
+
+impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
+    fn prefix(&self) -> &[u8] {
+        &self.lo[..self.prefix_length]
+    }
+
+    pub(crate) fn get(&self, key: &[u8]) -> Option<&InlineArray> {
+        let prefixed_key = if self.prefix_length == 0 {
+            key
+        } else {
+            let prefix = self.prefix();
+            assert!(key.starts_with(prefix));
+            &key[self.prefix_length..]
+        };
+        self.data.get(prefixed_key)
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        key: InlineArray,
+        value: InlineArray,
+    ) -> Option<InlineArray> {
+        let prefixed_key = if self.prefix_length == 0 {
+            key
+        } else {
+            let prefix = self.prefix();
+            assert!(key.starts_with(prefix));
+            key[self.prefix_length..].into()
+        };
+        self.data.insert(prefixed_key, value)
+    }
+
+    pub(crate) fn remove(&mut self, key: &[u8]) -> Option<InlineArray> {
+        let prefix = self.prefix();
+        assert!(key.starts_with(prefix));
+        let partial_key = &key[self.prefix_length..];
+        self.data.remove(partial_key)
+    }
+}

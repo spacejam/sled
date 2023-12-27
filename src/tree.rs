@@ -579,7 +579,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             assert!(&**hi > key_ref);
         }
 
-        Ok(leaf.data.get(key_ref).cloned())
+        Ok(leaf.get(key_ref).cloned())
     }
 
     /// Insert a key to a new value, returning the last value if it
@@ -616,7 +616,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
-        let ret = leaf.data.insert(key_ref.into(), value_ivec.clone());
+        let ret = leaf.insert(key_ref.into(), value_ivec.clone());
 
         let old_size =
             ret.as_ref().map(|v| key_ref.len() + v.len()).unwrap_or(0);
@@ -734,7 +734,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
-        let ret = leaf.data.remove(key_ref);
+        let ret = leaf.remove(key_ref);
 
         if ret.is_some() {
             leaf.mutation_count += 1;
@@ -850,7 +850,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let leaf = leaf_guard.leaf_write.as_mut().unwrap();
 
-        let current = leaf.data.get(key_ref).cloned();
+        let current = leaf.get(key_ref).cloned();
 
         let previous_matches = match (old, &current) {
             (None, None) => true,
@@ -864,9 +864,9 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let ret = if previous_matches {
             if let Some(ref new_value) = proposed {
-                leaf.data.insert(key_ref.into(), new_value.clone())
+                leaf.insert(key_ref.into(), new_value.clone())
             } else {
-                leaf.data.remove(key_ref)
+                leaf.remove(key_ref)
             };
 
             Ok(CompareAndSwapSuccess {
@@ -1299,7 +1299,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             }
 
             if let Some(value) = value_opt {
-                leaf.data.insert(key, value);
+                leaf.insert(key, value);
 
                 if let Some((split_key, rhs_node)) = leaf.split_if_full(
                     new_epoch,
@@ -1313,7 +1313,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     acquired_locks.insert(split_key, (write, rhs_node));
                 }
             } else {
-                leaf.data.remove(&key);
+                leaf.remove(&key);
             }
         }
 
