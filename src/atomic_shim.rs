@@ -3,10 +3,16 @@
 #[cfg(not(any(
     target_arch = "mips",
     target_arch = "powerpc",
+    target_arch = "xtensa",
     feature = "mutex"
 )))]
 pub use std::sync::atomic::{AtomicI64, AtomicU64};
-#[cfg(any(target_arch = "mips", target_arch = "powerpc", feature = "mutex"))]
+#[cfg(any(
+    target_arch = "mips",
+    target_arch = "powerpc",
+    target_arch = "xtensa",
+    feature = "mutex"
+))]
 mod shim {
     use parking_lot::{const_rwlock, RwLock};
     use std::sync::atomic::Ordering;
