@@ -16,7 +16,7 @@ use quickcheck::{Gen, QuickCheck};
 
 // use sled::Transactional;
 // use sled::transaction::*;
-use sled::{Config, Db as SledDb};
+use sled::{Config, Db as SledDb, InlineArray};
 
 type Db = SledDb<3>;
 
@@ -25,7 +25,7 @@ use tree::{
     Op::{self},
 };
 
-const N_THREADS: usize = 16;
+const N_THREADS: usize = 32;
 const N_PER_THREAD: usize = 10_000;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
@@ -33,10 +33,10 @@ const SPACE: usize = N;
 #[allow(dead_code)]
 const INTENSITY: usize = 10;
 
-fn kv(i: usize) -> Vec<u8> {
+fn kv(i: usize) -> InlineArray {
     let i = i % SPACE;
     let k = [(i >> 16) as u8, (i >> 8) as u8, i as u8];
-    k.to_vec()
+    (&k).into()
 }
 
 #[test]
@@ -399,7 +399,7 @@ fn concurrent_tree_ops() {
 
         debug!("========== initial sets test {} ==========", i);
         let t: Db = config.open().unwrap();
-        par! {t, move |tree: &Db, k: Vec<u8>| {
+        par! {t, move |tree: &Db, k: InlineArray| {
             assert_eq!(tree.get(&*k).unwrap(), None);
             tree.insert(&k, k.clone()).expect("we should write successfully");
             assert_eq!(tree.get(&*k).unwrap(), Some(k.clone().into()),
@@ -429,7 +429,7 @@ fn concurrent_tree_ops() {
         }
 
         debug!("========== reading sets in test {} ==========", i);
-        par! {t, move |tree: &Db, k: Vec<u8>| {
+        par! {t, move |tree: &Db, k: InlineArray| {
             if let Some(v) =  tree.get(&*k).unwrap() {
                 if v != k {
                     panic!("expected key {:?} not found", k);
@@ -446,35 +446,35 @@ fn concurrent_tree_ops() {
         let t: Db = config.open().expect("should be able to restart Db");
 
         debug!("========== CAS test in test {} ==========", i);
-        par! {t, move |tree: &Db, k: Vec<u8>| {
+        par! {t, move |tree: &Db, k: InlineArray| {
             let k1 = k.clone();
             let mut k2 = k;
-            k2.reverse();
+            k2.make_mut().reverse();
             tree.compare_and_swap(&k1, Some(&*k1), Some(k2)).unwrap().unwrap();
         }};
 
         drop(t);
         let t: Db = config.open().expect("should be able to restart Db");
 
-        par! {t, move |tree: &Db, k: Vec<u8>| {
+        par! {t, move |tree: &Db, k: InlineArray| {
             let k1 = k.clone();
             let mut k2 = k;
-            k2.reverse();
-            assert_eq!(tree.get(&*k1).unwrap().unwrap().to_vec(), k2);
+            k2.make_mut().reverse();
+            assert_eq!(tree.get(&*k1).unwrap().unwrap(), k2);
         }};
 
         drop(t);
         let t: Db = config.open().expect("should be able to restart Db");
 
         debug!("========== deleting in test {} ==========", i);
-        par! {t, move |tree: &Db, k: Vec<u8>| {
+        par! {t, move |tree: &Db, k: InlineArray| {
             tree.remove(&*k).unwrap().unwrap();
         }};
 
         drop(t);
         let t: Db = config.open().expect("should be able to restart Db");
 
-        par! {t, move |tree: &Db, k: Vec<u8>| {
+        par! {t, move |tree: &Db, k: InlineArray| {
             assert_eq!(tree.get(&*k).unwrap(), None);
         }};
     }
