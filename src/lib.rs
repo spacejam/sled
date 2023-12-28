@@ -8,6 +8,7 @@
 // TODO list trees test for recovering empty collections
 // TODO set explicit max key and value sizes w/ corresponding heap
 // TODO add failpoints to writepath
+// TODO fsync strictness
 //
 // performance
 // TODO handle prefix encoding
@@ -151,13 +152,17 @@ const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
 use std::num::NonZeroU64;
 use std::ops::Bound;
 
+use crate::flush_epoch::{
+    FlushEpoch, FlushEpochGuard, FlushEpochTracker, FlushInvariants,
+};
 use crate::heap::{
-    recover, Heap, HeapRecovery, ObjectRecovery, SlabAddress, Stats, Update,
+    recover, Heap, HeapRecovery, HeapStats, ObjectRecovery, SlabAddress,
+    Update, WriteBatchStats,
 };
 use crate::id_allocator::{Allocator, DeferredFree};
 use crate::leaf::Leaf;
 use crate::metadata_store::MetadataStore;
-use crate::object_cache::{Dirty, ObjectCache};
+use crate::object_cache::{CacheStats, Dirty, FlushStats, ObjectCache};
 
 /// Opens a `Db` with a default configuration at the
 /// specified path. This will create a new storage
@@ -169,9 +174,10 @@ pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Db> {
     Config::new().path(path).open()
 }
 
-use crate::flush_epoch::{
-    FlushEpoch, FlushEpochGuard, FlushEpochTracker, FlushInvariants,
-};
+#[derive(Debug, Copy, Clone)]
+pub struct Stats {
+    pub cache: CacheStats,
+}
 
 /// Compare and swap result.
 ///

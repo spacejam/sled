@@ -6,7 +6,9 @@ use std::mem::{self, ManuallyDrop};
 use std::ops;
 use std::ops::Bound;
 use std::ops::RangeBounds;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Instant;
 
 use concurrent_map::Minimum;
 use inline_array::InlineArray;
@@ -157,8 +159,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         self.cache.set_error(error)
     }
 
-    pub fn storage_stats(&self) -> heap::Stats {
-        self.cache.stats()
+    pub fn storage_stats(&self) -> Stats {
+        Stats { cache: self.cache.stats() }
     }
 
     /// Synchronously flushes all dirty IO buffers and calls
@@ -174,7 +176,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     ///
     /// This is called automatically on drop of the last open Db
     /// instance.
-    pub fn flush(&self) -> io::Result<()> {
+    pub fn flush(&self) -> io::Result<FlushStats> {
         self.cache.flush()
     }
 
@@ -186,6 +188,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
         Object<LEAF_FANOUT>,
     )> {
+        let before_read_io = Instant::now();
+
         let mut read_loops: u64 = 0;
         loop {
             let _heap_pin = self.cache.heap_object_id_pin();
@@ -201,6 +205,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
             let mut write = node.inner.write_arc();
             if write.is_none() {
+                self.cache
+                    .read_stats
+                    .cache_misses
+                    .fetch_add(1, Ordering::Relaxed);
+
                 let leaf_bytes =
                     if let Some(read_res) = self.cache.read(node.object_id) {
                         read_res?
@@ -220,8 +229,35 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
                         continue;
                     };
+
+                let read_io_latency_us =
+                    u64::try_from(before_read_io.elapsed().as_micros())
+                        .unwrap();
+                self.cache
+                    .read_stats
+                    .max_read_io_latency_us
+                    .fetch_max(read_io_latency_us, Ordering::Relaxed);
+                self.cache
+                    .read_stats
+                    .sum_read_io_latency_us
+                    .fetch_add(read_io_latency_us, Ordering::Relaxed);
+
+                let before_deserialization = Instant::now();
+
                 let leaf: Box<Leaf<LEAF_FANOUT>> =
                     Leaf::deserialize(&leaf_bytes).unwrap();
+
+                let deserialization_latency_us =
+                    u64::try_from(before_deserialization.elapsed().as_micros())
+                        .unwrap();
+                self.cache
+                    .read_stats
+                    .max_deserialization_latency_us
+                    .fetch_max(deserialization_latency_us, Ordering::Relaxed);
+                self.cache
+                    .read_stats
+                    .sum_deserialization_latency_us
+                    .fetch_add(deserialization_latency_us, Ordering::Relaxed);
 
                 #[cfg(feature = "for-internal-testing-only")]
                 {
@@ -234,6 +270,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 }
 
                 *write = Some(leaf);
+            } else {
+                self.cache
+                    .read_stats
+                    .cache_hits
+                    .fetch_add(1, Ordering::Relaxed);
             }
             let leaf = write.as_mut().unwrap();
 
@@ -388,16 +429,17 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             let node = self.leaf_for_key_mut(&search_key)?;
 
             let leaf = node.leaf_write.as_ref().unwrap();
-            let leaf_hi = leaf.hi.as_ref().unwrap();
-            assert!(
-                leaf_hi <= &successor.low_key,
-                "somehow, predecessor high key of {:?} \
-                is greater than successor low key of {:?}",
-                leaf_hi,
-                successor.low_key
-            );
-            if leaf_hi != &successor.low_key {
-                continue;
+            if let Some(leaf_hi) = leaf.hi.as_ref() {
+                assert!(
+                    leaf_hi <= &successor.low_key,
+                    "somehow, predecessor high key of {:?} \
+                    is greater than successor low key of {:?}",
+                    leaf_hi,
+                    successor.low_key
+                );
+                if leaf_hi != &successor.low_key {
+                    continue;
+                }
             }
             return Ok(node);
         }
@@ -415,6 +457,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 drop(read);
                 let (_low_key, write, _node) = self.page_in(key)?;
                 read = ArcRwLockWriteGuard::downgrade(write);
+            } else {
+                self.cache
+                    .read_stats
+                    .cache_hits
+                    .fetch_add(1, Ordering::Relaxed);
             }
 
             let leaf_guard = LeafReadGuard {

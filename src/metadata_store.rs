@@ -345,11 +345,12 @@ impl MetadataStore {
     }
 
     /// Write a batch of metadata. `None` for the second half of the outer tuple represents a
-    /// deletion.
-    pub fn insert_batch(&self, batch: &[UpdateMetadata]) -> io::Result<()> {
+    /// deletion. Returns the bytes written.
+    pub fn insert_batch(&self, batch: &[UpdateMetadata]) -> io::Result<u64> {
         self.check_error()?;
 
         let batch_bytes = serialize_batch(batch);
+        let ret = batch_bytes.len() as u64;
 
         let mut log = self.inner.active_log.lock();
 
@@ -406,7 +407,7 @@ impl MetadataStore {
                 .expect("unable to send log to compact to worker");
         }
 
-        Ok(())
+        Ok(ret)
     }
 }
 

@@ -3,12 +3,91 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use cache_advisor::CacheAdvisor;
 use concurrent_map::{ConcurrentMap, Minimum};
 use inline_array::InlineArray;
+use parking_lot::RwLock;
 
 use crate::*;
+
+#[derive(Debug, Copy, Clone)]
+pub struct CacheStats {
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_hit_ratio: f32,
+    pub max_read_io_latency_us: u64,
+    pub sum_read_io_latency_us: u64,
+    pub deserialization_latency_max_us: u64,
+    pub deserialization_latency_sum_us: u64,
+    pub heap: HeapStats,
+    pub flush_max: FlushStats,
+    pub flush_sum: FlushStats,
+    pub compacted_heap_slots: u64,
+    pub tree_leaves_merged: u64,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct FlushStats {
+    pub pre_block_on_previous_flush: Duration,
+    pub pre_block_on_current_quiescence: Duration,
+    pub serialization_latency: Duration,
+    pub compute_defrag_latency: Duration,
+    pub storage_latency: Duration,
+    pub post_write_eviction_latency: Duration,
+    pub objects_flushed: u64,
+    pub write_batch: WriteBatchStats,
+}
+
+impl FlushStats {
+    pub fn sum(&self, other: &FlushStats) -> FlushStats {
+        use std::ops::Add;
+
+        FlushStats {
+            pre_block_on_previous_flush: self
+                .pre_block_on_previous_flush
+                .add(other.pre_block_on_previous_flush),
+            pre_block_on_current_quiescence: self
+                .pre_block_on_current_quiescence
+                .add(other.pre_block_on_current_quiescence),
+            compute_defrag_latency: self
+                .compute_defrag_latency
+                .add(other.compute_defrag_latency),
+            serialization_latency: self
+                .serialization_latency
+                .add(other.serialization_latency),
+            storage_latency: self.storage_latency.add(other.storage_latency),
+            post_write_eviction_latency: self
+                .post_write_eviction_latency
+                .add(other.post_write_eviction_latency),
+            objects_flushed: self.objects_flushed.add(other.objects_flushed),
+            write_batch: self.write_batch.sum(&other.write_batch),
+        }
+    }
+    pub fn max(&self, other: &FlushStats) -> FlushStats {
+        FlushStats {
+            pre_block_on_previous_flush: self
+                .pre_block_on_previous_flush
+                .max(other.pre_block_on_previous_flush),
+            pre_block_on_current_quiescence: self
+                .pre_block_on_current_quiescence
+                .max(other.pre_block_on_current_quiescence),
+            compute_defrag_latency: self
+                .compute_defrag_latency
+                .max(other.compute_defrag_latency),
+            serialization_latency: self
+                .serialization_latency
+                .max(other.serialization_latency),
+            storage_latency: self.storage_latency.max(other.storage_latency),
+            post_write_eviction_latency: self
+                .post_write_eviction_latency
+                .max(other.post_write_eviction_latency),
+            objects_flushed: self.objects_flushed.max(other.objects_flushed),
+            write_batch: self.write_batch.max(&other.write_batch),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Dirty<const LEAF_FANOUT: usize> {
@@ -40,6 +119,23 @@ impl<const LEAF_FANOUT: usize> Dirty<LEAF_FANOUT> {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct FlushStatTracker {
+    count: u64,
+    sum: FlushStats,
+    max: FlushStats,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ReadStatTracker {
+    pub cache_hits: AtomicU64,
+    pub cache_misses: AtomicU64,
+    pub max_read_io_latency_us: AtomicU64,
+    pub sum_read_io_latency_us: AtomicU64,
+    pub max_deserialization_latency_us: AtomicU64,
+    pub sum_deserialization_latency_us: AtomicU64,
+}
+
 #[derive(Clone)]
 pub(crate) struct ObjectCache<const LEAF_FANOUT: usize> {
     pub config: Config,
@@ -56,10 +152,11 @@ pub(crate) struct ObjectCache<const LEAF_FANOUT: usize> {
     dirty: ConcurrentMap<(FlushEpoch, ObjectId), Dirty<LEAF_FANOUT>, 4>,
     compacted_heap_slots: Arc<AtomicU64>,
     pub(super) tree_leaves_merged: Arc<AtomicU64>,
-    pub(super) flushes: Arc<AtomicU64>,
     #[cfg(feature = "for-internal-testing-only")]
     pub(super) event_verifier: Arc<crate::event_verifier::EventVerifier>,
     invariants: Arc<FlushInvariants>,
+    flush_stats: Arc<RwLock<FlushStatTracker>>,
+    pub(super) read_stats: Arc<ReadStatTracker>,
 }
 
 impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
@@ -115,8 +212,9 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             event_verifier: Arc::default(),
             compacted_heap_slots: Arc::default(),
             tree_leaves_merged: Arc::default(),
-            flushes: Arc::default(),
             invariants: Arc::default(),
+            flush_stats: Arc::default(),
+            read_stats: Arc::default(),
         };
 
         Ok((pc, indices, was_recovered))
@@ -130,14 +228,40 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         self.heap.read(object_id)
     }
 
-    pub fn stats(&self) -> Stats {
-        Stats {
+    pub fn stats(&self) -> CacheStats {
+        let flush_stats = { *self.flush_stats.read() };
+        let cache_hits = self.read_stats.cache_hits.load(Ordering::Acquire);
+        let cache_misses = self.read_stats.cache_misses.load(Ordering::Acquire);
+        let cache_hit_ratio =
+            cache_hits as f32 / (cache_hits + cache_misses).max(1) as f32;
+
+        CacheStats {
+            cache_hits,
+            cache_misses,
+            cache_hit_ratio,
             compacted_heap_slots: self
                 .compacted_heap_slots
                 .load(Ordering::Acquire),
             tree_leaves_merged: self.tree_leaves_merged.load(Ordering::Acquire),
-            flushes: self.flushes.load(Ordering::Acquire),
-            ..self.heap.stats()
+            heap: self.heap.stats(),
+            flush_max: flush_stats.max,
+            flush_sum: flush_stats.sum,
+            deserialization_latency_max_us: self
+                .read_stats
+                .max_deserialization_latency_us
+                .load(Ordering::Acquire),
+            deserialization_latency_sum_us: self
+                .read_stats
+                .sum_deserialization_latency_us
+                .load(Ordering::Acquire),
+            max_read_io_latency_us: self
+                .read_stats
+                .max_read_io_latency_us
+                .load(Ordering::Acquire),
+            sum_read_io_latency_us: self
+                .read_stats
+                .sum_read_io_latency_us
+                .load(Ordering::Acquire),
         }
     }
 
@@ -309,7 +433,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         self.heap.heap_object_id_pin()
     }
 
-    pub fn flush(&self) -> io::Result<()> {
+    pub fn flush(&self) -> io::Result<FlushStats> {
         let mut write_batch = vec![];
 
         log::trace!("advancing epoch");
@@ -319,12 +443,18 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             forward_flush_notifier,
         ) = self.flush_epoch.roll_epoch_forward();
 
+        let before_previous_block = Instant::now();
+
         log::trace!(
             "waiting for previous flush of {:?} to complete",
             previous_flush_complete_notifier.epoch()
         );
         let previous_epoch =
             previous_flush_complete_notifier.wait_for_complete();
+
+        let pre_block_on_previous_flush = before_previous_block.elapsed();
+
+        let before_current_quiescence = Instant::now();
 
         log::trace!(
             "waiting for our epoch {:?} to become vacant",
@@ -336,6 +466,9 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         let flush_through_epoch: FlushEpoch =
             this_vacant_notifier.wait_for_complete();
 
+        let pre_block_on_current_quiescence =
+            before_current_quiescence.elapsed();
+
         self.invariants.mark_flushing_epoch(flush_through_epoch);
 
         let mut objects_to_defrag = self.heap.objects_to_defrag();
@@ -343,6 +476,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         let flush_boundary = (flush_through_epoch.increment(), ObjectId::MIN);
 
         let mut evict_after_flush = vec![];
+
+        let before_serialization = Instant::now();
 
         for ((dirty_epoch, dirty_object_id), dirty_value_initial_read) in
             self.dirty.range(..flush_boundary)
@@ -547,6 +682,9 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             self.compacted_heap_slots
                 .fetch_add(objects_to_defrag.len() as u64, Ordering::Relaxed);
         }
+
+        let before_compute_defrag = Instant::now();
+
         for fragmented_object_id in objects_to_defrag {
             let object_opt = self.object_id_index.get(&fragmented_object_id);
 
@@ -587,15 +725,26 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             });
         }
 
-        let written_count = write_batch.len();
-        if written_count > 0 {
-            self.heap.write_batch(write_batch)?;
+        let compute_defrag_latency = before_compute_defrag.elapsed();
+
+        let serialization_latency = before_serialization.elapsed();
+
+        let before_storage = Instant::now();
+
+        let objects_flushed = write_batch.len() as u64;
+
+        let write_batch_stats = if objects_flushed > 0 {
+            let write_batch_stats = self.heap.write_batch(write_batch)?;
             log::trace!(
-                "marking {:?} as flushed - {} objects written",
-                flush_through_epoch,
-                written_count
+                "marking {flush_through_epoch:?} as flushed - \
+                {objects_flushed} objects written, {write_batch_stats:?}",
             );
-        }
+            write_batch_stats
+        } else {
+            WriteBatchStats::default()
+        };
+
+        let storage_latency = before_storage.elapsed();
 
         log::trace!(
             "marking the forward flush notifier that {:?} is flushed",
@@ -605,6 +754,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         self.invariants.mark_flushed_epoch(flush_through_epoch);
 
         forward_flush_notifier.mark_complete();
+
+        let before_eviction = Instant::now();
 
         for node_to_evict in evict_after_flush {
             let mut lock = node_to_evict.inner.write();
@@ -635,12 +786,31 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             }
         }
 
+        let post_write_eviction_latency = before_eviction.elapsed();
+
+        // kick forward the low level epoch-based reclamation systems
+        // because this operation can cause a lot of garbage to build
+        // up, and this speeds up its reclamation.
         self.flush_epoch.manually_advance_epoch();
         self.heap.manually_advance_epoch();
 
-        self.flushes.fetch_add(1, Ordering::Release);
+        let ret = FlushStats {
+            pre_block_on_current_quiescence,
+            pre_block_on_previous_flush,
+            serialization_latency,
+            storage_latency,
+            post_write_eviction_latency,
+            objects_flushed,
+            write_batch: write_batch_stats,
+            compute_defrag_latency,
+        };
 
-        Ok(())
+        let mut flush_stats = self.flush_stats.write();
+        flush_stats.count += 1;
+        flush_stats.max = flush_stats.max.max(&ret);
+        flush_stats.sum = flush_stats.sum.sum(&ret);
+
+        Ok(ret)
     }
 }
 

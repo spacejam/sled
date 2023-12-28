@@ -635,6 +635,7 @@ fn concurrent_tree_iter() -> io::Result<()> {
     let deleter = thread::Builder::new()
         .name("deleter".into())
         .spawn({
+            let t: Db = t.clone();
             move || {
                 barrier.wait();
 
@@ -659,6 +660,8 @@ fn concurrent_tree_iter() -> io::Result<()> {
     for thread in threads.into_iter() {
         thread.join().expect("thread should not have crashed")?;
     }
+
+    dbg!(t.stats());
 
     Ok(())
 }
@@ -1171,14 +1174,24 @@ fn tree_gc() {
 
     let stats = t.stats();
 
-    assert!(stats.objects_allocated >= (N / FANOUT) as u64, "{stats:?}");
+    dbg!(stats);
+
     assert!(
-        stats.objects_freed >= (stats.objects_allocated / 2) as u64,
+        stats.cache.heap.allocator.objects_allocated >= (N / FANOUT) as u64,
         "{stats:?}"
     );
-    assert!(stats.heap_slots_allocated >= (N / FANOUT) as u64, "{stats:?}");
     assert!(
-        stats.heap_slots_freed >= (stats.heap_slots_allocated / 2) as u64,
+        stats.cache.heap.allocator.objects_freed
+            >= (stats.cache.heap.allocator.objects_allocated / 2) as u64,
+        "{stats:?}"
+    );
+    assert!(
+        stats.cache.heap.allocator.heap_slots_allocated >= (N / FANOUT) as u64,
+        "{stats:?}"
+    );
+    assert!(
+        stats.cache.heap.allocator.heap_slots_freed
+            >= (stats.cache.heap.allocator.heap_slots_allocated / 2) as u64,
         "{stats:?}"
     );
 
@@ -1187,8 +1200,8 @@ fn tree_gc() {
     // assert!(size_on_disk_after_deletes <= expected_max_size);
 
     println!(
-        "after writing {N} items and removing them, our stats are: \n{stats:?}. \
-        disk size went from {}kb after inserts to {}kb after rewriting to {}kb after deletes",
+        "after writing {N} items and removing them, disk size went \
+        from {}kb after inserts to {}kb after rewriting to {}kb after deletes",
         size_on_disk_after_inserts / 1024,
         size_on_disk_after_rewrites / 1024,
         size_on_disk_after_deletes / 1024,

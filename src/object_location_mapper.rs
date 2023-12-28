@@ -6,9 +6,17 @@ use fnv::FnvHashSet;
 use pagetable::PageTable;
 
 use crate::{
-    heap::{SlabAddress, Stats, UpdateMetadata, N_SLABS},
+    heap::{SlabAddress, UpdateMetadata, N_SLABS},
     Allocator, ObjectId,
 };
+
+#[derive(Debug, Default, Copy, Clone)]
+pub struct AllocatorStats {
+    pub objects_allocated: u64,
+    pub objects_freed: u64,
+    pub heap_slots_allocated: u64,
+    pub heap_slots_freed: u64,
+}
 
 #[derive(Default)]
 struct SlabTenancy {
@@ -119,7 +127,7 @@ impl ObjectLocationMapper {
         ret
     }
 
-    pub(crate) fn stats(&self) -> Stats {
+    pub(crate) fn stats(&self) -> AllocatorStats {
         let (objects_allocated, objects_freed) =
             self.object_id_allocator.counters();
 
@@ -133,15 +141,11 @@ impl ObjectLocationMapper {
             heap_slots_freed += freed;
         }
 
-        Stats {
+        AllocatorStats {
             objects_allocated,
             objects_freed,
             heap_slots_allocated,
             heap_slots_freed,
-            compacted_heap_slots: 0,
-            tree_leaves_merged: 0,
-            flushes: 0,
-            truncated_file_bytes: 0,
         }
     }
 

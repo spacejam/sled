@@ -5,15 +5,16 @@ use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use ebr::{Ebr, Guard};
 use fault_injection::{annotate, fallible, maybe};
 use fnv::FnvHashSet;
 use fs2::FileExt as _;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 
-use crate::object_location_mapper::ObjectLocationMapper;
+use crate::object_location_mapper::{AllocatorStats, ObjectLocationMapper};
 use crate::{CollectionId, Config, DeferredFree, MetadataStore, ObjectId};
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
@@ -102,6 +103,75 @@ const SLAB_SIZES: [usize; N_SLABS] = [
     17179869184,
 ];
 
+#[derive(Default, Debug, Copy, Clone)]
+pub struct WriteBatchStats {
+    pub heap_bytes_written: u64,
+    pub heap_files_written_to: u64,
+    pub heap_write_latency: Duration,
+    pub metadata_bytes_written: u64,
+    pub metadata_write_latency: Duration,
+    pub truncated_files: u64,
+    pub truncated_bytes: u64,
+    pub truncate_latency: Duration,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct HeapStats {
+    pub allocator: AllocatorStats,
+    pub write_batch_max: WriteBatchStats,
+    pub write_batch_sum: WriteBatchStats,
+    pub truncated_file_bytes: u64,
+}
+
+impl WriteBatchStats {
+    pub(crate) fn max(&self, other: &WriteBatchStats) -> WriteBatchStats {
+        WriteBatchStats {
+            heap_bytes_written: self
+                .heap_bytes_written
+                .max(other.heap_bytes_written),
+            heap_files_written_to: self
+                .heap_files_written_to
+                .max(other.heap_files_written_to),
+            heap_write_latency: self
+                .heap_write_latency
+                .max(other.heap_write_latency),
+            metadata_bytes_written: self
+                .metadata_bytes_written
+                .max(other.metadata_bytes_written),
+            metadata_write_latency: self
+                .metadata_write_latency
+                .max(other.metadata_write_latency),
+            truncated_files: self.truncated_files.max(other.truncated_files),
+            truncated_bytes: self.truncated_bytes.max(other.truncated_bytes),
+            truncate_latency: self.truncate_latency.max(other.truncate_latency),
+        }
+    }
+
+    pub(crate) fn sum(&self, other: &WriteBatchStats) -> WriteBatchStats {
+        use std::ops::Add;
+        WriteBatchStats {
+            heap_bytes_written: self
+                .heap_bytes_written
+                .add(other.heap_bytes_written),
+            heap_files_written_to: self
+                .heap_files_written_to
+                .add(other.heap_files_written_to),
+            heap_write_latency: self
+                .heap_write_latency
+                .add(other.heap_write_latency),
+            metadata_bytes_written: self
+                .metadata_bytes_written
+                .add(other.metadata_bytes_written),
+            metadata_write_latency: self
+                .metadata_write_latency
+                .add(other.metadata_write_latency),
+            truncated_files: self.truncated_files.add(other.truncated_files),
+            truncated_bytes: self.truncated_bytes.add(other.truncated_bytes),
+            truncate_latency: self.truncate_latency.add(other.truncate_latency),
+        }
+    }
+}
+
 const fn overhead_for_size(size: usize) -> usize {
     if size + 5 <= u8::MAX as usize {
         // crc32 + 1 byte frame
@@ -129,18 +199,6 @@ fn slab_for_size(size: usize) -> u8 {
 }
 
 pub use inline_array::InlineArray;
-
-#[derive(Debug, Clone, Copy)]
-pub struct Stats {
-    pub flushes: u64,
-    pub objects_allocated: u64,
-    pub objects_freed: u64,
-    pub heap_slots_allocated: u64,
-    pub heap_slots_freed: u64,
-    pub compacted_heap_slots: u64,
-    pub tree_leaves_merged: u64,
-    pub truncated_file_bytes: u64,
-}
 
 #[derive(Debug)]
 pub(crate) struct ObjectRecovery {
@@ -359,6 +417,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
             free_ebr: Ebr::default(),
             write_batch_atomicity_mutex: Default::default(),
             truncated_file_bytes: Arc::default(),
+            stats: Arc::default(),
         },
         recovered_nodes,
         was_recovered,
@@ -674,6 +733,12 @@ impl UpdateMetadata {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct WriteBatchStatTracker {
+    sum: WriteBatchStats,
+    max: WriteBatchStats,
+}
+
 #[derive(Clone)]
 pub(crate) struct Heap {
     path: PathBuf,
@@ -685,6 +750,7 @@ pub(crate) struct Heap {
     #[allow(unused)]
     directory_lock: Arc<fs::File>,
     write_batch_atomicity_mutex: Arc<Mutex<()>>,
+    stats: Arc<RwLock<WriteBatchStatTracker>>,
     truncated_file_bytes: Arc<AtomicU64>,
 }
 
@@ -724,10 +790,18 @@ impl Heap {
         self.free_ebr.manually_advance_epoch();
     }
 
-    pub fn stats(&self) -> Stats {
+    pub fn stats(&self) -> HeapStats {
         let truncated_file_bytes =
             self.truncated_file_bytes.load(Ordering::Acquire);
-        Stats { truncated_file_bytes, ..self.table.stats() }
+
+        let stats = self.stats.read();
+
+        HeapStats {
+            truncated_file_bytes,
+            allocator: self.table.stats(),
+            write_batch_max: stats.max,
+            write_batch_sum: stats.sum,
+        }
     }
 
     pub fn read(&self, object_id: ObjectId) -> Option<io::Result<Vec<u8>>> {
@@ -749,7 +823,10 @@ impl Heap {
         }
     }
 
-    pub fn write_batch(&self, batch: Vec<Update>) -> io::Result<()> {
+    pub fn write_batch(
+        &self,
+        batch: Vec<Update>,
+    ) -> io::Result<WriteBatchStats> {
         self.check_error()?;
         let atomicity_mu = self.write_batch_atomicity_mutex.try_lock()
             .expect("write_batch called concurrently! major correctness assumpiton violated");
@@ -758,9 +835,13 @@ impl Heap {
         let slabs = &self.slabs;
         let table = &self.table;
 
+        let heap_bytes_written = AtomicU64::new(0);
+        let heap_files_used = AtomicU64::new(0);
+
         let map_closure = |update: Update| match update {
             Update::Store { object_id, collection_id, metadata, data } => {
-                let slab_id = slab_for_size(data.len());
+                let data_len = data.len();
+                let slab_id = slab_for_size(data_len);
                 let slab = &slabs[usize::from(slab_id)];
                 let new_location = table.allocate_slab_slot(slab_id);
                 let new_location_nzu: NonZeroU64 = new_location.into();
@@ -773,6 +854,16 @@ impl Heap {
                     table.free_slab_slot(new_location);
                     return Err(e);
                 }
+
+                // record stats
+                heap_bytes_written
+                    .fetch_add(data_len as u64, Ordering::Release);
+                // N_SLABS is larger than 64, so we tolerate a bit
+                // of sloppiness in this file count stat in order to
+                // minimize overhead of calculating it.
+                let slab_bit = 0b1 << (slab_id % 63);
+                heap_files_used.fetch_or(slab_bit, Ordering::Release);
+
                 Ok(UpdateMetadata::Store {
                     object_id,
                     collection_id,
@@ -785,8 +876,12 @@ impl Heap {
             }
         };
 
+        let before_heap_write = Instant::now();
+
         let metadata_batch_res: io::Result<Vec<UpdateMetadata>> =
             batch.into_par_iter().map(map_closure).collect();
+
+        let heap_write_latency = before_heap_write.elapsed();
 
         let metadata_batch = match metadata_batch_res {
             Ok(mut mb) => {
@@ -801,10 +896,16 @@ impl Heap {
         };
 
         // make metadata durable
-        if let Err(e) = self.metadata_store.insert_batch(&metadata_batch) {
-            self.set_error(&e);
-            return Err(e);
-        }
+        let before_metadata_write = Instant::now();
+        let metadata_bytes_written =
+            match self.metadata_store.insert_batch(&metadata_batch) {
+                Ok(metadata_bytes_written) => metadata_bytes_written,
+                Err(e) => {
+                    self.set_error(&e);
+                    return Err(e);
+                }
+            };
+        let metadata_write_latency = before_metadata_write.elapsed();
 
         // reclaim previous disk locations for future writes
         for update_metadata in metadata_batch {
@@ -832,6 +933,9 @@ impl Heap {
         }
 
         // truncate files that are now too fragmented
+        let before_truncate = Instant::now();
+        let mut truncated_files = 0;
+        let mut truncated_bytes = 0;
         for (i, current_allocated) in self.table.get_max_allocated_per_slab() {
             let slab = &self.slabs[i];
 
@@ -864,19 +968,43 @@ impl Heap {
                     slab.max_allocated_slot_since_last_truncation
                         .store(current_allocated, Ordering::SeqCst);
 
-                    let truncated_bytes =
+                    let file_truncated_bytes =
                         currently_occupied.saturating_sub(target_len);
                     self.truncated_file_bytes
-                        .fetch_add(truncated_bytes, Ordering::Release);
+                        .fetch_add(file_truncated_bytes, Ordering::Release);
+
+                    truncated_files += 1;
+                    truncated_bytes += file_truncated_bytes;
                 } else {
                     // TODO surface stats
                 }
             }
         }
 
+        let truncate_latency = before_truncate.elapsed();
+
         drop(atomicity_mu);
 
-        Ok(())
+        let stats = WriteBatchStats {
+            heap_bytes_written: heap_bytes_written.load(Ordering::Acquire),
+            heap_files_written_to: heap_files_used
+                .load(Ordering::Acquire)
+                .count_ones() as u64,
+            heap_write_latency,
+            metadata_bytes_written,
+            metadata_write_latency,
+            truncated_files,
+            truncated_bytes,
+            truncate_latency,
+        };
+
+        {
+            let mut stats_tracker = self.stats.write();
+            stats_tracker.max = stats_tracker.max.max(&stats);
+            stats_tracker.sum = stats_tracker.sum.sum(&stats);
+        }
+
+        Ok(stats)
     }
 
     pub fn heap_object_id_pin(&self) -> ebr::Guard<'_, DeferredFree, 16, 16> {
