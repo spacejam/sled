@@ -491,7 +491,10 @@ fn concurrent_tree_iter() -> io::Result<()> {
     const N_FORWARD: usize = INTENSITY;
     const N_REVERSE: usize = INTENSITY;
 
-    let config = Config::tmp().unwrap().flush_every_ms(Some(1));
+    let config = Config::tmp()
+        .unwrap()
+        .cache_capacity_bytes(1024)
+        .flush_every_ms(Some(1));
 
     let t: Db = config.open().unwrap();
 
@@ -532,7 +535,7 @@ fn concurrent_tree_iter() -> io::Result<()> {
                 move || {
                     I.fetch_add(1, SeqCst);
                     barrier.wait();
-                    for _ in 0..100 {
+                    for _ in 0..N {
                         let expected = INDELIBLE.iter();
                         let mut keys = t.iter().keys();
 
@@ -571,7 +574,7 @@ fn concurrent_tree_iter() -> io::Result<()> {
                 move || {
                     I.fetch_add(1, SeqCst);
                     barrier.wait();
-                    for _ in 0..100 {
+                    for _ in 0..N {
                         let expected = INDELIBLE.iter().rev();
                         let mut keys = t.iter().keys().rev();
 
