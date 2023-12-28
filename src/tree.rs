@@ -157,6 +157,34 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         self.cache.set_error(error)
     }
 
+    #[inline]
+    fn read_trigger_pair(
+        &self,
+        pair: Option<(InlineArray, InlineArray)>,
+    ) -> io::Result<Option<(InlineArray, InlineArray)>> {
+        let (current_key, current_value) = if let Some((k, v)) = pair {
+            (k, v)
+        } else {
+            return Ok(None);
+        };
+
+        let ret_value = self.cache.apply_read_triggers(
+            self.collection_id,
+            current_key.as_ref(),
+            Some(&current_value),
+        )?;
+
+        let ret_pair = ret_value.map(|v| (current_key, v));
+
+        Ok(ret_pair)
+    }
+
+    /// Store a new trigger for this Tree.
+    pub fn set_trigger<T: Trigger>(&self, trigger: T) -> TriggerId {
+        let trigger_arc = Arc::new(trigger);
+        self.cache.set_trigger(self.collection_id, trigger_arc)
+    }
+
     pub fn storage_stats(&self) -> heap::Stats {
         self.cache.stats()
     }
@@ -579,7 +607,13 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             assert!(&**hi > key_ref);
         }
 
-        Ok(leaf.get(key_ref).cloned())
+        let current_value = leaf.get(key_ref);
+
+        self.cache.apply_read_triggers(
+            self.collection_id,
+            key_ref,
+            current_value,
+        )
     }
 
     /// Insert a key to a new value, returning the last value if it
@@ -1431,7 +1465,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     where
         K: AsRef<[u8]>,
     {
-        self.range(..key).next_back().transpose()
+        let pair = self.range(..key).next_back().transpose()?;
+        self.read_trigger_pair(pair)
     }
 
     /// Retrieve the next key and value from the `Tree` after the
@@ -1487,9 +1522,12 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     where
         K: AsRef<[u8]>,
     {
-        self.range((ops::Bound::Excluded(key), ops::Bound::Unbounded))
+        let pair = self
+            .range((ops::Bound::Excluded(key), ops::Bound::Unbounded))
             .next()
-            .transpose()
+            .transpose()?;
+
+        self.read_trigger_pair(pair)
     }
 
     /// Create an iterator over tuples of keys and values
@@ -1550,13 +1588,15 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     /// Returns the first key and value in the `Tree`, or
     /// `None` if the `Tree` is empty.
     pub fn first(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
-        self.iter().next().transpose()
+        let pair = self.iter().next().transpose()?;
+        self.read_trigger_pair(pair)
     }
 
     /// Returns the last key and value in the `Tree`, or
     /// `None` if the `Tree` is empty.
     pub fn last(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
-        self.iter().next_back().transpose()
+        let pair = self.iter().next_back().transpose()?;
+        self.read_trigger_pair(pair)
     }
 
     /// Atomically removes the maximum item in the `Tree` instance.
@@ -1584,7 +1624,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     /// # Ok(()) }
     /// ```
     pub fn pop_last(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
-        loop {
+        let pair = loop {
             if let Some(first_res) = self.iter().next_back() {
                 let first = first_res?;
                 if self
@@ -1596,14 +1636,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     .is_ok()
                 {
                     log::trace!("pop_last removed item {:?}", first);
-                    return Ok(Some(first));
+                    break Some(first);
                 }
             // try again
             } else {
                 log::trace!("pop_last removed nothing from empty tree");
-                return Ok(None);
+                break None;
             }
-        }
+        };
+
+        self.read_trigger_pair(pair)
     }
 
     /// Pops the last kv pair in the provided range, or returns `Ok(None)` if nothing
@@ -1657,20 +1699,22 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         K: AsRef<[u8]>,
         R: Clone + RangeBounds<K>,
     {
-        loop {
+        let pair = loop {
             let mut r = self.range(range.clone());
             let (k, v) = if let Some(kv_res) = r.next_back() {
                 kv_res?
             } else {
-                return Ok(None);
+                break None;
             };
             if self
                 .compare_and_swap(&k, Some(&v), None as Option<InlineArray>)?
                 .is_ok()
             {
-                return Ok(Some((k, v)));
+                break Some((k, v));
             }
-        }
+        };
+
+        self.read_trigger_pair(pair)
     }
 
     /// Atomically removes the minimum item in the `Tree` instance.
@@ -1698,7 +1742,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     /// # Ok(()) }
     /// ```
     pub fn pop_first(&self) -> io::Result<Option<(InlineArray, InlineArray)>> {
-        loop {
+        let pair = loop {
             if let Some(first_res) = self.iter().next() {
                 let first = first_res?;
                 if self
@@ -1710,14 +1754,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     .is_ok()
                 {
                     log::trace!("pop_first removed item {:?}", first);
-                    return Ok(Some(first));
+                    break Some(first);
                 }
             // try again
             } else {
                 log::trace!("pop_first removed nothing from empty tree");
-                return Ok(None);
+                break None;
             }
-        }
+        };
+
+        self.read_trigger_pair(pair)
     }
 
     /// Pops the first kv pair in the provided range, or returns `Ok(None)` if nothing
@@ -1766,20 +1812,22 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         K: AsRef<[u8]>,
         R: Clone + RangeBounds<K>,
     {
-        loop {
+        let pair = loop {
             let mut r = self.range(range.clone());
             let (k, v) = if let Some(kv_res) = r.next() {
                 kv_res?
             } else {
-                return Ok(None);
+                break None;
             };
             if self
                 .compare_and_swap(&k, Some(&v), None as Option<InlineArray>)?
                 .is_ok()
             {
-                return Ok(Some((k, v)));
+                break Some((k, v));
             }
-        }
+        };
+
+        self.read_trigger_pair(pair)
     }
 
     /// Returns the number of elements in this tree.

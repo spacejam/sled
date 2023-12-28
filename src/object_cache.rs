@@ -7,6 +7,7 @@ use std::sync::Arc;
 use cache_advisor::CacheAdvisor;
 use concurrent_map::{ConcurrentMap, Minimum};
 use inline_array::InlineArray;
+use parking_lot::RwLock;
 
 use crate::*;
 
@@ -60,6 +61,10 @@ pub(crate) struct ObjectCache<const LEAF_FANOUT: usize> {
     #[cfg(feature = "for-internal-testing-only")]
     pub(super) event_verifier: Arc<crate::event_verifier::EventVerifier>,
     invariants: Arc<FlushInvariants>,
+    trigger_id_allocator: Arc<AtomicU64>,
+    triggers: Arc<
+        RwLock<HashMap<CollectionId, HashMap<TriggerId, Arc<dyn Trigger>>>>,
+    >,
 }
 
 impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
@@ -117,9 +122,67 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             tree_leaves_merged: Arc::default(),
             flushes: Arc::default(),
             invariants: Arc::default(),
+            trigger_id_allocator: Arc::default(),
+            triggers: Arc::default(),
         };
 
         Ok((pc, indices, was_recovered))
+    }
+
+    pub fn apply_read_triggers(
+        &self,
+        collection_id: CollectionId,
+        key: &[u8],
+        value: Option<&InlineArray>,
+    ) -> io::Result<Option<InlineArray>> {
+        let triggers_per_collection = self.triggers.read();
+        let triggers = if let Some(triggers) =
+            triggers_per_collection.get(&collection_id)
+        {
+            triggers
+        } else {
+            return Ok(value.cloned());
+        };
+
+        let mut ret = value.cloned();
+        let mut return_access_denied = false;
+
+        for (_id, trigger) in triggers {
+            match trigger.read_trigger(collection_id, key, value) {
+                TriggerTransform::PassThrough => {}
+                TriggerTransform::AccessDenied => {
+                    return_access_denied = true;
+                }
+                TriggerTransform::TransformedValue { value } => ret = value,
+            }
+        }
+
+        if return_access_denied {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "access denied by trigger",
+            ))
+        } else {
+            Ok(ret)
+        }
+    }
+
+    pub fn set_trigger(
+        &self,
+        collection_id: CollectionId,
+        trigger: Arc<dyn Trigger>,
+    ) -> TriggerId {
+        let trigger_id = TriggerId(
+            self.trigger_id_allocator.fetch_add(1, Ordering::Relaxed),
+        );
+
+        let mut triggers = self.triggers.write();
+
+        let entry = triggers.entry(collection_id).or_default();
+
+        entry.insert(trigger_id, trigger);
+
+        trigger_id
     }
 
     pub fn is_clean(&self) -> bool {

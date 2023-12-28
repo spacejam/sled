@@ -113,6 +113,7 @@ mod metadata_store;
 mod object_cache;
 mod object_location_mapper;
 mod tree;
+mod trigger;
 
 #[cfg(any(
     feature = "testing_shred_allocator",
@@ -141,6 +142,7 @@ fn debug_delay() {
 pub use crate::config::Config;
 pub use crate::db::Db;
 pub use crate::tree::{Batch, Iter, Tree};
+pub use crate::trigger::{Trigger, TriggerTransform};
 pub use inline_array::InlineArray;
 
 const NAME_MAPPING_COLLECTION_ID: CollectionId = CollectionId(0);
@@ -258,6 +260,20 @@ impl std::ops::Deref for ObjectId {
 impl concurrent_map::Minimum for ObjectId {
     const MIN: ObjectId = ObjectId(NonZeroU64::MIN);
 }
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialOrd,
+    Ord,
+    PartialEq,
+    Eq,
+    Hash,
+)]
+pub struct TriggerId(u64);
 
 #[derive(
     Debug,
