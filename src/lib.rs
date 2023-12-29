@@ -2,6 +2,12 @@
 //
 // bugs
 // * object_cache violation of flush responsibility for second read of expected cooperative serialization. leaf in question's dirty_flush_epoch is Some(FlushEpoch(3)), our expected key was (FlushEpoch(2), ObjectId(263)). node.deleted: None
+// * tree predecessor holds lock on successor and tries to get it for predecessor. This will
+//   deadlock if used concurrently with write batches, which acquire locks lexicographically.
+//   * add merges to iterator test and assert it deadlocks
+//   * alternative is to merge right, not left
+// * concurrent bug with node hi key overshooting successor's low key
+//   * possibly related to merge?
 //
 // reliability
 // TODO test concurrent drop_tree when other threads are still using it
@@ -12,6 +18,7 @@
 //
 // performance
 // TODO handle prefix encoding
+// TODO (minor) remove cache access for removed node in merge function
 //
 // features
 // TODO multi-collection batch
