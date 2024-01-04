@@ -59,7 +59,7 @@
   1. Fsync of the metadata log directory.
   1. After the atomic metadata batch write, the previously occupied slab slots are marked for future reuse with the epoch-based reclamation system. After all threads that may have witnessed the previous location have finished their work, the slab slot is added to the free `BinaryHeap` of the slot that it belongs to so that it may be reused in future atomic write batches.
   1. Return `Ok(())` to the caller of `Db::flush`.
-* Writing objects before the metadata write is random, but modern SSD's handle this well. Even though the SSD's FTL will be working harder to defragment things periodically than if we wrote a few megabytes sequentially with each write, the data that the FTL will be copying will be mostly live due to the eager leaf write-backs.
+* Writing objects before the metadata write is random, but modern SSDs handle this well. Even though the SSD's FTL will be working harder to defragment things periodically than if we wrote a few megabytes sequentially with each write, the data that the FTL will be copying will be mostly live due to the eager leaf write-backs.
 
 ## recovery
 
