@@ -50,7 +50,7 @@ fnv = "1.0.7"
 fault-injection = "1.0.10"
 crossbeam-queue = "0.3.8"
 crossbeam-channel = "0.5.8"
-tempdir = "0.3.7"
+tempfile = "3"
 
 [dev-dependencies]
 env_logger = "0.10.0"

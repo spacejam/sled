@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fault_injection::{annotate, fallible};
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 use crate::Db;
 
@@ -66,7 +66,8 @@ impl Config {
     /// temporary directory that will be deleted when this `Config`
     /// is dropped.
     pub fn tmp() -> io::Result<Config> {
-        let tempdir = fallible!(tempdir::TempDir::new("sled_tmp"));
+        let tempdir =
+            fallible!(tempfile::Builder::new().prefix("sled_tmp").tempdir());
 
         Ok(Config {
             path: tempdir.path().into(),
