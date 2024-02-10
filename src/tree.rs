@@ -62,9 +62,8 @@ impl<const LEAF_FANOUT: usize> fmt::Debug for Tree<LEAF_FANOUT> {
 
 #[must_use]
 struct LeafReadGuard<'a, const LEAF_FANOUT: usize = 1024> {
-    leaf_read: ManuallyDrop<
-        ArcRwLockReadGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
-    >,
+    leaf_read:
+        ManuallyDrop<ArcRwLockReadGuard<RawRwLock, CacheBox<LEAF_FANOUT>>>,
     low_key: InlineArray,
     inner: &'a Tree<LEAF_FANOUT>,
     object_id: ObjectId,
@@ -73,7 +72,7 @@ struct LeafReadGuard<'a, const LEAF_FANOUT: usize = 1024> {
 
 impl<'a, const LEAF_FANOUT: usize> Drop for LeafReadGuard<'a, LEAF_FANOUT> {
     fn drop(&mut self) {
-        let size = self.leaf_read.as_ref().unwrap().in_memory_size;
+        let size = self.leaf_read.leaf.as_ref().unwrap().in_memory_size;
         // we must drop our mutex before calling mark_access_and_evict
         unsafe {
             ManuallyDrop::drop(&mut self.leaf_read);
@@ -96,9 +95,8 @@ impl<'a, const LEAF_FANOUT: usize> Drop for LeafReadGuard<'a, LEAF_FANOUT> {
 }
 
 struct LeafWriteGuard<'a, const LEAF_FANOUT: usize = 1024> {
-    leaf_write: ManuallyDrop<
-        ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
-    >,
+    leaf_write:
+        ManuallyDrop<ArcRwLockWriteGuard<RawRwLock, CacheBox<LEAF_FANOUT>>>,
     flush_epoch_guard: FlushEpochGuard<'a>,
     low_key: InlineArray,
     inner: &'a Tree<LEAF_FANOUT>,
@@ -115,13 +113,16 @@ impl<'a, const LEAF_FANOUT: usize> LeafWriteGuard<'a, LEAF_FANOUT> {
         mut self,
     ) -> (ObjectId, usize) {
         self.external_cache_access_and_eviction = true;
-        (self.node.object_id, self.leaf_write.as_ref().unwrap().in_memory_size)
+        (
+            self.node.object_id,
+            self.leaf_write.leaf.as_ref().unwrap().in_memory_size,
+        )
     }
 }
 
 impl<'a, const LEAF_FANOUT: usize> Drop for LeafWriteGuard<'a, LEAF_FANOUT> {
     fn drop(&mut self) {
-        let size = self.leaf_write.as_ref().unwrap().in_memory_size;
+        let size = self.leaf_write.leaf.as_ref().unwrap().in_memory_size;
 
         // we must drop our mutex before calling mark_access_and_evict
         unsafe {
@@ -185,7 +186,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         key: &[u8],
     ) -> io::Result<(
         InlineArray,
-        ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
+        ArcRwLockWriteGuard<RawRwLock, CacheBox<LEAF_FANOUT>>,
         Object<LEAF_FANOUT>,
     )> {
         let before_read_io = Instant::now();
@@ -204,7 +205,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             }
 
             let mut write = node.inner.write_arc();
-            if write.is_none() {
+            if write.leaf.is_none() {
                 self.cache
                     .read_stats
                     .cache_misses
@@ -269,14 +270,14 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     );
                 }
 
-                *write = Some(leaf);
+                write.leaf = Some(leaf);
             } else {
                 self.cache
                     .read_stats
                     .cache_hits
                     .fetch_add(1, Ordering::Relaxed);
             }
-            let leaf = write.as_mut().unwrap();
+            let leaf = write.leaf.as_mut().unwrap();
 
             if leaf.deleted.is_some() {
                 log::trace!("retry due to deleted node in page_in");
@@ -336,9 +337,10 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let merge_epoch = leaf_guard.epoch().max(predecessor_guard.epoch());
 
-        let leaf = leaf_guard.leaf_write.as_mut().unwrap();
-        let predecessor = predecessor_guard.leaf_write.as_mut().unwrap();
+        let leaf = leaf_guard.leaf_write.leaf.as_mut().unwrap();
+        let predecessor = predecessor_guard.leaf_write.leaf.as_mut().unwrap();
 
+        assert!(leaf.deleted.is_none());
         assert!(leaf.data.is_empty());
         assert!(predecessor.deleted.is_none());
         assert_eq!(predecessor.hi.as_ref(), Some(&leaf.lo));
@@ -407,6 +409,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             leaf_guard.handle_cache_access_and_eviction_externally();
 
         self.cache.mark_access_and_evict(p_object_id, p_sz)?;
+
+        // TODO maybe we don't need to do this, since we're removing it
         self.cache.mark_access_and_evict(s_object_id, s_sz)?;
 
         Ok(())
@@ -426,20 +430,22 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 .unwrap()
                 .0;
 
+            // TODO this can probably deadlock
             let node = self.leaf_for_key_mut(&search_key)?;
 
-            let leaf = node.leaf_write.as_ref().unwrap();
-            if let Some(leaf_hi) = leaf.hi.as_ref() {
-                assert!(
-                    leaf_hi <= &successor.low_key,
+            let leaf = node.leaf_write.leaf.as_ref().unwrap();
+            let leaf_hi = leaf.hi.as_ref().expect("we hold the successor mutex, so the predecessor should have a hi key");
+            if leaf_hi > &successor.low_key {
+                let still_in_index = self.index.get(&successor.low_key);
+                eprintln!(
                     "somehow, predecessor high key of {:?} \
-                    is greater than successor low key of {:?}",
-                    leaf_hi,
-                    successor.low_key
+                    is greater than successor low key of {:?}. current index presence: {:?} \n \
+                    predecessor: {:?} \n successor: {:?}",
+                    leaf_hi, successor.low_key, still_in_index, leaf, successor.leaf_write.leaf.as_ref().unwrap(),
                 );
-                if leaf_hi != &successor.low_key {
-                    continue;
-                }
+            }
+            if leaf_hi != &successor.low_key {
+                continue;
             }
             return Ok(node);
         }
@@ -453,7 +459,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             let (low_key, node) = self.index.get_lte(key).unwrap();
             let mut read = node.inner.read_arc();
 
-            if read.is_none() {
+            if read.leaf.is_none() {
                 drop(read);
                 let (_low_key, write, _node) = self.page_in(key)?;
                 read = ArcRwLockWriteGuard::downgrade(write);
@@ -472,7 +478,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 external_cache_access_and_eviction: false,
             };
 
-            let leaf = leaf_guard.leaf_read.as_ref().unwrap();
+            let leaf = leaf_guard.leaf_read.leaf.as_ref().unwrap();
 
             if leaf.deleted.is_some() {
                 log::trace!("retry due to deleted node in leaf_for_key");
@@ -508,7 +514,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let flush_epoch_guard = self.cache.check_into_flush_epoch();
 
-        let leaf = write.as_mut().unwrap();
+        let leaf = write.leaf.as_mut().unwrap();
 
         // NB: these invariants should be enforced in page_in
         assert!(leaf.deleted.is_none());
@@ -620,7 +626,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let leaf_guard = self.leaf_for_key(key_ref)?;
 
-        let leaf = leaf_guard.leaf_read.as_ref().unwrap();
+        let leaf = leaf_guard.leaf_read.leaf.as_ref().unwrap();
 
         if let Some(ref hi) = leaf.hi {
             assert!(&**hi > key_ref);
@@ -661,7 +667,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         let mut leaf_guard = self.leaf_for_key_mut(key_ref)?;
         let new_epoch = leaf_guard.epoch();
 
-        let leaf = leaf_guard.leaf_write.as_mut().unwrap();
+        let leaf = leaf_guard.leaf_write.leaf.as_mut().unwrap();
 
         let ret = leaf.insert(key_ref.into(), value_ivec.clone());
 
@@ -708,6 +714,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             }
         }
         if let Some((split_key, rhs_node)) = split {
+            assert_eq!(leaf.hi.as_ref().unwrap(), &split_key);
             log::trace!(
                 "G adding new from split {:?} to dirty {:?}",
                 rhs_node.object_id,
@@ -720,7 +727,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             self.cache
                 .object_id_index
                 .insert(rhs_node.object_id, rhs_node.clone());
-            self.index.insert(split_key.clone(), rhs_node.clone());
+            let prev = self.index.insert(split_key.clone(), rhs_node.clone());
+            assert!(prev.is_none());
 
             let rhs_object_id = rhs_node.object_id;
 
@@ -779,7 +787,9 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let new_epoch = leaf_guard.epoch();
 
-        let leaf = leaf_guard.leaf_write.as_mut().unwrap();
+        let leaf = leaf_guard.leaf_write.leaf.as_mut().unwrap();
+
+        assert!(leaf.deleted.is_none());
 
         let ret = leaf.remove(key_ref);
 
@@ -895,7 +905,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let proposed: Option<InlineArray> = new.map(Into::into);
 
-        let leaf = leaf_guard.leaf_write.as_mut().unwrap();
+        let leaf = leaf_guard.leaf_write.leaf.as_mut().unwrap();
 
         let current = leaf.get(key_ref).cloned();
 
@@ -1214,7 +1224,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         let mut acquired_locks: BTreeMap<
             InlineArray,
             (
-                ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
+                ArcRwLockWriteGuard<RawRwLock, CacheBox<LEAF_FANOUT>>,
                 Object<LEAF_FANOUT>,
             ),
         > = BTreeMap::new();
@@ -1222,13 +1232,13 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         // Phase 1: lock acquisition
         let mut last: Option<(
             InlineArray,
-            ArcRwLockWriteGuard<RawRwLock, Option<Box<Leaf<LEAF_FANOUT>>>>,
+            ArcRwLockWriteGuard<RawRwLock, CacheBox<LEAF_FANOUT>>,
             Object<LEAF_FANOUT>,
         )> = None;
 
         for key in batch.writes.keys() {
             if let Some((_lo, w, _id)) = &last {
-                let leaf = w.as_ref().unwrap();
+                let leaf = w.leaf.as_ref().unwrap();
                 assert!(&leaf.lo <= key);
                 if let Some(hi) = &leaf.hi {
                     if hi <= key {
@@ -1258,7 +1268,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         // Flush any leaves that are dirty from a previous flush epoch
         // before performing operations.
         for (write, node) in acquired_locks.values_mut() {
-            let leaf = write.as_mut().unwrap();
+            let leaf = write.leaf.as_mut().unwrap();
             if let Some(old_flush_epoch) = leaf.dirty_flush_epoch {
                 if old_flush_epoch == new_epoch {
                     // no need to cooperatively flush
@@ -1338,7 +1348,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 .range_mut::<InlineArray, _>(range)
                 .next_back()
                 .unwrap();
-            let leaf = w.as_mut().unwrap();
+            let leaf = w.leaf.as_mut().unwrap();
 
             assert!(leaf.lo <= key);
             if let Some(hi) = &leaf.hi {
@@ -1354,7 +1364,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     self.collection_id,
                 ) {
                     let write = rhs_node.inner.write_arc();
-                    assert!(write.is_some());
+                    assert!(write.leaf.is_some());
 
                     splits.push((split_key.clone(), rhs_node.clone()));
                     acquired_locks.insert(split_key, (write, rhs_node));
@@ -1375,7 +1385,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         // Add all written leaves to dirty and prepare to mark cache accesses
         let mut cache_accesses = Vec::with_capacity(acquired_locks.len());
         for (low_key, (write, node)) in &mut acquired_locks {
-            let leaf = write.as_mut().unwrap();
+            let leaf = write.leaf.as_mut().unwrap();
             leaf.dirty_flush_epoch = Some(new_epoch);
             leaf.mutation_count += 1;
             cache_accesses.push((node.object_id, leaf.in_memory_size));
@@ -1919,7 +1929,7 @@ impl<const LEAF_FANOUT: usize> Iterator for Iter<LEAF_FANOUT> {
                 Err(e) => return Some(Err(e)),
             };
 
-            let leaf = node.leaf_read.as_ref().unwrap();
+            let leaf = node.leaf_read.leaf.as_ref().unwrap();
 
             if let Some(leaf_hi) = &leaf.hi {
                 if leaf_hi <= &search_key {
@@ -1980,7 +1990,7 @@ impl<const LEAF_FANOUT: usize> DoubleEndedIterator for Iter<LEAF_FANOUT> {
                 Err(e) => return Some(Err(e)),
             };
 
-            let leaf = node.leaf_read.as_ref().unwrap();
+            let leaf = node.leaf_read.leaf.as_ref().unwrap();
 
             if leaf.lo > search_key {
                 // concurrent successor split, retry
@@ -2207,11 +2217,17 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
             self.hi = Some(split_key.clone());
             self.set_in_memory_size();
 
+            assert_eq!(self.hi.as_ref().unwrap(), &split_key);
+            assert_eq!(rhs.lo, &split_key);
+
             let rhs_node = Object {
                 object_id: rhs_id,
                 collection_id,
                 low_key: split_key.clone(),
-                inner: Arc::new(Some(Box::new(rhs)).into()),
+                inner: Arc::new(RwLock::new(CacheBox {
+                    leaf: Some(Box::new(rhs)).into(),
+                    logged_index: BTreeMap::default(),
+                })),
             };
 
             return Some((split_key, rhs_node));

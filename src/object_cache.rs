@@ -312,7 +312,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             object_id,
             collection_id,
             low_key,
-            inner: Arc::new(Some(Box::default()).into()),
+            inner: Arc::new(RwLock::new(CacheBox {
+                leaf: Some(Box::default()).into(),
+                logged_index: BTreeMap::default(),
+            })),
         };
 
         self.object_id_index.insert(object_id, node.clone());
@@ -402,11 +405,11 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             };
 
             let mut write = node.inner.write();
-            if write.is_none() {
+            if write.leaf.is_none() {
                 // already paged out
                 continue;
             }
-            let leaf: &mut Leaf<LEAF_FANOUT> = write.as_mut().unwrap();
+            let leaf: &mut Leaf<LEAF_FANOUT> = write.leaf.as_mut().unwrap();
 
             if let Some(dirty_epoch) = leaf.dirty_flush_epoch {
                 // We can't page out this leaf until it has been
@@ -422,7 +425,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                         concat!(file!(), ':', line!(), ":page-out"),
                     );
                 }
-                *write = None;
+                write.leaf = None;
             }
         }
 
@@ -561,7 +564,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
                     let leaf_ref: &mut Leaf<LEAF_FANOUT> = if let Some(
                         lock_ref,
-                    ) = lock.as_mut()
+                    ) =
+                        lock.leaf.as_mut()
                     {
                         lock_ref
                     } else {
@@ -695,7 +699,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 continue;
             };
 
-            if let Some(ref inner) = *object.inner.read() {
+            if let Some(ref inner) = object.inner.read().leaf {
                 if let Some(dirty) = inner.dirty_flush_epoch {
                     assert!(dirty > flush_through_epoch);
                     // This object will be rewritten anyway when its dirty epoch gets flushed
@@ -759,7 +763,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
         for node_to_evict in evict_after_flush {
             let mut lock = node_to_evict.inner.write();
-            if let Some(ref mut leaf) = *lock {
+            if let Some(ref mut leaf) = lock.leaf {
                 if leaf.page_out_on_flush != Some(flush_through_epoch) {
                     continue;
                 }
@@ -782,7 +786,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     );
                 }
 
-                *lock = None;
+                lock.leaf = None;
             }
         }
 
@@ -841,7 +845,10 @@ fn initialize<const LEAF_FANOUT: usize>(
             object_id: *object_id,
             collection_id: *collection_id,
             low_key: metadata.clone(),
-            inner: Arc::new(None.into()),
+            inner: Arc::new(RwLock::new(CacheBox {
+                leaf: None.into(),
+                logged_index: BTreeMap::default(),
+            })),
         };
 
         assert!(object_id_index.insert(*object_id, node.clone()).is_none());
@@ -864,7 +871,10 @@ fn initialize<const LEAF_FANOUT: usize>(
                 object_id,
                 collection_id,
                 low_key: initial_low_key.clone(),
-                inner: Arc::new(Some(Box::default()).into()),
+                inner: Arc::new(RwLock::new(CacheBox {
+                    leaf: Some(Box::default()).into(),
+                    logged_index: BTreeMap::default(),
+                })),
             };
 
             assert!(object_id_index

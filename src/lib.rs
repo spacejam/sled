@@ -10,6 +10,8 @@
 //   * possibly related to merge?
 //
 // reliability
+// TODO make all writes wrapped in a Tearable wrapper that splits writes
+//      and can possibly crash based on a counter.
 // TODO test concurrent drop_tree when other threads are still using it
 // TODO list trees test for recovering empty collections
 // TODO set explicit max key and value sizes w/ corresponding heap
@@ -156,8 +158,12 @@ const DEFAULT_COLLECTION_ID: CollectionId = CollectionId(1);
 const INDEX_FANOUT: usize = 64;
 const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
 
+use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 use std::ops::Bound;
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 use crate::flush_epoch::{
     FlushEpoch, FlushEpochGuard, FlushEpochTracker, FlushInvariants,
@@ -290,16 +296,24 @@ impl concurrent_map::Minimum for CollectionId {
     const MIN: CollectionId = CollectionId(u64::MIN);
 }
 
-type CacheBox<const LEAF_FANOUT: usize> =
-    std::sync::Arc<parking_lot::RwLock<Option<Box<Leaf<LEAF_FANOUT>>>>>;
+#[derive(Debug, Clone)]
+struct CacheBox<const LEAF_FANOUT: usize> {
+    leaf: Option<Box<Leaf<LEAF_FANOUT>>>,
+    logged_index: BTreeMap<InlineArray, LogValue>,
+}
+
+#[derive(Debug, Clone)]
+struct LogValue {
+    location: SlabAddress,
+    value: Option<InlineArray>,
+}
 
 #[derive(Debug, Clone)]
 struct Object<const LEAF_FANOUT: usize> {
-    // used for access in heap::Heap
     object_id: ObjectId,
     collection_id: CollectionId,
     low_key: InlineArray,
-    inner: CacheBox<LEAF_FANOUT>,
+    inner: Arc<RwLock<CacheBox<LEAF_FANOUT>>>,
 }
 
 impl<const LEAF_FANOUT: usize> PartialEq for Object<LEAF_FANOUT> {
