@@ -310,8 +310,9 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         &self,
         collection_id: CollectionId,
         low_key: InlineArray,
+        flush_epoch: FlushEpoch,
     ) -> Object<LEAF_FANOUT> {
-        let object_id = self.allocate_object_id();
+        let object_id = self.allocate_object_id(flush_epoch);
 
         let node = Object {
             object_id,
@@ -328,14 +329,14 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         node
     }
 
-    pub fn allocate_object_id(&self) -> ObjectId {
+    pub fn allocate_object_id(&self, flush_epoch: FlushEpoch) -> ObjectId {
         let object_id = self.heap.allocate_object_id();
 
         #[cfg(feature = "for-internal-testing-only")]
         {
             self.event_verifier.mark(
                 object_id,
-                None,
+                flush_epoch,
                 event_verifier::State::CleanPagedIn,
                 concat!(file!(), ':', line!(), ":allocated"),
             );
@@ -344,6 +345,9 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         object_id
     }
 
+    pub fn current_flush_epoch(&self) -> FlushEpoch {
+        self.flush_epoch.current_flush_epoch()
+    }
     pub fn check_into_flush_epoch(&self) -> FlushEpochGuard {
         self.flush_epoch.check_in()
     }
@@ -368,14 +372,14 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         // if the new Dirty is not final, we must assert
         // that the old value is also not final.
 
-        let old_dirty = self.dirty.insert((flush_epoch, object_id), dirty);
+        let last_dirty_opt = self.dirty.insert((flush_epoch, object_id), dirty);
 
-        if let Some(old) = old_dirty {
+        if let Some(last_dirty) = last_dirty_opt {
             assert!(
-                !old.is_final_state(),
+                !last_dirty.is_final_state(),
                 "tried to install another Dirty marker for a node that is already
-                finalized for this flush epoch. {:?} old: {:?}",
-                flush_epoch, old
+                finalized for this flush epoch. \nflush_epoch: {:?}\nlast: {:?}",
+                flush_epoch, last_dirty,
             );
         }
     }
@@ -387,6 +391,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         &self,
         object_id: ObjectId,
         size: usize,
+        flush_epoch: FlushEpoch,
     ) -> io::Result<()> {
         let mut ca = self.cache_advisor.borrow_mut();
         let to_evict = ca.accessed_reuse_buffer(*object_id, size);
@@ -425,7 +430,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 {
                     self.event_verifier.mark(
                         node.object_id,
-                        None,
+                        flush_epoch,
                         event_verifier::State::PagedOut,
                         concat!(file!(), ':', line!(), ":page-out"),
                     );
@@ -521,8 +526,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     {
                         self.event_verifier.mark(
                             object_id,
-                            Some(dirty_epoch),
-                            event_verifier::State::CleanPagedIn,
+                            dirty_epoch,
+                            event_verifier::State::AddedToWriteBatch,
                             concat!(
                                 file!(),
                                 ':',
@@ -552,8 +557,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     {
                         self.event_verifier.mark(
                             dirty_object_id,
-                            Some(dirty_epoch),
-                            event_verifier::State::CleanPagedIn,
+                            dirty_epoch,
+                            event_verifier::State::AddedToWriteBatch,
                             concat!(
                                 file!(),
                                 ':',
@@ -585,6 +590,17 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                         == Some(flush_through_epoch)
                     {
                         if let Some(deleted_at) = leaf_ref.deleted {
+                            #[cfg(feature = "for-internal-testing-only")]
+                            if deleted_at <= flush_through_epoch {
+                                println!(
+                                    "{dirty_object_id:?} deleted at {deleted_at:?} \
+                                    but we are flushing at {flush_through_epoch:?}"
+                                );
+                                self.event_verifier
+                                    .print_debug_history_for_object(
+                                        dirty_object_id,
+                                    );
+                            }
                             assert!(deleted_at > flush_through_epoch);
                         }
                         leaf_ref.dirty_flush_epoch.take();
@@ -593,8 +609,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                         {
                             self.event_verifier.mark(
                                 dirty_object_id,
-                                Some(dirty_epoch),
-                                event_verifier::State::CleanPagedIn,
+                                dirty_epoch,
+                                event_verifier::State::AddedToWriteBatch,
                                 concat!(
                                     file!(),
                                     ':',
@@ -612,11 +628,37 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                         let dirty_value_2_opt =
                             self.dirty.remove(&(dirty_epoch, dirty_object_id));
 
-                        let dirty_value_2 = if let Some(dv2) = dirty_value_2_opt
+                        if let Some(Dirty::CooperativelySerialized {
+                            low_key: low_key_2,
+                            mutation_count: _,
+                            mut data,
+                            collection_id: ci2,
+                            object_id: ni2,
+                        }) = dirty_value_2_opt
                         {
-                            dv2
+                            assert_eq!(node.object_id, ni2);
+                            assert_eq!(node.object_id, dirty_object_id);
+                            assert_eq!(low_key, low_key_2);
+                            assert_eq!(collection_id, ci2);
+                            Arc::make_mut(&mut data);
+
+                            #[cfg(feature = "for-internal-testing-only")]
+                            {
+                                self.event_verifier.mark(
+                                    dirty_object_id,
+                                    dirty_epoch,
+                                    event_verifier::State::AddedToWriteBatch,
+                                    concat!(
+                                        file!(),
+                                        ':',
+                                        line!(),
+                                        ":flush-laggy-cooperative"
+                                    ),
+                                );
+                            }
+
+                            Arc::into_inner(data).unwrap()
                         } else {
-                            // TODO this is being triggered
                             log::error!(
                                 "violation of flush responsibility for second read \
                                 of expected cooperative serialization. leaf in question's \
@@ -630,39 +672,6 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                                 dirty_object_id,
                             );
 
-                            std::process::abort();
-                        };
-
-                        #[cfg(feature = "for-internal-testing-only")]
-                        {
-                            self.event_verifier.mark(
-                                dirty_object_id,
-                                Some(dirty_epoch),
-                                event_verifier::State::CleanPagedIn,
-                                concat!(
-                                    file!(),
-                                    ':',
-                                    line!(),
-                                    ":flush-laggy-cooperative"
-                                ),
-                            );
-                        }
-
-                        if let Dirty::CooperativelySerialized {
-                            low_key: low_key_2,
-                            mutation_count: _,
-                            mut data,
-                            collection_id: ci2,
-                            object_id: ni2,
-                        } = dirty_value_2
-                        {
-                            assert_eq!(node.object_id, ni2);
-                            assert_eq!(node.object_id, dirty_object_id);
-                            assert_eq!(low_key, low_key_2);
-                            assert_eq!(collection_id, ci2);
-                            Arc::make_mut(&mut data);
-                            Arc::into_inner(data).unwrap()
-                        } else {
                             unreachable!("a leaf was expected to be cooperatively serialized but it was not available");
                         }
                     };
@@ -742,6 +751,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
         let objects_flushed = write_batch.len() as u64;
 
+        #[cfg(feature = "for-internal-testing-only")]
+        let write_batch_object_ids: Vec<ObjectId> =
+            write_batch.iter().map(Update::object_id).collect();
+
         let write_batch_stats = if objects_flushed > 0 {
             let write_batch_stats = self.heap.write_batch(write_batch)?;
             log::trace!(
@@ -755,6 +768,18 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
         let storage_latency = before_storage.elapsed();
 
+        #[cfg(feature = "for-internal-testing-only")]
+        {
+            for update_object_id in write_batch_object_ids {
+                self.event_verifier.mark(
+                    update_object_id,
+                    flush_through_epoch,
+                    event_verifier::State::Flushed,
+                    concat!(file!(), ':', line!(), ":flush-finished"),
+                );
+            }
+        }
+
         log::trace!(
             "marking the forward flush notifier that {:?} is flushed",
             flush_through_epoch
@@ -767,32 +792,31 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         let before_eviction = Instant::now();
 
         for node_to_evict in evict_after_flush {
+            // NB: since we dropped this leaf and lock after we marked its
+            // node in evict_after_flush, it's possible that it may have
+            // been written to afterwards.
             let mut lock = node_to_evict.inner.write();
-            if let Some(ref mut leaf) = lock.leaf {
-                if leaf.page_out_on_flush != Some(flush_through_epoch) {
+            let leaf = lock.leaf.as_mut().unwrap();
+
+            if let Some(dirty_epoch) = leaf.dirty_flush_epoch {
+                if dirty_epoch != flush_through_epoch {
                     continue;
                 }
-
-                if let Some(dirty_flush_epoch) = leaf.dirty_flush_epoch {
-                    if dirty_flush_epoch != flush_through_epoch {
-                        continue;
-                    }
-                }
-
-                assert_eq!(leaf.dirty_flush_epoch, None);
-
-                #[cfg(feature = "for-internal-testing-only")]
-                {
-                    self.event_verifier.mark(
-                        node_to_evict.object_id,
-                        Some(flush_through_epoch),
-                        event_verifier::State::PagedOut,
-                        concat!(file!(), ':', line!(), ":page-out-after-flush"),
-                    );
-                }
-
-                lock.leaf = None;
+            } else {
+                continue;
             }
+
+            #[cfg(feature = "for-internal-testing-only")]
+            {
+                self.event_verifier.mark(
+                    node_to_evict.object_id,
+                    flush_through_epoch,
+                    event_verifier::State::PagedOut,
+                    concat!(file!(), ':', line!(), ":page-out-after-flush"),
+                );
+            }
+
+            lock.leaf = None;
         }
 
         let post_write_eviction_latency = before_eviction.elapsed();

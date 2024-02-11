@@ -21,6 +21,9 @@ const MIN_EPOCH: u64 = 2;
 pub(crate) struct FlushEpoch(NonZeroU64);
 
 impl FlushEpoch {
+    pub const MIN: FlushEpoch = FlushEpoch(NonZeroU64::MIN);
+    pub const MAX: FlushEpoch = FlushEpoch(NonZeroU64::MAX);
+
     pub fn increment(&self) -> FlushEpoch {
         FlushEpoch(NonZeroU64::new(self.0.get() + 1).unwrap())
     }
@@ -31,7 +34,7 @@ impl FlushEpoch {
 }
 
 impl concurrent_map::Minimum for FlushEpoch {
-    const MIN: FlushEpoch = FlushEpoch(NonZeroU64::MIN);
+    const MIN: FlushEpoch = FlushEpoch::MIN;
 }
 
 #[derive(Debug)]
@@ -273,6 +276,12 @@ impl FlushEpochTracker {
 
     pub fn manually_advance_epoch(&self) {
         self.active_ebr.manually_advance_epoch();
+    }
+
+    pub fn current_flush_epoch(&self) -> FlushEpoch {
+        let current = self.inner.counter.load(Ordering::SeqCst);
+
+        FlushEpoch(NonZeroU64::new(current).unwrap())
     }
 }
 

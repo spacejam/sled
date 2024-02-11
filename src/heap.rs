@@ -710,6 +710,15 @@ pub(crate) enum Update {
     },
 }
 
+impl Update {
+    pub(crate) fn object_id(&self) -> ObjectId {
+        match self {
+            Update::Store { object_id, .. }
+            | Update::Free { object_id, .. } => *object_id,
+        }
+    }
+}
+
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub(crate) enum UpdateMetadata {
     Store {
