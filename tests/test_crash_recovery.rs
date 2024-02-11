@@ -15,6 +15,7 @@ use common::cleanup;
 
 type Db = SledDb<8>;
 
+const CACHE_SIZE: usize = 1024 * 1024;
 const TEST_ENV_VAR: &str = "SLED_CRASH_TEST";
 const N_TESTS: usize = 100;
 const CYCLE: usize = 256;
@@ -277,7 +278,7 @@ fn run_batches_inner(db: Db) {
 
 fn run_crash_recovery() {
     let config = Config::new()
-        .cache_capacity_bytes(128 * 1024 * 1024)
+        .cache_capacity_bytes(CACHE_SIZE)
         .flush_every_ms(Some(1))
         .path(RECOVERY_DIR);
 
@@ -295,7 +296,7 @@ fn run_crash_batches() {
     }
 
     let config = Config::new()
-        .cache_capacity_bytes(128 * 1024 * 1024)
+        .cache_capacity_bytes(CACHE_SIZE)
         .flush_every_ms(Some(1))
         .path(BATCHES_DIR);
 
@@ -421,7 +422,10 @@ fn run_crash_iter() {
     const N_FORWARD: usize = 50;
     const N_REVERSE: usize = 50;
 
-    let config = Config::new().path(ITER_DIR).flush_every_ms(Some(1));
+    let config = Config::new()
+        .cache_capacity_bytes(CACHE_SIZE)
+        .path(ITER_DIR)
+        .flush_every_ms(Some(1));
 
     let t: Db = config.open().unwrap();
 
@@ -583,7 +587,9 @@ fn run_crash_iter() {
 fn run_crash_tx() {
     common::setup_logger();
 
-    let config = Config::new().flush_every_ms(Some(1)).path(TX_DIR);
+    let config = Config::new()
+        .cache_capacity_bytes(CACHE_SIZE)
+        .flush_every_ms(Some(1)).path(TX_DIR);
     let db = config.open().unwrap();
 
     db.insert(b"k1", b"cats").unwrap();

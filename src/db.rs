@@ -79,12 +79,31 @@ fn flusher<const LEAF_FANOUT: usize>(
     let mut last_flush_duration = Duration::default();
 
     let flush = || {
-        if let Err(e) = cache.flush() {
-            log::error!("Db flusher encountered error while flushing: {:?}", e);
-            cache.set_error(&e);
-
-            std::process::abort();
+        let flush_res_res = std::panic::catch_unwind(|| cache.flush());
+        match flush_res_res {
+            Ok(Ok(_)) => {
+                // don't abort.
+                return;
+            }
+            Ok(Err(flush_failure)) => {
+                log::error!(
+                    "Db flusher encountered error while flushing: {:?}",
+                    flush_failure
+                );
+                cache.set_error(&flush_failure);
+            }
+            Err(panicked) => {
+                log::error!(
+                    "Db flusher panicked while flushing: {:?}",
+                    panicked
+                );
+                cache.set_error(&io::Error::new(
+                    io::ErrorKind::Other,
+                    "Db flusher panicked while flushing".to_string(),
+                ));
+            }
         }
+        std::process::abort();
     };
 
     loop {

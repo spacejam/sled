@@ -356,8 +356,6 @@ fn concurrent_tree_pops() -> std::io::Result<()> {
 fn concurrent_tree_ops() {
     use std::thread;
 
-    const CACHE_SIZE: usize = 1024;
-
     common::setup_logger();
 
     for i in 0..INTENSITY {
@@ -366,7 +364,7 @@ fn concurrent_tree_ops() {
         let config = Config::tmp()
             .unwrap()
             .flush_every_ms(Some(1))
-            .cache_capacity_bytes(CACHE_SIZE);
+            .cache_capacity_bytes(1024);
 
         macro_rules! par {
             ($t:ident, $f:expr) => {
@@ -495,7 +493,7 @@ fn concurrent_tree_iter() -> io::Result<()> {
 
     let config = Config::tmp()
         .unwrap()
-        .cache_capacity_bytes(1024)
+        .cache_capacity_bytes(1024 * 1024 * 1024)
         .flush_every_ms(Some(1));
 
     let t: Db = config.open().unwrap();
@@ -548,8 +546,8 @@ fn concurrent_tree_iter() -> io::Result<()> {
                             assert!(
                                 &*k <= *expect,
                                 "witnessed key is {:?} but we expected \
-                                     one <= {:?}, so we overshot due to a \
-                                     concurrent modification",
+                                one <= {:?}, so we overshot due to a \
+                                concurrent modification",
                                 k,
                                 expect,
                             );
@@ -586,8 +584,8 @@ fn concurrent_tree_iter() -> io::Result<()> {
                                 assert!(
                                     &*k >= *expect,
                                     "witnessed key is {:?} but we expected \
-                                         one >= {:?}, so we overshot due to a \
-                                         concurrent modification\n{:?}",
+                                    one >= {:?}, so we overshot due to a \
+                                    concurrent modification\n{:?}",
                                     k,
                                     expect,
                                     t,
@@ -667,6 +665,8 @@ fn concurrent_tree_iter() -> io::Result<()> {
     for thread in threads.into_iter() {
         thread.join().expect("thread should not have crashed")?;
     }
+
+    t.check_error().expect("Db should have no set error");
 
     dbg!(t.stats());
 
@@ -1178,6 +1178,8 @@ fn tree_gc() {
     }
 
     let size_on_disk_after_deletes = t.size_on_disk().unwrap();
+
+    t.check_error().expect("Db should have no set error");
 
     let stats = t.stats();
 
