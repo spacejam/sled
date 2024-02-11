@@ -1163,7 +1163,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
     pub fn range<K, R>(&self, range: R) -> Iter<LEAF_FANOUT>
     where
-        K: AsRef<[u8]>,
+        K: AsRef<[u8]> + ?Sized,
         R: RangeBounds<K>,
     {
         let start: Bound<InlineArray> =
@@ -1711,7 +1711,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         range: R,
     ) -> io::Result<Option<(InlineArray, InlineArray)>>
     where
-        K: AsRef<[u8]>,
+        K: AsRef<[u8]> + ?Sized,
         R: Clone + RangeBounds<K>,
     {
         loop {
@@ -1820,7 +1820,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         range: R,
     ) -> io::Result<Option<(InlineArray, InlineArray)>>
     where
-        K: AsRef<[u8]>,
+        K: AsRef<[u8]> + ?Sized,
         R: Clone + RangeBounds<K>,
     {
         loop {
