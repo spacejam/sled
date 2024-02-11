@@ -159,6 +159,11 @@ pub(crate) struct ObjectCache<const LEAF_FANOUT: usize> {
     pub(super) read_stats: Arc<ReadStatTracker>,
 }
 
+impl<const LEAF_FANOUT: usize> std::panic::RefUnwindSafe
+    for ObjectCache<LEAF_FANOUT>
+{
+}
+
 impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     /// Returns the recovered ObjectCache, the tree indexes, and a bool signifying whether the system
     /// was recovered or not
