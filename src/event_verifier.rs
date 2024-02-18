@@ -87,6 +87,7 @@ impl EventVerifier {
             if !dirty_epochs.is_empty() {
                 println!("{object_id:?} was paged out while having dirty epochs {dirty_epochs:?}");
                 self.print_debug_history_for_object(object_id);
+                println!("{state:?} {epoch:?} {at}");
                 println!("invalid object state transition");
                 std::process::abort();
             }

@@ -1,13 +1,29 @@
 // 1.0 blockers
 //
 // bugs
-// * object_cache violation of flush responsibility for second read of expected cooperative serialization. leaf in question's dirty_flush_epoch is Some(FlushEpoch(3)), our expected key was (FlushEpoch(2), ObjectId(263)). node.deleted: None
 // * tree predecessor holds lock on successor and tries to get it for predecessor. This will
 //   deadlock if used concurrently with write batches, which acquire locks lexicographically.
 //   * add merges to iterator test and assert it deadlocks
 //   * alternative is to merge right, not left
-// * concurrent bug with node hi key overshooting successor's low key
-//   * possibly related to merge?
+// * page-out needs to be deferred until after any flush of the dirty epoch
+//   * can't send reliable page-out request backwards from 7->6
+//   * re-locking every mutex in a writebatch feels bad
+//   * need to signal stability status forward
+//     * maybe we already are
+//   * can make dirty_flush_epoch atomic and CAS it to 0 after flush
+//   * can change dirty_flush_epoch to unflushed_epoch
+//   * can always set mutation_count to max dirty flush epoch
+//     * this feels nice, we can lazily update a global stable flushed counter
+//     * can get rid of dirty_flush_epoch and page_out_on_flush?
+//     * or at least dirty_flush_epoch
+//   * dirty_flush_epoch really means "hasn't yet been cooperatively serialized @ F.E."
+//   * interesting metrics:
+//     * whether dirty for some epoch
+//     * whether cooperatively serialized for some epoch
+//     * whether fully flushed for some epoch
+//     * clean -> dirty -> {maybe coop} -> flushed
+//   * for page-out, we only care if it's stable or if we need to add it to
+//     a page-out priority queue
 //
 // reliability
 // TODO make all writes wrapped in a Tearable wrapper that splits writes
@@ -21,6 +37,7 @@
 // performance
 // TODO handle prefix encoding
 // TODO (minor) remove cache access for removed node in merge function
+// TODO index+log hybrid - tinylsm key -> object location
 //
 // features
 // TODO multi-collection batch

@@ -100,14 +100,17 @@ const SLAB_SIZES: [usize; N_SLABS] = [
     6442450944,
     8589934592,
     12884901888,
-    17179869184,
+    17_179_869_184, // 17gb is max page size as-of now
 ];
 
 #[derive(Default, Debug, Copy, Clone)]
 pub struct WriteBatchStats {
     pub heap_bytes_written: u64,
     pub heap_files_written_to: u64,
+    /// Latency inclusive of fsync
     pub heap_write_latency: Duration,
+    /// Latency for fsyncing files
+    pub heap_sync_latency: Duration,
     pub metadata_bytes_written: u64,
     pub metadata_write_latency: Duration,
     pub truncated_files: u64,
@@ -135,6 +138,9 @@ impl WriteBatchStats {
             heap_write_latency: self
                 .heap_write_latency
                 .max(other.heap_write_latency),
+            heap_sync_latency: self
+                .heap_sync_latency
+                .max(other.heap_sync_latency),
             metadata_bytes_written: self
                 .metadata_bytes_written
                 .max(other.metadata_bytes_written),
@@ -159,6 +165,9 @@ impl WriteBatchStats {
             heap_write_latency: self
                 .heap_write_latency
                 .add(other.heap_write_latency),
+            heap_sync_latency: self
+                .heap_sync_latency
+                .add(other.heap_sync_latency),
             metadata_bytes_written: self
                 .metadata_bytes_written
                 .add(other.metadata_bytes_written),
@@ -579,6 +588,10 @@ struct Slab {
 }
 
 impl Slab {
+    fn sync(&self) -> io::Result<()> {
+        self.file.sync_all()
+    }
+
     fn read(
         &self,
         slot: u64,
@@ -890,6 +903,12 @@ impl Heap {
         let metadata_batch_res: io::Result<Vec<UpdateMetadata>> =
             batch.into_par_iter().map(map_closure).collect();
 
+        let before_heap_sync = Instant::now();
+
+        // TODO fsync dirty slabs here
+
+        let heap_sync_latency = before_heap_sync.elapsed();
+
         let heap_write_latency = before_heap_write.elapsed();
 
         let metadata_batch = match metadata_batch_res {
@@ -1000,6 +1019,7 @@ impl Heap {
                 .load(Ordering::Acquire)
                 .count_ones() as u64,
             heap_write_latency,
+            heap_sync_latency,
             metadata_bytes_written,
             metadata_write_latency,
             truncated_files,
