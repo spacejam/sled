@@ -559,32 +559,32 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             );
         }
 
-        if let Some(old_flush_epoch) = leaf.dirty_flush_epoch {
-            if old_flush_epoch != flush_epoch_guard.epoch() {
+        if let Some(old_dirty_epoch) = leaf.dirty_flush_epoch {
+            if old_dirty_epoch != flush_epoch_guard.epoch() {
                 log::trace!(
                     "cooperatively flushing {:?} with dirty {:?} after checking into {:?}",
                     node.object_id,
-                    old_flush_epoch,
+                    old_dirty_epoch,
                     flush_epoch_guard.epoch()
                 );
 
-                assert!(old_flush_epoch < flush_epoch_guard.epoch());
+                assert!(old_dirty_epoch < flush_epoch_guard.epoch());
 
                 // cooperatively serialize and put into dirty
-                let old_dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
+                //leaf.dirty_flush_epoch.take().unwrap();
 
                 // can't make many assertions about the page out epoch
                 leaf.page_out_on_flush.take();
 
                 log::trace!(
                     "starting cooperatively serializing {:?} for {:?} because we want to use it in {:?}",
-                    node.object_id, old_flush_epoch, flush_epoch_guard.epoch(),
+                    node.object_id, old_dirty_epoch, flush_epoch_guard.epoch(),
                 );
                 #[cfg(feature = "for-internal-testing-only")]
                 {
                     self.cache.event_verifier.mark(
                         node.object_id,
-                        old_flush_epoch,
+                        old_dirty_epoch,
                         event_verifier::State::CooperativelySerialized,
                         concat!(
                             file!(),
@@ -620,11 +620,12 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 );
                 log::trace!(
                     "finished cooperatively serializing {:?} for {:?} because we want to use it in {:?}",
-                    node.object_id, old_flush_epoch, flush_epoch_guard.epoch(),
+                    node.object_id, old_dirty_epoch, flush_epoch_guard.epoch(),
                 );
 
+                // TODO this won't hold w/ concurrent flushes
                 assert_eq!(
-                    old_flush_epoch.increment(),
+                    old_dirty_epoch.increment(),
                     flush_epoch_guard.epoch(),
                     "flush epochs somehow became unlinked"
                 );

@@ -37,7 +37,7 @@ impl<const LEAF_FANOUT: usize> Default for Leaf<LEAF_FANOUT> {
 impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
     pub(crate) fn set_dirty_epoch(&mut self, epoch: FlushEpoch) {
         if let Some(current_epoch) = self.dirty_flush_epoch {
-            assert_eq!(current_epoch, epoch);
+            assert!(current_epoch <= epoch);
         }
         if self.page_out_on_flush < Some(epoch) {
             self.page_out_on_flush = None;

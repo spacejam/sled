@@ -369,7 +369,20 @@ fn concurrent_tree_ops() {
         macro_rules! par {
             ($t:ident, $f:expr) => {
                 let mut threads = vec![];
+
+                for tn in 0..N_THREADS {
+                    let tree = $t.clone();
+                    let thread = thread::Builder::new()
+                        .name(format!("t(thread: {} flusher)", tn))
+                        .spawn(move || {
+                            tree.flush().unwrap();
+                        })
+                        .expect("should be able to spawn thread");
+                    threads.push(thread);
+                }
+
                 let barrier = Arc::new(Barrier::new(N_THREADS));
+
                 for tn in 0..N_THREADS {
                     let tree = $t.clone();
                     let barrier = barrier.clone();
@@ -491,13 +504,8 @@ fn concurrent_tree_iter() -> io::Result<()> {
     const N_INSERT: usize = INTENSITY;
     const N_DELETE: usize = INTENSITY;
 
-    let config = Config::tmp()
-        .unwrap()
-        .cache_capacity_bytes(1024 * 1024 * 1024)
-        .flush_every_ms(Some(1));
-
-    let t: Db = config.open().unwrap();
-
+    // items that are expected to always be present at their expected
+    // order, regardless of other inserts or deletes.
     const INDELIBLE: [&[u8]; 16] = [
         &[0u8],
         &[1u8],
@@ -517,6 +525,27 @@ fn concurrent_tree_iter() -> io::Result<()> {
         &[15u8],
     ];
 
+    let config = Config::tmp()
+        .unwrap()
+        .cache_capacity_bytes(1024 * 1024 * 1024)
+        .flush_every_ms(Some(1));
+
+    let t: Db = config.open().unwrap();
+
+    let mut threads: Vec<thread::JoinHandle<io::Result<()>>> = vec![];
+
+    for tn in 0..N_THREADS {
+        let tree = t.clone();
+        let thread = thread::Builder::new()
+            .name(format!("t(thread: {} flusher)", tn))
+            .spawn(move || {
+                tree.flush().unwrap();
+                Ok(())
+            })
+            .expect("should be able to spawn thread");
+        threads.push(thread);
+    }
+
     for item in &INDELIBLE {
         t.insert(item, item.to_vec())?;
     }
@@ -524,7 +553,6 @@ fn concurrent_tree_iter() -> io::Result<()> {
     let barrier =
         Arc::new(Barrier::new(N_FORWARD + N_REVERSE + N_INSERT + N_DELETE));
 
-    let mut threads: Vec<thread::JoinHandle<io::Result<()>>> = vec![];
     static I: AtomicUsize = AtomicUsize::new(0);
 
     for i in 0..N_FORWARD {
