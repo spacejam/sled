@@ -14,6 +14,8 @@ pub(crate) struct Leaf<const LEAF_FANOUT: usize> {
     pub page_out_on_flush: Option<FlushEpoch>,
     #[serde(skip)]
     pub deleted: Option<FlushEpoch>,
+    #[serde(skip)]
+    pub max_unflushed_epoch: Option<FlushEpoch>,
 }
 
 impl<const LEAF_FANOUT: usize> Default for Leaf<LEAF_FANOUT> {
@@ -30,6 +32,7 @@ impl<const LEAF_FANOUT: usize> Default for Leaf<LEAF_FANOUT> {
             mutation_count: 0,
             page_out_on_flush: None,
             deleted: None,
+            max_unflushed_epoch: None,
         }
     }
 }

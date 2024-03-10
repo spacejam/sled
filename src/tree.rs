@@ -542,6 +542,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let (low_key, mut write, node) = self.page_in(key, reader_epoch)?;
 
+        // by checking into an epoch after acquiring the node mutex, we
+        // avoid inversions where progress may be observed to go backwards.
         let flush_epoch_guard = self.cache.check_into_flush_epoch();
 
         let leaf = write.leaf.as_mut().unwrap();
@@ -571,11 +573,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 assert!(old_dirty_epoch < flush_epoch_guard.epoch());
 
                 // cooperatively serialize and put into dirty
-                //leaf.dirty_flush_epoch.take().unwrap();
-
-                // can't make many assertions about the page out epoch
+                leaf.max_unflushed_epoch = leaf.dirty_flush_epoch.take();
                 leaf.page_out_on_flush.take();
-
                 log::trace!(
                     "starting cooperatively serializing {:?} for {:?} because we want to use it in {:?}",
                     node.object_id, old_dirty_epoch, flush_epoch_guard.epoch(),
@@ -623,10 +622,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     node.object_id, old_dirty_epoch, flush_epoch_guard.epoch(),
                 );
 
-                // TODO this won't hold w/ concurrent flushes
-                assert_eq!(
-                    old_dirty_epoch.increment(),
-                    flush_epoch_guard.epoch(),
+                assert!(
+                    old_dirty_epoch < flush_epoch_guard.epoch(),
                     "flush epochs somehow became unlinked"
                 );
             }
@@ -1324,17 +1321,18 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     continue;
                 }
 
-                assert_eq!(old_flush_epoch.increment(), new_epoch);
+                assert!(old_flush_epoch < new_epoch);
 
                 log::trace!(
-                                "cooperatively flushing {:?} with dirty {:?} after checking into {:?}",
-                                node.object_id,
-                                old_flush_epoch,
-                                new_epoch
-                            );
+                    "cooperatively flushing {:?} with dirty {:?} after checking into {:?}",
+                    node.object_id,
+                    old_flush_epoch,
+                    new_epoch
+                );
 
                 // cooperatively serialize and put into dirty
                 let old_dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
+                leaf.max_unflushed_epoch = Some(old_dirty_epoch);
 
                 #[cfg(feature = "for-internal-testing-only")]
                 {
@@ -1385,9 +1383,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     );
                 }
 
-                assert_eq!(
-                    old_flush_epoch.increment(),
-                    flush_epoch_guard.epoch(),
+                assert!(
+                    old_flush_epoch < flush_epoch_guard.epoch(),
                     "flush epochs somehow became unlinked"
                 );
             }
@@ -2265,6 +2262,7 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
                 mutation_count: 0,
                 page_out_on_flush: None,
                 deleted: None,
+                max_unflushed_epoch: None,
             };
             rhs.set_in_memory_size();
 

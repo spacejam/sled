@@ -370,12 +370,15 @@ fn concurrent_tree_ops() {
             ($t:ident, $f:expr) => {
                 let mut threads = vec![];
 
+                let flusher_barrier = Arc::new(Barrier::new(N_THREADS));
                 for tn in 0..N_THREADS {
                     let tree = $t.clone();
+                    let barrier = flusher_barrier.clone();
                     let thread = thread::Builder::new()
                         .name(format!("t(thread: {} flusher)", tn))
                         .spawn(move || {
                             tree.flush().unwrap();
+                            barrier.wait();
                         })
                         .expect("should be able to spawn thread");
                     threads.push(thread);
@@ -534,12 +537,15 @@ fn concurrent_tree_iter() -> io::Result<()> {
 
     let mut threads: Vec<thread::JoinHandle<io::Result<()>>> = vec![];
 
+    let flusher_barrier = Arc::new(Barrier::new(N_THREADS));
     for tn in 0..N_THREADS {
         let tree = t.clone();
+        let barrier = flusher_barrier.clone();
         let thread = thread::Builder::new()
             .name(format!("t(thread: {} flusher)", tn))
             .spawn(move || {
                 tree.flush().unwrap();
+                barrier.wait();
                 Ok(())
             })
             .expect("should be able to spawn thread");

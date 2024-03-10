@@ -30,6 +30,20 @@ fn concurrent_batch_atomicity() {
 
     let mut threads = vec![];
 
+    let flusher_barrier = Arc::new(Barrier::new(CONCURRENCY));
+    for tn in 0..CONCURRENCY {
+        let db = db.clone();
+        let barrier = flusher_barrier.clone();
+        let thread = thread::Builder::new()
+            .name(format!("t(thread: {} flusher)", tn))
+            .spawn(move || {
+                db.flush().unwrap();
+                barrier.wait();
+            })
+            .expect("should be able to spawn thread");
+        threads.push(thread);
+    }
+
     let barrier = Arc::new(Barrier::new(CONCURRENCY + 1));
     for thread_number in 0..CONCURRENCY {
         let db = db.clone();

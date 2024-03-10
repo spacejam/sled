@@ -424,7 +424,11 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             if let Some(dirty_epoch) = leaf.dirty_flush_epoch {
                 // We can't page out this leaf until it has been
                 // flushed, because its changes are not yet durable.
-                leaf.page_out_on_flush = Some(dirty_epoch);
+                leaf.page_out_on_flush =
+                    leaf.page_out_on_flush.max(Some(dirty_epoch));
+            } else if let Some(max_unflushed_epoch) = leaf.max_unflushed_epoch {
+                leaf.page_out_on_flush =
+                    leaf.page_out_on_flush.max(Some(max_unflushed_epoch));
             } else {
                 #[cfg(feature = "for-internal-testing-only")]
                 {
@@ -603,7 +607,9 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                             }
                             assert!(deleted_at > flush_through_epoch);
                         }
-                        leaf_ref.dirty_flush_epoch.take();
+
+                        leaf_ref.max_unflushed_epoch =
+                            leaf_ref.dirty_flush_epoch.take();
 
                         #[cfg(feature = "for-internal-testing-only")]
                         {

@@ -6,6 +6,7 @@
 //   * add merges to iterator test and assert it deadlocks
 //   * alternative is to merge right, not left
 // * page-out needs to be deferred until after any flush of the dirty epoch
+//   * need to remove max_unflushed_epoch after flushing it
 //   * can't send reliable page-out request backwards from 7->6
 //   * re-locking every mutex in a writebatch feels bad
 //   * need to signal stability status forward
