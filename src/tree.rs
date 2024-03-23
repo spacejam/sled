@@ -1339,12 +1339,12 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     self.cache.event_verifier.mark(
                         node.object_id,
                         old_dirty_epoch,
-                        event_verifier::State::CleanPagedIn,
+                        event_verifier::State::CooperativelySerialized,
                         concat!(
                             file!(),
                             ':',
                             line!(),
-                            "batch-cooperative-serialization"
+                            ":batch-cooperative-serialization"
                         ),
                     );
                 }
