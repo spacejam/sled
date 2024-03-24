@@ -38,6 +38,10 @@ impl<const LEAF_FANOUT: usize> Default for Leaf<LEAF_FANOUT> {
 }
 
 impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
+    pub(crate) const fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
     pub(crate) fn set_dirty_epoch(&mut self, epoch: FlushEpoch) {
         if let Some(current_epoch) = self.dirty_flush_epoch {
             assert!(current_epoch <= epoch);

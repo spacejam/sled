@@ -1334,6 +1334,18 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 let old_dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
                 leaf.max_unflushed_epoch = Some(old_dirty_epoch);
 
+                // be extra-explicit about serialized bytes
+                let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
+
+                let serialized = leaf_ref
+                    .serialize(self.cache.config.zstd_compression_level);
+
+                log::trace!(
+                    "C adding node {} to dirty epoch {:?}",
+                    node.object_id.0,
+                    old_dirty_epoch
+                );
+
                 #[cfg(feature = "for-internal-testing-only")]
                 {
                     self.cache.event_verifier.mark(
@@ -1349,18 +1361,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     );
                 }
 
-                // be extra-explicit about serialized bytes
-                let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
-
-                let serialized = leaf_ref
-                    .serialize(self.cache.config.zstd_compression_level);
-
-                log::trace!(
-                    "C adding node {} to dirty epoch {:?}",
-                    node.object_id.0,
-                    old_dirty_epoch
-                );
-
                 self.cache.install_dirty(
                     old_dirty_epoch,
                     node.object_id,
@@ -1373,16 +1373,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     },
                 );
 
-                #[cfg(feature = "for-internal-testing-only")]
-                {
-                    self.cache.event_verifier.mark(
-                        node.object_id,
-                        old_dirty_epoch,
-                        event_verifier::State::Dirty,
-                        concat!(file!(), ':', line!(), ":apply-batch"),
-                    );
-                }
-
                 assert!(
                     old_flush_epoch < flush_epoch_guard.epoch(),
                     "flush epochs somehow became unlinked"
@@ -1391,16 +1381,19 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         }
 
         let mut splits: Vec<(InlineArray, Object<LEAF_FANOUT>)> = vec![];
+        let mut merges: BTreeMap<InlineArray, Object<LEAF_FANOUT>> =
+            BTreeMap::new();
 
         // Insert and split when full
         for (key, value_opt) in batch.writes {
             let range = ..=&key;
-            let (_lo, (ref mut w, _id)) = acquired_locks
+            let (lo, (ref mut w, object)) = acquired_locks
                 .range_mut::<InlineArray, _>(range)
                 .next_back()
                 .unwrap();
             let leaf = w.leaf.as_mut().unwrap();
 
+            assert_eq!(lo, &leaf.lo);
             assert!(leaf.lo <= key);
             if let Some(hi) = &leaf.hi {
                 assert!(hi > &key);
@@ -1408,6 +1401,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
             if let Some(value) = value_opt {
                 leaf.insert(key, value);
+                merges.remove(lo);
 
                 if let Some((split_key, rhs_node)) = leaf.split_if_full(
                     new_epoch,
@@ -1422,6 +1416,10 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 }
             } else {
                 leaf.remove(&key);
+
+                if leaf.is_empty() {
+                    merges.insert(lo.clone(), object.clone());
+                }
             }
         }
 
