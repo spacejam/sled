@@ -79,11 +79,11 @@ fn main() {
                     );
                     res.unwrap();
                 });
-                tests.push(test);
+                tests.push((test_name, test));
             }
 
-            for test in tests.into_iter() {
-                test.join().unwrap();
+            for (test_name, test) in tests.into_iter() {
+                test.join().expect(test_name);
             }
 
             println!();
@@ -185,7 +185,7 @@ fn run_inner(config: Config) {
         spawn_killah();
     }
 
-    let tree = config.open().unwrap();
+    let tree = config.open().expect("couldn't open db");
 
     if !crash_during_initialization {
         spawn_killah();
@@ -300,7 +300,7 @@ fn run_crash_batches() {
         .flush_every_ms(Some(1))
         .path(BATCHES_DIR);
 
-    let db = config.open().unwrap();
+    let db = config.open().expect("couldn't open batch db");
     // let db2 = db.clone();
 
     let t1 = thread::spawn(|| run_batches_inner(db));
@@ -427,7 +427,7 @@ fn run_crash_iter() {
         .path(ITER_DIR)
         .flush_every_ms(Some(1));
 
-    let t: Db = config.open().unwrap();
+    let t: Db = config.open().expect("couldn't open iter db");
 
     const INDELIBLE: [&[u8]; 16] = [
         &[0u8],

@@ -890,7 +890,11 @@ fn initialize<const LEAF_FANOUT: usize>(
 
         let tree = trees.entry(*collection_id).or_default();
 
-        assert!(tree.insert(metadata.clone(), node).is_none());
+        assert!(
+            tree.insert(metadata.clone(), node).is_none(),
+            "inserted multiple trees with metadata {:?}",
+            metadata
+        );
     }
 
     // initialize default collections if not recovered
