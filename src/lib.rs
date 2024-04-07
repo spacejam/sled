@@ -33,7 +33,6 @@
 // TODO list trees test for recovering empty collections
 // TODO set explicit max key and value sizes w/ corresponding heap
 // TODO add failpoints to writepath
-// TODO fsync strictness
 //
 // performance
 // TODO handle prefix encoding
