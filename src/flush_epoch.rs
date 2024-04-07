@@ -22,6 +22,7 @@ pub(crate) struct FlushEpoch(NonZeroU64);
 
 impl FlushEpoch {
     pub const MIN: FlushEpoch = FlushEpoch(NonZeroU64::MIN);
+    #[allow(unused)]
     pub const MAX: FlushEpoch = FlushEpoch(NonZeroU64::MAX);
 
     pub fn increment(&self) -> FlushEpoch {

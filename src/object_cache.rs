@@ -329,7 +329,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         node
     }
 
-    pub fn allocate_object_id(&self, flush_epoch: FlushEpoch) -> ObjectId {
+    pub fn allocate_object_id(
+        &self,
+        #[allow(unused)] flush_epoch: FlushEpoch,
+    ) -> ObjectId {
         let object_id = self.heap.allocate_object_id();
 
         #[cfg(feature = "for-internal-testing-only")]
@@ -391,7 +394,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         &self,
         object_id: ObjectId,
         size: usize,
-        flush_epoch: FlushEpoch,
+        #[allow(unused)] flush_epoch: FlushEpoch,
     ) -> io::Result<()> {
         let mut ca = self.cache_advisor.borrow_mut();
         let to_evict = ca.accessed_reuse_buffer(*object_id, size);

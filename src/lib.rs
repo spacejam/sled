@@ -316,9 +316,11 @@ impl concurrent_map::Minimum for CollectionId {
 #[derive(Debug, Clone)]
 struct CacheBox<const LEAF_FANOUT: usize> {
     leaf: Option<Box<Leaf<LEAF_FANOUT>>>,
+    #[allow(unused)]
     logged_index: BTreeMap<InlineArray, LogValue>,
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 struct LogValue {
     location: SlabAddress,
