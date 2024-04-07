@@ -413,6 +413,8 @@ pub(crate) fn recover<P: AsRef<Path>>(
         })
     }
 
+    maybe!(fs::File::open(&slabs_dir).and_then(|f| f.sync_all()))?;
+
     log::debug!("recovery of Heap at {:?} complete", path);
 
     Ok(HeapRecovery {
@@ -724,6 +726,7 @@ pub(crate) enum Update {
 }
 
 impl Update {
+    #[allow(unused)]
     pub(crate) fn object_id(&self) -> ObjectId {
         match self {
             Update::Store { object_id, .. }

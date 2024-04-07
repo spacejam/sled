@@ -332,16 +332,20 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
     /// ```
     /// # use sled as old_sled;
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let old = old_sled::open("my_old_db")?;
+    /// let old = old_sled::open("my_old_db_export")?;
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
-    /// let new = sled::open("my_new_db")?;
+    /// let new = sled::open("my_new_db_export")?;
     ///
     /// let export = old.export();
     /// new.import(export);
     ///
     /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # drop(old);
+    /// # drop(new);
+    /// # let _ = std::fs::remove_dir_all("my_old_db_export");
+    /// # let _ = std::fs::remove_dir_all("my_new_db_export");
     /// # Ok(()) }
     /// ```
     pub fn export(
@@ -403,16 +407,20 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
     /// ```
     /// # use sled as old_sled;
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let old = old_sled::open("my_old_db")?;
+    /// let old = old_sled::open("my_old_db_import")?;
     ///
     /// // may be a different version of sled,
     /// // the export type is version agnostic.
-    /// let new = sled::open("my_new_db")?;
+    /// let new = sled::open("my_new_db_import")?;
     ///
     /// let export = old.export();
     /// new.import(export);
     ///
     /// assert_eq!(old.checksum()?, new.checksum()?);
+    /// # drop(old);
+    /// # drop(new);
+    /// # let _ = std::fs::remove_dir_all("my_old_db_import");
+    /// # let _ = std::fs::remove_dir_all("my_new_db_import");
     /// # Ok(()) }
     /// ```
     pub fn import(

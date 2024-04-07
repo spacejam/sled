@@ -1,5 +1,6 @@
 mod common;
 
+use std::alloc::{Layout, System};
 use std::env::{self, VarError};
 use std::mem::size_of;
 use std::process::{exit, Child, Command, ExitStatus};
@@ -36,6 +37,27 @@ const TESTS: [(&str, fn()); 4] = [
 ];
 
 const CRASH_CHANCE: u32 = 250;
+
+#[global_allocator]
+static ALLOCATOR: ShredAllocator = ShredAllocator;
+
+#[derive(Default, Debug, Clone, Copy)]
+struct ShredAllocator;
+
+unsafe impl std::alloc::GlobalAlloc for ShredAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        assert!(layout.size() < 1_000_000_000);
+        let ret = System.alloc(layout);
+        assert_ne!(ret, std::ptr::null_mut());
+        std::ptr::write_bytes(ret, 0xa1, layout.size());
+        ret
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        std::ptr::write_bytes(ptr, 0xde, layout.size());
+        System.dealloc(ptr, layout)
+    }
+}
 
 fn main() {
     // Don't actually run this harness=false test under miri, as it requires

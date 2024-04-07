@@ -907,7 +907,7 @@ fn initialize<const LEAF_FANOUT: usize>(
         if tree.is_empty() {
             let object_id = heap.allocate_object_id();
 
-            let initial_low_key = InlineArray::default();
+            let initial_low_key = InlineArray::MIN;
 
             let empty_node = Object {
                 object_id,
@@ -924,11 +924,21 @@ fn initialize<const LEAF_FANOUT: usize>(
                 .is_none());
 
             assert!(tree.insert(initial_low_key, empty_node).is_none());
+        } else {
+            assert!(
+                tree.contains_key(&InlineArray::MIN),
+                "tree {:?} had no minimum node",
+                collection_id
+            );
         }
     }
 
-    for (_cid, tree) in &trees {
-        assert!(tree.contains_key(&InlineArray::MIN));
+    for (cid, tree) in &trees {
+        assert!(
+            tree.contains_key(&InlineArray::MIN),
+            "tree {:?} had no minimum node",
+            cid
+        );
     }
 
     (object_id_index, trees)
