@@ -463,6 +463,12 @@ fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
 
     let batch_len = batch_bytes.len().checked_sub(8).unwrap();
     batch_bytes[..8].copy_from_slice(&batch_len.to_le_bytes());
+    assert_eq!(&[0, 0], &batch_bytes[6..8]);
+
+    let len_hash: [u8; 2] =
+        (crc32fast::hash(&batch_bytes[..6]) as u16).to_le_bytes();
+
+    batch_bytes[6..8].copy_from_slice(&len_hash);
 
     let hash: u32 = crc32fast::hash(&batch_bytes) ^ 0xAF;
     let hash_bytes: [u8; 4] = hash.to_le_bytes();
@@ -478,6 +484,18 @@ fn read_frame(
     let mut frame_size_buf: [u8; 8] = [0; 8];
     // TODO only break if UnexpectedEof, otherwise propagate
     fallible!(file.read_exact(&mut frame_size_buf));
+
+    let expected_len_hash_buf = [frame_size_buf[6], frame_size_buf[7]];
+
+    let actual_len_hash_buf: [u8; 2] =
+        (crc32fast::hash(&frame_size_buf[..6]) as u16).to_le_bytes();
+
+    if actual_len_hash_buf != expected_len_hash_buf {
+        return Err(annotate!(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "corrupt frame length"
+        )));
+    }
 
     let len_u64: u64 = u64::from_le_bytes(frame_size_buf);
     // TODO make sure len < max len
