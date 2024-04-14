@@ -409,7 +409,7 @@ pub(crate) fn recover<P: AsRef<Path>>(
         slabs.push(Slab {
             slot_size,
             file,
-            max_allocated_slot_since_last_truncation: AtomicU64::new(0),
+            max_live_slot_since_last_truncation: AtomicU64::new(0),
         })
     }
 
@@ -586,7 +586,7 @@ mod sys_io {
 struct Slab {
     file: fs::File,
     slot_size: usize,
-    max_allocated_slot_since_last_truncation: AtomicU64,
+    max_live_slot_since_last_truncation: AtomicU64,
 }
 
 impl Slab {
@@ -990,40 +990,44 @@ impl Heap {
         let before_truncate = Instant::now();
         let mut truncated_files = 0;
         let mut truncated_bytes = 0;
-        for (i, current_allocated) in self.table.get_max_allocated_per_slab() {
+        for (i, max_live_slot) in self.table.get_max_allocated_per_slab() {
             let slab = &self.slabs[i];
 
             let last_max = slab
-                .max_allocated_slot_since_last_truncation
-                .fetch_max(current_allocated, Ordering::SeqCst);
+                .max_live_slot_since_last_truncation
+                .fetch_max(max_live_slot, Ordering::SeqCst);
 
-            let max_since_last_truncation = last_max.max(current_allocated);
+            let max_since_last_truncation = last_max.max(max_live_slot);
 
-            let currently_occupied =
-                (current_allocated + 1) * slab.slot_size as u64;
+            let currently_occupied_bytes =
+                (max_live_slot + 1) * slab.slot_size as u64;
 
-            let max_occupied =
+            let max_occupied_bytes =
                 (max_since_last_truncation + 1) * slab.slot_size as u64;
 
-            let ratio = currently_occupied * 100 / max_occupied;
+            let ratio = currently_occupied_bytes * 100 / max_occupied_bytes;
 
             if ratio < FILE_TARGET_FILL_RATIO {
-                let target_len = currently_occupied * FILE_RESIZE_MARGIN / 100;
+                let target_len = if max_live_slot < 16 {
+                    currently_occupied_bytes
+                } else {
+                    currently_occupied_bytes * FILE_RESIZE_MARGIN / 100
+                };
 
-                assert!(target_len < max_occupied);
+                assert!(target_len < max_occupied_bytes);
                 assert!(
-                    target_len > currently_occupied,
+                    target_len >= currently_occupied_bytes,
                     "target_len of {} is above actual occupied len of {}",
                     target_len,
-                    currently_occupied
+                    currently_occupied_bytes
                 );
 
                 if slab.file.set_len(target_len).is_ok() {
-                    slab.max_allocated_slot_since_last_truncation
-                        .store(current_allocated, Ordering::SeqCst);
+                    slab.max_live_slot_since_last_truncation
+                        .store(max_live_slot, Ordering::SeqCst);
 
                     let file_truncated_bytes =
-                        currently_occupied.saturating_sub(target_len);
+                        currently_occupied_bytes.saturating_sub(target_len);
                     self.truncated_file_bytes
                         .fetch_add(file_truncated_bytes, Ordering::Release);
 

@@ -481,14 +481,20 @@ fn read_frame(
     file: &mut fs::File,
     reusable_frame_buffer: &mut Vec<u8>,
 ) -> io::Result<Vec<UpdateMetadata>> {
-    let mut frame_size_buf: [u8; 8] = [0; 8];
+    let mut frame_size_with_crc_buf: [u8; 8] = [0; 8];
     // TODO only break if UnexpectedEof, otherwise propagate
-    fallible!(file.read_exact(&mut frame_size_buf));
+    fallible!(file.read_exact(&mut frame_size_with_crc_buf));
 
-    let expected_len_hash_buf = [frame_size_buf[6], frame_size_buf[7]];
+    let expected_len_hash_buf =
+        [frame_size_with_crc_buf[6], frame_size_with_crc_buf[7]];
 
     let actual_len_hash_buf: [u8; 2] =
-        (crc32fast::hash(&frame_size_buf[..6]) as u16).to_le_bytes();
+        (crc32fast::hash(&frame_size_with_crc_buf[..6]) as u16).to_le_bytes();
+
+    // clear crc bytes before turning into usize
+    let mut frame_size_buf = frame_size_with_crc_buf;
+    frame_size_buf[6] = 0;
+    frame_size_buf[7] = 0;
 
     if actual_len_hash_buf != expected_len_hash_buf {
         return Err(annotate!(io::Error::new(
@@ -498,7 +504,6 @@ fn read_frame(
     }
 
     let len_u64: u64 = u64::from_le_bytes(frame_size_buf);
-    // TODO make sure len < max len
     let len: usize = usize::try_from(len_u64).unwrap();
 
     reusable_frame_buffer.clear();
@@ -506,7 +511,7 @@ fn read_frame(
     unsafe {
         reusable_frame_buffer.set_len(len + 12);
     }
-    reusable_frame_buffer[..8].copy_from_slice(&frame_size_buf);
+    reusable_frame_buffer[..8].copy_from_slice(&frame_size_with_crc_buf);
 
     fallible!(file.read_exact(&mut reusable_frame_buffer[8..]));
 

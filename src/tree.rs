@@ -1403,6 +1403,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 leaf.insert(key, value);
                 merges.remove(lo);
 
+                merges.remove(&leaf.lo);
+
                 if let Some((split_key, rhs_node)) = leaf.split_if_full(
                     new_epoch,
                     &self.cache,
@@ -1418,7 +1420,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 leaf.remove(&key);
 
                 if leaf.is_empty() {
-                    merges.insert(lo.clone(), object.clone());
+                    assert_eq!(leaf.lo, lo);
+                    merges.insert(leaf.lo.clone(), object.clone());
                 }
             }
         }

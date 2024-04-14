@@ -1238,9 +1238,13 @@ fn tree_gc() {
         "{stats:?}"
     );
 
-    // TODO test this after we implement file truncation
-    // let expected_max_size = size_on_disk_after_inserts / 100;
-    // assert!(size_on_disk_after_deletes <= expected_max_size);
+    let expected_max_size = size_on_disk_after_inserts / 15;
+    assert!(
+        size_on_disk_after_deletes <= expected_max_size,
+        "expected file truncation to take size under {expected_max_size} \
+        but it was {size_on_disk_after_deletes}"
+    );
+    // TODO assert!(stats.cache.heap.truncated_file_bytes > 0);
 
     println!(
         "after writing {N} items and removing them, disk size went \
