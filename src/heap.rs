@@ -507,15 +507,26 @@ mod sys_io {
 
     use super::*;
 
-    pub fn read_exact_at<F: FileExt>(
+    pub(super) fn read_exact_at<F: FileExt>(
         file: &F,
         buf: &mut [u8],
         offset: u64,
     ) -> io::Result<()> {
-        maybe!(file.read_exact_at(buf, offset))
+        match maybe!(file.read_exact_at(buf, offset)) {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                println!(
+                    "failed to read {} bytes at offset {}",
+                    buf.len(),
+                    offset
+                );
+                let _ = dbg!(std::backtrace::Backtrace::force_capture());
+                Err(e)
+            }
+        }
     }
 
-    pub fn write_all_at<F: FileExt>(
+    pub(super) fn write_all_at<F: FileExt>(
         file: &F,
         buf: &[u8],
         offset: u64,
@@ -530,7 +541,7 @@ mod sys_io {
 
     use super::*;
 
-    pub fn read_exact_at<F: FileExt>(
+    pub(super) fn read_exact_at<F: FileExt>(
         file: &F,
         mut buf: &mut [u8],
         mut offset: u64,
@@ -557,7 +568,7 @@ mod sys_io {
         }
     }
 
-    pub fn write_all_at<F: FileExt>(
+    pub(super) fn write_all_at<F: FileExt>(
         file: &F,
         mut buf: &[u8],
         mut offset: u64,

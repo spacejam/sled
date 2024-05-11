@@ -194,8 +194,8 @@ fn slice_to_u32(b: &[u8]) -> u32 {
 
 fn spawn_killah() {
     thread::spawn(|| {
-        let runtime = rand::thread_rng().gen_range(0..60);
-        thread::sleep(Duration::from_millis(runtime));
+        let runtime = rand::thread_rng().gen_range(0..60_000);
+        thread::sleep(Duration::from_micros(runtime));
         exit(9);
     });
 }
@@ -220,12 +220,6 @@ fn run_inner(config: Config) {
     assert_eq!(hu / CYCLE, highest as usize);
 
     loop {
-        hu += 1;
-
-        if hu / CYCLE >= CYCLE {
-            hu = 0;
-        }
-
         let key = u32_to_vec((hu % CYCLE) as u32);
 
         let mut value = u32_to_vec((hu / CYCLE) as u32);
@@ -233,6 +227,12 @@ fn run_inner(config: Config) {
         value.append(&mut vec![0u8; additional_len]);
 
         tree.insert(&key, value).unwrap();
+
+        hu += 1;
+
+        if hu / CYCLE >= CYCLE {
+            hu = 0;
+        }
     }
 }
 
@@ -245,21 +245,25 @@ fn verify_batches(tree: &Db) -> u32 {
         Some(Err(e)) => panic!("{:?}", e),
         None => return 0,
     };
+
+    // we now expect all items in the batch to be present and to have the same value
+
     for key in 0..BATCH_SIZE {
         let res = tree.get(u32_to_vec(key));
         let option = res.unwrap();
         let v = match option {
             Some(v) => v,
             None => panic!(
-                "expected key {} to have a value, instead it was missing in db: {:?}",
-                key, tree
+                "expected key {} to have a value, instead it was missing in db with keys: {:?}",
+                key, tree.iter().keys().collect::<Vec<_>>()
+
             ),
         };
         let value = slice_to_u32(&*v);
         assert_eq!(
             first_value, value,
-            "expected key {} to have value {}, instead it had value {} in db: {:?}",
-            key, first_value, value, tree
+            "expected key {} to have value {}, instead it had value {} in db with keys: {:?}",
+            key, first_value, value, tree.iter().keys().collect::<Vec<_>>()
         );
     }
 
