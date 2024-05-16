@@ -108,6 +108,7 @@ impl Allocator {
 
     pub fn free(&self, id: u64) {
         self.free_counter.fetch_add(1, Ordering::Relaxed);
+        /* TODO NOCOMMIT
         if let Some(mut free) = self.free_and_pending.try_lock() {
             while let Some(free_id) = self.free_queue.pop() {
                 free.insert(free_id);
@@ -118,6 +119,7 @@ impl Allocator {
         } else {
             self.free_queue.push(id);
         }
+        */
     }
 
     /// Returns the counters for allocated, free

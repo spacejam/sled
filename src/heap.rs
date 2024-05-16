@@ -343,6 +343,15 @@ pub(crate) fn recover<P: AsRef<Path>>(
     log::trace!("recovering Heap at {:?}", path);
     let slabs_dir = path.join("slabs");
 
+    // TODO NOCOMMIT
+    let sync_status = std::process::Command::new("sync")
+        .status()
+        .map(|status| status.success());
+
+    if !matches!(sync_status, Ok(true)) {
+        log::warn!("sync command before recovery failed: {:?}", sync_status);
+    }
+
     // initialize directories if not present
     let mut was_recovered = true;
     for p in [path, &slabs_dir] {
@@ -350,8 +359,10 @@ pub(crate) fn recover<P: AsRef<Path>>(
             if e.kind() == io::ErrorKind::NotFound {
                 fallible!(fs::create_dir_all(p));
                 was_recovered = false;
+                continue;
             }
         }
+        maybe!(fs::File::open(p).and_then(|f| f.sync_all()))?;
     }
 
     let _ = fs::File::create(path.join(WARN));
@@ -360,6 +371,9 @@ pub(crate) fn recover<P: AsRef<Path>>(
     file_lock_opts.create(false).read(false).write(false);
     let directory_lock = fallible!(fs::File::open(&path));
     fallible!(directory_lock.try_lock_exclusive());
+
+    maybe!(fs::File::open(&slabs_dir).and_then(|f| f.sync_all()))?;
+    maybe!(directory_lock.sync_all())?;
 
     let persistent_settings =
         PersistentSettings::V1 { leaf_fanout: leaf_fanout as u64 };
@@ -507,18 +521,20 @@ mod sys_io {
 
     use super::*;
 
-    pub(super) fn read_exact_at<F: FileExt>(
-        file: &F,
+    pub(super) fn read_exact_at(
+        file: &fs::File,
         buf: &mut [u8],
         offset: u64,
     ) -> io::Result<()> {
         match maybe!(file.read_exact_at(buf, offset)) {
             Ok(r) => Ok(r),
             Err(e) => {
+                // FIXME BUG 3: failed to read 64 bytes at offset 192 from file with len 192
                 println!(
-                    "failed to read {} bytes at offset {}",
+                    "failed to read {} bytes at offset {} from file with len {}",
                     buf.len(),
-                    offset
+                    offset,
+                    file.metadata().unwrap().len(),
                 );
                 let _ = dbg!(std::backtrace::Backtrace::force_capture());
                 Err(e)
@@ -526,8 +542,8 @@ mod sys_io {
         }
     }
 
-    pub(super) fn write_all_at<F: FileExt>(
-        file: &F,
+    pub(super) fn write_all_at(
+        file: &fs::File,
         buf: &[u8],
         offset: u64,
     ) -> io::Result<()> {
@@ -541,8 +557,8 @@ mod sys_io {
 
     use super::*;
 
-    pub(super) fn read_exact_at<F: FileExt>(
-        file: &F,
+    pub(super) fn read_exact_at(
+        file: &fs::File,
         mut buf: &mut [u8],
         mut offset: u64,
     ) -> io::Result<()> {
@@ -568,8 +584,8 @@ mod sys_io {
         }
     }
 
-    pub(super) fn write_all_at<F: FileExt>(
-        file: &F,
+    pub(super) fn write_all_at(
+        file: &fs::File,
         mut buf: &[u8],
         mut offset: u64,
     ) -> io::Result<()> {
@@ -610,6 +626,8 @@ impl Slab {
         slot: u64,
         _guard: &mut Guard<'_, DeferredFree, 16, 16>,
     ) -> io::Result<Vec<u8>> {
+        log::trace!("reading from slot {} in slab {}", slot, self.slot_size);
+
         let mut data = Vec::with_capacity(self.slot_size);
         unsafe {
             data.set_len(self.slot_size);
@@ -617,7 +635,7 @@ impl Slab {
 
         let whence = self.slot_size as u64 * slot;
 
-        sys_io::read_exact_at(&self.file, &mut data, whence)?;
+        maybe!(sys_io::read_exact_at(&self.file, &mut data, whence))?;
 
         let hash_actual: [u8; 4] =
             (crc32fast::hash(&data[..self.slot_size - 4]) ^ 0xAF).to_le_bytes();
@@ -692,6 +710,7 @@ impl Slab {
 
         let whence = self.slot_size as u64 * slot;
 
+        log::trace!("writing to slot {} in slab {}", slot, self.slot_size);
         sys_io::write_all_at(&self.file, &data, whence)
     }
 }
@@ -853,8 +872,9 @@ impl Heap {
         match slab.read(slab_address.slot(), &mut guard) {
             Ok(bytes) => Some(Ok(bytes)),
             Err(e) => {
-                self.set_error(&e);
-                Some(Err(e))
+                let annotated = annotate!(e);
+                self.set_error(&annotated);
+                Some(Err(annotated))
             }
         }
     }
@@ -939,9 +959,9 @@ impl Heap {
                     == slab_bit
             };
 
-            if dirty {
-                self.slabs[slab_id].sync()?;
-            }
+            // TODO NOCOMMIT if dirty {
+            // self.slabs[slab_id].sync()?;
+            // }
         }
 
         let heap_sync_latency = before_heap_sync.elapsed();
@@ -1033,6 +1053,8 @@ impl Heap {
                     currently_occupied_bytes
                 );
 
+                /*
+                 * TODO NOCOMMIT
                 if slab.file.set_len(target_len).is_ok() {
                     slab.max_live_slot_since_last_truncation
                         .store(max_live_slot, Ordering::SeqCst);
@@ -1047,6 +1069,7 @@ impl Heap {
                 } else {
                     // TODO surface stats
                 }
+                */
             }
         }
 

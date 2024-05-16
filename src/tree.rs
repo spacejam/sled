@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use concurrent_map::Minimum;
+use fault_injection::annotate;
 use inline_array::InlineArray;
 use parking_lot::{
     lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard},
@@ -222,7 +223,10 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
                 let leaf_bytes =
                     if let Some(read_res) = self.cache.read(node.object_id) {
-                        read_res?
+                        match read_res {
+                            Ok(buf) => buf,
+                            Err(e) => return Err(annotate!(e)),
+                        }
                     } else {
                         // this particular object ID is not present
                         read_loops += 1;
@@ -864,9 +868,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 );
             }
 
+            /* TODO NOMERGE
             if leaf.data.is_empty() && leaf_guard.low_key != InlineArray::MIN {
                 self.merge_leaf_into_left_sibling(leaf_guard)?;
             }
+            */
         }
 
         Ok(ret)
@@ -1044,10 +1050,12 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             assert!(prev.is_none());
         }
 
+        /* TODO NOMERGE
         if leaf.data.is_empty() && leaf_guard.low_key != InlineArray::MIN {
             assert!(!split_happened);
             self.merge_leaf_into_left_sibling(leaf_guard)?;
         }
+        */
 
         Ok(ret)
     }

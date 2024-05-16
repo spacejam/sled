@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use cache_advisor::CacheAdvisor;
 use concurrent_map::{ConcurrentMap, Minimum};
+use fault_injection::annotate;
 use inline_array::InlineArray;
 use parking_lot::RwLock;
 
@@ -230,7 +231,11 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     }
 
     pub fn read(&self, object_id: ObjectId) -> Option<io::Result<Vec<u8>>> {
-        self.heap.read(object_id)
+        match self.heap.read(object_id) {
+            Some(Ok(buf)) => Some(Ok(buf)),
+            Some(Err(e)) => Some(Err(annotate!(e))),
+            None => None,
+        }
     }
 
     pub fn stats(&self) -> CacheStats {
@@ -712,6 +717,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
         let before_compute_defrag = Instant::now();
 
+        /*
+         * TODO NOCOMMIT
         for fragmented_object_id in objects_to_defrag {
             let object_opt = self.object_id_index.get(&fragmented_object_id);
 
@@ -733,7 +740,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             let data = match self.read(fragmented_object_id) {
                 Some(Ok(data)) => data,
                 Some(Err(e)) => {
-                    log::error!("failed to read object during GC: {e:?}");
+                    let annotated = annotate!(e);
+                    log::error!(
+                        "failed to read object during GC: {annotated:?}"
+                    );
                     continue;
                 }
                 None => {
@@ -751,6 +761,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 data,
             });
         }
+        */
 
         let compute_defrag_latency = before_compute_defrag.elapsed();
 
@@ -851,6 +862,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         flush_stats.count += 1;
         flush_stats.max = flush_stats.max.max(&ret);
         flush_stats.sum = flush_stats.sum.sum(&ret);
+
+        assert_eq!(self.dirty.range(..flush_boundary).count(), 0);
 
         Ok(ret)
     }

@@ -143,9 +143,10 @@ fn verify(tree: &Db) -> (u32, u32) {
 
     // find how far we got
     let mut contiguous: u32 = 0;
-    let mut lowest = 0;
+    let mut lowest_with_high_value = 0;
+
     for res in iter {
-        let (_k, v) = res.unwrap();
+        let (k, v) = res.unwrap();
         if v[..4] == highest_vec[..4] {
             contiguous += 1;
         } else {
@@ -155,8 +156,22 @@ fn verify(tree: &Db) -> (u32, u32) {
                 (highest - 1) % CYCLE as u32
             };
             let actual = slice_to_u32(&*v);
-            assert_eq!(expected, actual);
-            lowest = actual;
+            // FIXME BUG 2
+            // thread '<unnamed>' panicked at tests/test_crash_recovery.rs:159:13:
+            // assertion `left == right` failed
+            //   left: 139
+            //  right: 136
+            assert_eq!(
+                expected,
+                actual,
+                "tree failed assertion with iterated values: {}, k: {:?} v: {:?} expected: {} highest: {}",
+                tree_to_string(&tree),
+                k,
+                v,
+                expected,
+                highest
+            );
+            lowest_with_high_value = actual;
             break;
         }
     }
@@ -168,10 +183,10 @@ fn verify(tree: &Db) -> (u32, u32) {
         let (k, v): (sled::InlineArray, _) = res.unwrap();
         assert_eq!(
             slice_to_u32(&*v),
-            lowest,
+            lowest_with_high_value,
             "expected key {} to have value {}, instead it had value {} in db: {:?}",
             slice_to_u32(&*k),
-            lowest,
+            lowest_with_high_value,
             slice_to_u32(&*v),
             tree
         );
@@ -190,6 +205,18 @@ fn slice_to_u32(b: &[u8]) -> u32 {
     buf.copy_from_slice(&b[..size_of::<u32>()]);
 
     u32::from_be_bytes(buf)
+}
+
+fn tree_to_string(tree: &Db) -> String {
+    let mut ret = String::from("{");
+    for kv_res in tree.iter() {
+        let (k, v) = kv_res.unwrap();
+        let k_s = slice_to_u32(&k);
+        let v_s = slice_to_u32(&v);
+        ret.push_str(&format!("{}:{}, ", k_s, v_s));
+    }
+    ret.push_str("}");
+    ret
 }
 
 fn spawn_killah() {
@@ -213,7 +240,9 @@ fn run_inner(config: Config) {
         spawn_killah();
     }
 
+    println!("~~~~~~~~~~~~~~~~~~");
     let (key, highest) = verify(&tree);
+    dbg!(key, highest);
 
     let mut hu = ((highest as usize) * CYCLE) + key as usize;
     assert_eq!(hu % CYCLE, key as usize);
@@ -221,6 +250,8 @@ fn run_inner(config: Config) {
 
     loop {
         let key = u32_to_vec((hu % CYCLE) as u32);
+
+        //dbg!(hu, hu % CYCLE);
 
         let mut value = u32_to_vec((hu / CYCLE) as u32);
         let additional_len = rand::thread_rng().gen_range(0..SEGMENT_SIZE / 3);
@@ -254,16 +285,29 @@ fn verify_batches(tree: &Db) -> u32 {
         let v = match option {
             Some(v) => v,
             None => panic!(
-                "expected key {} to have a value, instead it was missing in db with keys: {:?}",
-                key, tree.iter().keys().collect::<Vec<_>>()
-
+                "expected key {} to have a value, instead it was missing in db with keys: {}",
+                key,
+                tree_to_string(&tree)
             ),
         };
         let value = slice_to_u32(&*v);
+        // FIXME BUG 1 count 2
+        // assertion `left == right` failed: expected key 0 to have value 62003, instead it had value 62375 in db with keys:
+        // {0:62003, 1:62003, 2:62003, 3:62003, 4:62003, 5:62003, 6:62003, 7:62003,
+        // Human: iterating shows correct value, but first get did not
+        //
+        // expected key 1 to have value 1, instead it had value 29469 in db with keys:
+        // {0:1, 1:29469, 2:29469, 3:29469, 4:29469, 5:29469, 6:29469, 7:29469,
+        // Human: 0 didn't get included in later syncs
+        //
+        //  expected key 0 to have value 59485, instead it had value 59484 in db with keys:
+        //  {0:59485, 1:59485, 2:59485, 3:59485, 4:59485, 5:59485, 6:59485, 7:59485,
+        //  Human: had key N during first check, then N + 1 in iteration
         assert_eq!(
             first_value, value,
-            "expected key {} to have value {}, instead it had value {} in db with keys: {:?}",
-            key, first_value, value, tree.iter().keys().collect::<Vec<_>>()
+            "expected key {} to have value {}, instead it had value {} in db with keys: {}",
+            key, first_value, value,
+            tree_to_string(&tree)
         );
     }
 
@@ -323,14 +367,16 @@ fn run_crash_batches() {
 
     let config = Config::new()
         .cache_capacity_bytes(CACHE_SIZE)
-        .flush_every_ms(Some(1))
+        .flush_every_ms(None) // TODO NOCOMMIT Some(1))
         .path(BATCHES_DIR);
 
     let db = config.open().expect("couldn't open batch db");
-    // let db2 = db.clone();
+    let db2 = db.clone();
 
     let t1 = thread::spawn(|| run_batches_inner(db));
-    let t2 = thread::spawn(|| {}); // run_batches_inner(db2));
+    let t2 = thread::spawn(move || loop {
+        db2.flush().unwrap();
+    }); // run_batches_inner(db2));
 
     if !crash_during_initialization {
         spawn_killah();
