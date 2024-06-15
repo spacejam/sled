@@ -89,9 +89,7 @@ fn run_inner(config: Config) {
         spawn_killah();
     }
 
-    println!("~~~~~~~~~~~~~~~~~~");
     let (key, highest) = verify(&tree);
-    dbg!(key, highest);
 
     let mut hu = ((highest as usize) * CYCLE) + key as usize;
     assert_eq!(hu % CYCLE, key as usize);

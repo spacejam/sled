@@ -9,9 +9,10 @@ pub fn run_crash_iter() {
     const N_FORWARD: usize = 50;
     const N_REVERSE: usize = 50;
 
+    let path = std::path::Path::new(CRASH_DIR).join(ITER_DIR);
     let config = Config::new()
         .cache_capacity_bytes(CACHE_SIZE)
-        .path(ITER_DIR)
+        .path(path)
         .flush_every_ms(Some(1));
 
     let t: Db = config.open().expect("couldn't open iter db");

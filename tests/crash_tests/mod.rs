@@ -28,13 +28,13 @@ pub use crash_tx::run_crash_tx;
 type Db = SledDb<8>;
 
 // test names, also used as dir names
-pub const SEQUENTIAL_WRITES_DIR: &str = "sequential_writes";
-pub const BATCHES_DIR: &str = "batches";
-pub const ITER_DIR: &str = "iter";
-pub const TX_DIR: &str = "tx";
-pub const METADATA_STORE_DIR: &str = "metadata_store";
-pub const HEAP_DIR: &str = "heap";
-pub const OBJECT_CACHE_DIR: &str = "object_cache";
+pub const SEQUENTIAL_WRITES_DIR: &str = "crash_sequential_writes";
+pub const BATCHES_DIR: &str = "crash_batches";
+pub const ITER_DIR: &str = "crash_iter";
+pub const TX_DIR: &str = "crash_tx";
+pub const METADATA_STORE_DIR: &str = "crash_metadata_store";
+pub const HEAP_DIR: &str = "crash_heap";
+pub const OBJECT_CACHE_DIR: &str = "crash_object_cache";
 
 const CRASH_DIR: &str = "crash_test_files";
 

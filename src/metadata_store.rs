@@ -265,6 +265,18 @@ impl MetadataStore {
     )> {
         use fs2::FileExt;
 
+        // TODO NOCOMMIT
+        let sync_status = std::process::Command::new("sync")
+            .status()
+            .map(|status| status.success());
+
+        if !matches!(sync_status, Ok(true)) {
+            log::warn!(
+                "sync command before recovery failed: {:?}",
+                sync_status
+            );
+        }
+
         let path = storage_directory.as_ref();
 
         // initialize directories if not present

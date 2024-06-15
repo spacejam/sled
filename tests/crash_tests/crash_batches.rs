@@ -105,10 +105,11 @@ pub fn run_crash_batches() {
         spawn_killah();
     }
 
+    let path = std::path::Path::new(CRASH_DIR).join(BATCHES_DIR);
     let config = Config::new()
         .cache_capacity_bytes(CACHE_SIZE)
-        .flush_every_ms(None) // TODO NOCOMMIT Some(1))
-        .path(BATCHES_DIR);
+        .flush_every_ms(Some(1))
+        .path(path);
 
     let db = config.open().expect("couldn't open batch db");
     let db2 = db.clone();
