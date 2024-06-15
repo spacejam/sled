@@ -186,13 +186,20 @@ use crate::flush_epoch::{
     FlushEpoch, FlushEpochGuard, FlushEpochTracker, FlushInvariants,
 };
 use crate::heap::{
-    recover, Heap, HeapRecovery, HeapStats, ObjectRecovery, SlabAddress,
-    Update, WriteBatchStats,
+    HeapStats, ObjectRecovery, SlabAddress, Update, WriteBatchStats,
 };
 use crate::id_allocator::{Allocator, DeferredFree};
 use crate::leaf::Leaf;
-use crate::metadata_store::MetadataStore;
-use crate::object_cache::{CacheStats, Dirty, FlushStats, ObjectCache};
+
+// These are public so that they can be easily crash tested in external
+// binaries. They are hidden because there are zero guarantees around their
+// API stability or functionality.
+#[doc(hidden)]
+pub use crate::heap::{Heap, HeapRecovery};
+#[doc(hidden)]
+pub use crate::metadata_store::MetadataStore;
+#[doc(hidden)]
+pub use crate::object_cache::{CacheStats, Dirty, FlushStats, ObjectCache};
 
 /// Opens a `Db` with a default configuration at the
 /// specified path. This will create a new storage
@@ -266,7 +273,7 @@ impl std::error::Error for CompareAndSwapError {}
     Eq,
     Hash,
 )]
-struct ObjectId(NonZeroU64);
+pub struct ObjectId(NonZeroU64);
 
 impl ObjectId {
     fn new(from: u64) -> Option<ObjectId> {
@@ -328,7 +335,7 @@ struct LogValue {
 }
 
 #[derive(Debug, Clone)]
-struct Object<const LEAF_FANOUT: usize> {
+pub struct Object<const LEAF_FANOUT: usize> {
     object_id: ObjectId,
     collection_id: CollectionId,
     low_key: InlineArray,

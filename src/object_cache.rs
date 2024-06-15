@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use cache_advisor::CacheAdvisor;
 use concurrent_map::{ConcurrentMap, Minimum};
+use fault_injection::annotate;
 use inline_array::InlineArray;
 use parking_lot::RwLock;
 
@@ -90,7 +91,7 @@ impl FlushStats {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Dirty<const LEAF_FANOUT: usize> {
+pub enum Dirty<const LEAF_FANOUT: usize> {
     NotYetSerialized {
         low_key: InlineArray,
         node: Object<LEAF_FANOUT>,
@@ -137,7 +138,7 @@ pub(crate) struct ReadStatTracker {
 }
 
 #[derive(Clone)]
-pub(crate) struct ObjectCache<const LEAF_FANOUT: usize> {
+pub struct ObjectCache<const LEAF_FANOUT: usize> {
     pub config: Config,
     global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
     pub object_id_index: ConcurrentMap<
@@ -167,7 +168,7 @@ impl<const LEAF_FANOUT: usize> std::panic::RefUnwindSafe
 impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     /// Returns the recovered ObjectCache, the tree indexes, and a bool signifying whether the system
     /// was recovered or not
-    pub(crate) fn recover(
+    pub fn recover(
         config: &Config,
     ) -> io::Result<(
         ObjectCache<LEAF_FANOUT>,
@@ -175,7 +176,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         bool,
     )> {
         let HeapRecovery { heap, recovered_nodes, was_recovered } =
-            recover(&config.path, LEAF_FANOUT, config)?;
+            Heap::recover(LEAF_FANOUT, config)?;
 
         let (object_id_index, indices) = initialize(&recovered_nodes, &heap);
 
@@ -230,7 +231,11 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     }
 
     pub fn read(&self, object_id: ObjectId) -> Option<io::Result<Vec<u8>>> {
-        self.heap.read(object_id)
+        match self.heap.read(object_id) {
+            Some(Ok(buf)) => Some(Ok(buf)),
+            Some(Err(e)) => Some(Err(annotate!(e))),
+            None => None,
+        }
     }
 
     pub fn stats(&self) -> CacheStats {
@@ -733,7 +738,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             let data = match self.read(fragmented_object_id) {
                 Some(Ok(data)) => data,
                 Some(Err(e)) => {
-                    log::error!("failed to read object during GC: {e:?}");
+                    let annotated = annotate!(e);
+                    log::error!(
+                        "failed to read object during GC: {annotated:?}"
+                    );
                     continue;
                 }
                 None => {
@@ -851,6 +859,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         flush_stats.count += 1;
         flush_stats.max = flush_stats.max.max(&ret);
         flush_stats.sum = flush_stats.sum.sum(&ret);
+
+        assert_eq!(self.dirty.range(..flush_boundary).count(), 0);
 
         Ok(ret)
     }

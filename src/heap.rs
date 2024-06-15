@@ -210,13 +210,13 @@ fn slab_for_size(size: usize) -> u8 {
 pub use inline_array::InlineArray;
 
 #[derive(Debug)]
-pub(crate) struct ObjectRecovery {
+pub struct ObjectRecovery {
     pub object_id: ObjectId,
     pub collection_id: CollectionId,
     pub metadata: InlineArray,
 }
 
-pub(crate) struct HeapRecovery {
+pub struct HeapRecovery {
     pub heap: Heap,
     pub recovered_nodes: Vec<ObjectRecovery>,
     pub was_recovered: bool,
@@ -334,107 +334,6 @@ impl PersistentSettings {
     }
 }
 
-pub(crate) fn recover<P: AsRef<Path>>(
-    path: P,
-    leaf_fanout: usize,
-    config: &Config,
-) -> io::Result<HeapRecovery> {
-    let path = path.as_ref();
-    log::trace!("recovering Heap at {:?}", path);
-    let slabs_dir = path.join("slabs");
-
-    // initialize directories if not present
-    let mut was_recovered = true;
-    for p in [path, &slabs_dir] {
-        if let Err(e) = fs::read_dir(p) {
-            if e.kind() == io::ErrorKind::NotFound {
-                fallible!(fs::create_dir_all(p));
-                was_recovered = false;
-            }
-        }
-    }
-
-    let _ = fs::File::create(path.join(WARN));
-
-    let mut file_lock_opts = fs::OpenOptions::new();
-    file_lock_opts.create(false).read(false).write(false);
-    let directory_lock = fallible!(fs::File::open(&path));
-    fallible!(directory_lock.try_lock_exclusive());
-
-    let persistent_settings =
-        PersistentSettings::V1 { leaf_fanout: leaf_fanout as u64 };
-
-    persistent_settings.verify_or_store(path, &directory_lock)?;
-
-    let (metadata_store, recovered_metadata) =
-        MetadataStore::recover(path.join("metadata"))?;
-
-    let table = ObjectLocationMapper::new(
-        &recovered_metadata,
-        config.target_heap_file_fill_ratio,
-    );
-
-    let mut recovered_nodes =
-        Vec::<ObjectRecovery>::with_capacity(recovered_metadata.len());
-
-    for update_metadata in recovered_metadata {
-        match update_metadata {
-            UpdateMetadata::Store {
-                object_id,
-                collection_id,
-                location: _,
-                metadata,
-            } => {
-                recovered_nodes.push(ObjectRecovery {
-                    object_id,
-                    collection_id,
-                    metadata: metadata.clone(),
-                });
-            }
-            UpdateMetadata::Free { .. } => {
-                unreachable!()
-            }
-        }
-    }
-
-    let mut slabs = vec![];
-    let mut slab_opts = fs::OpenOptions::new();
-    slab_opts.create(true).read(true).write(true);
-    for i in 0..N_SLABS {
-        let slot_size = SLAB_SIZES[i];
-        let slab_path = slabs_dir.join(format!("{}", slot_size));
-
-        let file = fallible!(slab_opts.open(slab_path));
-
-        slabs.push(Slab {
-            slot_size,
-            file,
-            max_live_slot_since_last_truncation: AtomicU64::new(0),
-        })
-    }
-
-    maybe!(fs::File::open(&slabs_dir).and_then(|f| f.sync_all()))?;
-
-    log::debug!("recovery of Heap at {:?} complete", path);
-
-    Ok(HeapRecovery {
-        heap: Heap {
-            slabs: Arc::new(slabs.try_into().unwrap()),
-            path: path.into(),
-            table,
-            global_error: metadata_store.get_global_error_arc(),
-            metadata_store: Arc::new(metadata_store),
-            directory_lock: Arc::new(directory_lock),
-            free_ebr: Ebr::default(),
-            write_batch_atomicity_mutex: Default::default(),
-            truncated_file_bytes: Arc::default(),
-            stats: Arc::default(),
-        },
-        recovered_nodes,
-        was_recovered,
-    })
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SlabAddress {
     slab_id: u8,
@@ -507,18 +406,20 @@ mod sys_io {
 
     use super::*;
 
-    pub(super) fn read_exact_at<F: FileExt>(
-        file: &F,
+    pub(super) fn read_exact_at(
+        file: &fs::File,
         buf: &mut [u8],
         offset: u64,
     ) -> io::Result<()> {
         match maybe!(file.read_exact_at(buf, offset)) {
             Ok(r) => Ok(r),
             Err(e) => {
+                // FIXME BUG 3: failed to read 64 bytes at offset 192 from file with len 192
                 println!(
-                    "failed to read {} bytes at offset {}",
+                    "failed to read {} bytes at offset {} from file with len {}",
                     buf.len(),
-                    offset
+                    offset,
+                    file.metadata().unwrap().len(),
                 );
                 let _ = dbg!(std::backtrace::Backtrace::force_capture());
                 Err(e)
@@ -526,8 +427,8 @@ mod sys_io {
         }
     }
 
-    pub(super) fn write_all_at<F: FileExt>(
-        file: &F,
+    pub(super) fn write_all_at(
+        file: &fs::File,
         buf: &[u8],
         offset: u64,
     ) -> io::Result<()> {
@@ -541,8 +442,8 @@ mod sys_io {
 
     use super::*;
 
-    pub(super) fn read_exact_at<F: FileExt>(
-        file: &F,
+    pub(super) fn read_exact_at(
+        file: &fs::File,
         mut buf: &mut [u8],
         mut offset: u64,
     ) -> io::Result<()> {
@@ -568,8 +469,8 @@ mod sys_io {
         }
     }
 
-    pub(super) fn write_all_at<F: FileExt>(
-        file: &F,
+    pub(super) fn write_all_at(
+        file: &fs::File,
         mut buf: &[u8],
         mut offset: u64,
     ) -> io::Result<()> {
@@ -610,6 +511,8 @@ impl Slab {
         slot: u64,
         _guard: &mut Guard<'_, DeferredFree, 16, 16>,
     ) -> io::Result<Vec<u8>> {
+        log::trace!("reading from slot {} in slab {}", slot, self.slot_size);
+
         let mut data = Vec::with_capacity(self.slot_size);
         unsafe {
             data.set_len(self.slot_size);
@@ -617,7 +520,7 @@ impl Slab {
 
         let whence = self.slot_size as u64 * slot;
 
-        sys_io::read_exact_at(&self.file, &mut data, whence)?;
+        maybe!(sys_io::read_exact_at(&self.file, &mut data, whence))?;
 
         let hash_actual: [u8; 4] =
             (crc32fast::hash(&data[..self.slot_size - 4]) ^ 0xAF).to_le_bytes();
@@ -692,6 +595,7 @@ impl Slab {
 
         let whence = self.slot_size as u64 * slot;
 
+        log::trace!("writing to slot {} in slab {}", slot, self.slot_size);
         sys_io::write_all_at(&self.file, &data, whence)
     }
 }
@@ -747,7 +651,7 @@ impl Update {
 }
 
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq)]
-pub(crate) enum UpdateMetadata {
+pub enum UpdateMetadata {
     Store {
         object_id: ObjectId,
         collection_id: CollectionId,
@@ -776,7 +680,7 @@ struct WriteBatchStatTracker {
 }
 
 #[derive(Clone)]
-pub(crate) struct Heap {
+pub struct Heap {
     path: PathBuf,
     slabs: Arc<[Slab; N_SLABS]>,
     table: ObjectLocationMapper,
@@ -800,6 +704,123 @@ impl fmt::Debug for Heap {
 }
 
 impl Heap {
+    pub fn recover(
+        leaf_fanout: usize,
+        config: &Config,
+    ) -> io::Result<HeapRecovery> {
+        let path = &config.path;
+        log::trace!("recovering Heap at {:?}", path);
+        let slabs_dir = path.join("slabs");
+
+        // TODO NOCOMMIT
+        let sync_status = std::process::Command::new("sync")
+            .status()
+            .map(|status| status.success());
+
+        if !matches!(sync_status, Ok(true)) {
+            log::warn!(
+                "sync command before recovery failed: {:?}",
+                sync_status
+            );
+        }
+
+        // initialize directories if not present
+        let mut was_recovered = true;
+        for p in [path, &slabs_dir] {
+            if let Err(e) = fs::read_dir(p) {
+                if e.kind() == io::ErrorKind::NotFound {
+                    fallible!(fs::create_dir_all(p));
+                    was_recovered = false;
+                    continue;
+                }
+            }
+            maybe!(fs::File::open(p).and_then(|f| f.sync_all()))?;
+        }
+
+        let _ = fs::File::create(path.join(WARN));
+
+        let mut file_lock_opts = fs::OpenOptions::new();
+        file_lock_opts.create(false).read(false).write(false);
+        let directory_lock = fallible!(fs::File::open(&path));
+        fallible!(directory_lock.try_lock_exclusive());
+
+        maybe!(fs::File::open(&slabs_dir).and_then(|f| f.sync_all()))?;
+        maybe!(directory_lock.sync_all())?;
+
+        let persistent_settings =
+            PersistentSettings::V1 { leaf_fanout: leaf_fanout as u64 };
+
+        persistent_settings.verify_or_store(path, &directory_lock)?;
+
+        let (metadata_store, recovered_metadata) =
+            MetadataStore::recover(path.join("metadata"))?;
+
+        let table = ObjectLocationMapper::new(
+            &recovered_metadata,
+            config.target_heap_file_fill_ratio,
+        );
+
+        let mut recovered_nodes =
+            Vec::<ObjectRecovery>::with_capacity(recovered_metadata.len());
+
+        for update_metadata in recovered_metadata {
+            match update_metadata {
+                UpdateMetadata::Store {
+                    object_id,
+                    collection_id,
+                    location: _,
+                    metadata,
+                } => {
+                    recovered_nodes.push(ObjectRecovery {
+                        object_id,
+                        collection_id,
+                        metadata: metadata.clone(),
+                    });
+                }
+                UpdateMetadata::Free { .. } => {
+                    unreachable!()
+                }
+            }
+        }
+
+        let mut slabs = vec![];
+        let mut slab_opts = fs::OpenOptions::new();
+        slab_opts.create(true).read(true).write(true);
+        for i in 0..N_SLABS {
+            let slot_size = SLAB_SIZES[i];
+            let slab_path = slabs_dir.join(format!("{}", slot_size));
+
+            let file = fallible!(slab_opts.open(slab_path));
+
+            slabs.push(Slab {
+                slot_size,
+                file,
+                max_live_slot_since_last_truncation: AtomicU64::new(0),
+            })
+        }
+
+        maybe!(fs::File::open(&slabs_dir).and_then(|f| f.sync_all()))?;
+
+        log::debug!("recovery of Heap at {:?} complete", path);
+
+        Ok(HeapRecovery {
+            heap: Heap {
+                slabs: Arc::new(slabs.try_into().unwrap()),
+                path: path.into(),
+                table,
+                global_error: metadata_store.get_global_error_arc(),
+                metadata_store: Arc::new(metadata_store),
+                directory_lock: Arc::new(directory_lock),
+                free_ebr: Ebr::default(),
+                write_batch_atomicity_mutex: Default::default(),
+                truncated_file_bytes: Arc::default(),
+                stats: Arc::default(),
+            },
+            recovered_nodes,
+            was_recovered,
+        })
+    }
+
     pub fn get_global_error_arc(
         &self,
     ) -> Arc<AtomicPtr<(io::ErrorKind, String)>> {
@@ -853,8 +874,9 @@ impl Heap {
         match slab.read(slab_address.slot(), &mut guard) {
             Ok(bytes) => Some(Ok(bytes)),
             Err(e) => {
-                self.set_error(&e);
-                Some(Err(e))
+                let annotated = annotate!(e);
+                self.set_error(&annotated);
+                Some(Err(annotated))
             }
         }
     }

@@ -32,7 +32,7 @@ const ZSTD_LEVEL: i32 = 3;
 // all high-level structs are dropped. This is not
 // hard to change over time though, just a current
 // invariant.
-pub(crate) struct MetadataStore {
+pub struct MetadataStore {
     inner: Inner,
     is_shut_down: bool,
 }
@@ -106,18 +106,14 @@ fn worker(
     inner: Inner,
 ) {
     loop {
-        let err_ptr: *const (io::ErrorKind, String) =
-            inner.global_error.load(Ordering::Acquire);
-
-        if !err_ptr.is_null() {
-            let deref: &(io::ErrorKind, String) = unsafe { &*err_ptr };
-            let error = io::Error::new(deref.0, deref.1.clone());
+        if let Err(error) = check_error(&inner.global_error) {
             drop(inner);
 
             log::error!(
                 "compaction thread terminating after global error set to {:?}",
                 error
             );
+
             return;
         }
 
@@ -186,6 +182,20 @@ fn set_error(
     }
 }
 
+fn check_error(
+    global_error: &AtomicPtr<(io::ErrorKind, String)>,
+) -> io::Result<()> {
+    let err_ptr: *const (io::ErrorKind, String) =
+        global_error.load(Ordering::Acquire);
+
+    if err_ptr.is_null() {
+        Ok(())
+    } else {
+        let deref: &(io::ErrorKind, String) = unsafe { &*err_ptr };
+        Err(io::Error::new(deref.0, deref.1.clone()))
+    }
+}
+
 #[derive(Clone)]
 struct Inner {
     global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
@@ -236,15 +246,7 @@ impl MetadataStore {
     }
 
     fn check_error(&self) -> io::Result<()> {
-        let err_ptr: *const (io::ErrorKind, String) =
-            self.inner.global_error.load(Ordering::Acquire);
-
-        if err_ptr.is_null() {
-            Ok(())
-        } else {
-            let deref: &(io::ErrorKind, String) = unsafe { &*err_ptr };
-            Err(io::Error::new(deref.0, deref.1.clone()))
-        }
+        check_error(&self.inner.global_error)
     }
 
     fn set_error(&self, error: &io::Error) {
