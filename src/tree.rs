@@ -534,6 +534,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 }
             }
 
+            assert_eq!(leaf.lo, node.low_key, "searching for key {key:?}, had indexed key at {:?}, got leaf {:?}", leaf_guard.low_key, leaf);
+
             return Ok(leaf_guard);
         }
     }
@@ -609,6 +611,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     node.object_id.0,
                     old_dirty_epoch
                 );
+
+                assert_eq!(node.low_key, leaf.lo);
 
                 self.cache.install_dirty(
                     old_dirty_epoch,
@@ -868,8 +872,13 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 );
             }
 
-            if leaf.data.is_empty() && leaf_guard.low_key != InlineArray::MIN {
-                self.merge_leaf_into_left_sibling(leaf_guard)?;
+            if cfg!(not(feature = "monotonic-behavior")) {
+                if leaf.data.is_empty()
+                    && leaf_guard.low_key != InlineArray::MIN
+                {
+                    assert_ne!(leaf_guard.node.low_key, InlineArray::MIN);
+                    self.merge_leaf_into_left_sibling(leaf_guard)?;
+                }
             }
         }
 
@@ -1048,9 +1057,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             assert!(prev.is_none());
         }
 
-        if leaf.data.is_empty() && leaf_guard.low_key != InlineArray::MIN {
-            assert!(!split_happened);
-            self.merge_leaf_into_left_sibling(leaf_guard)?;
+        if cfg!(not(feature = "monotonic-behavior")) {
+            if leaf.data.is_empty() && leaf_guard.low_key != InlineArray::MIN {
+                assert!(!split_happened);
+                self.merge_leaf_into_left_sibling(leaf_guard)?;
+            }
         }
 
         Ok(ret)
@@ -1365,6 +1376,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     );
                 }
 
+                assert_eq!(node.low_key, leaf.lo);
                 self.cache.install_dirty(
                     old_dirty_epoch,
                     node.object_id,

@@ -181,11 +181,11 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         let (object_id_index, indices) = initialize(&recovered_nodes, &heap);
 
         // validate recovery
-        for ObjectRecovery { object_id, collection_id, metadata } in
+        for ObjectRecovery { object_id, collection_id, low_key } in
             recovered_nodes
         {
             let index = indices.get(&collection_id).unwrap();
-            let node = index.get(&metadata).unwrap();
+            let node = index.get(&low_key).unwrap();
             assert_eq!(node.object_id, object_id);
         }
 
@@ -311,18 +311,16 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         }
     }
 
-    pub fn allocate_node(
+    pub fn allocate_default_node(
         &self,
         collection_id: CollectionId,
-        low_key: InlineArray,
-        flush_epoch: FlushEpoch,
     ) -> Object<LEAF_FANOUT> {
-        let object_id = self.allocate_object_id(flush_epoch);
+        let object_id = self.allocate_object_id(FlushEpoch::MIN);
 
         let node = Object {
             object_id,
             collection_id,
-            low_key,
+            low_key: InlineArray::default(),
             inner: Arc::new(RwLock::new(CacheBox {
                 leaf: Some(Box::default()).into(),
                 logged_index: BTreeMap::default(),
@@ -561,7 +559,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     write_batch.push(Update::Store {
                         object_id: dirty_object_id,
                         collection_id,
-                        metadata: low_key,
+                        low_key,
                         data,
                     });
 
@@ -581,6 +579,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     }
                 }
                 Dirty::NotYetSerialized { low_key, collection_id, node } => {
+                    assert_eq!(low_key, node.low_key);
                     assert_eq!(dirty_object_id, node.object_id, "mismatched node ID for NotYetSerialized with low key {:?}", low_key);
                     let mut lock = node.inner.write();
 
@@ -597,6 +596,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
                         panic!("failed to get lock for node that was NotYetSerialized, low key {:?} id {:?}", low_key, node.object_id);
                     };
+
+                    assert_eq!(leaf_ref.lo, low_key);
 
                     let data = if leaf_ref.dirty_flush_epoch
                         == Some(flush_through_epoch)
@@ -653,6 +654,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                             assert_eq!(node.object_id, ni2);
                             assert_eq!(node.object_id, dirty_object_id);
                             assert_eq!(low_key, low_key_2);
+                            assert_eq!(node.low_key, low_key);
                             assert_eq!(collection_id, ci2);
                             Arc::make_mut(&mut data);
 
@@ -693,7 +695,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     write_batch.push(Update::Store {
                         object_id: dirty_object_id,
                         collection_id: collection_id,
-                        metadata: low_key,
+                        low_key,
                         data,
                     });
 
@@ -717,47 +719,50 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
         let before_compute_defrag = Instant::now();
 
-        for fragmented_object_id in objects_to_defrag {
-            let object_opt = self.object_id_index.get(&fragmented_object_id);
+        if cfg!(not(feature = "monotonic-behavior")) {
+            for fragmented_object_id in objects_to_defrag {
+                let object_opt =
+                    self.object_id_index.get(&fragmented_object_id);
 
-            let object = if let Some(object) = object_opt {
-                object
-            } else {
-                log::debug!("defragmenting object not found in object_id_index: {fragmented_object_id:?}");
-                continue;
-            };
-
-            if let Some(ref inner) = object.inner.read().leaf {
-                if let Some(dirty) = inner.dirty_flush_epoch {
-                    assert!(dirty > flush_through_epoch);
-                    // This object will be rewritten anyway when its dirty epoch gets flushed
+                let object = if let Some(object) = object_opt {
+                    object
+                } else {
+                    log::debug!("defragmenting object not found in object_id_index: {fragmented_object_id:?}");
                     continue;
+                };
+
+                if let Some(ref inner) = object.inner.read().leaf {
+                    if let Some(dirty) = inner.dirty_flush_epoch {
+                        assert!(dirty > flush_through_epoch);
+                        // This object will be rewritten anyway when its dirty epoch gets flushed
+                        continue;
+                    }
                 }
+
+                let data = match self.read(fragmented_object_id) {
+                    Some(Ok(data)) => data,
+                    Some(Err(e)) => {
+                        let annotated = annotate!(e);
+                        log::error!(
+                            "failed to read object during GC: {annotated:?}"
+                        );
+                        continue;
+                    }
+                    None => {
+                        log::error!(
+                            "failed to read object during GC: object not found"
+                        );
+                        continue;
+                    }
+                };
+
+                write_batch.push(Update::Store {
+                    object_id: fragmented_object_id,
+                    collection_id: object.collection_id,
+                    low_key: object.low_key,
+                    data,
+                });
             }
-
-            let data = match self.read(fragmented_object_id) {
-                Some(Ok(data)) => data,
-                Some(Err(e)) => {
-                    let annotated = annotate!(e);
-                    log::error!(
-                        "failed to read object during GC: {annotated:?}"
-                    );
-                    continue;
-                }
-                None => {
-                    log::error!(
-                        "failed to read object during GC: object not found"
-                    );
-                    continue;
-                }
-            };
-
-            write_batch.push(Update::Store {
-                object_id: fragmented_object_id,
-                collection_id: object.collection_id,
-                metadata: object.low_key,
-                data,
-            });
         }
 
         let compute_defrag_latency = before_compute_defrag.elapsed();
@@ -887,12 +892,12 @@ fn initialize<const LEAF_FANOUT: usize>(
         EBR_LOCAL_GC_BUFFER_SIZE,
     > = ConcurrentMap::default();
 
-    for ObjectRecovery { object_id, collection_id, metadata } in recovered_nodes
+    for ObjectRecovery { object_id, collection_id, low_key } in recovered_nodes
     {
         let node = Object {
             object_id: *object_id,
             collection_id: *collection_id,
-            low_key: metadata.clone(),
+            low_key: low_key.clone(),
             inner: Arc::new(RwLock::new(CacheBox {
                 leaf: None.into(),
                 logged_index: BTreeMap::default(),
@@ -904,9 +909,9 @@ fn initialize<const LEAF_FANOUT: usize>(
         let tree = trees.entry(*collection_id).or_default();
 
         assert!(
-            tree.insert(metadata.clone(), node).is_none(),
-            "inserted multiple trees with metadata {:?}",
-            metadata
+            tree.insert(low_key.clone(), node).is_none(),
+            "inserted multiple objects with low key {:?}",
+            low_key
         );
     }
 

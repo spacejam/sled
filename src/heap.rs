@@ -213,7 +213,7 @@ pub use inline_array::InlineArray;
 pub struct ObjectRecovery {
     pub object_id: ObjectId,
     pub collection_id: CollectionId,
-    pub metadata: InlineArray,
+    pub low_key: InlineArray,
 }
 
 pub struct HeapRecovery {
@@ -627,11 +627,11 @@ fn set_error(
 }
 
 #[derive(Debug)]
-pub(crate) enum Update {
+pub enum Update {
     Store {
         object_id: ObjectId,
         collection_id: CollectionId,
-        metadata: InlineArray,
+        low_key: InlineArray,
         data: Vec<u8>,
     },
     Free {
@@ -655,7 +655,7 @@ pub enum UpdateMetadata {
     Store {
         object_id: ObjectId,
         collection_id: CollectionId,
-        metadata: InlineArray,
+        low_key: InlineArray,
         location: NonZeroU64,
     },
     Free {
@@ -684,12 +684,11 @@ pub struct Heap {
     path: PathBuf,
     slabs: Arc<[Slab; N_SLABS]>,
     table: ObjectLocationMapper,
-    metadata_store: Arc<MetadataStore>,
+    metadata_store: Arc<Mutex<MetadataStore>>,
     free_ebr: Ebr<DeferredFree, 16, 16>,
     global_error: Arc<AtomicPtr<(io::ErrorKind, String)>>,
     #[allow(unused)]
     directory_lock: Arc<fs::File>,
-    write_batch_atomicity_mutex: Arc<Mutex<()>>,
     stats: Arc<RwLock<WriteBatchStatTracker>>,
     truncated_file_bytes: Arc<AtomicU64>,
 }
@@ -769,12 +768,12 @@ impl Heap {
                     object_id,
                     collection_id,
                     location: _,
-                    metadata,
+                    low_key,
                 } => {
                     recovered_nodes.push(ObjectRecovery {
                         object_id,
                         collection_id,
-                        metadata: metadata.clone(),
+                        low_key,
                     });
                 }
                 UpdateMetadata::Free { .. } => {
@@ -809,10 +808,9 @@ impl Heap {
                 path: path.into(),
                 table,
                 global_error: metadata_store.get_global_error_arc(),
-                metadata_store: Arc::new(metadata_store),
+                metadata_store: Arc::new(Mutex::new(metadata_store)),
                 directory_lock: Arc::new(directory_lock),
                 free_ebr: Ebr::default(),
-                write_batch_atomicity_mutex: Default::default(),
                 truncated_file_bytes: Arc::default(),
                 stats: Arc::default(),
             },
@@ -886,7 +884,7 @@ impl Heap {
         batch: Vec<Update>,
     ) -> io::Result<WriteBatchStats> {
         self.check_error()?;
-        let atomicity_mu = self.write_batch_atomicity_mutex.try_lock()
+        let metadata_store = self.metadata_store.try_lock()
             .expect("write_batch called concurrently! major correctness assumpiton violated");
         let mut guard = self.free_ebr.pin();
 
@@ -898,7 +896,7 @@ impl Heap {
         let heap_files_used_64_to_127 = AtomicU64::new(0);
 
         let map_closure = |update: Update| match update {
-            Update::Store { object_id, collection_id, metadata, data } => {
+            Update::Store { object_id, collection_id, low_key, data } => {
                 let data_len = data.len();
                 let slab_id = slab_for_size(data_len);
                 let slab = &slabs[usize::from(slab_id)];
@@ -932,7 +930,7 @@ impl Heap {
                 Ok(UpdateMetadata::Store {
                     object_id,
                     collection_id,
-                    metadata,
+                    low_key,
                     location: new_location_nzu,
                 })
             }
@@ -985,7 +983,7 @@ impl Heap {
         // make metadata durable
         let before_metadata_write = Instant::now();
         let metadata_bytes_written =
-            match self.metadata_store.insert_batch(&metadata_batch) {
+            match metadata_store.write_batch(&metadata_batch) {
                 Ok(metadata_bytes_written) => metadata_bytes_written,
                 Err(e) => {
                     self.set_error(&e);
@@ -1055,26 +1053,26 @@ impl Heap {
                     currently_occupied_bytes
                 );
 
-                if slab.file.set_len(target_len).is_ok() {
-                    slab.max_live_slot_since_last_truncation
-                        .store(max_live_slot, Ordering::SeqCst);
+                if cfg!(not(feature = "monotonic-behavior")) {
+                    if slab.file.set_len(target_len).is_ok() {
+                        slab.max_live_slot_since_last_truncation
+                            .store(max_live_slot, Ordering::SeqCst);
 
-                    let file_truncated_bytes =
-                        currently_occupied_bytes.saturating_sub(target_len);
-                    self.truncated_file_bytes
-                        .fetch_add(file_truncated_bytes, Ordering::Release);
+                        let file_truncated_bytes =
+                            currently_occupied_bytes.saturating_sub(target_len);
+                        self.truncated_file_bytes
+                            .fetch_add(file_truncated_bytes, Ordering::Release);
 
-                    truncated_files += 1;
-                    truncated_bytes += file_truncated_bytes;
-                } else {
-                    // TODO surface stats
+                        truncated_files += 1;
+                        truncated_bytes += file_truncated_bytes;
+                    } else {
+                        // TODO surface stats
+                    }
                 }
             }
         }
 
         let truncate_latency = before_truncate.elapsed();
-
-        drop(atomicity_mu);
 
         let heap_files_written_to = u64::from(
             heap_files_used_0_to_63.load(Ordering::Acquire).count_ones()

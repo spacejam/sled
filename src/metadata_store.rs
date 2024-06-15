@@ -289,6 +289,7 @@ impl MetadataStore {
         let _ = fs::File::create(path.join(WARN));
 
         let directory_lock = fallible!(fs::File::open(path));
+        fallible!(directory_lock.sync_all());
         fallible!(directory_lock.try_lock_exclusive());
 
         let recovery =
@@ -360,7 +361,7 @@ impl MetadataStore {
 
     /// Write a batch of metadata. `None` for the second half of the outer tuple represents a
     /// deletion. Returns the bytes written.
-    pub fn insert_batch(&self, batch: &[UpdateMetadata]) -> io::Result<u64> {
+    pub fn write_batch(&self, batch: &[UpdateMetadata]) -> io::Result<u64> {
         self.check_error()?;
 
         let batch_bytes = serialize_batch(batch);
@@ -430,7 +431,8 @@ fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
     let batch_bytes = 0_u64.to_le_bytes().to_vec();
 
     // write format:
-    //  8 byte LE frame length (in bytes, not items)
+    //  6 byte LE frame length (in bytes, not items)
+    //  2 byte crc of the frame length
     //  payload:
     //      zstd encoded 8 byte LE key
     //      zstd encoded 8 byte LE value
@@ -443,7 +445,7 @@ fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
             UpdateMetadata::Store {
                 object_id,
                 collection_id,
-                metadata,
+                low_key,
                 location,
             } => {
                 batch_encoder
@@ -454,9 +456,9 @@ fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
                     .unwrap();
                 batch_encoder.write_all(&location.get().to_le_bytes()).unwrap();
 
-                let metadata_len: u64 = metadata.len() as u64;
-                batch_encoder.write_all(&metadata_len.to_le_bytes()).unwrap();
-                batch_encoder.write_all(&metadata).unwrap();
+                let low_key_len: u64 = low_key.len() as u64;
+                batch_encoder.write_all(&low_key_len.to_le_bytes()).unwrap();
+                batch_encoder.write_all(&low_key).unwrap();
             }
             UpdateMetadata::Free { object_id, collection_id } => {
                 batch_encoder
@@ -553,14 +555,14 @@ fn read_frame(
     let mut object_id_buf: [u8; 8] = [0; 8];
     let mut collection_id_buf: [u8; 8] = [0; 8];
     let mut location_buf: [u8; 8] = [0; 8];
-    let mut metadata_len_buf: [u8; 8] = [0; 8];
-    let mut metadata_buf = vec![];
+    let mut low_key_len_buf: [u8; 8] = [0; 8];
+    let mut low_key_buf = vec![];
     loop {
         let first_read_res = decoder
             .read_exact(&mut object_id_buf)
             .and_then(|_| decoder.read_exact(&mut collection_id_buf))
             .and_then(|_| decoder.read_exact(&mut location_buf))
-            .and_then(|_| decoder.read_exact(&mut metadata_len_buf));
+            .and_then(|_| decoder.read_exact(&mut low_key_len_buf));
 
         if let Err(e) = first_read_res {
             if e.kind() != io::ErrorKind::UnexpectedEof {
@@ -584,26 +586,26 @@ fn read_frame(
         let collection_id = CollectionId(u64::from_le_bytes(collection_id_buf));
         let location = u64::from_le_bytes(location_buf);
 
-        let metadata_len_raw = u64::from_le_bytes(metadata_len_buf);
-        let metadata_len = usize::try_from(metadata_len_raw).unwrap();
+        let low_key_len_raw = u64::from_le_bytes(low_key_len_buf);
+        let low_key_len = usize::try_from(low_key_len_raw).unwrap();
 
-        metadata_buf.reserve(metadata_len);
+        low_key_buf.reserve(low_key_len);
         unsafe {
-            metadata_buf.set_len(metadata_len);
+            low_key_buf.set_len(low_key_len);
         }
 
         decoder
-            .read_exact(&mut metadata_buf)
+            .read_exact(&mut low_key_buf)
             .expect("we expect reads from crc-verified buffers to succeed");
 
         if let Some(location_nzu) = NonZeroU64::new(location) {
-            let metadata = InlineArray::from(&*metadata_buf);
+            let low_key = InlineArray::from(&*low_key_buf);
 
             ret.push(UpdateMetadata::Store {
                 object_id,
                 collection_id,
                 location: location_nzu,
-                metadata,
+                low_key,
             });
         } else {
             ret.push(UpdateMetadata::Free { object_id, collection_id });

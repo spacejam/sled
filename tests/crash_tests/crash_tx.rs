@@ -1,11 +1,6 @@
 use super::*;
 
 const CACHE_SIZE: usize = 1024 * 1024;
-const TEST_ENV_VAR: &str = "SLED_CRASH_TEST";
-const N_TESTS: usize = 100;
-const CYCLE: usize = 256;
-const BATCH_SIZE: u32 = 8;
-const SEGMENT_SIZE: usize = 1024;
 
 pub fn run_crash_tx() {
     let config = Config::new()

@@ -19,6 +19,8 @@ testing-shred-allocator = []
 # use a counting global allocator that provides the sled::alloc::{allocated, freed, resident, reset} functions
 testing-count-allocator = []
 for-internal-testing-only = []
+# turn off re-use of object IDs and heap slots, disable tree leaf merges, disable heap file truncation.
+monotonic-behavior = []
 
 [profile.release]
 debug = true

@@ -18,7 +18,7 @@ const MIN_EPOCH: u64 = 2;
     Eq,
     Hash,
 )]
-pub(crate) struct FlushEpoch(NonZeroU64);
+pub struct FlushEpoch(NonZeroU64);
 
 impl FlushEpoch {
     pub const MIN: FlushEpoch = FlushEpoch(NonZeroU64::MIN);
@@ -116,7 +116,7 @@ impl Completion {
     }
 }
 
-pub(crate) struct FlushEpochGuard<'a> {
+pub struct FlushEpochGuard<'a> {
     tracker: &'a EpochTracker,
     previously_sealed: bool,
 }

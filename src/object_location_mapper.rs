@@ -87,7 +87,7 @@ impl ObjectLocationMapper {
                     object_id,
                     collection_id: _,
                     location,
-                    metadata: _,
+                    low_key: _,
                 } => {
                     object_ids.insert(**object_id);
                     let slab_address = SlabAddress::from(*location);

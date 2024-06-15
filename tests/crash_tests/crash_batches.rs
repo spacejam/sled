@@ -1,19 +1,10 @@
-use std::alloc::{Layout, System};
-use std::env::{self, VarError};
-use std::mem::size_of;
-use std::process::{exit, Child, Command, ExitStatus};
-use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::Duration;
 
 use rand::Rng;
 
 use super::*;
 
 const CACHE_SIZE: usize = 1024 * 1024;
-const TEST_ENV_VAR: &str = "SLED_CRASH_TEST";
-const N_TESTS: usize = 100;
-const CYCLE: usize = 256;
 const BATCH_SIZE: u32 = 8;
 const SEGMENT_SIZE: usize = 1024;
 

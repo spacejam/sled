@@ -4,16 +4,21 @@ use std::sync::Arc;
 
 use crossbeam_queue::SegQueue;
 use fnv::FnvHashSet;
-use parking_lot::{Mutex, MutexGuard};
+use parking_lot::Mutex;
 
 #[derive(Default, Debug)]
-pub(crate) struct Allocator {
-    free_and_pending: Mutex<BTreeSet<u64>>,
+struct FreeSetAndTip {
+    free_set: BTreeSet<u64>,
+    next_to_allocate: u64,
+}
+
+#[derive(Default, Debug)]
+pub struct Allocator {
+    free_and_pending: Mutex<FreeSetAndTip>,
     /// Flat combining.
     ///
     /// A lock free queue of recently freed ids which uses when there is contention on `free_and_pending`.
     free_queue: SegQueue<u64>,
-    next_to_allocate: AtomicU64,
     allocation_counter: AtomicU64,
     free_counter: AtomicU64,
 }
@@ -29,23 +34,25 @@ impl Allocator {
         &self,
         desired_ratio: f32,
     ) -> Option<(u64, u64)> {
-        let next_to_allocate = self.next_to_allocate.load(Ordering::Acquire);
+        let mut free_and_tip = self.free_and_pending.lock();
+
+        let next_to_allocate = free_and_tip.next_to_allocate;
 
         if next_to_allocate == 0 {
             return None;
         }
 
-        let mut free = self.free_and_pending.lock();
         while let Some(free_id) = self.free_queue.pop() {
-            free.insert(free_id);
+            free_and_tip.free_set.insert(free_id);
         }
 
-        let live_objects = next_to_allocate - free.len() as u64;
+        let live_objects =
+            next_to_allocate - free_and_tip.free_set.len() as u64;
         let actual_ratio = live_objects as f32 / next_to_allocate as f32;
 
         log::trace!(
             "fragmented_slots actual ratio: {actual_ratio}, free len: {}",
-            free.len()
+            free_and_tip.free_set.len()
         );
 
         if desired_ratio <= actual_ratio {
@@ -69,17 +76,21 @@ impl Allocator {
             }
         }
 
+        let free_and_pending = Mutex::new(FreeSetAndTip {
+            free_set: heap,
+            next_to_allocate: max.map(|m| m + 1).unwrap_or(0),
+        });
+
         Allocator {
-            free_and_pending: Mutex::new(heap),
+            free_and_pending,
             free_queue: SegQueue::default(),
-            next_to_allocate: max.map(|m| m + 1).unwrap_or(0).into(),
             allocation_counter: 0.into(),
             free_counter: 0.into(),
         }
     }
 
     pub fn max_allocated(&self) -> Option<u64> {
-        let next = self.next_to_allocate.load(Ordering::Acquire);
+        let next = self.free_and_pending.lock().next_to_allocate;
 
         if next == 0 {
             None
@@ -90,33 +101,37 @@ impl Allocator {
 
     pub fn allocate(&self) -> u64 {
         self.allocation_counter.fetch_add(1, Ordering::Relaxed);
-        let mut free = self.free_and_pending.lock();
+        let mut free_and_tip = self.free_and_pending.lock();
         while let Some(free_id) = self.free_queue.pop() {
-            free.insert(free_id);
+            free_and_tip.free_set.insert(free_id);
         }
 
-        compact(&mut free, &self.next_to_allocate);
+        compact(&mut free_and_tip);
 
-        let pop_attempt = free.pop_first();
+        let pop_attempt = free_and_tip.free_set.pop_first();
 
         if let Some(id) = pop_attempt {
             id
         } else {
-            self.next_to_allocate.fetch_add(1, Ordering::Release)
+            let ret = free_and_tip.next_to_allocate;
+            free_and_tip.next_to_allocate += 1;
+            ret
         }
     }
 
     pub fn free(&self, id: u64) {
-        self.free_counter.fetch_add(1, Ordering::Relaxed);
-        if let Some(mut free) = self.free_and_pending.try_lock() {
-            while let Some(free_id) = self.free_queue.pop() {
-                free.insert(free_id);
-            }
-            free.insert(id);
+        if cfg!(not(feature = "monotonic-behavior")) {
+            self.free_counter.fetch_add(1, Ordering::Relaxed);
+            if let Some(mut free) = self.free_and_pending.try_lock() {
+                while let Some(free_id) = self.free_queue.pop() {
+                    free.free_set.insert(free_id);
+                }
+                free.free_set.insert(id);
 
-            compact(&mut free, &self.next_to_allocate);
-        } else {
-            self.free_queue.push(id);
+                compact(&mut free);
+            } else {
+                self.free_queue.push(id);
+            }
         }
     }
 
@@ -129,19 +144,16 @@ impl Allocator {
     }
 }
 
-fn compact(
-    free: &mut MutexGuard<'_, BTreeSet<u64>>,
-    next_to_allocate: &AtomicU64,
-) {
-    let mut next = next_to_allocate.load(Ordering::Acquire);
+fn compact(free: &mut FreeSetAndTip) {
+    let next = &mut free.next_to_allocate;
 
-    while next > 1 && free.contains(&(next - 1)) {
-        free.remove(&(next - 1));
-        next = next_to_allocate.fetch_sub(1, Ordering::SeqCst) - 1;
+    while *next > 1 && free.free_set.contains(&(*next - 1)) {
+        free.free_set.remove(&(*next - 1));
+        *next -= 1;
     }
 }
 
-pub(crate) struct DeferredFree {
+pub struct DeferredFree {
     pub allocator: Arc<Allocator>,
     pub freed_slot: u64,
 }

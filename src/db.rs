@@ -250,11 +250,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
             let initial_low_key = InlineArray::default();
 
-            let empty_node = cache.allocate_node(
-                collection_id,
-                initial_low_key.clone(),
-                FlushEpoch::MIN,
-            );
+            let empty_node = cache.allocate_default_node(collection_id);
 
             let index = Index::default();
 
@@ -484,7 +480,8 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         Ok(true)
     }
-    /// Open or create a new disk-backed Tree with its own keyspace,
+
+    /// Open or create a new disk-backed [`Tree`] with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
     pub fn open_tree<V: AsRef<[u8]>>(
         &self,
@@ -510,11 +507,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         let initial_low_key = InlineArray::default();
 
-        let empty_node = self.cache.allocate_node(
-            collection_id,
-            initial_low_key.clone(),
-            FlushEpoch::MIN,
-        );
+        let empty_node = self.cache.allocate_default_node(collection_id);
 
         let index = Index::default();
 
