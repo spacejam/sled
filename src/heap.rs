@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicPtr, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -945,6 +945,8 @@ impl Heap {
             batch.into_par_iter().map(map_closure).collect();
 
         let before_heap_sync = Instant::now();
+
+        fence(Ordering::SeqCst);
 
         for slab_id in 0..N_SLABS {
             let dirty = if slab_id < 64 {
