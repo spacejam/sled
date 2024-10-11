@@ -3,7 +3,7 @@ use std::thread;
 
 use super::*;
 
-const CACHE_SIZE: usize = 1024 * 1024;
+const CACHE_SIZE: usize = 256;
 
 pub fn run_crash_iter() {
     const N_FORWARD: usize = 50;
@@ -15,7 +15,18 @@ pub fn run_crash_iter() {
         .path(path)
         .flush_every_ms(Some(1));
 
-    let t: Db = config.open().expect("couldn't open iter db");
+    let db: Db = config.open().expect("couldn't open iter db");
+    let t = db.open_tree(b"crash_iter_test").unwrap();
+
+    thread::Builder::new()
+        .name("crash_iter_flusher".to_string())
+        .spawn({
+            let t = t.clone();
+            move || loop {
+                t.flush().unwrap();
+            }
+        })
+        .unwrap();
 
     const INDELIBLE: [&[u8]; 16] = [
         &[0u8],

@@ -506,6 +506,7 @@ fn concurrent_tree_iter() -> io::Result<()> {
     const N_REVERSE: usize = INTENSITY;
     const N_INSERT: usize = INTENSITY;
     const N_DELETE: usize = INTENSITY;
+    const N_FLUSHERS: usize = N_THREADS;
 
     // items that are expected to always be present at their expected
     // order, regardless of other inserts or deletes.
@@ -537,15 +538,12 @@ fn concurrent_tree_iter() -> io::Result<()> {
 
     let mut threads: Vec<thread::JoinHandle<io::Result<()>>> = vec![];
 
-    let flusher_barrier = Arc::new(Barrier::new(N_THREADS));
-    for tn in 0..N_THREADS {
+    for tn in 0..N_FLUSHERS {
         let tree = t.clone();
-        let barrier = flusher_barrier.clone();
         let thread = thread::Builder::new()
             .name(format!("t(thread: {} flusher)", tn))
             .spawn(move || {
                 tree.flush().unwrap();
-                barrier.wait();
                 Ok(())
             })
             .expect("should be able to spawn thread");

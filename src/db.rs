@@ -158,6 +158,50 @@ impl<const LEAF_FANOUT: usize> Drop for Db<LEAF_FANOUT> {
 }
 
 impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
+    #[cfg(feature = "for-internal-testing-only")]
+    fn validate(&self) -> io::Result<()> {
+        // for each tree, iterate over index, read node and assert low key matches
+        // and assert first time we've ever seen node ID
+
+        let mut ever_seen = std::collections::HashSet::new();
+        let before = std::time::Instant::now();
+
+        for (_cid, tree) in self.trees.lock().iter() {
+            let mut hi_none_count = 0;
+            let mut last_hi = None;
+            for (low, node) in tree.index.iter() {
+                // ensure we haven't reused the object_id across Trees
+                assert!(ever_seen.insert(node.object_id));
+
+                let (read_low, node_mu, read_node) =
+                    tree.page_in(&low, self.cache.current_flush_epoch())?;
+
+                assert_eq!(read_node.object_id, node.object_id);
+                assert_eq!(node_mu.leaf.as_ref().unwrap().lo, low);
+                assert_eq!(read_low, low);
+
+                if let Some(hi) = &last_hi {
+                    assert_eq!(hi, &node_mu.leaf.as_ref().unwrap().lo);
+                }
+
+                if let Some(hi) = &node_mu.leaf.as_ref().unwrap().hi {
+                    last_hi = Some(hi.clone());
+                } else {
+                    assert_eq!(hi_none_count, 0);
+                    hi_none_count += 1;
+                }
+            }
+        }
+
+        log::debug!(
+            "{} leaves looking good after {} micros",
+            ever_seen.len(),
+            before.elapsed().as_micros()
+        );
+
+        Ok(())
+    }
+
     pub fn stats(&self) -> Stats {
         Stats { cache: self.cache.stats() }
     }
@@ -281,6 +325,9 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             _shutdown_dropper,
             was_recovered,
         };
+
+        #[cfg(feature = "for-internal-testing-only")]
+        ret.validate()?;
 
         if let Some(flush_every_ms) = ret.cache.config.flush_every_ms {
             let spawn_res = std::thread::Builder::new()

@@ -3,7 +3,7 @@
 // uninitialized allocations and 0xde for deallocated memory,
 // in the hope that it will cause memory errors to surface
 // more quickly.
-#[cfg(feature = "memshred")]
+#[cfg(feature = "testing-shred-allocator")]
 mod alloc {
     use std::alloc::{Layout, System};
 
@@ -34,9 +34,6 @@ pub fn setup_logger() {
     fn tn() -> String {
         std::thread::current().name().unwrap_or("unknown").to_owned()
     }
-
-    #[cfg(feature = "pretty_backtrace")]
-    color_backtrace::install();
 
     let mut builder = env_logger::Builder::new();
     builder
