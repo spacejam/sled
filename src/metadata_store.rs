@@ -136,7 +136,7 @@ fn worker(
                     Ok(recovery) => {
                         inner
                             .snapshot_size
-                            .store(recovery.snapshot_size, Ordering::Release);
+                            .store(recovery.snapshot_size, Ordering::SeqCst);
                         last_snapshot_lsn =
                             recovery.id_for_next_log.checked_sub(1).unwrap();
                     }

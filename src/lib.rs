@@ -142,8 +142,8 @@ mod object_location_mapper;
 mod tree;
 
 #[cfg(any(
-    feature = "testing_shred_allocator",
-    feature = "testing_count_allocator"
+    feature = "testing-shred-allocator",
+    feature = "testing-count-allocator"
 ))]
 pub mod alloc;
 

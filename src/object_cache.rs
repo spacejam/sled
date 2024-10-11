@@ -322,7 +322,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             collection_id,
             low_key: InlineArray::default(),
             inner: Arc::new(RwLock::new(CacheBox {
-                leaf: Some(Box::default()).into(),
+                leaf: Some(Box::new(Leaf::empty())).into(),
                 logged_index: BTreeMap::default(),
             })),
         };
@@ -929,7 +929,7 @@ fn initialize<const LEAF_FANOUT: usize>(
                 collection_id,
                 low_key: initial_low_key.clone(),
                 inner: Arc::new(RwLock::new(CacheBox {
-                    leaf: Some(Box::default()).into(),
+                    leaf: Some(Box::new(Leaf::empty())).into(),
                     logged_index: BTreeMap::default(),
                 })),
             };

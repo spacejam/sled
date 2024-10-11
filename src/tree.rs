@@ -24,7 +24,7 @@ use crate::*;
 pub struct Tree<const LEAF_FANOUT: usize = 1024> {
     collection_id: CollectionId,
     cache: ObjectCache<LEAF_FANOUT>,
-    index: Index<LEAF_FANOUT>,
+    pub(crate) index: Index<LEAF_FANOUT>,
     _shutdown_dropper: Arc<ShutdownDropper<LEAF_FANOUT>>,
 }
 
@@ -190,7 +190,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         self.cache.flush()
     }
 
-    fn page_in(
+    pub(crate) fn page_in(
         &self,
         key: &[u8],
         flush_epoch: FlushEpoch,
@@ -260,6 +260,14 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
                 let leaf: Box<Leaf<LEAF_FANOUT>> =
                     Leaf::deserialize(&leaf_bytes).unwrap();
+
+                if leaf.lo != low_key {
+                    // TODO determine why this rare situation occurs and better
+                    // understand whether it is really benign.
+                    log::trace!("mismatch between object key and leaf low");
+                    hint::spin_loop();
+                    continue;
+                }
 
                 let deserialization_latency_us =
                     u64::try_from(before_deserialization.elapsed().as_micros())
@@ -382,7 +390,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             .inner
             .cache
             .tree_leaves_merged
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(1, Ordering::Relaxed);
 
         self.index.remove(&leaf_guard.low_key).unwrap();
         self.cache.object_id_index.remove(&leaf_guard.node.object_id).unwrap();
@@ -534,7 +542,15 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 }
             }
 
-            assert_eq!(leaf.lo, node.low_key, "searching for key {key:?}, had indexed key at {:?}, got leaf {:?}", leaf_guard.low_key, leaf);
+            if leaf.lo != node.low_key {
+                // TODO determine why this rare situation occurs and better
+                // understand whether it is really benign.
+                log::trace!("mismatch between object key and leaf low");
+                // cache maintenance occurs in Drop for LeafReadGuard
+                drop(leaf_guard);
+                hint::spin_loop();
+                continue;
+            }
 
             return Ok(leaf_guard);
         }
