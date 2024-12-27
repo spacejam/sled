@@ -40,6 +40,8 @@ pub struct Config {
     /// A float between 0.0 and 1.0 that controls how much fragmentation can
     /// exist in a file before GC attempts to recompact it.
     pub target_heap_file_fill_ratio: f32,
+    /// Values larger than this configurable will be stored as separate blob
+    pub max_inline_value_threshold: usize,
 }
 
 impl Default for Config {
@@ -52,6 +54,7 @@ impl Default for Config {
             zstd_compression_level: 3,
             tempdir_deleter: None,
             target_heap_file_fill_ratio: 0.9,
+            max_inline_value_threshold: 4096,
         }
     }
 }
@@ -85,7 +88,9 @@ impl Config {
         (flush_every_ms, Option<usize>, "Start a background thread that flushes data to disk every few milliseconds. Defaults to every 200ms."),
         (cache_capacity_bytes, usize, "Cache size in **bytes**. Default is 512mb."),
         (entry_cache_percent, u8, "The percentage of the cache that is dedicated to the scan-resistant entry cache."),
-        (zstd_compression_level, i32, "The zstd compression level to use when writing data to disk. Defaults to 3.")
+        (zstd_compression_level, i32, "The zstd compression level to use when writing data to disk. Defaults to 3."),
+        (target_heap_file_fill_ratio, f32, "A float between 0.0 and 1.0 that controls how much fragmentation can exist in a file before GC attempts to recompact it."),
+        (max_inline_value_threshold, usize, "Values larger than this configurable will be stored as separate blob")
     );
 
     pub fn open<const LEAF_FANOUT: usize>(

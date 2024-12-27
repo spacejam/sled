@@ -50,6 +50,7 @@ pub fn run_crash_iter() {
     for item in &INDELIBLE {
         t.insert(*item, *item).unwrap();
     }
+    t.flush().unwrap();
 
     let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
     let mut threads = vec![];
