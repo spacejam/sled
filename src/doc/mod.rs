@@ -43,7 +43,8 @@
 //!
 //! 1. more cores on servers, spanning sockets and numa domains
 //! 1. the vast majority of content consumption and generation happening on
-//! phones 1. compute migrating to the edge, into CDNs
+//! phones 
+//! 1. compute migrating to the edge, into CDNs
 //! 1. conflict-free and OT-based replication techniques at the edge
 //! 1. strongly-consistent replication techniques within and between datacenters
 //! 1. event-driven architectures which benefit heavily from subscriber/watch
