@@ -63,6 +63,8 @@ tree.compare_and_swap(
 tree.flush()?;
 ```
 
+$${\color{red}This README is slightly out of sync with the main branch, which contains a large in-progress rewrite of the storage engine}$$
+
 If you would like to work with structured data without paying expensive deserialization costs, check out the [structured](examples/structured.rs) example!
 
 # features
