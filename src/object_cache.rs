@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use cache_advisor::CacheAdvisor;
@@ -354,6 +354,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     pub fn current_flush_epoch(&self) -> FlushEpoch {
         self.flush_epoch.current_flush_epoch()
     }
+
     pub fn check_into_flush_epoch(&self) -> FlushEpochGuard {
         self.flush_epoch.check_in()
     }
@@ -411,12 +412,18 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
             let node = if let Some(n) = self.object_id_index.get(&object_id) {
                 if *n.object_id != *node_to_evict {
-                    log::debug!("during cache eviction, node to evict did not match current occupant for {:?}", node_to_evict);
+                    log::debug!(
+                        "during cache eviction, node to evict did not match current occupant for {:?}",
+                        node_to_evict
+                    );
                     continue;
                 }
                 n
             } else {
-                log::debug!("during cache eviction, unable to find node to evict for {:?}", node_to_evict);
+                log::debug!(
+                    "during cache eviction, unable to find node to evict for {:?}",
+                    node_to_evict
+                );
                 continue;
             };
 
@@ -580,7 +587,11 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 }
                 Dirty::NotYetSerialized { low_key, collection_id, node } => {
                     assert_eq!(low_key, node.low_key);
-                    assert_eq!(dirty_object_id, node.object_id, "mismatched node ID for NotYetSerialized with low key {:?}", low_key);
+                    assert_eq!(
+                        dirty_object_id, node.object_id,
+                        "mismatched node ID for NotYetSerialized with low key {:?}",
+                        low_key
+                    );
                     let mut lock = node.inner.write();
 
                     let leaf_ref: &mut Leaf<LEAF_FANOUT> = if let Some(
@@ -594,7 +605,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                         self.event_verifier
                             .print_debug_history_for_object(dirty_object_id);
 
-                        panic!("failed to get lock for node that was NotYetSerialized, low key {:?} id {:?}", low_key, node.object_id);
+                        panic!(
+                            "failed to get lock for node that was NotYetSerialized, low key {:?} id {:?}",
+                            low_key, node.object_id
+                        );
                     };
 
                     assert_eq!(leaf_ref.lo, low_key);
@@ -688,7 +702,9 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                                 dirty_object_id,
                             );
 
-                            unreachable!("a leaf was expected to be cooperatively serialized but it was not available");
+                            unreachable!(
+                                "a leaf was expected to be cooperatively serialized but it was not available"
+                            );
                         }
                     };
 
@@ -727,7 +743,9 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 let object = if let Some(object) = object_opt {
                     object
                 } else {
-                    log::debug!("defragmenting object not found in object_id_index: {fragmented_object_id:?}");
+                    log::debug!(
+                        "defragmenting object not found in object_id_index: {fragmented_object_id:?}"
+                    );
                     continue;
                 };
 
@@ -934,9 +952,9 @@ fn initialize<const LEAF_FANOUT: usize>(
                 })),
             };
 
-            assert!(object_id_index
-                .insert(object_id, empty_node.clone())
-                .is_none());
+            assert!(
+                object_id_index.insert(object_id, empty_node.clone()).is_none()
+            );
 
             assert!(tree.insert(initial_low_key, empty_node).is_none());
         } else {

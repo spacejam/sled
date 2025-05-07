@@ -130,7 +130,9 @@ fn main() {
 fn run_child_process(dir: &str) {
     let bin = env::current_exe().expect("could not get test binary path");
 
-    env::set_var(TEST_ENV_VAR, dir);
+    unsafe {
+        env::set_var(TEST_ENV_VAR, dir);
+    }
 
     let status_res = Command::new(bin)
         .env(TEST_ENV_VAR, dir)

@@ -4,8 +4,8 @@ mod tree;
 use std::{
     io,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc, Barrier,
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
     },
 };
 
@@ -21,8 +21,8 @@ use sled::{Config, Db as SledDb, InlineArray};
 type Db = SledDb<3>;
 
 use tree::{
-    prop_tree_matches_btreemap,
     Op::{self},
+    prop_tree_matches_btreemap,
 };
 
 const N_THREADS: usize = 32;
@@ -1153,7 +1153,9 @@ fn recover_tree() {
     }
     drop(t);
 
-    println!("---------------- recovering a (hopefully) empty db ----------------------");
+    println!(
+        "---------------- recovering a (hopefully) empty db ----------------------"
+    );
 
     let t: sled::Db<7> = config.open().unwrap();
     for i in 0..N_PER_THREAD {
@@ -1364,7 +1366,7 @@ fn quickcheck_tree_matches_btreemap() {
     let n_tests = if cfg!(windows) { 25 } else { 100 };
 
     QuickCheck::new()
-        .gen(Gen::new(100))
+        .r#gen(Gen::new(100))
         .tests(n_tests)
         .max_tests(n_tests * 10)
         .quickcheck(

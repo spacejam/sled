@@ -6,7 +6,7 @@ use std::convert::TryInto;
 use std::sync::Mutex;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use rand::{seq::SliceRandom, Rng};
+use rand::{Rng, seq::SliceRandom};
 
 use sled::*;
 
@@ -35,7 +35,7 @@ impl Arbitrary for BatchOp {
         if g.gen_ratio(1, 2) {
             BatchOp::Set
         } else {
-            BatchOp::Del(g.gen::<u8>())
+            BatchOp::Del(g.r#gen::<u8>())
         }
     }
 }
@@ -75,7 +75,7 @@ impl Arbitrary for Op {
         ];
 
         if g.gen_bool(1. / 30.) {
-            return FailPoint(fail_points.choose(g).unwrap(), g.gen::<u64>());
+            return FailPoint(fail_points.choose(g).unwrap(), g.r#gen::<u64>());
         }
 
         if g.gen_bool(1. / 10.) {
@@ -86,7 +86,7 @@ impl Arbitrary for Op {
 
         match choice {
             0 => Set,
-            1 => Del(g.gen::<u8>()),
+            1 => Del(g.r#gen::<u8>()),
             2 => Id,
             3 => Batched(Arbitrary::arbitrary(g)),
             4 => Flush,
@@ -518,7 +518,7 @@ fn quickcheck_tree_with_failpoints() {
     let generator_sz = 100;
 
     QuickCheck::new()
-        .gen(StdGen::new(rand::thread_rng(), generator_sz))
+        .r#gen(StdGen::new(rand::rng(), generator_sz))
         .tests(n_tests)
         .quickcheck(prop_tree_crashes_nicely as fn(Vec<Op>, bool) -> bool);
 }

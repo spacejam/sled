@@ -40,7 +40,7 @@ const CRASH_DIR: &str = "crash_test_files";
 
 fn spawn_killah() {
     thread::spawn(|| {
-        let runtime = rand::thread_rng().gen_range(0..60_000);
+        let runtime = rand::rng().random_range(0..60_000);
         thread::sleep(Duration::from_micros(runtime));
         exit(9);
     });

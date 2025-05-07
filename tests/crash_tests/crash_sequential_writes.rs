@@ -77,7 +77,7 @@ fn verify(tree: &Db) -> (u32, u32) {
 }
 
 fn run_inner(config: Config) {
-    let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
+    let crash_during_initialization = rand::rng().random_bool(0.1);
 
     if crash_during_initialization {
         spawn_killah();
@@ -101,7 +101,7 @@ fn run_inner(config: Config) {
         //dbg!(hu, hu % CYCLE);
 
         let mut value = u32_to_vec((hu / CYCLE) as u32);
-        let additional_len = rand::thread_rng().gen_range(0..SEGMENT_SIZE / 3);
+        let additional_len = rand::rng().random_range(0..SEGMENT_SIZE / 3);
         value.append(&mut vec![0u8; additional_len]);
 
         tree.insert(&key, value).unwrap();

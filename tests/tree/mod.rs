@@ -41,7 +41,7 @@ impl Arbitrary for Key {
         if bool::arbitrary(g) {
             let gs = g.size();
             let gamma = Gamma::new(0.3, gs as f64).unwrap();
-            let v = gamma.sample(&mut rand::thread_rng());
+            let v = gamma.sample(&mut rand::rng());
             let len = if v > 3000.0 { 10000 } else { (v % 300.) as usize };
 
             let space = range(g, 0, gs) + 1;

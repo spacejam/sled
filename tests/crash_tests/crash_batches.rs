@@ -45,9 +45,12 @@ fn verify_batches(tree: &Db) -> u32 {
         //  {0:59485, 1:59485, 2:59485, 3:59485, 4:59485, 5:59485, 6:59485, 7:59485,
         //  Human: had key N during first check, then N + 1 in iteration
         assert_eq!(
-            first_value, value,
+            first_value,
+            value,
             "expected key {} to have value {}, instead it had value {}. second get: {:?}. db iter: {}. third get: {:?}",
-            key, first_value, value,
+            key,
+            first_value,
+            value,
             slice_to_u32(&*tree.get(u32_to_vec(key)).unwrap().unwrap()),
             tree_to_string(&tree),
             slice_to_u32(&*tree.get(u32_to_vec(key)).unwrap().unwrap()),
@@ -59,18 +62,18 @@ fn verify_batches(tree: &Db) -> u32 {
 
 fn run_batches_inner(db: Db) {
     fn do_batch(i: u32, db: &Db) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let base_value = u32_to_vec(i);
 
         let mut batch = sled::Batch::default();
-        if rng.gen_bool(0.1) {
+        if rng.random_bool(0.1) {
             for key in 0..BATCH_SIZE {
                 batch.remove(u32_to_vec(key));
             }
         } else {
             for key in 0..BATCH_SIZE {
                 let mut value = base_value.clone();
-                let additional_len = rng.gen_range(0..SEGMENT_SIZE / 3);
+                let additional_len = rng.random_range(0..SEGMENT_SIZE / 3);
                 value.append(&mut vec![0u8; additional_len]);
 
                 batch.insert(u32_to_vec(key), value);
@@ -90,7 +93,7 @@ fn run_batches_inner(db: Db) {
 }
 
 pub fn run_crash_batches() {
-    let crash_during_initialization = rand::thread_rng().gen_ratio(1, 10);
+    let crash_during_initialization = rand::rng().random_ratio(1, 10);
 
     if crash_during_initialization {
         spawn_killah();
@@ -106,16 +109,18 @@ pub fn run_crash_batches() {
     let db2 = db.clone();
 
     let t1 = thread::spawn(|| run_batches_inner(db));
-    let t2 = thread::spawn(move || loop {
-        db2.flush().unwrap();
+    let t2 = thread::spawn(move || {
+        loop {
+            db2.flush().unwrap();
+        }
     }); // run_batches_inner(db2));
 
     if !crash_during_initialization {
         spawn_killah();
     }
 
-    if let Err(e) = t1.join().and_then(|_| t2.join()) {
-        println!("worker thread failed: {:?}", e);
-        std::process::exit(15);
-    }
+    let Err(e) = t1.join().and_then(|_| t2.join());
+
+    println!("worker thread failed: {:?}", e);
+    std::process::exit(15);
 }

@@ -6,16 +6,16 @@ use std::mem::{self, ManuallyDrop};
 use std::ops;
 use std::ops::Bound;
 use std::ops::RangeBounds;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use concurrent_map::Minimum;
 use fault_injection::annotate;
 use inline_array::InlineArray;
 use parking_lot::{
-    lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard},
     RawRwLock,
+    lock_api::{ArcRwLockReadGuard, ArcRwLockWriteGuard},
 };
 
 use crate::*;
@@ -479,7 +479,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     "somehow, predecessor high key of {:?} \
                     is greater than successor low key of {:?}. current index presence: {:?} \n \
                     predecessor: {:?} \n successor: {:?}",
-                    leaf_hi, successor.low_key, still_in_index, leaf, successor.leaf_write.leaf.as_ref().unwrap(),
+                    leaf_hi,
+                    successor.low_key,
+                    still_in_index,
+                    leaf,
+                    successor.leaf_write.leaf.as_ref().unwrap(),
                 );
             }
             if leaf_hi != &successor.low_key {
@@ -599,7 +603,9 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 leaf.page_out_on_flush.take();
                 log::trace!(
                     "starting cooperatively serializing {:?} for {:?} because we want to use it in {:?}",
-                    node.object_id, old_dirty_epoch, flush_epoch_guard.epoch(),
+                    node.object_id,
+                    old_dirty_epoch,
+                    flush_epoch_guard.epoch(),
                 );
                 #[cfg(feature = "for-internal-testing-only")]
                 {
@@ -643,7 +649,9 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 );
                 log::trace!(
                     "finished cooperatively serializing {:?} for {:?} because we want to use it in {:?}",
-                    node.object_id, old_dirty_epoch, flush_epoch_guard.epoch(),
+                    node.object_id,
+                    old_dirty_epoch,
+                    flush_epoch_guard.epoch(),
                 );
 
                 assert!(
@@ -1419,7 +1427,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         // Insert and split when full
         for (key, value_opt) in batch.writes {
             let range = ..=&key;
-            let (lo, (ref mut w, object)) = acquired_locks
+            let (lo, (w, object)) = acquired_locks
                 .range_mut::<InlineArray, _>(range)
                 .next_back()
                 .unwrap();
