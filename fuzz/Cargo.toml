@@ -1,0 +1,31 @@
+[package]
+name = "bloodstone-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies.libfuzzer-sys]
+version = "0.4.0"
+features = ["arbitrary-derive"]
+
+[dependencies]
+arbitrary = { version = "1.0.3", features = ["derive"] }
+tempfile = "3.5.0"
+
+[dependencies.sled]
+path = ".."
+features = []
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_model"
+path = "fuzz_targets/fuzz_model.rs"
+test = false
+doc = false

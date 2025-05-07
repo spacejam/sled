@@ -56,7 +56,7 @@ These hazards can result in the above losses:
   * bugs in the GC system
     * the old location is overwritten before the defragmented location becomes durable
   * bugs in the recovery system
-  * hardware failures
+  * hardare failures
 * consistency violations may be caused by
   * transaction concurrency control failure to enforce linearizability (strict serializability)
   * non-linearizable lock-free single-key operations

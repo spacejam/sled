@@ -1,50 +1,100 @@
-//! `sled` is an embedded database with
+// 1.0 blockers
+//
+// bugs
+// * tree predecessor holds lock on successor and tries to get it for predecessor. This will
+//   deadlock if used concurrently with write batches, which acquire locks lexicographically.
+//   * add merges to iterator test and assert it deadlocks
+//   * alternative is to merge right, not left
+// * page-out needs to be deferred until after any flush of the dirty epoch
+//   * need to remove max_unflushed_epoch after flushing it
+//   * can't send reliable page-out request backwards from 7->6
+//   * re-locking every mutex in a writebatch feels bad
+//   * need to signal stability status forward
+//     * maybe we already are
+//   * can make dirty_flush_epoch atomic and CAS it to 0 after flush
+//   * can change dirty_flush_epoch to unflushed_epoch
+//   * can always set mutation_count to max dirty flush epoch
+//     * this feels nice, we can lazily update a global stable flushed counter
+//     * can get rid of dirty_flush_epoch and page_out_on_flush?
+//     * or at least dirty_flush_epoch
+//   * dirty_flush_epoch really means "hasn't yet been cooperatively serialized @ F.E."
+//   * interesting metrics:
+//     * whether dirty for some epoch
+//     * whether cooperatively serialized for some epoch
+//     * whether fully flushed for some epoch
+//     * clean -> dirty -> {maybe coop} -> flushed
+//   * for page-out, we only care if it's stable or if we need to add it to
+//     a page-out priority queue
+//
+// reliability
+// TODO make all writes wrapped in a Tearable wrapper that splits writes
+//      and can possibly crash based on a counter.
+// TODO test concurrent drop_tree when other threads are still using it
+// TODO list trees test for recovering empty collections
+// TODO set explicit max key and value sizes w/ corresponding heap
+// TODO add failpoints to writepath
+//
+// performance
+// TODO handle prefix encoding
+// TODO (minor) remove cache access for removed node in merge function
+// TODO index+log hybrid - tinylsm key -> object location
+//
+// features
+// TODO multi-collection batch
+//
+// misc
+// TODO skim inlining output of RUSTFLAGS="-Cremark=all -Cdebuginfo=1"
+//
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~ 1.0 cutoff ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//
+// post-1.0 improvements
+//
+// reliability
+// TODO bug hiding: if the crash_iter test panics, the test doesn't fail as expected
+// TODO event log assertion for testing heap location bidirectional referential integrity,
+//      particularly in the object location mapper.
+// TODO ensure nothing "from the future" gets copied into earlier epochs during GC
+// TODO collection_id on page_in checks - it needs to be pinned w/ heap's EBR?
+// TODO put aborts behind feature flags for hard crashes
+// TODO re-enable transaction tests in test_tree.rs
+//
+// performance
+// TODO force writers to flush when some number of dirty epochs have built up
+// TODO serialize flush batch in parallel
+// TODO concurrent serialization of NotYetSerialized dirty objects
+// TODO make the Arc<Option<Box<Leaf just a single pointer chase w/ custom container
+// TODO allow waiting flusher to start collecting dirty pages as soon
+//      as it is evacuated - just wait until last flush is done before
+//      we persist the batch
+// TODO measure space savings vs cost of zstd in metadata store
+// TODO make EBR and index fanout consts as small as possible to reduce memory usage
+// TODO make leaf fanout as small as possible while retaining perf
+// TODO dynamically sized fanouts for reducing fragmentation
+//
+// features
+// TODO transactions
+// TODO implement create exclusive
+// TODO temporary trees for transactional in-memory coordination
+// TODO corrupted data extraction binary
+//
+
+//! `sled` is a high-performance embedded database with
 //! an API that is similar to a `BTreeMap<[u8], [u8]>`,
 //! but with several additional capabilities for
 //! assisting creators of stateful systems.
 //!
 //! It is fully thread-safe, and all operations are
-//! atomic. Most are fully non-blocking. Multiple
-//! `Tree`s with isolated keyspaces are supported with the
+//! atomic. Multiple `Tree`s with isolated keyspaces
+//! are supported with the
 //! [`Db::open_tree`](struct.Db.html#method.open_tree) method.
-//!
-//! ACID transactions involving reads and writes to
-//! multiple items are supported with the
-//! [`Tree::transaction`](struct.Tree.html#method.transaction)
-//! method. Transactions may also operate over
-//! multiple `Tree`s (see
-//! [`Tree::transaction`](struct.Tree.html#method.transaction)
-//! docs for more info).
-//!
-//! Users may also subscribe to updates on individual
-//! `Tree`s by using the
-//! [`Tree::watch_prefix`](struct.Tree.html#method.watch_prefix)
-//! method, which returns a blocking `Iterator` over
-//! updates to keys that begin with the provided
-//! prefix. You may supply an empty prefix to subscribe
-//! to everything.
-//!
-//! [Merge operators](https://github.com/spacejam/sled/wiki/merge-operators)
-//! (aka read-modify-write operators) are supported. A
-//! merge operator is a function that specifies
-//! how new data can be merged into an existing value
-//! without requiring both a read and a write.
-//! Using the
-//! [`Tree::merge`](struct.Tree.html#method.merge)
-//! method, you may "push" data to a `Tree` value
-//! and have the provided merge operator combine
-//! it with the existing value, if there was one.
-//! They are set on a per-`Tree` basis, and essentially
-//! allow any sort of data structure to be built
-//! using merges as an atomic high-level operation.
 //!
 //! `sled` is built by experienced database engineers
 //! who think users should spend less time tuning and
 //! working against high-friction APIs. Expect
 //! significant ergonomic and performance improvements
 //! over time. Most surprises are bugs, so please
-//! [let us know](mailto:t@jujit.su?subject=sled%20sucks!!!) if something
-//! is high friction.
+//! [let us know](mailto:tylerneely@gmail.com?subject=sled%20sucks!!!)
+//! if something is high friction.
 //!
 //! # Examples
 //!
@@ -68,10 +118,10 @@
 //! let scan_key: &[u8] = b"a non-present key before yo!";
 //! let mut iter = db.range(scan_key..);
 //! assert_eq!(&iter.next().unwrap().unwrap().0, b"yo!");
-//! assert_eq!(iter.next(), None);
+//! assert!(iter.next().is_none());
 //!
 //! db.remove(b"yo!");
-//! assert_eq!(db.get(b"yo!"), Ok(None));
+//! assert!(db.get(b"yo!").unwrap().is_none());
 //!
 //! let other_tree: sled::Tree = db.open_tree(b"cool db facts").unwrap();
 //! other_tree.insert(
@@ -80,454 +130,287 @@
 //! ).unwrap();
 //! # let _ = std::fs::remove_dir_all("my_db");
 //! ```
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/spacejam/sled/main/art/tree_face_anti-transphobia.png"
-)]
-#![cfg_attr(
-    feature = "for-internal-testing-only",
-    deny(
-        missing_docs,
-        future_incompatible,
-        nonstandard_style,
-        rust_2018_idioms,
-        missing_copy_implementations,
-        trivial_casts,
-        trivial_numeric_casts,
-        unsafe_code,
-        unused_qualifications,
-    )
-)]
-#![cfg_attr(feature = "for-internal-testing-only", deny(
-    // over time, consider enabling the commented-out lints below
-    clippy::cast_lossless,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    clippy::decimal_literal_representation,
-    clippy::doc_markdown,
-    // clippy::else_if_without_else,
-    clippy::empty_enum,
-    clippy::explicit_into_iter_loop,
-    clippy::explicit_iter_loop,
-    clippy::expl_impl_clone_on_copy,
-    clippy::fallible_impl_from,
-    clippy::filter_map_next,
-    clippy::float_arithmetic,
-    clippy::get_unwrap,
-    clippy::if_not_else,
-    // clippy::indexing_slicing,
-    clippy::inline_always,
-    //clippy::integer_arithmetic,
-    clippy::invalid_upcast_comparisons,
-    clippy::items_after_statements,
-    clippy::manual_find_map,
-    clippy::map_entry,
-    clippy::map_flatten,
-    clippy::match_like_matches_macro,
-    clippy::match_same_arms,
-    clippy::maybe_infinite_iter,
-    clippy::mem_forget,
-    // clippy::missing_docs_in_private_items,
-    clippy::module_name_repetitions,
-    clippy::multiple_inherent_impl,
-    clippy::mut_mut,
-    clippy::needless_borrow,
-    clippy::needless_continue,
-    clippy::needless_pass_by_value,
-    clippy::non_ascii_literal,
-    clippy::path_buf_push_overwrite,
-    clippy::print_stdout,
-    clippy::redundant_closure_for_method_calls,
-    // clippy::shadow_reuse,
-    clippy::shadow_same,
-    clippy::shadow_unrelated,
-    clippy::single_match_else,
-    clippy::string_add,
-    clippy::string_add_assign,
-    clippy::type_repetition_in_bounds,
-    clippy::unicode_not_nfc,
-    // clippy::unimplemented,
-    clippy::unseparated_literal_suffix,
-    clippy::used_underscore_binding,
-    clippy::wildcard_dependencies,
-))]
-#![cfg_attr(
-    feature = "for-internal-testing-only",
-    warn(
-        clippy::missing_const_for_fn,
-        clippy::multiple_crate_versions,
-        // clippy::wildcard_enum_match_arm,
-    )
-)]
-#![allow(clippy::comparison_chain)]
+mod config;
+mod db;
+mod flush_epoch;
+mod heap;
+mod id_allocator;
+mod leaf;
+mod metadata_store;
+mod object_cache;
+mod object_location_mapper;
+mod tree;
 
-macro_rules! io_fail {
-    ($config:expr, $e:expr) => {
-        #[cfg(feature = "failpoints")]
-        {
-            debug_delay();
-            if fail::is_active($e) {
-                $config.set_global_error(Error::FailPoint);
-                return Err(Error::FailPoint).into();
+#[cfg(any(
+    feature = "testing-shred-allocator",
+    feature = "testing-count-allocator"
+))]
+pub mod alloc;
+
+#[cfg(feature = "for-internal-testing-only")]
+mod event_verifier;
+
+#[inline]
+fn debug_delay() {
+    #[cfg(debug_assertions)]
+    {
+        let rand =
+            std::time::SystemTime::UNIX_EPOCH.elapsed().unwrap().as_nanos();
+
+        if rand % 128 > 100 {
+            for _ in 0..rand % 16 {
+                std::thread::yield_now();
             }
         }
-    };
+    }
 }
 
-macro_rules! testing_assert {
-    ($($e:expr),*) => {
-        #[cfg(feature = "for-internal-testing-only")]
-        assert!($($e),*)
-    };
-}
+pub use crate::config::Config;
+pub use crate::db::Db;
+pub use crate::tree::{Batch, Iter, Tree};
+pub use inline_array::InlineArray;
 
-mod atomic_shim;
-mod backoff;
-mod batch;
-mod cache_padded;
-mod concurrency_control;
-mod config;
-mod context;
-mod db;
-mod dll;
-mod ebr;
-mod fastcmp;
-mod fastlock;
-mod fnv;
-mod histogram;
-mod iter;
-mod ivec;
-mod lazy;
-mod lru;
-mod meta;
-#[cfg(feature = "metrics")]
-mod metrics;
-mod node;
-mod oneshot;
-mod pagecache;
-mod result;
-mod serialization;
-mod stack;
-mod subscriber;
-mod sys_limits;
-mod threadpool;
-pub mod transaction;
-mod tree;
-mod varint;
+const NAME_MAPPING_COLLECTION_ID: CollectionId = CollectionId(0);
+const DEFAULT_COLLECTION_ID: CollectionId = CollectionId(1);
+const INDEX_FANOUT: usize = 64;
+const EBR_LOCAL_GC_BUFFER_SIZE: usize = 128;
 
-/// Functionality for conditionally triggering failpoints under test.
-#[cfg(feature = "failpoints")]
-pub mod fail;
+use std::collections::BTreeMap;
+use std::num::NonZeroU64;
+use std::ops::Bound;
+use std::sync::Arc;
 
-#[cfg(feature = "docs")]
-pub mod doc;
+use parking_lot::RwLock;
 
-#[cfg(not(miri))]
-mod flusher;
+use crate::flush_epoch::{
+    FlushEpoch, FlushEpochGuard, FlushEpochTracker, FlushInvariants,
+};
+use crate::heap::{
+    HeapStats, ObjectRecovery, SlabAddress, Update, WriteBatchStats,
+};
+use crate::id_allocator::{Allocator, DeferredFree};
+use crate::leaf::Leaf;
 
-#[cfg(feature = "event_log")]
-/// The event log helps debug concurrency issues.
-pub mod event_log;
+// These are public so that they can be easily crash tested in external
+// binaries. They are hidden because there are zero guarantees around their
+// API stability or functionality.
+#[doc(hidden)]
+pub use crate::heap::{Heap, HeapRecovery};
+#[doc(hidden)]
+pub use crate::metadata_store::MetadataStore;
+#[doc(hidden)]
+pub use crate::object_cache::{CacheStats, Dirty, FlushStats, ObjectCache};
 
 /// Opens a `Db` with a default configuration at the
 /// specified path. This will create a new storage
 /// directory at the specified path if it does
 /// not already exist. You can use the `Db::was_recovered`
 /// method to determine if your database was recovered
-/// from a previous instance. You can use `Config::create_new`
-/// if you want to increase the chances that the database
-/// will be freshly created.
-pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
+/// from a previous instance.
+pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Db> {
     Config::new().path(path).open()
 }
 
-/// Print a performance profile to standard out
-/// detailing what the internals of the system are doing.
+#[derive(Debug, Copy, Clone)]
+pub struct Stats {
+    pub cache: CacheStats,
+}
+
+/// Compare and swap result.
 ///
-/// Requires the `metrics` feature to be enabled,
-/// which may introduce a bit of memory and overall
-/// performance overhead as lots of metrics are
-/// tallied up. Nevertheless, it is a useful
-/// tool for quickly understanding the root of
-/// a performance problem, and it can be invaluable
-/// for including in any opened issues.
-#[cfg(feature = "metrics")]
-#[allow(clippy::print_stdout)]
-pub fn print_profile() {
-    println!("{}", M.format_profile());
+/// It returns `Ok(Ok(()))` if operation finishes successfully and
+///     - `Ok(Err(CompareAndSwapError(current, proposed)))` if operation failed
+///       to setup a new value. `CompareAndSwapError` contains current and
+///       proposed values.
+///     - `Err(Error::Unsupported)` if the database is opened in read-only mode.
+///       otherwise.
+pub type CompareAndSwapResult = std::io::Result<
+    std::result::Result<CompareAndSwapSuccess, CompareAndSwapError>,
+>;
+
+type Index<const LEAF_FANOUT: usize> = concurrent_map::ConcurrentMap<
+    InlineArray,
+    Object<LEAF_FANOUT>,
+    INDEX_FANOUT,
+    EBR_LOCAL_GC_BUFFER_SIZE,
+>;
+
+/// Compare and swap error.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CompareAndSwapError {
+    /// The current value which caused your CAS to fail.
+    pub current: Option<InlineArray>,
+    /// Returned value that was proposed unsuccessfully.
+    pub proposed: Option<InlineArray>,
 }
 
-/// hidden re-export of items for testing purposes
-#[doc(hidden)]
-pub use self::{
-    config::RunningConfig,
-    lazy::Lazy,
-    pagecache::{
-        constants::{
-            MAX_MSG_HEADER_LEN, MAX_SPACE_AMPLIFICATION, SEG_HEADER_LEN,
-        },
-        BatchManifest, DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn,
-        PageCache, PageId,
-    },
-    serialization::Serialize,
-};
-
-pub use self::{
-    batch::Batch,
-    config::{Config, Mode},
-    db::Db,
-    iter::Iter,
-    ivec::IVec,
-    result::{Error, Result},
-    subscriber::{Event, Subscriber},
-    transaction::Transactional,
-    tree::{CompareAndSwapError, Tree},
-};
-
-#[cfg(feature = "metrics")]
-use self::{
-    histogram::Histogram,
-    metrics::{clock, Measure, M},
-};
-
-use {
-    self::{
-        atomic_shim::{AtomicI64 as AtomicLsn, AtomicU64},
-        backoff::Backoff,
-        cache_padded::CachePadded,
-        concurrency_control::Protector,
-        context::Context,
-        ebr::{
-            pin as crossbeam_pin, Atomic, Guard as CrossbeamGuard, Owned,
-            Shared,
-        },
-        fastcmp::fastcmp,
-        lru::Lru,
-        meta::Meta,
-        node::Node,
-        oneshot::{OneShot, OneShotFiller},
-        result::CasResult,
-        subscriber::Subscribers,
-        tree::TreeInner,
-    },
-    log::{debug, error, trace, warn},
-    pagecache::{constants::MAX_BLOB, RecoveryGuard},
-    parking_lot::{Condvar, Mutex, RwLock},
-    std::{
-        collections::BTreeMap,
-        convert::TryFrom,
-        fmt::{self, Debug},
-        io::{Read, Write},
-        sync::{
-            atomic::{
-                AtomicUsize,
-                Ordering::{Acquire, Relaxed, Release, SeqCst},
-            },
-            Arc,
-        },
-    },
-};
-
-#[doc(hidden)]
-pub fn pin() -> Guard {
-    Guard { inner: crossbeam_pin() }
+/// Compare and swap success.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CompareAndSwapSuccess {
+    /// The current value which was successfully installed.
+    pub new_value: Option<InlineArray>,
+    /// Returned value that was previously stored.
+    pub previous_value: Option<InlineArray>,
 }
 
-#[doc(hidden)]
-pub struct Guard {
-    inner: CrossbeamGuard,
-}
-
-impl std::ops::Deref for Guard {
-    type Target = CrossbeamGuard;
-
-    fn deref(&self) -> &CrossbeamGuard {
-        &self.inner
+impl std::fmt::Display for CompareAndSwapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Compare and swap conflict")
     }
 }
 
-#[derive(Debug)]
-struct Conflict;
+impl std::error::Error for CompareAndSwapError {}
 
-type Conflictable<T> = std::result::Result<T, Conflict>;
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialOrd,
+    Ord,
+    PartialEq,
+    Eq,
+    Hash,
+)]
+pub struct ObjectId(NonZeroU64);
 
-fn crc32(buf: &[u8]) -> u32 {
-    let mut hasher = crc32fast::Hasher::new();
-    hasher.update(buf);
-    hasher.finalize()
-}
-
-fn calculate_message_crc32(header: &[u8], body: &[u8]) -> u32 {
-    trace!(
-        "calculating crc32 for header len {} body len {}",
-        header.len(),
-        body.len()
-    );
-    let mut hasher = crc32fast::Hasher::new();
-    hasher.update(body);
-    hasher.update(&header[4..]);
-    let crc32 = hasher.finalize();
-    crc32 ^ 0xFFFF_FFFF
-}
-
-#[cfg(any(test, feature = "lock_free_delays"))]
-mod debug_delay;
-
-#[cfg(any(test, feature = "lock_free_delays"))]
-use debug_delay::debug_delay;
-
-/// This function is useful for inducing random jitter into our atomic
-/// operations, shaking out more possible interleavings quickly. It gets
-/// fully eliminated by the compiler in non-test code.
-#[cfg(not(any(test, feature = "lock_free_delays")))]
-const fn debug_delay() {}
-
-/// Link denotes a tree node or its modification fragment such as
-/// key addition or removal.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Link {
-    /// A new value is set for a given key
-    Set(IVec, IVec),
-    /// The kv pair at a particular index is removed
-    Del(IVec),
-    /// A child of this Index node is marked as mergeable
-    ParentMergeIntention(PageId),
-    /// The merging child has been completely merged into its left sibling
-    ParentMergeConfirm,
-    /// A Node is marked for being merged into its left sibling
-    ChildMergeCap,
-}
-
-/// A fast map that is not resistant to collision attacks. Works
-/// on 8 bytes at a time.
-#[cfg(not(feature = "for-internal-testing-only"))]
-pub(crate) type FastMap8<K, V> =
-    std::collections::HashMap<K, V, std::hash::BuildHasherDefault<fnv::Hasher>>;
-
-#[cfg(feature = "for-internal-testing-only")]
-pub(crate) type FastMap8<K, V> = BTreeMap<K, V>;
-
-/// A fast set that is not resistant to collision attacks. Works
-/// on 8 bytes at a time.
-#[cfg(not(feature = "for-internal-testing-only"))]
-pub(crate) type FastSet8<V> =
-    std::collections::HashSet<V, std::hash::BuildHasherDefault<fnv::Hasher>>;
-
-#[cfg(feature = "for-internal-testing-only")]
-pub(crate) type FastSet8<V> = std::collections::BTreeSet<V>;
-
-#[cfg(not(feature = "for-internal-testing-only"))]
-use std::collections::HashMap as Map;
-
-// we avoid HashMap while testing because
-// it makes tests non-deterministic
-#[cfg(feature = "for-internal-testing-only")]
-use std::collections::{BTreeMap as Map, BTreeSet as Set};
-
-/// A function that may be configured on a particular shared `Tree`
-/// that will be applied as a kind of read-modify-write operator
-/// to any values that are written using the `Tree::merge` method.
-///
-/// The first argument is the key. The second argument is the
-/// optional existing value that was in place before the
-/// merged value being applied. The Third argument is the
-/// data being merged into the item.
-///
-/// You may return `None` to delete the value completely.
-///
-/// Merge operators are shared by all instances of a particular
-/// `Tree`. Different merge operators may be set on different
-/// `Tree`s.
-///
-/// # Examples
-///
-/// ```
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use sled::{Config, IVec};
-///
-/// fn concatenate_merge(
-///   _key: &[u8],               // the key being merged
-///   old_value: Option<&[u8]>,  // the previous value, if one existed
-///   merged_bytes: &[u8]        // the new bytes being merged in
-/// ) -> Option<Vec<u8>> {       // set the new value, return None to delete
-///   let mut ret = old_value
-///     .map(|ov| ov.to_vec())
-///     .unwrap_or_else(|| vec![]);
-///
-///   ret.extend_from_slice(merged_bytes);
-///
-///   Some(ret)
-/// }
-///
-/// let config = Config::new()
-///   .temporary(true);
-///
-/// let tree = config.open()?;
-/// tree.set_merge_operator(concatenate_merge);
-///
-/// let k = b"k1";
-///
-/// tree.insert(k, vec![0]);
-/// tree.merge(k, vec![1]);
-/// tree.merge(k, vec![2]);
-/// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![0, 1, 2]))));
-///
-/// // Replace previously merged data. The merge function will not be called.
-/// tree.insert(k, vec![3]);
-/// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![3]))));
-///
-/// // Merges on non-present values will cause the merge function to be called
-/// // with `old_value == None`. If the merge function returns something (which it
-/// // does, in this case) a new value will be inserted.
-/// tree.remove(k);
-/// tree.merge(k, vec![4]);
-/// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
-/// # Ok(()) }
-/// ```
-pub trait MergeOperator:
-    Send + Sync + Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
-{
-}
-impl<F> MergeOperator for F where
-    F: Send + Sync + Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
-{
-}
-
-mod compile_time_assertions {
-    use crate::*;
-
-    #[allow(unreachable_code)]
-    const fn _assert_public_types_send_sync() {
-        _assert_send::<Subscriber>();
-
-        _assert_send_sync::<Iter>();
-        _assert_send_sync::<Tree>();
-        _assert_send_sync::<Db>();
-        _assert_send_sync::<Batch>();
-        _assert_send_sync::<IVec>();
-        _assert_send_sync::<Config>();
-        _assert_send_sync::<CompareAndSwapError>();
-        _assert_send_sync::<Error>();
-        _assert_send_sync::<Event>();
-        _assert_send_sync::<Mode>();
+impl ObjectId {
+    fn new(from: u64) -> Option<ObjectId> {
+        NonZeroU64::new(from).map(ObjectId)
     }
-
-    const fn _assert_send<S: Send>() {}
-
-    const fn _assert_send_sync<S: Send + Sync>() {}
 }
 
-#[cfg(all(unix, not(miri)))]
-fn maybe_fsync_directory<P: AsRef<std::path::Path>>(
-    path: P,
-) -> std::io::Result<()> {
-    std::fs::File::open(path)?.sync_all()
+impl std::ops::Deref for ObjectId {
+    type Target = u64;
+
+    fn deref(&self) -> &u64 {
+        let self_ref: &NonZeroU64 = &self.0;
+
+        // NonZeroU64 is repr(transparent) where it wraps a u64
+        // so it is guaranteed to match the binary layout. This
+        // makes it safe to cast a reference to one as a reference
+        // to the other like this.
+        let self_ptr: *const NonZeroU64 = self_ref as *const _;
+        let reference: *const u64 = self_ptr as *const u64;
+
+        unsafe { &*reference }
+    }
 }
 
-#[cfg(any(not(unix), miri))]
-fn maybe_fsync_directory<P: AsRef<std::path::Path>>(
-    _: P,
-) -> std::io::Result<()> {
-    Ok(())
+impl concurrent_map::Minimum for ObjectId {
+    const MIN: ObjectId = ObjectId(NonZeroU64::MIN);
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialOrd,
+    Ord,
+    PartialEq,
+    Eq,
+    Hash,
+)]
+pub struct CollectionId(u64);
+
+impl concurrent_map::Minimum for CollectionId {
+    const MIN: CollectionId = CollectionId(u64::MIN);
+}
+
+#[derive(Debug, Clone)]
+struct CacheBox<const LEAF_FANOUT: usize> {
+    leaf: Option<Box<Leaf<LEAF_FANOUT>>>,
+    #[allow(unused)]
+    logged_index: BTreeMap<InlineArray, LogValue>,
+}
+
+#[allow(unused)]
+#[derive(Debug, Clone)]
+struct LogValue {
+    location: SlabAddress,
+    value: Option<InlineArray>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Object<const LEAF_FANOUT: usize> {
+    object_id: ObjectId,
+    collection_id: CollectionId,
+    low_key: InlineArray,
+    inner: Arc<RwLock<CacheBox<LEAF_FANOUT>>>,
+}
+
+impl<const LEAF_FANOUT: usize> PartialEq for Object<LEAF_FANOUT> {
+    fn eq(&self, other: &Self) -> bool {
+        self.object_id == other.object_id
+    }
+}
+
+/// Stored on `Db` and `Tree` in an Arc, so that when the
+/// last "high-level" struct is dropped, the flusher thread
+/// is cleaned up.
+struct ShutdownDropper<const LEAF_FANOUT: usize> {
+    shutdown_sender: parking_lot::Mutex<
+        std::sync::mpsc::Sender<std::sync::mpsc::Sender<()>>,
+    >,
+    cache: parking_lot::Mutex<object_cache::ObjectCache<LEAF_FANOUT>>,
+}
+
+impl<const LEAF_FANOUT: usize> Drop for ShutdownDropper<LEAF_FANOUT> {
+    fn drop(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        log::debug!("sending shutdown signal to flusher");
+        if self.shutdown_sender.lock().send(tx).is_ok() {
+            if let Err(e) = rx.recv() {
+                log::error!("failed to shut down flusher thread: {:?}", e);
+            } else {
+                log::debug!("flush thread successfully terminated");
+            }
+        } else {
+            log::debug!(
+                "failed to shut down flusher, manually flushing ObjectCache"
+            );
+            let cache = self.cache.lock();
+            if let Err(e) = cache.flush() {
+                log::error!(
+                    "Db flusher encountered error while flushing: {:?}",
+                    e
+                );
+                cache.set_error(&e);
+            }
+        }
+    }
+}
+
+fn map_bound<T, U, F: FnOnce(T) -> U>(bound: Bound<T>, f: F) -> Bound<U> {
+    match bound {
+        Bound::Unbounded => Bound::Unbounded,
+        Bound::Included(x) => Bound::Included(f(x)),
+        Bound::Excluded(x) => Bound::Excluded(f(x)),
+    }
+}
+
+const fn _assert_public_types_send_sync() {
+    use std::fmt::Debug;
+
+    const fn _assert_send<S: Send + Clone + Debug>() {}
+
+    const fn _assert_send_sync<S: Send + Sync + Clone + Debug>() {}
+
+    /*
+    _assert_send::<Subscriber>();
+    _assert_send_sync::<Event>();
+    _assert_send_sync::<Mode>();
+    _assert_send_sync::<Tree>();
+    */
+
+    _assert_send::<Db>();
+
+    _assert_send_sync::<Batch>();
+    _assert_send_sync::<InlineArray>();
+    _assert_send_sync::<Config>();
+    _assert_send_sync::<CompareAndSwapSuccess>();
+    _assert_send_sync::<CompareAndSwapError>();
 }

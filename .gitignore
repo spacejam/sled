@@ -1,6 +1,8 @@
+fuzz-*.log
 default.sled
-crash_*
+timing_test*
 *db
+crash_test_files
 *conf
 *snap.*
 *grind.out*

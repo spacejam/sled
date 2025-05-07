@@ -249,7 +249,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     continue;
                 }
                 // find the last version from a stable batch, if there is one,
-                // throw away all preceding versions
+                // throw away all preceeding versions
                 let committed_find_result = ref_entry.versions.iter().enumerate().rev().find(|(_, ReferenceVersion{ batch, value: _ })| match batch {
                     Some(batch) => *batch <= stable_batch,
                     None => false,
@@ -485,9 +485,10 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     if reference_entry.versions.len() > 1
                         && reference_entry.crash_epoch == crash_counter
                     {
-                        let last = std::mem::take(&mut reference_entry.versions)
-                        .pop()
-                        .unwrap();
+                        let last =
+                            std::mem::take(&mut reference_entry.versions)
+                                .pop()
+                                .unwrap();
                         reference_entry.versions.push(last);
                     }
                 }
@@ -1005,7 +1006,7 @@ fn failpoints_bug_11() {
 #[cfg_attr(miri, ignore)]
 fn failpoints_bug_12() {
     // postmortem 1: we were not sorting the recovery state, which
-    // led to divergent state across recoveries. TODO wut
+    // led to divergent state across recoveries.
     assert!(prop_tree_crashes_nicely(
         vec![
             Set,

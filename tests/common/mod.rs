@@ -1,17 +1,9 @@
-#[cfg(not(any(feature = "testing", feature = "light_testing")))]
-compile_error!(
-    "please run tests using the \"testing\" feature, \
-     which enables additional checks at runtime and \
-     causes more race conditions to jump out by \
-     inserting delays in concurrent code."
-);
-
 // the memshred feature causes all allocated and deallocated
 // memory to be set to a specific non-zero value of 0xa1 for
 // uninitialized allocations and 0xde for deallocated memory,
 // in the hope that it will cause memory errors to surface
 // more quickly.
-#[cfg(feature = "memshred")]
+#[cfg(feature = "testing-shred-allocator")]
 mod alloc {
     use std::alloc::{Layout, System};
 
@@ -42,9 +34,6 @@ pub fn setup_logger() {
     fn tn() -> String {
         std::thread::current().name().unwrap_or("unknown").to_owned()
     }
-
-    #[cfg(feature = "pretty_backtrace")]
-    color_backtrace::install();
 
     let mut builder = env_logger::Builder::new();
     builder

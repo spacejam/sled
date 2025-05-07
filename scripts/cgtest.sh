@@ -5,7 +5,7 @@ cgdelete memory:sledTest || true
 cgcreate -g memory:sledTest
 echo 100M > /sys/fs/cgroup/memory/sledTest/memory.limit_in_bytes
 
-su $SUDO_USER -c 'cargo build --release --features=for-internal-testing-only'
+su $SUDO_USER -c 'cargo build --release --features=testing'
 
 for test in target/release/deps/test*; do
   if [[ -x $test ]]

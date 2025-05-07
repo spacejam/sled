@@ -51,7 +51,7 @@ jobs:
       run: |
         rustup update --no-self-update
         cargo test --release --no-default-features --features=for-internal-testing-only -- --nocapture
-    - uses: actions/upload-artifact@v2
+    - uses: actions/upload-artifact@v4
       if: ${{ failure() && runner.os == 'linux' }}
       with:
         name: linux-core-dumps
@@ -134,7 +134,7 @@ jobs:
         echo ""
         echo "all backtraces:"
         gdb target/release/stress2 core-dumps/* -batch -ex 't a a bt -frame-info source-and-location'
-    - uses: actions/upload-artifact@v2
+    - uses: actions/upload-artifact@v4
       if: ${{ failure() }}
       with:
         name: linux-core-dumps

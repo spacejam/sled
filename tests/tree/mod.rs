@@ -1,10 +1,11 @@
 use std::{collections::BTreeMap, convert::TryInto, fmt, panic};
 
-use quickcheck::{Arbitrary, Gen, RngCore};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use quickcheck::{Arbitrary, Gen};
 use rand_distr::{Distribution, Gamma};
 
-use sled::*;
+use sled::{Config, Db as SledDb, InlineArray};
+
+type Db = SledDb<3>;
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Key(pub Vec<u8>);
@@ -24,70 +25,11 @@ impl fmt::Debug for Key {
     }
 }
 
-struct SledGen {
-    r: StdRng,
-    size: usize,
-}
-
-impl Gen for SledGen {
-    fn size(&self) -> usize {
-        self.size
-    }
-}
-
-impl RngCore for SledGen {
-    fn next_u32(&mut self) -> u32 {
-        self.r.gen::<u32>()
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        self.r.gen::<u64>()
-    }
-
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.r.fill_bytes(dest)
-    }
-
-    fn try_fill_bytes(
-        &mut self,
-        dest: &mut [u8],
-    ) -> std::result::Result<(), rand::Error> {
-        self.r.try_fill_bytes(dest)
-    }
-}
-
-pub fn fuzz_then_shrink(buf: &[u8]) {
-    let use_compression = !cfg!(feature = "no_zstd")
-        && !cfg!(miri)
-        && buf.first().unwrap_or(&0) % 2 == 0;
-
-    let ops: Vec<Op> = buf
-        .chunks(2)
-        .map(|chunk| {
-            let mut seed = [0_u8; 32];
-            seed[0..chunk.len()].copy_from_slice(chunk);
-            let rng: StdRng = SeedableRng::from_seed(seed);
-            let mut sled_rng = SledGen { r: rng, size: 2 };
-
-            Op::arbitrary(&mut sled_rng)
-        })
-        .collect();
-
-    let cache_bits = *buf.get(1).unwrap_or(&0);
-    let segment_size_bits = *buf.get(2).unwrap_or(&0);
-
-    match panic::catch_unwind(move || {
-        prop_tree_matches_btreemap(
-            ops,
-            false,
-            use_compression,
-            cache_bits,
-            segment_size_bits,
-        )
-    }) {
-        Ok(_) => {}
-        Err(_e) => panic!("TODO"),
-    }
+fn range(g: &mut Gen, min_inclusive: usize, max_exclusive: usize) -> usize {
+    assert!(max_exclusive > min_inclusive);
+    let range = max_exclusive - min_inclusive;
+    let generated = usize::arbitrary(g) % range;
+    min_inclusive + generated
 }
 
 impl Arbitrary for Key {
@@ -95,24 +37,24 @@ impl Arbitrary for Key {
     #![allow(clippy::cast_precision_loss)]
     #![allow(clippy::cast_sign_loss)]
 
-    fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        if g.gen::<bool>() {
+    fn arbitrary(g: &mut Gen) -> Self {
+        if bool::arbitrary(g) {
             let gs = g.size();
             let gamma = Gamma::new(0.3, gs as f64).unwrap();
             let v = gamma.sample(&mut rand::thread_rng());
             let len = if v > 3000.0 { 10000 } else { (v % 300.) as usize };
 
-            let space = g.gen_range(0, gs) + 1;
+            let space = range(g, 0, gs) + 1;
 
-            let inner = (0..len).map(|_| g.gen_range(0, space) as u8).collect();
+            let inner = (0..len).map(|_| range(g, 0, space) as u8).collect();
 
             Self(inner)
         } else {
-            let len = g.gen_range(0, 2);
+            let len = range(g, 0, 2);
             let mut inner = vec![];
 
             for _ in 0..len {
-                inner.push(g.gen::<u8>());
+                inner.push(u8::arbitrary(g));
             }
 
             Self(inner)
@@ -134,7 +76,7 @@ impl Arbitrary for Key {
 #[derive(Debug, Clone)]
 pub enum Op {
     Set(Key, u8),
-    Merge(Key, u8),
+    // Merge(Key, u8),
     Get(Key),
     GetLt(Key),
     GetGt(Key),
@@ -144,25 +86,25 @@ pub enum Op {
     Restart,
 }
 
-use self::Op::{Cas, Del, Get, GetGt, GetLt, Merge, Restart, Scan, Set};
+use self::Op::*;
 
 impl Arbitrary for Op {
-    fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        if g.gen_bool(1. / 10.) {
+    fn arbitrary(g: &mut Gen) -> Self {
+        if range(g, 0, 10) == 0 {
             return Restart;
         }
 
-        let choice = g.gen_range(0, 8);
+        let choice = range(g, 0, 7);
 
         match choice {
-            0 => Set(Key::arbitrary(g), g.gen::<u8>()),
-            1 => Merge(Key::arbitrary(g), g.gen::<u8>()),
-            2 => Get(Key::arbitrary(g)),
-            3 => GetLt(Key::arbitrary(g)),
-            4 => GetGt(Key::arbitrary(g)),
-            5 => Del(Key::arbitrary(g)),
-            6 => Cas(Key::arbitrary(g), g.gen::<u8>(), g.gen::<u8>()),
-            7 => Scan(Key::arbitrary(g), g.gen_range(-40, 40)),
+            0 => Set(Key::arbitrary(g), u8::arbitrary(g)),
+            1 => Get(Key::arbitrary(g)),
+            2 => GetLt(Key::arbitrary(g)),
+            3 => GetGt(Key::arbitrary(g)),
+            4 => Del(Key::arbitrary(g)),
+            5 => Cas(Key::arbitrary(g), u8::arbitrary(g), u8::arbitrary(g)),
+            6 => Scan(Key::arbitrary(g), range(g, 0, 80) as isize - 40),
+            //7 => Merge(Key::arbitrary(g), u8::arbitrary(g)),
             _ => panic!("impossible choice"),
         }
     }
@@ -170,10 +112,12 @@ impl Arbitrary for Op {
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         match *self {
             Set(ref k, v) => Box::new(k.shrink().map(move |sk| Set(sk, v))),
+            /*
             Merge(ref k, v) => Box::new(
                 k.shrink()
                     .flat_map(move |k| vec![Set(k.clone(), v), Merge(k, v)]),
             ),
+            */
             Get(ref k) => Box::new(k.shrink().map(Get)),
             GetLt(ref k) => Box::new(k.shrink().map(GetLt)),
             GetGt(ref k) => Box::new(k.shrink().map(GetGt)),
@@ -196,6 +140,7 @@ fn u16_to_bytes(u: u16) -> Vec<u8> {
     u.to_be_bytes().to_vec()
 }
 
+/*
 // just adds up values as if they were u16's
 fn merge_operator(
     _k: &[u8],
@@ -208,20 +153,19 @@ fn merge_operator(
     let ret = u16_to_bytes(new_n);
     Some(ret)
 }
+*/
 
 pub fn prop_tree_matches_btreemap(
     ops: Vec<Op>,
     flusher: bool,
-    use_compression: bool,
-    cache_bits: u8,
-    segment_size_bits: u8,
+    compression_level: i32,
+    cache_size: usize,
 ) -> bool {
     if let Err(e) = prop_tree_matches_btreemap_inner(
         ops,
         flusher,
-        use_compression,
-        cache_bits,
-        segment_size_bits,
+        compression_level,
+        cache_size,
     ) {
         eprintln!("hit error while running quickcheck on tree: {:?}", e);
         false
@@ -233,26 +177,20 @@ pub fn prop_tree_matches_btreemap(
 fn prop_tree_matches_btreemap_inner(
     ops: Vec<Op>,
     flusher: bool,
-    use_compression: bool,
-    cache_bits: u8,
-    segment_size_bits: u8,
-) -> Result<()> {
+    compression: i32,
+    cache_size: usize,
+) -> std::io::Result<()> {
     use self::*;
 
     super::common::setup_logger();
 
-    let use_compression = cfg!(feature = "compression") && use_compression;
-
-    let config = Config::new()
-        .temporary(true)
-        .use_compression(use_compression)
+    let config = Config::tmp()?
+        .zstd_compression_level(compression)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .cache_capacity(256 * (1 << (cache_bits as usize % 16)))
-        .idgen_persist_interval(1)
-        .segment_size(256 * (1 << (segment_size_bits as usize % 16)));
+        .cache_capacity_bytes(cache_size);
 
-    let mut tree = config.open().unwrap();
-    tree.set_merge_operator(merge_operator);
+    let mut tree: Db = config.open().unwrap();
+    //tree.set_merge_operator(merge_operator);
 
     let mut reference: BTreeMap<Key, u16> = BTreeMap::new();
 
@@ -270,11 +208,13 @@ fn prop_tree_matches_btreemap_inner(
                     tree
                 );
             }
+            /*
             Merge(k, v) => {
                 tree.merge(&k.0, vec![v]).unwrap();
                 let entry = reference.entry(k).or_insert(0_u16);
                 *entry += u16::from(v);
             }
+            */
             Get(k) => {
                 let res1 = tree.get(&*k.0).unwrap().map(|v| bytes_to_u16(&*v));
                 let res2 = reference.get(&k).cloned();
@@ -286,7 +226,7 @@ fn prop_tree_matches_btreemap_inner(
                     .iter()
                     .rev()
                     .find(|(key, _)| **key < k)
-                    .map(|(k, _v)| IVec::from(&*k.0));
+                    .map(|(k, _v)| InlineArray::from(&*k.0));
                 assert_eq!(
                     res1, res2,
                     "get_lt({:?}) should have returned {:?} \
@@ -300,7 +240,7 @@ fn prop_tree_matches_btreemap_inner(
                 let res2 = reference
                     .iter()
                     .find(|(key, _)| **key > k)
-                    .map(|(k, _v)| IVec::from(&*k.0));
+                    .map(|(k, _v)| InlineArray::from(&*k.0));
                 assert_eq!(
                     res1, res2,
                     "get_gt({:?}) expected {:?} in tree {:?}",
@@ -337,7 +277,9 @@ fn prop_tree_matches_btreemap_inner(
                         .map(|(rk, rv)| (rk.0.clone(), *rv));
 
                     for r in ref_iter {
-                        let tree_next = tree_iter.next().unwrap();
+                        let tree_next = tree_iter
+                            .next()
+                            .expect("iterator incorrectly stopped early");
                         let lhs = (tree_next.0, &*tree_next.1);
                         let rhs = (r.0.clone(), &*u16_to_bytes(r.1));
                         assert_eq!(
@@ -380,38 +322,16 @@ fn prop_tree_matches_btreemap_inner(
             Restart => {
                 drop(tree);
                 tree = config.open().unwrap();
-                tree.set_merge_operator(merge_operator);
+                //tree.set_merge_operator(merge_operator);
             }
         }
-        if let Err(e) = config.global_error() {
+        if let Err(e) = tree.check_error() {
             eprintln!("quickcheck test encountered error: {:?}", e);
             return Err(e);
         }
     }
 
-    let space_amplification = tree
-        .space_amplification()
-        .expect("should be able to read files and pages");
+    let _ = std::fs::remove_dir_all(config.path);
 
-    assert!(
-        space_amplification < MAX_SPACE_AMPLIFICATION,
-        "space amplification was measured to be {}, \
-         which is higher than the maximum of {}",
-        space_amplification,
-        MAX_SPACE_AMPLIFICATION
-    );
-
-    drop(tree);
-    config.global_error()
-}
-
-#[test]
-fn fuzz_test() {
-    let seed = [0; 32];
-    fuzz_then_shrink(&seed);
-    let seed = [0; 31];
-    fuzz_then_shrink(&seed);
-    let seed = [0; 33];
-    fuzz_then_shrink(&seed);
-    fuzz_then_shrink(&[]);
+    tree.check_error()
 }
