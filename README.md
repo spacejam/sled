@@ -63,7 +63,7 @@ tree.compare_and_swap(
 tree.flush()?;
 ```
 
-$${\color{red}This README is slightly out of sync with the main branch, which contains a large in-progress rewrite of the storage engine}$$
+$${\color{red}This \space README \space is \space slightly \space out \space of \space sync \space with \space the \space main \space branch \space which \space contains \space a \space large \space in-progress \space rewrite \space of \space the \space storage \space engine}$$
 
 If you would like to work with structured data without paying expensive deserialization costs, check out the [structured](examples/structured.rs) example!
 
