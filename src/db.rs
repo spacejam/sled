@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::io;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -47,6 +47,15 @@ impl<const LEAF_FANOUT: usize> std::ops::Deref for Db<LEAF_FANOUT> {
     type Target = Tree<LEAF_FANOUT>;
     fn deref(&self) -> &Tree<LEAF_FANOUT> {
         &self.default_tree
+    }
+}
+
+impl<const LEAF_FANOUT: usize> IntoIterator for &Db<LEAF_FANOUT> {
+    type Item = io::Result<(InlineArray, InlineArray)>;
+    type IntoIter = crate::Iter<LEAF_FANOUT>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -337,7 +346,10 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             if let Err(e) = spawn_res {
                 return Err(io::Error::new(
                     io::ErrorKind::Other,
-                    format!("unable to spawn flusher thread for sled database: {:?}", e)
+                    format!(
+                        "unable to spawn flusher thread for sled database: {:?}",
+                        e
+                    ),
                 ));
             }
         }
