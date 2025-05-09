@@ -356,51 +356,72 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     // as the rest of the batch. So, this is why we potentially separate the
     // flush of the left merge from the flush of the operations that caused
     // the leaf to empty in the first place.
-    fn merge_leaf_into_left_sibling<'a>(
+    fn merge_leaf_into_right_sibling<'a>(
         &'a self,
-        mut leaf_guard: LeafWriteGuard<'a, LEAF_FANOUT>,
+        mut predecessor: LeafWriteGuard<'a, LEAF_FANOUT>,
     ) -> io::Result<()> {
-        let mut predecessor_guard = self.predecessor_leaf_mut(&leaf_guard)?;
+        let mut successor = self.successor_leaf_mut(&predecessor)?;
 
-        assert!(predecessor_guard.epoch() >= leaf_guard.epoch());
+        // TODO why should this be true?
+        assert!(successor.epoch() >= predecessor.epoch());
 
-        let merge_epoch = leaf_guard.epoch().max(predecessor_guard.epoch());
+        let merge_epoch = predecessor.epoch().max(successor.epoch());
 
-        let leaf = leaf_guard.leaf_write.leaf.as_mut().unwrap();
-        let predecessor = predecessor_guard.leaf_write.leaf.as_mut().unwrap();
+        let predecessor_leaf = predecessor.leaf_write.leaf.as_mut().unwrap();
+        let successor_leaf = successor.leaf_write.leaf.as_mut().unwrap();
 
-        assert!(leaf.deleted.is_none());
-        assert!(leaf.data.is_empty());
-        assert!(predecessor.deleted.is_none());
-        assert_eq!(predecessor.hi.as_ref(), Some(&leaf.lo));
-
-        log::trace!(
-            "deleting empty node id {} with low key {:?} and high key {:?}",
-            leaf_guard.node.object_id.0,
-            leaf.lo,
-            leaf.hi
+        assert!(predecessor_leaf.deleted.is_none());
+        assert!(predecessor_leaf.data.is_empty());
+        assert!(successor_leaf.deleted.is_none());
+        assert_eq!(
+            predecessor_leaf.hi.as_deref(),
+            Some(successor_leaf.lo.as_ref()),
         );
 
-        predecessor.hi = leaf.hi.clone();
-        predecessor.set_dirty_epoch(merge_epoch);
+        log::trace!(
+            "merging empty predecessor node id {} with low key {:?} and high key {:?} \
+            and successor node id {} with low key {:?} and high key {:?} into the \
+            predecessor",
+            predecessor.node.object_id.0,
+            predecessor_leaf.lo,
+            predecessor_leaf.hi,
+            successor.node.object_id.0,
+            successor_leaf.lo,
+            successor_leaf.hi
+        );
 
-        leaf.deleted = Some(merge_epoch);
+        // TODO
+        // TODO
+        // TODO left-to-right merge needs to have the empty left node
+        // TODO eat the data from the non-empty right, then delete the
+        // TODO right node. This is to avoid changing low key indexes.
+        // TODO
+        // TODO
 
-        leaf_guard
+        predecessor_leaf.hi = Some(successor_leaf.lo.clone());
+        predecessor_leaf.set_dirty_epoch(merge_epoch);
+        predecessor_leaf.data = std::mem::take(&mut successor_leaf.data);
+
+        successor_leaf.deleted = Some(merge_epoch);
+
+        successor
             .inner
             .cache
             .tree_leaves_merged
             .fetch_add(1, Ordering::Relaxed);
 
-        self.index.remove(&leaf_guard.low_key).unwrap();
-        self.cache.object_id_index.remove(&leaf_guard.node.object_id).unwrap();
+        assert_eq!(successor.low_key, successor_leaf.lo);
+        assert_eq!(predecessor.low_key, predecessor_leaf.lo);
+
+        self.index.remove(&successor.low_key).unwrap();
+        self.cache.object_id_index.remove(&successor.node.object_id).unwrap();
 
         // NB: these updates must "happen" atomically in the same flush epoch
         self.cache.install_dirty(
             merge_epoch,
-            leaf_guard.node.object_id,
+            successor.node.object_id,
             Dirty::MergedAndDeleted {
-                object_id: leaf_guard.node.object_id,
+                object_id: successor.node.object_id,
                 collection_id: self.collection_id,
             },
         );
@@ -408,7 +429,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         #[cfg(feature = "for-internal-testing-only")]
         {
             self.cache.event_verifier.mark(
-                leaf_guard.node.object_id,
+                successor.node.object_id,
                 merge_epoch,
                 event_verifier::State::Unallocated,
                 concat!(file!(), ':', line!(), ":merged"),
@@ -417,10 +438,10 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         self.cache.install_dirty(
             merge_epoch,
-            predecessor_guard.node.object_id,
+            predecessor.node.object_id,
             Dirty::NotYetSerialized {
-                low_key: predecessor.lo.clone(),
-                node: predecessor_guard.node.clone(),
+                low_key: predecessor_leaf.lo.clone(),
+                node: predecessor.node.clone(),
                 collection_id: self.collection_id,
             },
         );
@@ -428,7 +449,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         #[cfg(feature = "for-internal-testing-only")]
         {
             self.cache.event_verifier.mark(
-                predecessor_guard.node.object_id,
+                predecessor.node.object_id,
                 merge_epoch,
                 event_verifier::State::Dirty,
                 concat!(file!(), ':', line!(), ":merged-into"),
@@ -436,60 +457,50 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         }
 
         let (p_object_id, p_sz) =
-            predecessor_guard.handle_cache_access_and_eviction_externally();
+            predecessor.handle_cache_access_and_eviction_externally();
         let (s_object_id, s_sz) =
-            leaf_guard.handle_cache_access_and_eviction_externally();
+            successor.handle_cache_access_and_eviction_externally();
 
         self.cache.mark_access_and_evict(p_object_id, p_sz, merge_epoch)?;
-
-        // TODO maybe we don't need to do this, since we're removing it
         self.cache.mark_access_and_evict(s_object_id, s_sz, merge_epoch)?;
 
         Ok(())
     }
 
-    fn predecessor_leaf_mut<'a>(
+    fn successor_leaf_mut<'a>(
         &'a self,
-        successor: &LeafWriteGuard<'a, LEAF_FANOUT>,
+        predecessor: &LeafWriteGuard<'a, LEAF_FANOUT>,
     ) -> io::Result<LeafWriteGuard<'a, LEAF_FANOUT>> {
-        assert_ne!(successor.low_key, &*InlineArray::MIN);
+        let predecessor_leaf = predecessor.leaf_write.leaf.as_ref().unwrap();
+        assert!(predecessor_leaf.hi.is_some());
 
         loop {
-            let search_key = self
-                .index
-                .range::<InlineArray, _>(..&successor.low_key)
-                .next_back()
-                .unwrap()
-                .0;
+            let search_key = predecessor_leaf.hi.as_ref().unwrap();
 
-            assert!(search_key < successor.low_key);
+            let successor_node = self.leaf_for_key_mut(&search_key)?;
 
-            // TODO this can probably deadlock
-            let node = self.leaf_for_key_mut(&search_key)?;
+            let successor_leaf =
+                successor_node.leaf_write.leaf.as_ref().unwrap();
 
-            let leaf = node.leaf_write.leaf.as_ref().unwrap();
+            assert!(predecessor_leaf.lo < successor_leaf.lo);
 
-            assert!(leaf.lo < successor.low_key);
-
-            let leaf_hi = leaf.hi.as_ref().expect("we hold the successor mutex, so the predecessor should have a hi key");
-
-            if leaf_hi > &successor.low_key {
-                let still_in_index = self.index.get(&successor.low_key);
+            if predecessor_leaf.hi.as_ref().unwrap() > &successor_leaf.lo {
+                let still_in_index = self.index.get(&successor_leaf.lo);
                 panic!(
                     "somehow, predecessor high key of {:?} \
                     is greater than successor low key of {:?}. current index presence: {:?} \n \
                     predecessor: {:?} \n successor: {:?}",
-                    leaf_hi,
-                    successor.low_key,
+                    predecessor_leaf.hi,
+                    successor_leaf.lo,
                     still_in_index,
-                    leaf,
-                    successor.leaf_write.leaf.as_ref().unwrap(),
+                    predecessor_leaf,
+                    successor_leaf,
                 );
             }
-            if leaf_hi != &successor.low_key {
+            if predecessor_leaf.hi.as_ref().unwrap() != &successor_leaf.lo {
                 continue;
             }
-            return Ok(node);
+            return Ok(successor_node);
         }
     }
 
@@ -897,11 +908,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             }
 
             if cfg!(not(feature = "monotonic-behavior")) {
-                if leaf.data.is_empty()
-                    && leaf_guard.low_key != InlineArray::MIN
-                {
-                    assert_ne!(leaf_guard.node.low_key, InlineArray::MIN);
-                    self.merge_leaf_into_left_sibling(leaf_guard)?;
+                if leaf.data.is_empty() && leaf.hi.is_some() {
+                    self.merge_leaf_into_right_sibling(leaf_guard)?;
                 }
             }
         }
@@ -1082,9 +1090,9 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         }
 
         if cfg!(not(feature = "monotonic-behavior")) {
-            if leaf.data.is_empty() && leaf_guard.low_key != InlineArray::MIN {
+            if leaf.data.is_empty() && leaf.hi.is_some() {
                 assert!(!split_happened);
-                self.merge_leaf_into_left_sibling(leaf_guard)?;
+                self.merge_leaf_into_right_sibling(leaf_guard)?;
             }
         }
 
