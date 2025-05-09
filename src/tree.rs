@@ -390,15 +390,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             successor_leaf.hi
         );
 
-        // TODO
-        // TODO
-        // TODO left-to-right merge needs to have the empty left node
-        // TODO eat the data from the non-empty right, then delete the
-        // TODO right node. This is to avoid changing low key indexes.
-        // TODO
-        // TODO
-
-        predecessor_leaf.hi = Some(successor_leaf.lo.clone());
+        predecessor_leaf.hi = successor_leaf.hi.clone();
         predecessor_leaf.set_dirty_epoch(merge_epoch);
         predecessor_leaf.data = std::mem::take(&mut successor_leaf.data);
 
