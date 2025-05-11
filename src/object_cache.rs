@@ -402,6 +402,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     ) -> io::Result<()> {
         let mut ca = self.cache_advisor.borrow_mut();
         let to_evict = ca.accessed_reuse_buffer(*object_id, size);
+        let mut not_found = 0;
         for (node_to_evict, _rough_size) in to_evict {
             let object_id =
                 if let Some(object_id) = ObjectId::new(*node_to_evict) {
@@ -412,18 +413,11 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
             let node = if let Some(n) = self.object_id_index.get(&object_id) {
                 if *n.object_id != *node_to_evict {
-                    log::debug!(
-                        "during cache eviction, node to evict did not match current occupant for {:?}",
-                        node_to_evict
-                    );
                     continue;
                 }
                 n
             } else {
-                log::debug!(
-                    "during cache eviction, unable to find node to evict for {:?}",
-                    node_to_evict
-                );
+                not_found += 1;
                 continue;
             };
 
@@ -454,6 +448,13 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 }
                 write.leaf = None;
             }
+        }
+
+        if not_found > 0 {
+            log::trace!(
+                "during cache eviction, did not find {} nodes that we were trying to evict",
+                not_found
+            );
         }
 
         Ok(())
@@ -741,6 +742,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         let before_compute_defrag = Instant::now();
 
         if cfg!(not(feature = "monotonic-behavior")) {
+            let mut object_not_found = 0;
+
             for fragmented_object_id in objects_to_defrag {
                 let object_opt =
                     self.object_id_index.get(&fragmented_object_id);
@@ -748,9 +751,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 let object = if let Some(object) = object_opt {
                     object
                 } else {
-                    log::debug!(
-                        "defragmenting object not found in object_id_index: {fragmented_object_id:?}"
-                    );
+                    object_not_found += 1;
                     continue;
                 };
 
@@ -785,6 +786,13 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     low_key: object.low_key,
                     data,
                 });
+            }
+
+            if object_not_found > 0 {
+                log::debug!(
+                    "{} objects not found while defragmenting",
+                    object_not_found
+                );
             }
         }
 

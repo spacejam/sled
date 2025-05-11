@@ -31,7 +31,7 @@ const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREA
 const SPACE: usize = N;
 
 #[allow(dead_code)]
-const INTENSITY: usize = 10;
+const INTENSITY: usize = 1;
 
 fn kv(i: usize) -> InlineArray {
     let i = i % SPACE;

@@ -204,12 +204,30 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     )> {
         let before_read_io = Instant::now();
 
-        let mut read_loops: u64 = 0;
-
         #[cfg(feature = "for-internal-testing-only")]
         let _b0 = track_blocks();
 
+        let mut loops: u64 = 0;
+        let mut last_continue = "none";
+
         loop {
+            loops += 1;
+
+            if loops > 10_000_000 {
+                log::warn!(
+                    "page_in spinning for a long time due to continue point {}",
+                    last_continue
+                );
+
+                #[cfg(feature = "for-internal-testing-only")]
+                assert!(
+                    loops <= 10_000_000,
+                    "stuck in loop at continue point: {}, search key: {:?}",
+                    last_continue,
+                    key,
+                );
+            }
+
             let _heap_pin = self.cache.heap_object_id_pin();
 
             let (low_key, node) = self.index.get_lte(key).unwrap();
@@ -217,6 +235,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 log::trace!("retry due to mismatched collection id in page_in");
 
                 hint::spin_loop();
+
+                last_continue = concat!(file!(), ':', line!());
 
                 continue;
             }
@@ -238,18 +258,9 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                             Err(e) => return Err(annotate!(e)),
                         }
                     } else {
-                        // this particular object ID is not present
-                        read_loops += 1;
-                        // TODO change this assertion
-                        debug_assert!(
-                            read_loops < 10_000_000_000,
-                            "search key: {:?} node key: {:?} object id: {:?}",
-                            key,
-                            low_key,
-                            node.object_id
-                        );
-
                         hint::spin_loop();
+
+                        last_continue = concat!(file!(), ':', line!());
 
                         continue;
                     };
@@ -275,7 +286,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     // TODO determine why this rare situation occurs and better
                     // understand whether it is really benign.
                     log::trace!("mismatch between object key and leaf low");
+
                     hint::spin_loop();
+
+                    last_continue = concat!(file!(), ':', line!());
+
                     continue;
                 }
 
@@ -316,6 +331,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
                 hint::spin_loop();
 
+                last_continue = concat!(file!(), ':', line!());
+
                 continue;
             }
 
@@ -331,14 +348,20 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
                 hint::spin_loop();
 
+                last_continue = concat!(file!(), ':', line!());
+
                 continue;
             }
 
             if let Some(ref hi) = leaf.hi {
                 if &**hi <= key {
                     let size = leaf.in_memory_size;
+                    log::trace!(
+                        "key overshoot in page_in - search key {:?}, node hi {:?}",
+                        key,
+                        hi
+                    );
                     drop(write);
-                    log::trace!("key overshoot in page_in");
                     self.cache.mark_access_and_evict(
                         node.object_id,
                         size,
@@ -346,6 +369,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     )?;
 
                     hint::spin_loop();
+
+                    last_continue = concat!(file!(), ':', line!());
 
                     continue;
                 }
@@ -538,6 +563,12 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         assert!(Some(old_dirty_epoch) > leaf.max_unflushed_epoch);
         leaf.max_unflushed_epoch = Some(old_dirty_epoch);
         leaf.page_out_on_flush.take();
+
+        log::trace!(
+            "cooperatively serializing leaf id {:?} with low key {:?}",
+            object_id,
+            leaf.lo
+        );
 
         #[cfg(feature = "for-internal-testing-only")]
         {
