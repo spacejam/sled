@@ -130,6 +130,8 @@
 //! ).unwrap();
 //! # let _ = std::fs::remove_dir_all("my_db");
 //! ```
+#[cfg(feature = "for-internal-testing-only")]
+mod block_checker;
 mod config;
 mod db;
 mod flush_epoch;
