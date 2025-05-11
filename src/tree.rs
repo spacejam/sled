@@ -20,6 +20,9 @@ use parking_lot::{
 
 use crate::*;
 
+#[cfg(feature = "for-internal-testing-only")]
+use crate::block_checker::track_blocks;
+
 #[derive(Clone)]
 pub struct Tree<const LEAF_FANOUT: usize = 1024> {
     collection_id: CollectionId,
@@ -202,6 +205,10 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         let before_read_io = Instant::now();
 
         let mut read_loops: u64 = 0;
+
+        #[cfg(feature = "for-internal-testing-only")]
+        let _b0 = track_blocks();
+
         loop {
             let _heap_pin = self.cache.heap_object_id_pin();
 
@@ -213,6 +220,9 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
                 continue;
             }
+
+            #[cfg(feature = "for-internal-testing-only")]
+            let _b1 = track_blocks();
 
             let mut write = node.inner.write_arc();
             if write.leaf.is_none() {
@@ -360,12 +370,18 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         &'a self,
         mut predecessor: LeafWriteGuard<'a, LEAF_FANOUT>,
     ) -> io::Result<()> {
+        #[cfg(feature = "for-internal-testing-only")]
+        let _b1 = track_blocks();
+
         let mut successor = self.successor_leaf_mut(&predecessor)?;
 
-        // TODO why should this be true?
+        // This should be true because we acquire the successor
+        // write mutex after acquiring the predecessor's.
         assert!(successor.epoch() >= predecessor.epoch());
 
         let merge_epoch = predecessor.epoch().max(successor.epoch());
+
+        let predecessor_epoch = predecessor.epoch().clone();
 
         let predecessor_leaf = predecessor.leaf_write.leaf.as_mut().unwrap();
         let successor_leaf = successor.leaf_write.leaf.as_mut().unwrap();
@@ -389,6 +405,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             successor_leaf.lo,
             successor_leaf.hi
         );
+
+        if merge_epoch != predecessor_epoch {
+            // need to cooperatively serialize predecessor so that whatever
+            // writes caused it to be empty in the first place are atomically
+            // persisted with the rest of any batch that may have caused that.
+            self.cooperatively_serialize_leaf(
+                predecessor.node.object_id,
+                &mut *predecessor_leaf,
+            );
+        }
 
         predecessor_leaf.hi = successor_leaf.hi.clone();
         predecessor_leaf.set_dirty_epoch(merge_epoch);
@@ -466,8 +492,14 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         let predecessor_leaf = predecessor.leaf_write.leaf.as_ref().unwrap();
         assert!(predecessor_leaf.hi.is_some());
 
+        #[cfg(feature = "for-internal-testing-only")]
+        let _b0 = track_blocks();
+
         loop {
             let search_key = predecessor_leaf.hi.as_ref().unwrap();
+
+            #[cfg(feature = "for-internal-testing-only")]
+            let _b1 = track_blocks();
 
             let successor_node = self.leaf_for_key_mut(&search_key)?;
 
@@ -496,12 +528,65 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         }
     }
 
+    fn cooperatively_serialize_leaf(
+        &self,
+        object_id: ObjectId,
+        leaf: &mut Leaf<LEAF_FANOUT>,
+    ) {
+        // cooperatively serialize and put into dirty
+        let old_dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
+        assert!(Some(old_dirty_epoch) > leaf.max_unflushed_epoch);
+        leaf.max_unflushed_epoch = Some(old_dirty_epoch);
+        leaf.page_out_on_flush.take();
+
+        #[cfg(feature = "for-internal-testing-only")]
+        {
+            self.cache.event_verifier.mark(
+                object_id,
+                old_dirty_epoch,
+                event_verifier::State::CooperativelySerialized,
+                concat!(file!(), ':', line!(), ":cooperative-serialize"),
+            );
+        }
+
+        // be extra-explicit about serialized bytes
+        let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
+
+        let serialized =
+            leaf_ref.serialize(self.cache.config.zstd_compression_level);
+
+        log::trace!(
+            "D adding node {} to dirty {:?}",
+            object_id.0,
+            old_dirty_epoch
+        );
+
+        self.cache.install_dirty(
+            old_dirty_epoch,
+            object_id,
+            Dirty::CooperativelySerialized {
+                object_id,
+                collection_id: self.collection_id,
+                low_key: leaf.lo.clone(),
+                mutation_count: leaf.mutation_count,
+                data: Arc::new(serialized),
+            },
+        );
+    }
+
     fn leaf_for_key<'a>(
         &'a self,
         key: &[u8],
     ) -> io::Result<LeafReadGuard<'a, LEAF_FANOUT>> {
+        #[cfg(feature = "for-internal-testing-only")]
+        let _b0 = track_blocks();
+
         loop {
             let (low_key, node) = self.index.get_lte(key).unwrap();
+
+            #[cfg(feature = "for-internal-testing-only")]
+            let _b1 = track_blocks();
+
             let mut read = node.inner.read_arc();
 
             if read.leaf.is_none() {
@@ -537,6 +622,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 log::trace!("key undershoot in leaf_for_key");
                 drop(leaf_guard);
                 hint::spin_loop();
+
                 continue;
             }
             if let Some(ref hi) = leaf.hi {
@@ -558,6 +644,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 hint::spin_loop();
                 continue;
             }
+
+            assert_eq!(node.low_key, leaf.lo);
 
             return Ok(leaf_guard);
         }
@@ -590,8 +678,16 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             );
         }
 
+        if let Some(max_unflushed_epoch) = leaf.max_unflushed_epoch {
+            // We already serialized something for this epoch, so if we did so again,
+            // we need to think a bit.
+            assert_ne!(max_unflushed_epoch, flush_epoch_guard.epoch());
+        }
+
         if let Some(old_dirty_epoch) = leaf.dirty_flush_epoch {
             if old_dirty_epoch != flush_epoch_guard.epoch() {
+                assert!(old_dirty_epoch < flush_epoch_guard.epoch());
+
                 log::trace!(
                     "cooperatively flushing {:?} with dirty {:?} after checking into {:?}",
                     node.object_id,
@@ -599,68 +695,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     flush_epoch_guard.epoch()
                 );
 
-                assert!(old_dirty_epoch < flush_epoch_guard.epoch());
-
-                // cooperatively serialize and put into dirty
-                leaf.max_unflushed_epoch = leaf.dirty_flush_epoch.take();
-                leaf.page_out_on_flush.take();
-                log::trace!(
-                    "starting cooperatively serializing {:?} for {:?} because we want to use it in {:?}",
-                    node.object_id,
-                    old_dirty_epoch,
-                    flush_epoch_guard.epoch(),
-                );
-                #[cfg(feature = "for-internal-testing-only")]
-                {
-                    self.cache.event_verifier.mark(
-                        node.object_id,
-                        old_dirty_epoch,
-                        event_verifier::State::CooperativelySerialized,
-                        concat!(
-                            file!(),
-                            ':',
-                            line!(),
-                            ":cooperative-serialize"
-                        ),
-                    );
-                }
-
-                // be extra-explicit about serialized bytes
-                let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
-
-                let serialized = leaf_ref
-                    .serialize(self.cache.config.zstd_compression_level);
-
-                log::trace!(
-                    "D adding node {} to dirty {:?}",
-                    node.object_id.0,
-                    old_dirty_epoch
-                );
-
-                assert_eq!(node.low_key, leaf.lo);
-
-                self.cache.install_dirty(
-                    old_dirty_epoch,
-                    node.object_id,
-                    Dirty::CooperativelySerialized {
-                        object_id: node.object_id,
-                        collection_id: self.collection_id,
-                        low_key: leaf.lo.clone(),
-                        mutation_count: leaf.mutation_count,
-                        data: Arc::new(serialized),
-                    },
-                );
-                log::trace!(
-                    "finished cooperatively serializing {:?} for {:?} because we want to use it in {:?}",
-                    node.object_id,
-                    old_dirty_epoch,
-                    flush_epoch_guard.epoch(),
-                );
-
-                assert!(
-                    old_dirty_epoch < flush_epoch_guard.epoch(),
-                    "flush epochs somehow became unlinked"
-                );
+                self.cooperatively_serialize_leaf(node.object_id, &mut *leaf);
             }
         }
 
@@ -1369,54 +1404,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     new_epoch
                 );
 
-                // cooperatively serialize and put into dirty
-                let old_dirty_epoch = leaf.dirty_flush_epoch.take().unwrap();
-                leaf.max_unflushed_epoch = Some(old_dirty_epoch);
-
-                // be extra-explicit about serialized bytes
-                let leaf_ref: &Leaf<LEAF_FANOUT> = &*leaf;
-
-                let serialized = leaf_ref
-                    .serialize(self.cache.config.zstd_compression_level);
-
-                log::trace!(
-                    "C adding node {} to dirty epoch {:?}",
-                    node.object_id.0,
-                    old_dirty_epoch
-                );
-
-                #[cfg(feature = "for-internal-testing-only")]
-                {
-                    self.cache.event_verifier.mark(
-                        node.object_id,
-                        old_dirty_epoch,
-                        event_verifier::State::CooperativelySerialized,
-                        concat!(
-                            file!(),
-                            ':',
-                            line!(),
-                            ":batch-cooperative-serialization"
-                        ),
-                    );
-                }
-
-                assert_eq!(node.low_key, leaf.lo);
-                self.cache.install_dirty(
-                    old_dirty_epoch,
-                    node.object_id,
-                    Dirty::CooperativelySerialized {
-                        object_id: node.object_id,
-                        collection_id: self.collection_id,
-                        mutation_count: leaf_ref.mutation_count,
-                        low_key: leaf.lo.clone(),
-                        data: Arc::new(serialized),
-                    },
-                );
-
-                assert!(
-                    old_flush_epoch < flush_epoch_guard.epoch(),
-                    "flush epochs somehow became unlinked"
-                );
+                self.cooperatively_serialize_leaf(node.object_id, &mut *leaf);
             }
         }
 
@@ -1450,6 +1438,9 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                     &self.cache,
                     self.collection_id,
                 ) {
+                    #[cfg(feature = "for-internal-testing-only")]
+                    let _b1 = track_blocks();
+
                     let write = rhs_node.inner.write_arc();
                     assert!(write.leaf.is_some());
 

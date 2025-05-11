@@ -701,9 +701,14 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                             self.event_verifier.print_debug_history_for_object(
                                 dirty_object_id,
                             );
-
                             unreachable!(
-                                "a leaf was expected to be cooperatively serialized but it was not available"
+                                "a leaf was expected to be cooperatively serialized but it was not available. \
+                                violation of flush responsibility for second read \
+                                of expected cooperative serialization. leaf in question's \
+                                dirty_flush_epoch is {:?}, our expected key was {:?}. node.deleted: {:?}",
+                                leaf_ref.dirty_flush_epoch,
+                                (dirty_epoch, dirty_object_id),
+                                leaf_ref.deleted,
                             );
                         }
                     };
