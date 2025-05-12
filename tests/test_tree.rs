@@ -104,7 +104,7 @@ fn fixed_stride_inserts() {
         count += 1;
     }
     assert_eq!(count, 4096, "tree: {:?}", db);
-    assert_eq!(db.len(), 4096);
+    assert_eq!(db.len().unwrap(), 4096);
 
     let count = db.iter().rev().count();
     assert_eq!(count, 4096);
@@ -118,7 +118,7 @@ fn fixed_stride_inserts() {
 
     let count = db.iter().rev().count();
     assert_eq!(count, 4096);
-    assert_eq!(db.len(), 4096);
+    assert_eq!(db.len().unwrap(), 4096);
 
     for k in 0..4096_u16 {
         db.remove(&k.to_be_bytes()).unwrap();
@@ -129,7 +129,7 @@ fn fixed_stride_inserts() {
 
     let count = db.iter().rev().count();
     assert_eq!(count, 0);
-    assert_eq!(db.len(), 0);
+    assert_eq!(db.len().unwrap(), 0);
     assert!(db.is_empty().unwrap());
 }
 
