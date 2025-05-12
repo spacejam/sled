@@ -254,7 +254,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
     pub fn open_with_config(config: &Config) -> io::Result<Db<LEAF_FANOUT>> {
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
-        let (cache, indices, was_recovered) = ObjectCache::recover(&config)?;
+        let (cache, indices, was_recovered) = ObjectCache::recover(config)?;
 
         let _shutdown_dropper = Arc::new(ShutdownDropper {
             shutdown_sender: Mutex::new(shutdown_tx),
@@ -327,7 +327,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         let collection_id_allocator =
             Arc::new(Allocator::from_allocated(&allocated_collection_ids));
 
-        assert_eq!(collection_name_mapping.len() + 2, trees.len());
+        assert_eq!(collection_name_mapping.len()? + 2, trees.len());
 
         let ret = Db {
             config: config.clone(),

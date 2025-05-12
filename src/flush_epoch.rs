@@ -121,7 +121,7 @@ pub struct FlushEpochGuard<'a> {
     previously_sealed: bool,
 }
 
-impl<'a> Drop for FlushEpochGuard<'a> {
+impl Drop for FlushEpochGuard<'_> {
     fn drop(&mut self) {
         let rc = self.tracker.rc.fetch_sub(1, Ordering::SeqCst) - 1;
         if rc & SEAL_MASK == 0 && (rc & SEAL_BIT) == SEAL_BIT {
@@ -133,7 +133,7 @@ impl<'a> Drop for FlushEpochGuard<'a> {
     }
 }
 
-impl<'a> FlushEpochGuard<'a> {
+impl FlushEpochGuard<'_> {
     pub fn epoch(&self) -> FlushEpoch {
         self.tracker.epoch
     }

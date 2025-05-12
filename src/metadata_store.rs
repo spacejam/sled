@@ -4,11 +4,11 @@ use std::io::{self, Read, Write};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicPtr, AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicPtr, AtomicU64, Ordering},
 };
 
-use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use fault_injection::{annotate, fallible, maybe};
 use fnv::FnvHashMap;
 use inline_array::InlineArray;
@@ -17,7 +17,7 @@ use rayon::prelude::*;
 use zstd::stream::read::Decoder as ZstdDecoder;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
-use crate::{heap::UpdateMetadata, CollectionId, ObjectId};
+use crate::{CollectionId, ObjectId, heap::UpdateMetadata};
 
 const WARN: &str = "DO_NOT_PUT_YOUR_FILES_HERE";
 const TMP_SUFFIX: &str = ".tmp";
@@ -79,8 +79,8 @@ fn get_compactions(
         }
         Err(e) => {
             log::error!(
-                    "metadata store worker thread unable to receive message, unexpected shutdown: {e:?}"
-                );
+                "metadata store worker thread unable to receive message, unexpected shutdown: {e:?}"
+            );
             return Err(None);
         }
     }
@@ -130,7 +130,10 @@ fn worker(
                 match write_res {
                     Err(e) => {
                         set_error(&inner.global_error, &e);
-                        log::error!("log compactor thread encountered error: {:?} - setting global fatal error and shutting down compactions", e);
+                        log::error!(
+                            "log compactor thread encountered error: {:?} - setting global fatal error and shutting down compactions",
+                            e
+                        );
                         return;
                     }
                     Ok(recovery) => {
@@ -145,7 +148,9 @@ fn worker(
             Err(Some(tx)) => {
                 drop(inner);
                 if let Err(e) = tx.send(()) {
-                    log::error!("log compactor failed to send shutdown ack to system: {e:?}");
+                    log::error!(
+                        "log compactor failed to send shutdown ack to system: {e:?}"
+                    );
                 }
                 return;
             }
@@ -458,7 +463,7 @@ fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
 
                 let low_key_len: u64 = low_key.len() as u64;
                 batch_encoder.write_all(&low_key_len.to_le_bytes()).unwrap();
-                batch_encoder.write_all(&low_key).unwrap();
+                batch_encoder.write_all(low_key).unwrap();
             }
             UpdateMetadata::Free { object_id, collection_id } => {
                 batch_encoder
@@ -718,7 +723,8 @@ fn enumerate_logs_and_snapshot(
                         if let Err(e) = fs::remove_file(&file_name) {
                             log::warn!(
                                 "failed to remove stale snapshot file {:?}: {:?}",
-                                file_name, e
+                                file_name,
+                                e
                             );
                         }
 
@@ -737,7 +743,9 @@ fn enumerate_logs_and_snapshot(
     for stale_log_id in logs.range(..=snap_id) {
         let file_name = log_path(directory_path, *stale_log_id);
 
-        log::warn!("removing stale log {file_name:?} that is contained within snapshot {snap_id}");
+        log::warn!(
+            "removing stale log {file_name:?} that is contained within snapshot {snap_id}"
+        );
 
         fallible!(fs::remove_file(file_name));
     }
@@ -795,7 +803,9 @@ fn read_snapshot_and_apply_logs(
             } else {
                 let previous = recovered.remove(&object_id);
                 if previous.is_none() {
-                    log::trace!("recovered a Free for {object_id:?} without a preceeding Store");
+                    log::trace!(
+                        "recovered a Free for {object_id:?} without a preceeding Store"
+                    );
                 }
             }
         }

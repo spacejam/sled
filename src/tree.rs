@@ -74,7 +74,7 @@ struct LeafReadGuard<'a, const LEAF_FANOUT: usize = 1024> {
     external_cache_access_and_eviction: bool,
 }
 
-impl<'a, const LEAF_FANOUT: usize> Drop for LeafReadGuard<'a, LEAF_FANOUT> {
+impl<const LEAF_FANOUT: usize> Drop for LeafReadGuard<'_, LEAF_FANOUT> {
     fn drop(&mut self) {
         let size = self.leaf_read.leaf.as_ref().unwrap().in_memory_size;
         // we must drop our mutex before calling mark_access_and_evict
@@ -113,7 +113,7 @@ struct LeafWriteGuard<'a, const LEAF_FANOUT: usize = 1024> {
     external_cache_access_and_eviction: bool,
 }
 
-impl<'a, const LEAF_FANOUT: usize> LeafWriteGuard<'a, LEAF_FANOUT> {
+impl<const LEAF_FANOUT: usize> LeafWriteGuard<'_, LEAF_FANOUT> {
     fn epoch(&self) -> FlushEpoch {
         self.flush_epoch_guard.epoch()
     }
@@ -129,7 +129,7 @@ impl<'a, const LEAF_FANOUT: usize> LeafWriteGuard<'a, LEAF_FANOUT> {
     }
 }
 
-impl<'a, const LEAF_FANOUT: usize> Drop for LeafWriteGuard<'a, LEAF_FANOUT> {
+impl<const LEAF_FANOUT: usize> Drop for LeafWriteGuard<'_, LEAF_FANOUT> {
     fn drop(&mut self) {
         let size = self.leaf_write.leaf.as_ref().unwrap().in_memory_size;
 
@@ -406,7 +406,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let merge_epoch = predecessor.epoch().max(successor.epoch());
 
-        let predecessor_epoch = predecessor.epoch().clone();
+        let predecessor_epoch = predecessor.epoch();
 
         let predecessor_leaf = predecessor.leaf_write.leaf.as_mut().unwrap();
         let successor_leaf = successor.leaf_write.leaf.as_mut().unwrap();
@@ -526,7 +526,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             #[cfg(feature = "for-internal-testing-only")]
             let _b1 = track_blocks();
 
-            let successor_node = self.leaf_for_key_mut(&search_key)?;
+            let successor_node = self.leaf_for_key_mut(search_key)?;
 
             let successor_leaf =
                 successor_node.leaf_write.leaf.as_ref().unwrap();
@@ -965,10 +965,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 );
             }
 
-            if cfg!(not(feature = "monotonic-behavior")) {
-                if leaf.data.is_empty() && leaf.hi.is_some() {
-                    self.merge_leaf_into_right_sibling(leaf_guard)?;
-                }
+            if cfg!(not(feature = "monotonic-behavior"))
+                && leaf.data.is_empty()
+                && leaf.hi.is_some()
+            {
+                self.merge_leaf_into_right_sibling(leaf_guard)?;
             }
         }
 
@@ -1147,11 +1148,12 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             assert!(prev.is_none());
         }
 
-        if cfg!(not(feature = "monotonic-behavior")) {
-            if leaf.data.is_empty() && leaf.hi.is_some() {
-                assert!(!split_happened);
-                self.merge_leaf_into_right_sibling(leaf_guard)?;
-            }
+        if cfg!(not(feature = "monotonic-behavior"))
+            && leaf.data.is_empty()
+            && leaf.hi.is_some()
+        {
+            assert!(!split_happened);
+            self.merge_leaf_into_right_sibling(leaf_guard)?;
         }
 
         Ok(ret)
@@ -1701,7 +1703,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     /// assert!(r.next().is_none());
     /// # Ok(()) }
     /// ```
-    pub fn scan_prefix<'a, P>(&'a self, prefix: P) -> Iter<LEAF_FANOUT>
+    pub fn scan_prefix<P>(&self, prefix: P) -> Iter<LEAF_FANOUT>
     where
         P: AsRef<[u8]>,
     {
@@ -1968,8 +1970,13 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     /// assert_eq!(db.len(), 2);
     /// # Ok(()) }
     /// ```
-    pub fn len(&self) -> usize {
-        self.iter().count()
+    pub fn len(&self) -> io::Result<usize> {
+        let mut count = 0;
+        for item_res in self.iter() {
+            let _item = item_res?;
+            count += 1;
+        }
+        Ok(count)
     }
 
     /// Returns `true` if the `Tree` contains no elements.
@@ -2340,7 +2347,7 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
                 collection_id,
                 low_key: split_key.clone(),
                 inner: Arc::new(RwLock::new(CacheBox {
-                    leaf: Some(Box::new(rhs)).into(),
+                    leaf: Some(Box::new(rhs)),
                     logged_index: BTreeMap::default(),
                 })),
             };

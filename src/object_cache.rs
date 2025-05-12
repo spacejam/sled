@@ -322,7 +322,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
             collection_id,
             low_key: InlineArray::default(),
             inner: Arc::new(RwLock::new(CacheBox {
-                leaf: Some(Box::new(Leaf::empty())).into(),
+                leaf: Some(Box::new(Leaf::empty())),
                 logged_index: BTreeMap::default(),
             })),
         };
@@ -716,7 +716,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
                     write_batch.push(Update::Store {
                         object_id: dirty_object_id,
-                        collection_id: collection_id,
+                        collection_id,
                         low_key,
                         data,
                     });
@@ -930,7 +930,7 @@ fn initialize<const LEAF_FANOUT: usize>(
             collection_id: *collection_id,
             low_key: low_key.clone(),
             inner: Arc::new(RwLock::new(CacheBox {
-                leaf: None.into(),
+                leaf: None,
                 logged_index: BTreeMap::default(),
             })),
         };
@@ -960,7 +960,7 @@ fn initialize<const LEAF_FANOUT: usize>(
                 collection_id,
                 low_key: initial_low_key.clone(),
                 inner: Arc::new(RwLock::new(CacheBox {
-                    leaf: Some(Box::new(Leaf::empty())).into(),
+                    leaf: Some(Box::new(Leaf::empty())),
                     logged_index: BTreeMap::default(),
                 })),
             };

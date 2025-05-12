@@ -1,13 +1,13 @@
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use fnv::FnvHashSet;
 use pagetable::PageTable;
 
 use crate::{
-    heap::{SlabAddress, UpdateMetadata, N_SLABS},
     Allocator, ObjectId,
+    heap::{N_SLABS, SlabAddress, UpdateMetadata},
 };
 
 #[derive(Debug, Default, Copy, Clone)]
@@ -270,7 +270,7 @@ impl ObjectLocationMapper {
         let mut ret = FnvHashSet::default();
 
         for slab_id in 0..N_SLABS {
-            let slab = &self.slab_tenancies[usize::from(slab_id)];
+            let slab = &self.slab_tenancies[slab_id];
 
             for (object_id, slot) in
                 slab.objects_to_defrag(self.target_fill_ratio)
@@ -295,7 +295,10 @@ impl ObjectLocationMapper {
 
                 if sa == rt_sa {
                     let newly_inserted = ret.insert(object_id);
-                    assert!(newly_inserted, "{object_id:?} present multiple times across slab objects_to_defrag");
+                    assert!(
+                        newly_inserted,
+                        "{object_id:?} present multiple times across slab objects_to_defrag"
+                    );
                 }
             }
         }

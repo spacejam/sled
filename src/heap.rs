@@ -3,8 +3,8 @@ use std::fs;
 use std::io::{self, Read};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{fence, AtomicPtr, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering, fence};
 use std::time::{Duration, Instant};
 
 use ebr::{Ebr, Guard};
@@ -199,9 +199,9 @@ const fn overhead_for_size(size: usize) -> usize {
 
 fn slab_for_size(size: usize) -> u8 {
     let total_size = size + overhead_for_size(size);
-    for idx in 0..SLAB_SIZES.len() {
-        if SLAB_SIZES[idx] >= total_size {
-            return idx as u8;
+    for (idx, slab_size) in SLAB_SIZES.iter().enumerate() {
+        if *slab_size >= total_size {
+            return u8::try_from(idx).unwrap();
         }
     }
     u8::MAX
@@ -242,7 +242,7 @@ impl PersistentSettings {
                 self.check_compatibility(&previous)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::write(settings_path, &self.serialize())
+                std::fs::write(settings_path, self.serialize())
             }
             Err(e) => Err(e),
         }
@@ -267,15 +267,14 @@ impl PersistentSettings {
 
         match version {
             1 => {
-                let leaf_fanout = u64::from_le_bytes(buf[2..10].try_into().unwrap());
+                let leaf_fanout =
+                    u64::from_le_bytes(buf[2..10].try_into().unwrap());
                 Ok(PersistentSettings::V1 { leaf_fanout })
             }
-            _ => {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "encountered unknown version number when reading settings cookie"
-                ))
-            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "encountered unknown version number when reading settings cookie",
+            )),
         }
     }
 
@@ -289,13 +288,14 @@ impl PersistentSettings {
             (V1 { leaf_fanout: lf1 }, V1 { leaf_fanout: lf2 }) => {
                 if lf1 != lf2 {
                     Err(io::Error::new(
-                            io::ErrorKind::Unsupported,
-                            format!(
-                                "sled was already opened with a LEAF_FANOUT const generic of {}, \
+                        io::ErrorKind::Unsupported,
+                        format!(
+                            "sled was already opened with a LEAF_FANOUT const generic of {}, \
                                 and this may not be changed after initial creation. Please use \
                                 Db::import / Db::export to migrate, if you wish to change the \
-                                system's format.", lf2
-                            )
+                                system's format.",
+                            lf2
+                        ),
                     ))
                 } else {
                     Ok(())
@@ -383,17 +383,17 @@ impl From<NonZeroU64> for SlabAddress {
     }
 }
 
-impl Into<NonZeroU64> for SlabAddress {
-    fn into(self) -> NonZeroU64 {
+impl From<SlabAddress> for NonZeroU64 {
+    fn from(sa: SlabAddress) -> NonZeroU64 {
         NonZeroU64::new(u64::from_be_bytes([
-            self.slab_id + 1,
-            self.slab_slot[0],
-            self.slab_slot[1],
-            self.slab_slot[2],
-            self.slab_slot[3],
-            self.slab_slot[4],
-            self.slab_slot[5],
-            self.slab_slot[6],
+            sa.slab_id + 1,
+            sa.slab_slot[0],
+            sa.slab_slot[1],
+            sa.slab_slot[2],
+            sa.slab_slot[3],
+            sa.slab_slot[4],
+            sa.slab_slot[5],
+            sa.slab_slot[6],
         ]))
         .unwrap()
     }
@@ -740,7 +740,7 @@ impl Heap {
 
         let mut file_lock_opts = fs::OpenOptions::new();
         file_lock_opts.create(false).read(false).write(false);
-        let directory_lock = fallible!(fs::File::open(&path));
+        let directory_lock = fallible!(fs::File::open(path));
         fallible!(directory_lock.try_lock_exclusive());
 
         maybe!(fs::File::open(&slabs_dir).and_then(|f| f.sync_all()))?;
@@ -785,14 +785,13 @@ impl Heap {
         let mut slabs = vec![];
         let mut slab_opts = fs::OpenOptions::new();
         slab_opts.create(true).read(true).write(true);
-        for i in 0..N_SLABS {
-            let slot_size = SLAB_SIZES[i];
+        for slot_size in &SLAB_SIZES {
             let slab_path = slabs_dir.join(format!("{}", slot_size));
 
             let file = fallible!(slab_opts.open(slab_path));
 
             slabs.push(Slab {
-                slot_size,
+                slot_size: *slot_size,
                 file,
                 max_live_slot_since_last_truncation: AtomicU64::new(0),
             })
