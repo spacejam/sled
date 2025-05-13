@@ -1967,7 +1967,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     /// # let db: sled::Db<1024> = config.open()?;
     /// db.insert(b"a", vec![0]);
     /// db.insert(b"b", vec![1]);
-    /// assert_eq!(db.len(), 2);
+    /// assert_eq!(db.len().unwrap(), 2);
     /// # Ok(()) }
     /// ```
     pub fn len(&self) -> io::Result<usize> {

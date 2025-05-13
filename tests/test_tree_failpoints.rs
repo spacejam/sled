@@ -1,4 +1,4 @@
-#![cfg(feature = "for-internal-testing-only")]
+#![cfg(feature = "failpoints")]
 mod common;
 
 use std::collections::BTreeMap;
