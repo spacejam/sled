@@ -200,7 +200,11 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
                 .count()
                 + 1;
 
-            let split_key = InlineArray::from(&right_min[..splitpoint_length]);
+            let mut split_vec =
+                Vec::with_capacity(self.prefix_length + splitpoint_length);
+            split_vec.extend_from_slice(self.prefix());
+            split_vec.extend_from_slice(&right_min[..splitpoint_length]);
+            let split_key = InlineArray::from(split_vec);
 
             let rhs_id = allocator.allocate_object_id(new_epoch);
 
@@ -272,9 +276,10 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
 
         assert!(
             new_prefix_len > old_prefix_len,
-            "expected new prefix length of {} to be greater than the pre-split prefix length of {}",
+            "expected new prefix length of {} to be greater than the pre-split prefix length of {} for node {:?}",
             new_prefix_len,
-            old_prefix_len
+            old_prefix_len,
+            self
         );
 
         let key_shift = new_prefix_len - old_prefix_len;

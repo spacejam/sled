@@ -1657,7 +1657,7 @@ fn tree_bug_52() {
             GetGt(Key(vec![57; 1])),
             Get(Key(vec![57; 2])),
             GetLt(Key(vec![57; 2])),
-            //Scan(Key(vec![]), 4),
+            Scan(Key(vec![]), 4),
         ],
         false,
         0,
