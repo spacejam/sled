@@ -217,14 +217,12 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         loop {
             loops += 1;
 
-            if loops > 10_000_000 {
-                if !warned {
-                    log::warn!(
-                        "page_in spinning for a long time due to continue point {}",
-                        last_continue
-                    );
-                    warned = true;
-                }
+            if loops > 10_000_000 && !warned {
+                log::warn!(
+                    "page_in spinning for a long time due to continue point {}",
+                    last_continue
+                );
+                warned = true;
 
                 #[cfg(feature = "for-internal-testing-only")]
                 assert!(

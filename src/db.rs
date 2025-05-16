@@ -106,8 +106,7 @@ fn flusher<const LEAF_FANOUT: usize>(
                     "Db flusher panicked while flushing: {:?}",
                     panicked
                 );
-                cache.set_error(&io::Error::new(
-                    io::ErrorKind::Other,
+                cache.set_error(&io::Error::other(
                     "Db flusher panicked while flushing".to_string(),
                 ));
             }
@@ -125,8 +124,7 @@ fn flusher<const LEAF_FANOUT: usize>(
 
             // this is probably unnecessary but it will avoid issues
             // if egregious bugs get introduced that trigger it
-            cache.set_error(&io::Error::new(
-                io::ErrorKind::Other,
+            cache.set_error(&io::Error::other(
                 "system has been shut down".to_string(),
             ));
 
@@ -349,13 +347,10 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 .spawn(move || flusher(cache, shutdown_rx, flush_every_ms));
 
             if let Err(e) = spawn_res {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "unable to spawn flusher thread for sled database: {:?}",
-                        e
-                    ),
-                ));
+                return Err(io::Error::other(format!(
+                    "unable to spawn flusher thread for sled database: {:?}",
+                    e
+                )));
             }
         }
         Ok(ret)

@@ -242,8 +242,7 @@ impl MetadataStore {
             let _ = rx.recv();
         }
 
-        self.set_error(&io::Error::new(
-            io::ErrorKind::Other,
+        self.set_error(&io::Error::other(
             "system has been shut down".to_string(),
         ));
 
@@ -333,13 +332,10 @@ impl MetadataStore {
             });
 
         if let Err(e) = spawn_res {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "unable to spawn metadata compactor thread for sled database: {:?}",
-                    e
-                ),
-            ));
+            return Err(io::Error::other(format!(
+                "unable to spawn metadata compactor thread for sled database: {:?}",
+                e
+            )));
         }
 
         Ok((MetadataStore { inner, is_shut_down: false }, recovery.recovered))
