@@ -112,8 +112,8 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
         );
 
         let unshifted_key_amount = other.prefix_length - self.prefix_length;
-        let unshifted_prefix =
-            &other.lo[other.prefix_length - unshifted_key_amount..];
+        let unshifted_prefix = &other.lo
+            [other.prefix_length - unshifted_key_amount..other.prefix_length];
 
         for (k, v) in other.data.iter() {
             let mut unshifted_key =
@@ -124,6 +124,15 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
         }
 
         assert_eq!(other.data.len(), self.data.len());
+
+        #[cfg(feature = "for-internal-testing-only")]
+        assert_eq!(
+            self.iter().collect::<Vec<_>>(),
+            other.iter().collect::<Vec<_>>(),
+            "self: {:#?} \n other: {:#?}\n",
+            self,
+            other
+        );
     }
 
     pub(crate) fn iter(
