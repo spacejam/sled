@@ -212,15 +212,19 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let mut loops: u64 = 0;
         let mut last_continue = "none";
+        let mut warned = false;
 
         loop {
             loops += 1;
 
             if loops > 10_000_000 {
-                log::warn!(
-                    "page_in spinning for a long time due to continue point {}",
-                    last_continue
-                );
+                if !warned {
+                    log::warn!(
+                        "page_in spinning for a long time due to continue point {}",
+                        last_continue
+                    );
+                    warned = true;
+                }
 
                 #[cfg(feature = "for-internal-testing-only")]
                 assert!(

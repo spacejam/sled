@@ -87,11 +87,6 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
 
         self.hi = other.hi.clone();
 
-        if self.prefix() == other.prefix() {
-            self.data = std::mem::take(&mut other.data);
-            return;
-        }
-
         let new_prefix_len = if let Some(hi) = &self.hi {
             self.lo.iter().zip(hi.iter()).take_while(|(l, r)| l == r).count()
         } else {
@@ -104,7 +99,17 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
         // initialized here.
         self.prefix_length = new_prefix_len;
 
-        assert!(self.prefix_length < other.prefix_length);
+        if self.prefix() == other.prefix() {
+            self.data = std::mem::take(&mut other.data);
+            return;
+        }
+
+        assert!(
+            self.prefix_length < other.prefix_length,
+            "self: {:?} other: {:?}",
+            self,
+            other
+        );
 
         let unshifted_key_amount = other.prefix_length - self.prefix_length;
         let unshifted_prefix =
@@ -117,6 +122,8 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
             unshifted_key.extend_from_slice(k);
             self.data.insert(unshifted_key.into(), v.clone());
         }
+
+        assert_eq!(other.data.len(), self.data.len());
     }
 
     pub(crate) fn iter(
@@ -172,6 +179,8 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
         collection_id: CollectionId,
     ) -> Option<(InlineArray, Object<LEAF_FANOUT>)> {
         if self.data.is_full() {
+            let original_len = self.data.len();
+
             let old_prefix_len = self.prefix_length;
             // split
             let split_offset = if self.lo.is_empty() {
@@ -241,6 +250,7 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
 
             assert_eq!(self.hi.as_ref().unwrap(), &split_key);
             assert_eq!(rhs.lo, &split_key);
+            assert_eq!(rhs.data.len() + self.data.len(), original_len);
 
             let rhs_node = Object {
                 object_id: rhs_id,

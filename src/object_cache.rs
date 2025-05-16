@@ -411,7 +411,11 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     unreachable!("object ID must never have been 0");
                 };
 
-            assert_ne!(accessed_object_id, object_id);
+            if accessed_object_id == object_id {
+                // TODO our own object was evicted, so
+                // set page out after current epoch (or just page out if clean?)
+                continue;
+            }
 
             let node = if let Some(n) = self.object_id_index.get(&object_id) {
                 if *n.object_id != *node_to_evict {
