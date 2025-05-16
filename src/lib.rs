@@ -1,10 +1,6 @@
 // 1.0 blockers
 //
 // bugs
-// * tree predecessor holds lock on successor and tries to get it for predecessor. This will
-//   deadlock if used concurrently with write batches, which acquire locks lexicographically.
-//   * add merges to iterator test and assert it deadlocks
-//   * alternative is to merge right, not left
 // * page-out needs to be deferred until after any flush of the dirty epoch
 //   * need to remove max_unflushed_epoch after flushing it
 //   * can't send reliable page-out request backwards from 7->6
@@ -25,6 +21,7 @@
 //     * clean -> dirty -> {maybe coop} -> flushed
 //   * for page-out, we only care if it's stable or if we need to add it to
 //     a page-out priority queue
+// * page-out doesn't seem to happen as expected
 //
 // reliability
 // TODO make all writes wrapped in a Tearable wrapper that splits writes
