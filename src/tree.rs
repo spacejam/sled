@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::hint;
 use std::io;
-use std::mem::{self, ManuallyDrop};
+use std::mem::ManuallyDrop;
 use std::ops;
 use std::ops::Bound;
 use std::ops::RangeBounds;
@@ -118,6 +118,9 @@ impl<const LEAF_FANOUT: usize> LeafWriteGuard<'_, LEAF_FANOUT> {
         self.flush_epoch_guard.epoch()
     }
 
+    // Handling cache access involves acquiring a mutex to anything
+    // that is being paged-out so that it can be dropped. We call
+    // this for things that we want to perform cache
     fn handle_cache_access_and_eviction_externally(
         mut self,
     ) -> (ObjectId, usize) {
@@ -209,15 +212,19 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
         let mut loops: u64 = 0;
         let mut last_continue = "none";
+        let mut warned = false;
 
         loop {
             loops += 1;
 
             if loops > 10_000_000 {
-                log::warn!(
-                    "page_in spinning for a long time due to continue point {}",
-                    last_continue
-                );
+                if !warned {
+                    log::warn!(
+                        "page_in spinning for a long time due to continue point {}",
+                        last_continue
+                    );
+                    warned = true;
+                }
 
                 #[cfg(feature = "for-internal-testing-only")]
                 assert!(
@@ -412,7 +419,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         let successor_leaf = successor.leaf_write.leaf.as_mut().unwrap();
 
         assert!(predecessor_leaf.deleted.is_none());
-        assert!(predecessor_leaf.data.is_empty());
+        assert!(predecessor_leaf.is_empty());
         assert!(successor_leaf.deleted.is_none());
         assert_eq!(
             predecessor_leaf.hi.as_deref(),
@@ -441,9 +448,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             );
         }
 
-        predecessor_leaf.hi = successor_leaf.hi.clone();
         predecessor_leaf.set_dirty_epoch(merge_epoch);
-        predecessor_leaf.data = std::mem::take(&mut successor_leaf.data);
+        predecessor_leaf.merge_from(successor_leaf.as_mut());
 
         successor_leaf.deleted = Some(merge_epoch);
 
@@ -966,7 +972,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             }
 
             if cfg!(not(feature = "monotonic-behavior"))
-                && leaf.data.is_empty()
+                && leaf.is_empty()
                 && leaf.hi.is_some()
             {
                 self.merge_leaf_into_right_sibling(leaf_guard)?;
@@ -1149,7 +1155,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         }
 
         if cfg!(not(feature = "monotonic-behavior"))
-            && leaf.data.is_empty()
+            && leaf.is_empty()
             && leaf.hi.is_some()
         {
             assert!(!split_happened);
@@ -1967,7 +1973,7 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     /// # let db: sled::Db<1024> = config.open()?;
     /// db.insert(b"a", vec![0]);
     /// db.insert(b"b", vec![1]);
-    /// assert_eq!(db.len(), 2);
+    /// assert_eq!(db.len().unwrap(), 2);
     /// # Ok(()) }
     /// ```
     pub fn len(&self) -> io::Result<usize> {
@@ -2066,8 +2072,8 @@ impl<const LEAF_FANOUT: usize> Iterator for Iter<LEAF_FANOUT> {
                 continue;
             }
 
-            for (k, v) in leaf.data.iter() {
-                if self.bounds.contains(k) && &search_key <= k {
+            for (k, v) in leaf.iter() {
+                if self.bounds.contains(&k) && search_key <= k {
                     self.prefetched.push_back((k.clone(), v.clone()));
                 }
             }
@@ -2142,11 +2148,11 @@ impl<const LEAF_FANOUT: usize> DoubleEndedIterator for Iter<LEAF_FANOUT> {
                 continue;
             }
 
-            for (k, v) in leaf.data.iter() {
-                if self.bounds.contains(k) {
+            for (k, v) in leaf.iter() {
+                if self.bounds.contains(&k) {
                     let beneath_last_lo =
                         if let Some(last_lo) = &self.next_back_last_lo {
-                            k < last_lo
+                            &k < last_lo
                         } else {
                             true
                         };
@@ -2240,121 +2246,5 @@ impl Batch {
     pub fn get<K: AsRef<[u8]>>(&self, k: K) -> Option<Option<&InlineArray>> {
         let inner = self.writes.get(k.as_ref())?;
         Some(inner.as_ref())
-    }
-}
-
-impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
-    pub fn serialize(&self, zstd_compression_level: i32) -> Vec<u8> {
-        let mut ret = vec![];
-
-        let mut zstd_enc =
-            zstd::stream::Encoder::new(&mut ret, zstd_compression_level)
-                .unwrap();
-
-        bincode::serialize_into(&mut zstd_enc, self).unwrap();
-
-        zstd_enc.finish().unwrap();
-
-        ret
-    }
-
-    fn deserialize(buf: &[u8]) -> io::Result<Box<Leaf<LEAF_FANOUT>>> {
-        let zstd_decoded = zstd::stream::decode_all(buf).unwrap();
-        let mut leaf: Box<Leaf<LEAF_FANOUT>> =
-            bincode::deserialize(&zstd_decoded).unwrap();
-
-        // use decompressed buffer length as a cheap proxy for in-memory size for now
-        leaf.in_memory_size = zstd_decoded.len();
-
-        Ok(leaf)
-    }
-
-    fn set_in_memory_size(&mut self) {
-        self.in_memory_size = mem::size_of::<Leaf<LEAF_FANOUT>>()
-            + self.hi.as_ref().map(|h| h.len()).unwrap_or(0)
-            + self.lo.len()
-            + self.data.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>();
-    }
-
-    fn split_if_full(
-        &mut self,
-        new_epoch: FlushEpoch,
-        allocator: &ObjectCache<LEAF_FANOUT>,
-        collection_id: CollectionId,
-    ) -> Option<(InlineArray, Object<LEAF_FANOUT>)> {
-        if self.data.is_full() {
-            // split
-            let split_offset = if self.lo.is_empty() {
-                // split left-most shard almost at the beginning for
-                // optimizing downward-growing workloads
-                1
-            } else if self.hi.is_none() {
-                // split right-most shard almost at the end for
-                // optimizing upward-growing workloads
-                self.data.len() - 2
-            } else {
-                self.data.len() / 2
-            };
-
-            let data = self.data.split_off(split_offset);
-
-            let left_max = &self.data.last().unwrap().0;
-            let right_min = &data.first().unwrap().0;
-
-            // suffix truncation attempts to shrink the split key
-            // so that shorter keys bubble up into the index
-            let splitpoint_length = right_min
-                .iter()
-                .zip(left_max.iter())
-                .take_while(|(a, b)| a == b)
-                .count()
-                + 1;
-
-            let split_key = InlineArray::from(&right_min[..splitpoint_length]);
-
-            let rhs_id = allocator.allocate_object_id(new_epoch);
-
-            log::trace!(
-                "split leaf {:?} at split key: {:?} into new {:?} at {:?}",
-                self.lo,
-                split_key,
-                rhs_id,
-                new_epoch,
-            );
-
-            let mut rhs = Leaf {
-                dirty_flush_epoch: Some(new_epoch),
-                hi: self.hi.clone(),
-                lo: split_key.clone(),
-                prefix_length: 0,
-                in_memory_size: 0,
-                data,
-                mutation_count: 0,
-                page_out_on_flush: None,
-                deleted: None,
-                max_unflushed_epoch: None,
-            };
-            rhs.set_in_memory_size();
-
-            self.hi = Some(split_key.clone());
-            self.set_in_memory_size();
-
-            assert_eq!(self.hi.as_ref().unwrap(), &split_key);
-            assert_eq!(rhs.lo, &split_key);
-
-            let rhs_node = Object {
-                object_id: rhs_id,
-                collection_id,
-                low_key: split_key.clone(),
-                inner: Arc::new(RwLock::new(CacheBox {
-                    leaf: Some(Box::new(rhs)),
-                    logged_index: BTreeMap::default(),
-                })),
-            };
-
-            return Some((split_key, rhs_node));
-        }
-
-        None
     }
 }

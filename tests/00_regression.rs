@@ -3,7 +3,7 @@ mod tree;
 
 use std::alloc::{Layout, System};
 
-use tree::{prop_tree_matches_btreemap, Key, Op::*};
+use tree::{Key, Op::*, prop_tree_matches_btreemap};
 
 #[global_allocator]
 static ALLOCATOR: ShredAllocator = ShredAllocator;
@@ -12,18 +12,22 @@ static ALLOCATOR: ShredAllocator = ShredAllocator;
 struct ShredAllocator;
 
 unsafe impl std::alloc::GlobalAlloc for ShredAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 { unsafe {
-        assert!(layout.size() < 1_000_000_000);
-        let ret = System.alloc(layout);
-        assert_ne!(ret, std::ptr::null_mut());
-        std::ptr::write_bytes(ret, 0xa1, layout.size());
-        ret
-    }}
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe {
+            assert!(layout.size() < 1_000_000_000);
+            let ret = System.alloc(layout);
+            assert_ne!(ret, std::ptr::null_mut());
+            std::ptr::write_bytes(ret, 0xa1, layout.size());
+            ret
+        }
+    }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) { unsafe {
-        std::ptr::write_bytes(ptr, 0xde, layout.size());
-        System.dealloc(ptr, layout)
-    }}
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe {
+            std::ptr::write_bytes(ptr, 0xde, layout.size());
+            System.dealloc(ptr, layout)
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -1633,6 +1637,28 @@ fn tree_bug_51() {
     // postmortem:
     prop_tree_matches_btreemap(
         vec![Set(Key(vec![]), 135), Restart, Scan(Key(vec![]), -38)],
+        false,
+        0,
+        0,
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn tree_bug_52() {
+    // postmortem:
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![57; 1]), 235),
+            Set(Key(vec![229; 1]), 136),
+            Set(Key(vec![]), 74),
+            Set(Key(vec![57; 2]), 0),
+            Get(Key(vec![57; 1])),
+            GetGt(Key(vec![57; 1])),
+            Get(Key(vec![57; 2])),
+            GetLt(Key(vec![57; 2])),
+            Scan(Key(vec![]), 4),
+        ],
         false,
         0,
         0,

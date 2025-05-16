@@ -291,6 +291,8 @@ fn prop_tree_matches_btreemap_inner(
                             tree
                         );
                     }
+
+                    assert!(tree_iter.next().is_none());
                 } else {
                     let mut tree_iter = tree
                         .range(&*k.0..)
@@ -317,6 +319,8 @@ fn prop_tree_matches_btreemap_inner(
                             tree
                         );
                     }
+
+                    assert!(tree_iter.next().is_none());
                 }
             }
             Restart => {

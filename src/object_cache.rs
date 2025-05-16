@@ -396,12 +396,12 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
     // this being called in the destructor.
     pub fn mark_access_and_evict(
         &self,
-        object_id: ObjectId,
+        accessed_object_id: ObjectId,
         size: usize,
         #[allow(unused)] flush_epoch: FlushEpoch,
     ) -> io::Result<()> {
         let mut ca = self.cache_advisor.borrow_mut();
-        let to_evict = ca.accessed_reuse_buffer(*object_id, size);
+        let to_evict = ca.accessed_reuse_buffer(*accessed_object_id, size);
         let mut not_found = 0;
         for (node_to_evict, _rough_size) in to_evict {
             let object_id =
@@ -410,6 +410,12 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 } else {
                     unreachable!("object ID must never have been 0");
                 };
+
+            if accessed_object_id == object_id {
+                // TODO our own object was evicted, so
+                // set page out after current epoch (or just page out if clean?)
+                continue;
+            }
 
             let node = if let Some(n) = self.object_id_index.get(&object_id) {
                 if *n.object_id != *node_to_evict {
