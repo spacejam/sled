@@ -31,7 +31,8 @@ pub struct Config {
     /// Start a background thread that flushes data to disk
     /// every few milliseconds. Defaults to every 200ms.
     pub flush_every_ms: Option<usize>,
-    /// The zstd compression level to use when writing data to disk. Defaults to 3.
+    /// The zstd compression level to use when writing data to disk. Defaults
+    /// to 3.
     pub zstd_compression_level: i32,
     /// This is only set to `Some` for objects created via
     /// `Config::tmp`, and will remove the storage directory

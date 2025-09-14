@@ -38,9 +38,9 @@ fn verify(tree: &Db) -> (u32, u32) {
             };
             let actual = slice_to_u32(&*v);
             // FIXME BUG 2
-            // thread '<unnamed>' panicked at tests/test_crash_recovery.rs:159:13:
-            // assertion `left == right` failed
-            //   left: 139
+            // thread '<unnamed>' panicked at
+            // tests/test_crash_recovery.rs:159:13: assertion `left
+            // == right` failed   left: 139
             //  right: 136
             assert_eq!(
                 expected,

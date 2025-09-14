@@ -227,7 +227,8 @@ enum PersistentSettings {
 }
 
 impl PersistentSettings {
-    // NB: should only be called with a directory lock already exclusively acquired
+    // NB: should only be called with a directory lock already exclusively
+    // acquired
     fn verify_or_store<P: AsRef<Path>>(
         &self,
         path: P,
@@ -414,7 +415,8 @@ mod sys_io {
         match maybe!(file.read_exact_at(buf, offset)) {
             Ok(r) => Ok(r),
             Err(e) => {
-                // FIXME BUG 3: failed to read 64 bytes at offset 192 from file with len 192
+                // FIXME BUG 3: failed to read 64 bytes at offset 192 from file
+                // with len 192
                 println!(
                     "failed to read {} bytes at offset {} from file with len {}",
                     buf.len(),
@@ -724,11 +726,12 @@ impl Heap {
         let mut was_recovered = true;
         for p in [path, &slabs_dir] {
             if let Err(e) = fs::read_dir(p)
-                && e.kind() == io::ErrorKind::NotFound {
-                    fallible!(fs::create_dir_all(p));
-                    was_recovered = false;
-                    continue;
-                }
+                && e.kind() == io::ErrorKind::NotFound
+            {
+                fallible!(fs::create_dir_all(p));
+                was_recovered = false;
+                continue;
+            }
             maybe!(fs::File::open(p).and_then(|f| f.sync_all()))?;
         }
 

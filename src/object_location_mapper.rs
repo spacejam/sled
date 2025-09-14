@@ -154,7 +154,8 @@ impl ObjectLocationMapper {
     }
 
     pub(crate) fn allocate_object_id(&self) -> ObjectId {
-        // object IDs wrap a NonZeroU64, so if we get 0, just re-allocate and leak the id
+        // object IDs wrap a NonZeroU64, so if we get 0, just re-allocate and
+        // leak the id
 
         let mut object_id = self.object_id_allocator.allocate();
         if object_id == 0 {
@@ -231,7 +232,8 @@ impl ObjectLocationMapper {
             .get(slot)
             .swap(*object_id, Ordering::Release);
 
-        // TODO add debug event verifier here assert_eq!(0, last_oid_at_location);
+        // TODO add debug event verifier here assert_eq!(0,
+        // last_oid_at_location);
 
         last_address_opt
     }
@@ -287,9 +289,10 @@ impl ObjectLocationMapper {
                 ) {
                     SlabAddress::from(rt_raw_sa)
                 } else {
-                    // object has been removed but its slot has not yet been freed,
-                    // hopefully due to a deferred write
-                    // TODO test that with a testing event log
+                    // object has been removed but its slot has not yet been
+                    // freed, hopefully due to a deferred
+                    // write TODO test that with a testing
+                    // event log
                     continue;
                 };
 

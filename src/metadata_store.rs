@@ -85,7 +85,8 @@ fn get_compactions(
         }
     }
 
-    // scoop up any additional logs that have built up while we were busy compacting
+    // scoop up any additional logs that have built up while we were busy
+    // compacting
     loop {
         match rx.try_recv() {
             Ok(WorkerMessage::Shutdown(tx)) => {
@@ -257,8 +258,8 @@ impl MetadataStore {
         set_error(&self.inner.global_error, error);
     }
 
-    /// Returns the writer handle `MetadataStore`, a sorted array of metadata, and a sorted array
-    /// of free keys.
+    /// Returns the writer handle `MetadataStore`, a sorted array of metadata,
+    /// and a sorted array of free keys.
     pub fn recover<P: AsRef<Path>>(
         storage_directory: P,
     ) -> io::Result<(
@@ -285,9 +286,10 @@ impl MetadataStore {
 
         // initialize directories if not present
         if let Err(e) = fs::read_dir(path)
-            && e.kind() == io::ErrorKind::NotFound {
-                fallible!(fs::create_dir_all(path));
-            }
+            && e.kind() == io::ErrorKind::NotFound
+        {
+            fallible!(fs::create_dir_all(path));
+        }
 
         let _ = fs::File::create(path.join(WARN));
 
@@ -340,7 +342,8 @@ impl MetadataStore {
         Ok((MetadataStore { inner, is_shut_down: false }, recovery.recovered))
     }
 
-    /// Returns the recovered mappings, the id for the next log file, the highest allocated object id, and the set of free ids
+    /// Returns the recovered mappings, the id for the next log file, the
+    /// highest allocated object id, and the set of free ids
     fn recover_inner<P: AsRef<Path>>(
         storage_directory: P,
         directory_lock: &fs::File,
@@ -359,8 +362,8 @@ impl MetadataStore {
         )
     }
 
-    /// Write a batch of metadata. `None` for the second half of the outer tuple represents a
-    /// deletion. Returns the bytes written.
+    /// Write a batch of metadata. `None` for the second half of the outer tuple
+    /// represents a deletion. Returns the bytes written.
     pub fn write_batch(&self, batch: &[UpdateMetadata]) -> io::Result<u64> {
         self.check_error()?;
 
@@ -427,7 +430,8 @@ impl MetadataStore {
 }
 
 fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
-    // we initialize the vector to contain placeholder bytes for the frame length
+    // we initialize the vector to contain placeholder bytes for the frame
+    // length
     let batch_bytes = 0_u64.to_le_bytes().to_vec();
 
     // write format:
@@ -437,7 +441,8 @@ fn serialize_batch(batch: &[UpdateMetadata]) -> Vec<u8> {
     //      zstd encoded 8 byte LE key
     //      zstd encoded 8 byte LE value
     //      repeated for each kv pair
-    //  LE encoded crc32 of length + payload raw bytes, XOR 0xAF to make non-zero in empty case
+    //  LE encoded crc32 of length + payload raw bytes, XOR 0xAF to make
+    // non-zero in empty case
     let mut batch_encoder = ZstdEncoder::new(batch_bytes, ZSTD_LEVEL).unwrap();
 
     for update_metadata in batch {
@@ -609,8 +614,8 @@ fn read_frame(
     Ok(ret)
 }
 
-// returns the deduplicated data in this log, along with an optional offset where a
-// final torn write occurred.
+// returns the deduplicated data in this log, along with an optional offset
+// where a final torn write occurred.
 fn read_log(
     directory_path: &Path,
     lsn: u64,

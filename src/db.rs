@@ -167,8 +167,8 @@ impl<const LEAF_FANOUT: usize> Drop for Db<LEAF_FANOUT> {
 impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
     #[cfg(feature = "for-internal-testing-only")]
     fn validate(&self) -> io::Result<()> {
-        // for each tree, iterate over index, read node and assert low key matches
-        // and assert first time we've ever seen node ID
+        // for each tree, iterate over index, read node and assert low key
+        // matches and assert first time we've ever seen node ID
 
         let mut ever_seen = std::collections::HashSet::new();
         let before = std::time::Instant::now();

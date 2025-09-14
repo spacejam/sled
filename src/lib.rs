@@ -13,14 +13,15 @@
 //     * this feels nice, we can lazily update a global stable flushed counter
 //     * can get rid of dirty_flush_epoch and page_out_on_flush?
 //     * or at least dirty_flush_epoch
-//   * dirty_flush_epoch really means "hasn't yet been cooperatively serialized @ F.E."
+//   * dirty_flush_epoch really means "hasn't yet been cooperatively serialized
+//     @ F.E."
 //   * interesting metrics:
 //     * whether dirty for some epoch
 //     * whether cooperatively serialized for some epoch
 //     * whether fully flushed for some epoch
 //     * clean -> dirty -> {maybe coop} -> flushed
-//   * for page-out, we only care if it's stable or if we need to add it to
-//     a page-out priority queue
+//   * for page-out, we only care if it's stable or if we need to add it to a
+//     page-out priority queue
 // * page-out doesn't seem to happen as expected
 //
 // reliability
@@ -47,25 +48,25 @@
 // post-1.0 improvements
 //
 // reliability
-// TODO bug hiding: if the crash_iter test panics, the test doesn't fail as expected
-// TODO event log assertion for testing heap location bidirectional referential integrity,
-//      particularly in the object location mapper.
-// TODO ensure nothing "from the future" gets copied into earlier epochs during GC
-// TODO collection_id on page_in checks - it needs to be pinned w/ heap's EBR?
-// TODO put aborts behind feature flags for hard crashes
+// TODO bug hiding: if the crash_iter test panics, the test doesn't fail as
+// expected TODO event log assertion for testing heap location bidirectional
+// referential integrity,      particularly in the object location mapper.
+// TODO ensure nothing "from the future" gets copied into earlier epochs during
+// GC TODO collection_id on page_in checks - it needs to be pinned w/ heap's
+// EBR? TODO put aborts behind feature flags for hard crashes
 // TODO re-enable transaction tests in test_tree.rs
 //
 // performance
 // TODO force writers to flush when some number of dirty epochs have built up
 // TODO serialize flush batch in parallel
 // TODO concurrent serialization of NotYetSerialized dirty objects
-// TODO make the Arc<Option<Box<Leaf just a single pointer chase w/ custom container
-// TODO allow waiting flusher to start collecting dirty pages as soon
+// TODO make the Arc<Option<Box<Leaf just a single pointer chase w/ custom
+// container TODO allow waiting flusher to start collecting dirty pages as soon
 //      as it is evacuated - just wait until last flush is done before
 //      we persist the batch
 // TODO measure space savings vs cost of zstd in metadata store
-// TODO make EBR and index fanout consts as small as possible to reduce memory usage
-// TODO make leaf fanout as small as possible while retaining perf
+// TODO make EBR and index fanout consts as small as possible to reduce memory
+// usage TODO make leaf fanout as small as possible while retaining perf
 // TODO dynamically sized fanouts for reducing fragmentation
 //
 // features
