@@ -580,7 +580,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         );
 
         self.collection_name_mapping
-            .insert(name_ref, &collection_id.0.to_le_bytes())?;
+            .insert(name_ref, collection_id.0.to_le_bytes())?;
 
         trees.insert(collection_id, tree.clone());
 

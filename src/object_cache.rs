@@ -355,7 +355,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         self.flush_epoch.current_flush_epoch()
     }
 
-    pub fn check_into_flush_epoch(&self) -> FlushEpochGuard {
+    pub fn check_into_flush_epoch(&self) -> FlushEpochGuard<'_> {
         self.flush_epoch.check_in()
     }
 
@@ -761,13 +761,12 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     continue;
                 };
 
-                if let Some(ref inner) = object.inner.read().leaf {
-                    if let Some(dirty) = inner.dirty_flush_epoch {
+                if let Some(ref inner) = object.inner.read().leaf
+                    && let Some(dirty) = inner.dirty_flush_epoch {
                         assert!(dirty > flush_through_epoch);
                         // This object will be rewritten anyway when its dirty epoch gets flushed
                         continue;
                     }
-                }
 
                 let data = match self.read(fragmented_object_id) {
                     Some(Ok(data)) => data,

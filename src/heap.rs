@@ -726,13 +726,12 @@ impl Heap {
         // initialize directories if not present
         let mut was_recovered = true;
         for p in [path, &slabs_dir] {
-            if let Err(e) = fs::read_dir(p) {
-                if e.kind() == io::ErrorKind::NotFound {
+            if let Err(e) = fs::read_dir(p)
+                && e.kind() == io::ErrorKind::NotFound {
                     fallible!(fs::create_dir_all(p));
                     was_recovered = false;
                     continue;
                 }
-            }
             maybe!(fs::File::open(p).and_then(|f| f.sync_all()))?;
         }
 

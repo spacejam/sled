@@ -284,11 +284,10 @@ impl MetadataStore {
         let path = storage_directory.as_ref();
 
         // initialize directories if not present
-        if let Err(e) = fs::read_dir(path) {
-            if e.kind() == io::ErrorKind::NotFound {
+        if let Err(e) = fs::read_dir(path)
+            && e.kind() == io::ErrorKind::NotFound {
                 fallible!(fs::create_dir_all(path));
             }
-        }
 
         let _ = fs::File::create(path.join(WARN));
 

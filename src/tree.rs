@@ -358,8 +358,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 continue;
             }
 
-            if let Some(ref hi) = leaf.hi {
-                if &**hi <= key {
+            if let Some(ref hi) = leaf.hi
+                && &**hi <= key {
                     let size = leaf.in_memory_size;
                     log::trace!(
                         "key overshoot in page_in - search key {:?}, node hi {:?}",
@@ -379,7 +379,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
                     continue;
                 }
-            }
             return Ok((low_key, write, node));
         }
     }
@@ -660,15 +659,14 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
                 continue;
             }
-            if let Some(ref hi) = leaf.hi {
-                if &**hi <= key {
+            if let Some(ref hi) = leaf.hi
+                && &**hi <= key {
                     log::trace!("key overshoot on leaf_for_key");
                     // cache maintenance occurs in Drop for LeafReadGuard
                     drop(leaf_guard);
                     hint::spin_loop();
                     continue;
                 }
-            }
 
             if leaf.lo != node.low_key {
                 // TODO determine why this rare situation occurs and better
@@ -719,8 +717,8 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             assert_ne!(max_unflushed_epoch, flush_epoch_guard.epoch());
         }
 
-        if let Some(old_dirty_epoch) = leaf.dirty_flush_epoch {
-            if old_dirty_epoch != flush_epoch_guard.epoch() {
+        if let Some(old_dirty_epoch) = leaf.dirty_flush_epoch
+            && old_dirty_epoch != flush_epoch_guard.epoch() {
                 assert!(old_dirty_epoch < flush_epoch_guard.epoch());
 
                 log::trace!(
@@ -732,7 +730,6 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
                 self.cooperatively_serialize_leaf(node.object_id, &mut *leaf);
             }
-        }
 
         Ok(LeafWriteGuard {
             flush_epoch_guard,
@@ -1396,12 +1393,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             if let Some((_lo, w, _id)) = &last {
                 let leaf = w.leaf.as_ref().unwrap();
                 assert!(&leaf.lo <= key);
-                if let Some(hi) = &leaf.hi {
-                    if hi <= key {
+                if let Some(hi) = &leaf.hi
+                    && hi <= key {
                         let (lo, w, n) = last.take().unwrap();
                         acquired_locks.insert(lo, (w, n));
                     }
-                }
             }
             if last.is_none() {
                 // TODO evaluate whether this is correct, as page_in performs
@@ -2056,13 +2052,12 @@ impl<const LEAF_FANOUT: usize> Iterator for Iter<LEAF_FANOUT> {
 
             let leaf = node.leaf_read.leaf.as_ref().unwrap();
 
-            if let Some(leaf_hi) = &leaf.hi {
-                if leaf_hi <= &search_key {
+            if let Some(leaf_hi) = &leaf.hi
+                && leaf_hi <= &search_key {
                     // concurrent merge, retry
                     log::trace!("undershot in interator, retrying search");
                     continue;
                 }
-            }
 
             if leaf.lo > search_key {
                 // concurrent successor split, retry
