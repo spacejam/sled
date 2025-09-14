@@ -513,10 +513,7 @@ impl Slab {
     ) -> io::Result<Vec<u8>> {
         log::trace!("reading from slot {} in slab {}", slot, self.slot_size);
 
-        let mut data = Vec::with_capacity(self.slot_size);
-        unsafe {
-            data.set_len(self.slot_size);
-        }
+        let mut data = vec![0u8; self.slot_size];
 
         let whence = self.slot_size as u64 * slot;
 

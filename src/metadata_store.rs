@@ -523,10 +523,7 @@ fn read_frame(
     let len: usize = usize::try_from(len_u64).unwrap();
 
     reusable_frame_buffer.clear();
-    reusable_frame_buffer.reserve(len + 12);
-    unsafe {
-        reusable_frame_buffer.set_len(len + 12);
-    }
+    reusable_frame_buffer.resize(len + 12, 0);
     reusable_frame_buffer[..8].copy_from_slice(&frame_size_with_crc_buf);
 
     fallible!(file.read_exact(&mut reusable_frame_buffer[8..]));
@@ -589,10 +586,7 @@ fn read_frame(
         let low_key_len_raw = u64::from_le_bytes(low_key_len_buf);
         let low_key_len = usize::try_from(low_key_len_raw).unwrap();
 
-        low_key_buf.reserve(low_key_len);
-        unsafe {
-            low_key_buf.set_len(low_key_len);
-        }
+        low_key_buf.resize(low_key_len, 0);
 
         decoder
             .read_exact(&mut low_key_buf)
