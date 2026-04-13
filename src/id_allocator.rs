@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::sync::Mutex;
 
@@ -18,7 +18,8 @@ pub struct Allocator {
     free_and_pending: Mutex<FreeSetAndTip>,
     /// Flat combining.
     ///
-    /// A lock free queue of recently freed ids which uses when there is contention on `free_and_pending`.
+    /// A lock free queue of recently freed ids which uses when there is
+    /// contention on `free_and_pending`.
     free_queue: SegQueue<u64>,
     allocation_counter: AtomicU64,
     free_counter: AtomicU64,
@@ -93,11 +94,7 @@ impl Allocator {
     pub fn max_allocated(&self) -> Option<u64> {
         let next = self.free_and_pending.lock().unwrap().next_to_allocate;
 
-        if next == 0 {
-            None
-        } else {
-            Some(next - 1)
-        }
+        if next == 0 { None } else { Some(next - 1) }
     }
 
     pub fn allocate(&self) -> u64 {

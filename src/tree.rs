@@ -358,27 +358,27 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
                 continue;
             }
 
-            if let Some(ref hi) = leaf.hi {
-                if &**hi <= key {
-                    let size = leaf.in_memory_size;
-                    log::trace!(
-                        "key overshoot in page_in - search key {:?}, node hi {:?}",
-                        key,
-                        hi
-                    );
-                    drop(write);
-                    self.cache.mark_access_and_evict(
-                        node.object_id,
-                        size,
-                        flush_epoch,
-                    )?;
+            if let Some(ref hi) = leaf.hi
+                && &**hi <= key
+            {
+                let size = leaf.in_memory_size;
+                log::trace!(
+                    "key overshoot in page_in - search key {:?}, node hi {:?}",
+                    key,
+                    hi
+                );
+                drop(write);
+                self.cache.mark_access_and_evict(
+                    node.object_id,
+                    size,
+                    flush_epoch,
+                )?;
 
-                    hint::spin_loop();
+                hint::spin_loop();
 
-                    last_continue = concat!(file!(), ':', line!());
+                last_continue = concat!(file!(), ':', line!());
 
-                    continue;
-                }
+                continue;
             }
             return Ok((low_key, write, node));
         }
@@ -661,14 +661,14 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
 
                 continue;
             }
-            if let Some(ref hi) = leaf.hi {
-                if &**hi <= key {
-                    log::trace!("key overshoot on leaf_for_key");
-                    // cache maintenance occurs in Drop for LeafReadGuard
-                    drop(leaf_guard);
-                    hint::spin_loop();
-                    continue;
-                }
+            if let Some(ref hi) = leaf.hi
+                && &**hi <= key
+            {
+                log::trace!("key overshoot on leaf_for_key");
+                // cache maintenance occurs in Drop for LeafReadGuard
+                drop(leaf_guard);
+                hint::spin_loop();
+                continue;
             }
 
             if leaf.lo != node.low_key {
@@ -715,24 +715,24 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         }
 
         if let Some(max_unflushed_epoch) = leaf.max_unflushed_epoch {
-            // We already serialized something for this epoch, so if we did so again,
-            // we need to think a bit.
+            // We already serialized something for this epoch, so if we did so
+            // again, we need to think a bit.
             assert_ne!(max_unflushed_epoch, flush_epoch_guard.epoch());
         }
 
-        if let Some(old_dirty_epoch) = leaf.dirty_flush_epoch {
-            if old_dirty_epoch != flush_epoch_guard.epoch() {
-                assert!(old_dirty_epoch < flush_epoch_guard.epoch());
+        if let Some(old_dirty_epoch) = leaf.dirty_flush_epoch
+            && old_dirty_epoch != flush_epoch_guard.epoch()
+        {
+            assert!(old_dirty_epoch < flush_epoch_guard.epoch());
 
-                log::trace!(
-                    "cooperatively flushing {:?} with dirty {:?} after checking into {:?}",
-                    node.object_id,
-                    old_dirty_epoch,
-                    flush_epoch_guard.epoch()
-                );
+            log::trace!(
+                "cooperatively flushing {:?} with dirty {:?} after checking into {:?}",
+                node.object_id,
+                old_dirty_epoch,
+                flush_epoch_guard.epoch()
+            );
 
-                self.cooperatively_serialize_leaf(node.object_id, &mut *leaf);
-            }
+            self.cooperatively_serialize_leaf(node.object_id, &mut *leaf);
         }
 
         Ok(LeafWriteGuard {
@@ -986,17 +986,19 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
     /// correct. If both old and new are `Some`, will modify the value if
     /// old is correct.
     ///
-    /// It returns `Ok(Ok(CompareAndSwapSuccess { new_value, previous_value }))` if operation finishes successfully.
+    /// It returns `Ok(Ok(CompareAndSwapSuccess { new_value, previous_value }))`
+    /// if operation finishes successfully.
     ///
     /// If it fails it returns:
-    ///     - `Ok(Err(CompareAndSwapError{ current, proposed }))` if no IO
-    ///       error was encountered but the operation
-    ///       failed to specify the correct current value. `CompareAndSwapError` contains
-    ///       current and proposed values.
-    ///     - `Err(io::Error)` if there was a high-level IO problem that prevented
-    ///       the operation from logically progressing. This is usually fatal and
-    ///       will prevent future requests from functioning, and requires the
-    ///       administrator to fix the system issue before restarting.
+    ///     - `Ok(Err(CompareAndSwapError{ current, proposed }))` if no IO error
+    ///       was encountered but the operation failed to specify the correct
+    ///       current value. `CompareAndSwapError` contains current and proposed
+    ///       values.
+    ///     - `Err(io::Error)` if there was a high-level IO problem that
+    ///       prevented the operation from logically progressing. This is
+    ///       usually fatal and will prevent future requests from functioning,
+    ///       and requires the administrator to fix the system issue before
+    ///       restarting.
     ///
     /// # Examples
     ///
@@ -1397,11 +1399,11 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
             if let Some((_lo, w, _id)) = &last {
                 let leaf = w.leaf.as_ref().unwrap();
                 assert!(&leaf.lo <= key);
-                if let Some(hi) = &leaf.hi {
-                    if hi <= key {
-                        let (lo, w, n) = last.take().unwrap();
-                        acquired_locks.insert(lo, (w, n));
-                    }
+                if let Some(hi) = &leaf.hi
+                    && hi <= key
+                {
+                    let (lo, w, n) = last.take().unwrap();
+                    acquired_locks.insert(lo, (w, n));
                 }
             }
             if last.is_none() {
@@ -1784,12 +1786,13 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         }
     }
 
-    /// Pops the last kv pair in the provided range, or returns `Ok(None)` if nothing
-    /// exists within that range.
+    /// Pops the last kv pair in the provided range, or returns `Ok(None)` if
+    /// nothing exists within that range.
     ///
     /// # Panics
     ///
-    /// This will panic if the provided range's end_bound() == Bound::Excluded(K::MIN).
+    /// This will panic if the provided range's end_bound() ==
+    /// Bound::Excluded(K::MIN).
     ///
     /// # Examples
     ///
@@ -1898,12 +1901,13 @@ impl<const LEAF_FANOUT: usize> Tree<LEAF_FANOUT> {
         }
     }
 
-    /// Pops the first kv pair in the provided range, or returns `Ok(None)` if nothing
-    /// exists within that range.
+    /// Pops the first kv pair in the provided range, or returns `Ok(None)` if
+    /// nothing exists within that range.
     ///
     /// # Panics
     ///
-    /// This will panic if the provided range's end_bound() == Bound::Excluded(K::MIN).
+    /// This will panic if the provided range's end_bound() ==
+    /// Bound::Excluded(K::MIN).
     ///
     /// # Examples
     ///
@@ -2057,12 +2061,12 @@ impl<const LEAF_FANOUT: usize> Iterator for Iter<LEAF_FANOUT> {
 
             let leaf = node.leaf_read.leaf.as_ref().unwrap();
 
-            if let Some(leaf_hi) = &leaf.hi {
-                if leaf_hi <= &search_key {
-                    // concurrent merge, retry
-                    log::trace!("undershot in interator, retrying search");
-                    continue;
-                }
+            if let Some(leaf_hi) = &leaf.hi
+                && leaf_hi <= &search_key
+            {
+                // concurrent merge, retry
+                log::trace!("undershot in interator, retrying search");
+                continue;
             }
 
             if leaf.lo > search_key {
@@ -2124,7 +2128,8 @@ impl<const LEAF_FANOUT: usize> DoubleEndedIterator for Iter<LEAF_FANOUT> {
                 continue;
             }
 
-            // determine if we undershot our target due to concurrent modifications
+            // determine if we undershot our target due to concurrent
+            // modifications
             let undershot =
                 match (&leaf.hi, &self.next_back_last_lo, &self.bounds.1) {
                     (Some(leaf_hi), Some(last_lo), _) => leaf_hi < last_lo,

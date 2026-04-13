@@ -166,8 +166,8 @@ impl<const LEAF_FANOUT: usize> std::panic::RefUnwindSafe
 }
 
 impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
-    /// Returns the recovered ObjectCache, the tree indexes, and a bool signifying whether the system
-    /// was recovered or not
+    /// Returns the recovered ObjectCache, the tree indexes, and a bool
+    /// signifying whether the system was recovered or not
     pub fn recover(
         config: &Config,
     ) -> io::Result<(
@@ -355,7 +355,7 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
         self.flush_epoch.current_flush_epoch()
     }
 
-    pub fn check_into_flush_epoch(&self) -> FlushEpochGuard {
+    pub fn check_into_flush_epoch(&self) -> FlushEpochGuard<'_> {
         self.flush_epoch.check_in()
     }
 
@@ -530,8 +530,8 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                 assert_eq!(dirty_value_initial_read, dirty_value);
             }
 
-            // drop is necessary to increase chance of Arc strong count reaching 1
-            // while taking ownership of the value
+            // drop is necessary to increase chance of Arc strong count reaching
+            // 1 while taking ownership of the value
             drop(dirty_value_initial_read);
 
             assert_eq!(dirty_epoch, flush_through_epoch);
@@ -658,8 +658,10 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
 
                         leaf_ref.serialize(self.config.zstd_compression_level)
                     } else {
-                        // Here we expect that there was a benign data race and that another thread
-                        // mutated the leaf after encountering it being dirty for our epoch, after
+                        // Here we expect that there was a benign data race and
+                        // that another thread
+                        // mutated the leaf after encountering it being dirty
+                        // for our epoch, after
                         // storing a CooperativelySerialized in the dirty map.
                         let dirty_value_2_opt =
                             self.dirty.remove(&(dirty_epoch, dirty_object_id));
@@ -761,12 +763,13 @@ impl<const LEAF_FANOUT: usize> ObjectCache<LEAF_FANOUT> {
                     continue;
                 };
 
-                if let Some(ref inner) = object.inner.read().leaf {
-                    if let Some(dirty) = inner.dirty_flush_epoch {
-                        assert!(dirty > flush_through_epoch);
-                        // This object will be rewritten anyway when its dirty epoch gets flushed
-                        continue;
-                    }
+                if let Some(ref inner) = object.inner.read().leaf
+                    && let Some(dirty) = inner.dirty_flush_epoch
+                {
+                    assert!(dirty > flush_through_epoch);
+                    // This object will be rewritten anyway when its dirty epoch
+                    // gets flushed
+                    continue;
                 }
 
                 let data = match self.read(fragmented_object_id) {

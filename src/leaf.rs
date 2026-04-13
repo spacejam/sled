@@ -168,7 +168,8 @@ impl<const LEAF_FANOUT: usize> Leaf<LEAF_FANOUT> {
         let mut leaf: Box<Leaf<LEAF_FANOUT>> =
             bincode::deserialize(&zstd_decoded).unwrap();
 
-        // use decompressed buffer length as a cheap proxy for in-memory size for now
+        // use decompressed buffer length as a cheap proxy for in-memory size
+        // for now
         leaf.in_memory_size = zstd_decoded.len();
 
         Ok(leaf)

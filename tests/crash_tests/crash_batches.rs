@@ -18,7 +18,8 @@ fn verify_batches(tree: &Db) -> u32 {
         None => return 0,
     };
 
-    // we now expect all items in the batch to be present and to have the same value
+    // we now expect all items in the batch to be present and to have the same
+    // value
 
     for key in 0..BATCH_SIZE {
         let res = tree.get(u32_to_vec(key));
@@ -33,17 +34,19 @@ fn verify_batches(tree: &Db) -> u32 {
         };
         let value = slice_to_u32(&*v);
         // FIXME BUG 1 count 2
-        // assertion `left == right` failed: expected key 0 to have value 62003, instead it had value 62375 in db with keys:
-        // {0:62003, 1:62003, 2:62003, 3:62003, 4:62003, 5:62003, 6:62003, 7:62003,
+        // assertion `left == right` failed: expected key 0 to have value 62003,
+        // instead it had value 62375 in db with keys: {0:62003, 1:
+        // 62003, 2:62003, 3:62003, 4:62003, 5:62003, 6:62003, 7:62003,
         // Human: iterating shows correct value, but first get did not
         //
-        // expected key 1 to have value 1, instead it had value 29469 in db with keys:
-        // {0:1, 1:29469, 2:29469, 3:29469, 4:29469, 5:29469, 6:29469, 7:29469,
-        // Human: 0 didn't get included in later syncs
+        // expected key 1 to have value 1, instead it had value 29469 in db with
+        // keys: {0:1, 1:29469, 2:29469, 3:29469, 4:29469, 5:29469,
+        // 6:29469, 7:29469, Human: 0 didn't get included in later syncs
         //
-        //  expected key 0 to have value 59485, instead it had value 59484 in db with keys:
-        //  {0:59485, 1:59485, 2:59485, 3:59485, 4:59485, 5:59485, 6:59485, 7:59485,
-        //  Human: had key N during first check, then N + 1 in iteration
+        //  expected key 0 to have value 59485, instead it had value 59484 in db
+        // with keys:  {0:59485, 1:59485, 2:59485, 3:59485, 4:59485,
+        // 5:59485, 6:59485, 7:59485,  Human: had key N during first
+        // check, then N + 1 in iteration
         assert_eq!(
             first_value,
             value,

@@ -12,7 +12,7 @@ type Db = SledDb<1024>;
 
 const N_WRITES_PER_THREAD: u32 = 4 * 1024 * 1024;
 const MAX_CONCURRENCY: u32 = 4;
-const CONCURRENCY: &[usize] = &[/*1, 2, 4,*/ MAX_CONCURRENCY as _];
+const CONCURRENCY: &[usize] = &[/* 1, 2, 4, */ MAX_CONCURRENCY as _];
 const BYTES_PER_ITEM: u32 = 8;
 
 trait Databench: Clone + Send {
